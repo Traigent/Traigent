@@ -2,6 +2,9 @@
 
 import os
 import time
+from collections import defaultdict
+from itertools import count
+from typing import Any
 
 import pytest
 
@@ -9,21 +12,177 @@ from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.models import SessionCreationRequest
 
 
+class _MockClientTimeout:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
+class _MockBackendResponse:
+    def __init__(self, status: int, payload: dict[str, Any] | None = None):
+        self.status = status
+        self._payload = payload or {}
+
+    async def __aenter__(self) -> "_MockBackendResponse":
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool:
+        return False
+
+    async def json(self) -> dict[str, Any]:
+        return self._payload
+
+    async def text(self) -> str:
+        return str(self._payload)
+
+
+class _MockBackendSession:
+    def __init__(self, backend: "_MockBackendTransport") -> None:
+        self._backend = backend
+
+    async def __aenter__(self) -> "_MockBackendSession":
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool:
+        return False
+
+    def post(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> _MockBackendResponse:
+        return self._backend.post(url, json or {})
+
+    def put(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> _MockBackendResponse:
+        return self._backend.put(url, json or {})
+
+
+class _MockBackendTransport:
+    """In-memory backend contract used by these integration tests."""
+
+    def __init__(self) -> None:
+        self._ids = count(1)
+        self._max_trials_by_session: dict[str, int] = {}
+        self._completed_trials_by_session: defaultdict[str, set[str]] = defaultdict(set)
+
+    def client_session(self, *args: Any, **kwargs: Any) -> _MockBackendSession:
+        return _MockBackendSession(self)
+
+    def post(self, url: str, payload: dict[str, Any]) -> _MockBackendResponse:
+        path = url.rstrip("/")
+
+        if path.endswith("/sessions"):
+            return self._create_session(payload)
+        if path.endswith("/results"):
+            return self._submit_result(path, payload)
+        if path.endswith("/finalize"):
+            return self._finalize_session(path)
+
+        return _MockBackendResponse(404, {"error": f"unexpected POST {url}"})
+
+    def put(self, url: str, payload: dict[str, Any]) -> _MockBackendResponse:
+        return _MockBackendResponse(200, {"status": "updated"})
+
+    def _create_session(self, payload: dict[str, Any]) -> _MockBackendResponse:
+        index = next(self._ids)
+        session_id = f"mock_session_{index}"
+        experiment_id = f"mock_exp_{index}"
+        experiment_run_id = f"mock_run_{index}"
+        max_trials = payload.get("optimization_config", {}).get("max_trials", 0)
+        self._max_trials_by_session[session_id] = int(max_trials or 0)
+        return _MockBackendResponse(
+            201,
+            {
+                "session_id": session_id,
+                "metadata": {
+                    "experiment_id": experiment_id,
+                    "experiment_run_id": experiment_run_id,
+                },
+            },
+        )
+
+    def _submit_result(
+        self, path: str, payload: dict[str, Any]
+    ) -> _MockBackendResponse:
+        session_id = path.split("/")[-2]
+        trial_id = str(payload.get("trial_id", ""))
+        if payload.get("status") == "COMPLETED" and trial_id:
+            self._completed_trials_by_session[session_id].add(trial_id)
+
+        max_trials = self._max_trials_by_session.get(session_id, 0)
+        completed_trials = len(self._completed_trials_by_session[session_id])
+        return _MockBackendResponse(
+            200,
+            {
+                "status": "success",
+                "continue_optimization": completed_trials < max_trials,
+            },
+        )
+
+    def _finalize_session(self, path: str) -> _MockBackendResponse:
+        session_id = path.split("/")[-2]
+        total_trials = len(self._completed_trials_by_session[session_id])
+        return _MockBackendResponse(
+            200,
+            {
+                "best_config": {},
+                "best_metrics": {},
+                "total_trials": total_trials,
+                "successful_trials": total_trials,
+                "total_duration": 0.0,
+                "cost_savings": 0.0,
+                "stop_reason": "sdk_explicit_finalization",
+                "convergence_history": [],
+            },
+        )
+
+
 @pytest.mark.integration
-@pytest.mark.skipif(
-    not os.getenv("TRAIGENT_API_KEY") or not os.getenv("TRAIGENT_BACKEND_URL"),
-    reason="Requires TRAIGENT_API_KEY and TRAIGENT_BACKEND_URL environment variables",
-)
 class TestSessionFinalizationIntegration:
     """Integration tests for session finalization."""
 
     @pytest.fixture
-    def client(self):
-        """Create a real BackendIntegratedClient for integration testing."""
+    def client(self, monkeypatch):
+        """Create a BackendIntegratedClient against a mocked backend transport."""
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        # The mocked transport needs no real credentials; provide fakes so the
+        # client constructs without depending on ambient environment (the old
+        # real-backend skipif is gone — these tests must RUN in CI).
+        monkeypatch.setenv("TRAIGENT_API_KEY", "uk_test_finalization_fake")
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://mock-backend.invalid")
+
+        backend = _MockBackendTransport()
+        for module_path in (
+            "traigent.cloud.api_operations",
+            "traigent.cloud.trial_operations",
+            "traigent.cloud.session_operations",
+        ):
+            monkeypatch.setattr(f"{module_path}.AIOHTTP_AVAILABLE", True)
+            monkeypatch.setattr(
+                f"{module_path}.aiohttp.ClientSession",
+                backend.client_session,
+            )
+            monkeypatch.setattr(
+                f"{module_path}.aiohttp.ClientTimeout",
+                _MockClientTimeout,
+            )
+
         api_key = os.getenv("TRAIGENT_API_KEY")
         backend_url = os.getenv("TRAIGENT_BACKEND_URL", "http://localhost:5000")
 
         client = BackendIntegratedClient(api_key=api_key, base_url=backend_url)
+
+        async def augment_headers(headers):
+            return {**headers, "Authorization": "Bearer test-token"}
+
+        client.auth_manager.augment_headers = augment_headers
         return client
 
     @pytest.mark.asyncio
