@@ -23,6 +23,15 @@ from __future__ import annotations
 from .adapters import knob_to_parameter_range, parameter_range_to_knob
 from .bindings import Binding, Calibrated, Fixed, Knob, Ref, Tuned
 from .canonical import CTX_SCHEMA_VERSION, CanonicalizationError, canonical_hash
+from .cascade import (
+    CascadePolicy,
+    CascadeStep,
+    Gate,
+    GateKind,
+    StageSpec,
+    VoteStats,
+    vote_over,
+)
 from .certificates import (
     CTX_EXT_KEYS,
     Certificate,
@@ -45,11 +54,15 @@ __all__ = [
     "Calibrated",
     "CalibratedInput",
     "CanonicalizationError",
+    "CascadePolicy",
+    "CascadeStep",
     "Certificate",
     "CertificateDecision",
     "EvidenceRef",
     "Fixed",
     "FreshnessContext",
+    "Gate",
+    "GateKind",
     "Knob",
     "KnobKind",
     "KnobResolver",
@@ -60,11 +73,14 @@ __all__ = [
     "ResolvedConfiguration",
     "SignalObservation",
     "SignalSpec",
+    "StageSpec",
     "TargetProperty",
     "Tuned",
+    "VoteStats",
     "canonical_hash",
     "conformal_evidence_floor",
     "issue_certificate",
     "knob_to_parameter_range",
     "parameter_range_to_knob",
+    "vote_over",
 ]
