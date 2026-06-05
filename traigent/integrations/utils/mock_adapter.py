@@ -28,6 +28,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
@@ -182,8 +183,10 @@ class MockAdapter:
             "openai": cls._build_openai_mock,
             "azure_openai": cls._build_openai_mock,  # Same format
             "anthropic": cls._build_anthropic_mock,
+            "bedrock": cls._build_bedrock_mock,
             "gemini": cls._build_gemini_mock,
             "cohere": cls._build_cohere_mock,
+            "litellm": cls._build_litellm_mock,
         }
 
         builder = builders.get(provider.lower(), cls._build_generic_mock)
@@ -275,6 +278,78 @@ class MockAdapter:
                 }
             },
         }
+
+    @classmethod
+    def _build_bedrock_mock(cls, data: MockResponse) -> dict[str, Any]:
+        """Build Bedrock Anthropic Messages API-like response dict."""
+        return {
+            "id": data.response_id,
+            "type": "message",
+            "role": "assistant",
+            "model": data.model,
+            "content": [
+                {
+                    "type": "text",
+                    "text": data.text,
+                }
+            ],
+            "stop_reason": data.finish_reason,
+            "usage": {
+                "input_tokens": data.prompt_tokens,
+                "output_tokens": data.completion_tokens,
+                "total_tokens": data.total_tokens,
+            },
+        }
+
+    @classmethod
+    def _build_litellm_mock(cls, data: MockResponse) -> Any:
+        """Build a LiteLLM ModelResponse-like mock response."""
+        try:
+            from litellm import ModelResponse
+        except Exception as exc:  # pragma: no cover - exercised only without litellm
+            logger.debug("LiteLLM ModelResponse unavailable, using fallback: %s", exc)
+            return SimpleNamespace(
+                id=data.response_id,
+                object="chat.completion",
+                created=int(time.time()),
+                model=data.model,
+                choices=[
+                    SimpleNamespace(
+                        index=0,
+                        message=SimpleNamespace(
+                            role="assistant",
+                            content=data.text,
+                        ),
+                        finish_reason=data.finish_reason,
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=data.prompt_tokens,
+                    completion_tokens=data.completion_tokens,
+                    total_tokens=data.total_tokens,
+                ),
+            )
+
+        return ModelResponse(
+            id=data.response_id,
+            model=data.model,
+            object="chat.completion",
+            choices=[
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": data.text,
+                    },
+                    "finish_reason": data.finish_reason,
+                }
+            ],
+            usage={
+                "prompt_tokens": data.prompt_tokens,
+                "completion_tokens": data.completion_tokens,
+                "total_tokens": data.total_tokens,
+            },
+        )
 
     @classmethod
     def _build_generic_mock(cls, data: MockResponse) -> dict[str, Any]:

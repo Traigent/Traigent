@@ -11,6 +11,7 @@ from traigent.integrations.bedrock_client import BedrockChatClient
 def test_bedrock_mock_env_does_not_short_circuit_invoke(monkeypatch) -> None:
     """Setting BEDROCK_MOCK still uses the boto3 Bedrock Runtime client."""
     monkeypatch.setenv("BEDROCK_MOCK", "true")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
 
     mock_boto3 = MagicMock()
     mock_session = MagicMock()

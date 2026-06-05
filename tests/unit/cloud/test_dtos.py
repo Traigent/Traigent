@@ -1153,3 +1153,32 @@ class TestExampleMeasure:
 
         assert "ExampleMeasure" in repr_str
         assert "ex_repr_test" in repr_str
+
+
+class TestLocalDtoHelpers:
+    """Regression tests for local DTO helper metadata."""
+
+    def test_local_experiment_metadata_uses_mode_not_execution_mode(self):
+        """Local experiment helper should not emit raw SDK execution_mode metadata."""
+        experiment = cloud_dtos.create_local_experiment(
+            experiment_id="exp-local",
+            name="Local Experiment",
+            description="Local helper payload",
+            configuration_space={"temperature": [0.1, 0.2]},
+        )
+
+        assert experiment.metadata["mode"] == "local"
+        assert "execution_mode" not in experiment.metadata
+
+    def test_local_experiment_run_metadata_uses_mode_not_execution_mode(self):
+        """Local run helper should not emit raw SDK execution_mode metadata."""
+        run = cloud_dtos.create_local_experiment_run(
+            run_id="run-local",
+            experiment_id="exp-local",
+            function_name="optimize_me",
+            configuration_space={"temperature": [0.1, 0.2]},
+            objectives=["accuracy"],
+        )
+
+        assert run.metadata["mode"] == "local"
+        assert "execution_mode" not in run.metadata

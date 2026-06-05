@@ -29,6 +29,21 @@ export AWS_PROFILE=traigent-bedrock
 # export BEDROCK_MOCK=true
 ```
 
+## Credential Boundary
+
+Bedrock credentials are AWS/customer credentials. The SDK's optional Bedrock
+client creates a local `boto3`/`aioboto3` Bedrock Runtime client and relies on
+the AWS SDK credential chain on the machine where the optimization runs. The
+SDK does not use a Traigent API key as an AWS credential and does not send AWS
+credentials to the Traigent backend.
+
+If you use `AWS_BEARER_TOKEN_BEDROCK`, treat it as a short-lived AWS/provider
+credential with the same boundary. It belongs in your local AWS credential
+environment or tooling, not in Traigent backend configuration.
+
+For the broader credential and telemetry boundary, see the
+[Credential & data trust model](../../SECURITY.md#credential--data-trust-model).
+
 ## Dependency Installation
 Ensure you installed integration dependencies:
 ```bash

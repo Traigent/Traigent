@@ -9,6 +9,7 @@ import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from traigent._version import get_version
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,
@@ -923,7 +924,7 @@ class BackendSessionManager:
                 "aggregation_level": "session",
                 "aggregation_summary": session_summary,
                 "trial_id": aggregated_trial_id,
-                "sdk_version": "2.0.0",
+                "sdk_version": get_version(),
             },
         }
 

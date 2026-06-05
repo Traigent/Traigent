@@ -1,0 +1,35 @@
+name: Cost Coverage
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  model-price-coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[test]"
+
+      - name: Run static model price coverage check
+        env:
+          LITELLM_LOCAL_MODEL_COST_MAP: "True"
+          PYTHONPATH: .
+          TRAIGENT_OFFLINE_MODE: "true"
+        run: |
+          # No AWS credentials here: this enumerates a static curated catalog,
+          # not live Bedrock list_inference_profiles output.
+          pytest tests/cost_coverage/test_model_price_coverage.py -q --tb=short --timeout=60
