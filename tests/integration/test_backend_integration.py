@@ -110,7 +110,7 @@ class TestBackendBridges:
         assert "test_function" in backend_request.name
         assert backend_request.description is not None
         assert backend_request.measures == ["accuracy", "cost"]
-        assert backend_request.metadata["test"] is True
+        assert backend_request.metadata["test"] == "True"
         assert backend_request.agent_data is not None
         assert backend_request.example_set_data is not None
 

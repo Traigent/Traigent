@@ -40,87 +40,95 @@ def patch_litellm_for_metadata_capture() -> bool:
 
     # Patch litellm.completion (sync)
     if not getattr(litellm, "_traigent_patched_completion", False):
-        original_completion = litellm.completion
+        original_completion = getattr(litellm, "completion", None)
+        if original_completion is None:
+            logger.debug("litellm.completion not available, skipping sync interceptor")
+        else:
 
-        def completion_with_capture(*args: Any, **kwargs: Any) -> Any:
-            """Wrapped completion that captures response with timing."""
-            from traigent.integrations.utils.mock_adapter import MockAdapter
+            def completion_with_capture(*args: Any, **kwargs: Any) -> Any:
+                """Wrapped completion that captures response with timing."""
+                from traigent.integrations.utils.mock_adapter import MockAdapter
 
-            if MockAdapter.is_mock_enabled("litellm"):
-                mock_data = MockAdapter.get_mock_response(
-                    "litellm",
-                    model=kwargs.get("model", args[0] if args else "mock-model"),
+                if MockAdapter.is_mock_enabled("litellm"):
+                    mock_data = MockAdapter.get_mock_response(
+                        "litellm",
+                        model=kwargs.get("model", args[0] if args else "mock-model"),
+                    )
+                    return mock_data
+
+                start_time = time.perf_counter()
+                response = original_completion(*args, **kwargs)
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+
+                # Skip capture for streaming responses — usage is not populated
+                # until the stream is fully consumed in user code after we return.
+                if kwargs.get("stream", False):
+                    return response
+
+                # Inject timing into response for the handler chain
+                response.response_time_ms = response_time_ms
+
+                capture_langchain_response(response)
+                logger.debug(
+                    "Captured litellm.completion response: model=%s, "
+                    "tokens=%s, response_time_ms=%.2f",
+                    getattr(response, "model", "unknown"),
+                    getattr(response, "usage", None),
+                    response_time_ms,
                 )
-                return mock_data
-
-            start_time = time.perf_counter()
-            response = original_completion(*args, **kwargs)
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-
-            # Skip capture for streaming responses — usage is not populated
-            # until the stream is fully consumed in user code after we return.
-            if kwargs.get("stream", False):
                 return response
 
-            # Inject timing into response for the handler chain
-            response.response_time_ms = response_time_ms
-
-            capture_langchain_response(response)
-            logger.debug(
-                "Captured litellm.completion response: model=%s, "
-                "tokens=%s, response_time_ms=%.2f",
-                getattr(response, "model", "unknown"),
-                getattr(response, "usage", None),
-                response_time_ms,
-            )
-            return response
-
-        litellm.completion = completion_with_capture
-        litellm._traigent_patched_completion = True
-        logger.info("Patched litellm.completion for metadata capture")
-        patched_any = True
+            litellm.completion = completion_with_capture
+            litellm._traigent_patched_completion = True
+            logger.info("Patched litellm.completion for metadata capture")
+            patched_any = True
 
     # Patch litellm.acompletion (async)
     if not getattr(litellm, "_traigent_patched_acompletion", False):
-        original_acompletion = litellm.acompletion
+        original_acompletion = getattr(litellm, "acompletion", None)
+        if original_acompletion is None:
+            logger.debug(
+                "litellm.acompletion not available, skipping async interceptor"
+            )
+        else:
 
-        async def acompletion_with_capture(*args: Any, **kwargs: Any) -> Any:
-            """Wrapped async completion that captures response with timing."""
-            from traigent.integrations.utils.mock_adapter import MockAdapter
+            async def acompletion_with_capture(*args: Any, **kwargs: Any) -> Any:
+                """Wrapped async completion that captures response with timing."""
+                from traigent.integrations.utils.mock_adapter import MockAdapter
 
-            if MockAdapter.is_mock_enabled("litellm"):
-                mock_data = MockAdapter.get_mock_response(
-                    "litellm",
-                    model=kwargs.get("model", args[0] if args else "mock-model"),
+                if MockAdapter.is_mock_enabled("litellm"):
+                    mock_data = MockAdapter.get_mock_response(
+                        "litellm",
+                        model=kwargs.get("model", args[0] if args else "mock-model"),
+                    )
+                    return mock_data
+
+                start_time = time.perf_counter()
+                response = await original_acompletion(*args, **kwargs)
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+
+                # Skip capture for streaming responses — usage is not populated
+                # until the stream is fully consumed in user code after we return.
+                if kwargs.get("stream", False):
+                    return response
+
+                # Inject timing into response for the handler chain
+                response.response_time_ms = response_time_ms
+
+                capture_langchain_response(response)
+                logger.debug(
+                    "Captured litellm.acompletion response: model=%s, "
+                    "tokens=%s, response_time_ms=%.2f",
+                    getattr(response, "model", "unknown"),
+                    getattr(response, "usage", None),
+                    response_time_ms,
                 )
-                return mock_data
-
-            start_time = time.perf_counter()
-            response = await original_acompletion(*args, **kwargs)
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-
-            # Skip capture for streaming responses — usage is not populated
-            # until the stream is fully consumed in user code after we return.
-            if kwargs.get("stream", False):
                 return response
 
-            # Inject timing into response for the handler chain
-            response.response_time_ms = response_time_ms
-
-            capture_langchain_response(response)
-            logger.debug(
-                "Captured litellm.acompletion response: model=%s, "
-                "tokens=%s, response_time_ms=%.2f",
-                getattr(response, "model", "unknown"),
-                getattr(response, "usage", None),
-                response_time_ms,
-            )
-            return response
-
-        litellm.acompletion = acompletion_with_capture
-        litellm._traigent_patched_acompletion = True
-        logger.info("Patched litellm.acompletion for metadata capture")
-        patched_any = True
+            litellm.acompletion = acompletion_with_capture
+            litellm._traigent_patched_acompletion = True
+            logger.info("Patched litellm.acompletion for metadata capture")
+            patched_any = True
 
     if not patched_any:
         logger.debug("LiteLLM functions already patched, skipping")
