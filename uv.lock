@@ -6438,7 +6438,7 @@ requires-dist = [
     { name = "traigent", extras = ["bayesian", "analytics"], marker = "extra == 'ml'" },
     { name = "traigent", extras = ["integrations", "analytics", "bayesian", "visualization", "hybrid", "pydanticai"], marker = "extra == 'recommended'" },
     { name = "traigent", extras = ["security"], marker = "extra == 'cloud'" },
-    { name = "traigent-schema", marker = "extra == 'internal-schema'", git = "https://github.com/Traigent/TraigentSchema.git?rev=96c30d3c6f4f0ab32748093357bbedfab89b80a5" },
+    { name = "traigent-schema", marker = "extra == 'internal-schema'", specifier = "==4.1.0" },
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
@@ -6449,12 +6449,16 @@ provides-extras = ["analytics", "bayesian", "integrations", "dspy", "pydanticai"
 
 [[package]]
 name = "traigent-schema"
-version = "4.0.0"
-source = { git = "https://github.com/Traigent/TraigentSchema.git?rev=96c30d3c6f4f0ab32748093357bbedfab89b80a5#96c30d3c6f4f0ab32748093357bbedfab89b80a5" }
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
     { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/47/46/b8bd89f889bfd6c35e1743e8a514432384129d48f50c1d00fc3ed88fe97d/traigent_schema-4.1.0.tar.gz", hash = "sha256:92858563946f0ba9cd1d20dc98fdb27a909456c876562f3b6b69274f0e835bf1", size = 79251, upload-time = "2026-05-08T06:11:00.737Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/a1/362b658c3a8de9cfcb5303e513edfbd7e425a5468d6bef654be456236e62/traigent_schema-4.1.0-py3-none-any.whl", hash = "sha256:97558518f694091c8ea3702424aa8ab959041e348b2b7fcf444a9d66f89537a5", size = 153443, upload-time = "2026-05-08T06:10:59.166Z" },
 ]
 
 [[package]]

@@ -133,7 +133,7 @@ mcp = [
 
 # Internal schema validation support for DTO strict-validation paths.
 internal_schema = [
-    "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@96c30d3c6f4f0ab32748093357bbedfab89b80a5",
+    "traigent-schema==4.1.0",
 ]
 
 # Testing dependencies

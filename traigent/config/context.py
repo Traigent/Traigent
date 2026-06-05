@@ -31,6 +31,9 @@ config_space_context: ContextVar[dict[str, Any] | None] = ContextVar(
 trial_context: ContextVar[dict[str, Any] | None] = ContextVar(
     "traigent_trial_context", default=None
 )
+workflow_trace_context: ContextVar[dict[str, Any] | None] = ContextVar(
+    "traigent_workflow_trace_context", default=None
+)
 
 
 def get_config() -> TraigentConfig | dict[str, Any]:
@@ -256,6 +259,23 @@ def set_trial_context(payload: dict[str, Any] | None) -> Token[dict[str, Any] | 
     return trial_context.set(payload)
 
 
+def get_workflow_trace_context() -> dict[str, Any] | None:
+    """Return the active workflow trace context if one is set."""
+
+    try:
+        return workflow_trace_context.get()
+    except LookupError:
+        return None
+
+
+def set_workflow_trace_context(
+    payload: dict[str, Any] | None,
+) -> Token[dict[str, Any] | None]:
+    """Set the active workflow trace context payload."""
+
+    return workflow_trace_context.set(payload)
+
+
 class ContextSnapshot:
     """Snapshot of all Traigent context variables for thread propagation.
 
@@ -281,6 +301,7 @@ class ContextSnapshot:
     def __init__(
         self,
         trial_ctx: dict[str, Any] | None,
+        workflow_trace_ctx: dict[str, Any] | None,
         config: TraigentConfig | dict[str, Any] | None,
         config_space: dict[str, Any] | None,
         applied_config: TraigentConfig | dict[str, Any] | None,
@@ -289,11 +310,13 @@ class ContextSnapshot:
 
         Args:
             trial_ctx: Trial context dict or None
+            workflow_trace_ctx: Workflow trace context dict or None
             config: Configuration (TraigentConfig or dict) or None
             config_space: Configuration space dict or None
             applied_config: Applied configuration dict or TraigentConfig or None
         """
         self.trial_context = trial_ctx
+        self.workflow_trace_context = workflow_trace_ctx
         self.config = config
         self.config_space = config_space
         self.applied_config = applied_config
@@ -317,6 +340,7 @@ class ContextSnapshot:
         """Return True if any context is set."""
         return bool(
             self.trial_context
+            or self.workflow_trace_context
             or self.config
             or self.config_space
             or self.applied_config
@@ -335,6 +359,10 @@ class ContextRestorer:
         if self.snapshot.trial_context:
             token = trial_context.set(self.snapshot.trial_context)
             self._tokens.append((trial_context, token))
+
+        if self.snapshot.workflow_trace_context:
+            token = workflow_trace_context.set(self.snapshot.workflow_trace_context)
+            self._tokens.append((workflow_trace_context, token))
 
         if self.snapshot.config is not None:
             token = config_context.set(self.snapshot.config)  # type: ignore[assignment]
@@ -408,6 +436,7 @@ def copy_context_to_thread() -> ContextSnapshot:
     """
     return ContextSnapshot(
         trial_ctx=get_trial_context(),
+        workflow_trace_ctx=get_workflow_trace_context(),
         config=get_config(),
         config_space=get_config_space(),
         applied_config=get_applied_config(),
@@ -457,6 +486,47 @@ class TrialContext:
                 )
             finally:
                 # Clear token to prevent double-reset attempts
+                self._token = None
+        return False
+
+    async def __aenter__(self) -> dict[str, Any]:
+        return self.__enter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
+        return self.__exit__(exc_type, exc_val, exc_tb)
+
+
+class WorkflowTraceContext:
+    """Context manager to expose private workflow trace metadata to observability."""
+
+    def __init__(self, metadata: dict[str, Any] | None = None) -> None:
+        self.metadata = metadata or {}
+        self._token: Token[dict[str, Any] | None] | None = None
+
+    def __enter__(self) -> dict[str, Any]:
+        self._token = set_workflow_trace_context(self.metadata)
+        return self.metadata
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
+        if self._token is not None:
+            try:
+                workflow_trace_context.reset(self._token)
+            except ValueError:
+                logger.warning(
+                    "Stale workflow trace context token detected during cleanup. "
+                    "This may indicate a double-exit or context mismatch."
+                )
+            finally:
                 self._token = None
         return False
 

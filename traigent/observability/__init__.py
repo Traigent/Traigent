@@ -1,5 +1,6 @@
 """Public observability API for Traigent SDK."""
 
+from traigent.observability.agent_spans import add_agent_span
 from traigent.observability.client import ObservabilityClient
 from traigent.observability.config import ObservabilityConfig
 from traigent.observability.decorators import (
@@ -59,6 +60,7 @@ __all__ = [
     "TraceListResponse",
     "TraceObservationsResponse",
     "TraceRecord",
+    "add_agent_span",
     "get_default_observability_client",
     "observe",
     "set_default_observability_client",
