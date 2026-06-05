@@ -397,6 +397,32 @@ def quickstart() -> None:
     run_quickstart()
 
 
+@cli.group("mcp")
+def mcp_commands() -> None:
+    """Run Traigent local MCP integrations."""
+
+
+@mcp_commands.command("serve")
+def mcp_serve() -> None:
+    """Run the local stdio MCP server for coding agents.
+
+    Requires the optional MCP dependency:
+        pip install 'traigent[mcp]'
+    """
+    try:
+        from traigent.mcp.server import run_stdio_server
+    except ImportError as exc:
+        raise click.ClickException(
+            "The optional MCP dependency is not installed. "
+            "Install it with: pip install 'traigent[mcp]'"
+        ) from exc
+
+    try:
+        run_stdio_server()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @cli.command()
 def info() -> None:
     """Show Traigent SDK version and system information."""
