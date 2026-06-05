@@ -40,6 +40,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`langgraph-checkpoint` 3.x → 4.x:** the 4.0 release drops default deserialization of payloads serialized with the legacy `"json"` serde mode. Users running `langgraph` with a persistent checkpoint saver (SQLite, Postgres, Redis, etc.) whose stored state contains JSON-format blobs will see deserialization failures unless they configure `serde` with an explicit `allowed_json_modules` list. Traigent does not bind `langgraph-checkpoint` directly — it arrives transitively through the `langgraph` dependency — so this only affects projects that also use `langgraph` checkpointers in their own code. See [CVE-2026-27794](https://github.com/langchain-ai/langgraph/security/advisories) for the underlying RCE that motivated removing the default.
 
 ### Changed
+- **Strict evidence modes now fail closed in promotion** (#1103,
+  FR-SDK-FAIL-CLOSED-PROMOTION-V1). When a TVL promotion policy declares a strict
+  evidence mode — `require_calibration.enabled: true` or `chance_constraints` —
+  the verdicts *no decision*, *insufficient samples*, and *gate exception* now
+  WITHHOLD promotion instead of silently falling back to the permissive simple
+  comparison, and the terminal selector returns either the gate-certified
+  incumbent verbatim or an explicit no-winner result
+  (`reason_code="NO_CERTIFIED_SELECTION"`, empty `best_config`,
+  `best_score=None`) instead of re-deriving a winner by raw score.
+  **Behavior change for existing specs that already declare
+  `chance_constraints`:** runs whose evidence never certifies a winner now
+  return the explicit no-winner result; no best config is applied or
+  snapshotted, so `export_best_config()` raises `ConfigurationError` instead
+  of exporting an uncertified config. Runs with certified winners, and all
+  specs without strict declarations, are unchanged. First-trial incumbency
+  counts as initialization, not certification.
 - **Dual-licensed** under `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`: declared the SPDX
   license expression in package metadata (PEP 639 via `setuptools>=77`), added `license-files`,
   per-module SPDX headers, and `COMMERCIAL-LICENSE.md`; aligned `NOTICE`, `README`, and

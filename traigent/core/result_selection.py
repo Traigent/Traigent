@@ -21,6 +21,7 @@ __all__ = [
 TieBreaker = Literal["min_abs_deviation", "custom"]
 ComparabilityMode = Literal["legacy", "warn", "strict"]
 NO_RANKING_ELIGIBLE_TRIALS = "NO_RANKING_ELIGIBLE_TRIALS"
+NO_CERTIFIED_SELECTION = "NO_CERTIFIED_SELECTION"
 
 
 @dataclass(slots=True)
@@ -564,8 +565,18 @@ def select_best_configuration(
     tie_breakers: dict[str, TieBreaker] | None = None,
     band_target: float | None = None,
     comparability_mode: ComparabilityMode = "warn",
+    require_certified: bool = False,
+    certified_config: dict[str, Any] | None = None,
+    certified_score: float | None = None,
 ) -> SelectionResult:
     """Return the configuration that best satisfies the primary objective.
+
+    Strict evidence modes (RFC 0001 / FR-SDK-FAIL-CLOSED-PROMOTION-V1):
+    with ``require_certified=True`` the selector NEVER re-derives a winner by
+    raw score. It returns the gate-certified incumbent verbatim, or — when no
+    certified winner exists — an explicit empty result with
+    ``reason_code=NO_CERTIFIED_SELECTION``. Silent fallback to
+    highest-score-wins is exactly the fail-open behavior this closes.
 
     Args:
         trials: Iterable of completed trial results.
@@ -579,6 +590,28 @@ def select_best_configuration(
     Returns:
         SelectionResult with best configuration and score.
     """
+    if require_certified:
+        if certified_config is None:
+            return SelectionResult(
+                best_config={},
+                best_score=None,
+                session_summary={
+                    "reason": (
+                        "strict evidence mode: no certified winner exists; "
+                        "refusing winner-by-objective fallback"
+                    ),
+                    "reason_code": NO_CERTIFIED_SELECTION,
+                },
+                reason_code=NO_CERTIFIED_SELECTION,
+            )
+        return SelectionResult(
+            best_config=dict(certified_config),
+            best_score=certified_score,
+            session_summary={
+                "reason": "strict evidence mode: gate-certified incumbent",
+            },
+        )
+
     trial_list = list(trials)
     successful_trials = [t for t in trial_list if _trial_produced_outputs(t)]
     non_successful_count = len(trial_list) - len(successful_trials)

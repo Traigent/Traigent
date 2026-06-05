@@ -608,7 +608,15 @@ class OptimizationResult:
 
     @property
     def best_metrics(self) -> dict[str, float]:
-        """Get best metrics from the best trial."""
+        """Get best metrics from the best trial.
+
+        A result with NO WINNER — empty ``best_config`` AND ``best_score``
+        of ``None``, the NO_CERTIFIED_SELECTION shape from strict evidence
+        runs — makes no winner-metric claims. A valid winner whose config
+        happens to be empty still carries a score and keeps its metrics.
+        """
+        if not self.best_config and self.best_score is None:
+            return {}
         if not self.trials:
             return {}
         if not self.objectives:
@@ -1261,6 +1269,11 @@ class OptimizationResult:
         This method allows proper multi-objective scoring after the optimization has
         completed, using the full range of observed values for normalization.
 
+        Winner-claim note (FR-SDK-FAIL-CLOSED-PROMOTION-V1): the per-trial
+        weighted scores are DESCRIPTIVE statistics and always computed; the
+        ``best_weighted_config`` key is a winner claim and is omitted when the
+        result carries no certified winner (empty ``best_config``).
+
         Args:
             objective_weights: Dictionary of objective weights (defaults to equal weights)
             minimize_objectives: List of objectives to minimize (e.g., ["cost", "latency"])
@@ -1277,7 +1290,11 @@ class OptimizationResult:
         """
         if not self.successful_trials:
             return {
-                "best_weighted_config": self.best_config,
+                **(
+                    {"best_weighted_config": self.best_config}
+                    if (self.best_config or self.best_score is not None)
+                    else {}
+                ),
                 "best_weighted_score": 0.0,
                 "weighted_scores": [],
                 "normalization_ranges": {},
@@ -1305,7 +1322,11 @@ class OptimizationResult:
         )
 
         return {
-            "best_weighted_config": best_weighted_config,
+            **(
+                {"best_weighted_config": best_weighted_config}
+                if (self.best_config or self.best_score is not None)
+                else {}
+            ),
             "best_weighted_score": best_weighted_score,
             "weighted_scores": weighted_scores,
             "normalization_ranges": ranges,
