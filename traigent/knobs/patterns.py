@@ -62,6 +62,7 @@ __all__ = [
     "self_consistency",
     "self_debug",
     "self_refine",
+    "react_tool_loop",
 ]
 
 #: §3.10 standard telemetry measure names, per constructor kind. Content-free:
@@ -486,6 +487,83 @@ def self_refine(
             ),
             state_keys=state_keys,
             max_iters=max_iters,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
+
+
+def react_tool_loop(
+    name: str,
+    *,
+    stage: str,
+    signal: str,
+    tool_confidence_min: str,
+    max_tool_calls: int,
+    state_keys: tuple[str, ...] = (
+        "scratchpad",
+        "tool_calls",
+        "observations",
+        "confidence",
+        "last_error",
+    ),
+    signal_inputs: tuple[str, ...] = (
+        "scratchpad",
+        "tool_calls",
+        "observations",
+        "confidence",
+        "last_error",
+    ),
+    stage_tuned_params: tuple[str, ...] = (
+        "planner_style",
+        "tool_allowlist",
+        "observation_format",
+        "failure_handler",
+    ),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Loop(body=stage(a), state_keys, stop=signal_accept(tool_confidence, θ), max_iters=K)``.
+
+    A catalog ReAct-style tool loop over the existing loop algebra only. Each
+    body invocation is assumed to perform at most one ReAct tool step, so
+    ``max_tool_calls`` maps to the sealed IR's literal ``max_iters`` bound. If
+    the opaque stage performs multiple tool calls per invocation, this is a
+    max-ReAct-iterations bound, not a precise tool-call cap.
+
+    ``tool_cost_cap`` is deliberately not part of this expansion: the current
+    algebra has no cost stop/gate or mid-loop budget hook, so this factory does
+    not enforce cost stopping. Add a future cost-stop proposal before making
+    that claim.
+    """
+    params = {
+        "name": name,
+        "stage": stage,
+        "signal": signal,
+        "tool_confidence_min": tool_confidence_min,
+        "max_tool_calls": max_tool_calls,
+        "state_keys": list(state_keys),
+        "signal_inputs": list(signal_inputs),
+        "stage_tuned_params": list(stage_tuned_params),
+    }
+    prov = _provenance("react_tool_loop", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.LOOP,
+        body=LoopBody(
+            body=StageArm(stage, stage_tuned_params),
+            stop=StopDecl(
+                kind=StopKind.SIGNAL_ACCEPT,
+                threshold=tool_confidence_min,
+                signal=SignalUse(signal=signal, inputs=signal_inputs),
+            ),
+            state_keys=state_keys,
+            max_iters=max_tool_calls,
         ),
         provenance=prov,
     )
