@@ -285,6 +285,19 @@ class SessionOperations:
             # Preflight: check if API key exists before attempting any HTTP call
             has_key = self.client.auth_manager.has_api_key()
             if not has_key:
+                if governed:
+                    # ADJUDICATED (review round 3): no API key is an explicit
+                    # local-only configuration, not a cloud failure — strict
+                    # enforcement runs fully locally and no backend record
+                    # exists that could launder strict mode. Stay local, but
+                    # make the governance/no-cloud mismatch VISIBLE.
+                    logger.warning(
+                        "Governed session '%s' declared promotion_policy/"
+                        "tvl_governance but no API key is configured — "
+                        "running local-only (strict enforcement stays local; "
+                        "no backend session or certified record is created)",
+                        function_name,
+                    )
                 logger.debug(
                     "No API key configured — skipping backend session creation"
                 )

@@ -16,7 +16,7 @@ from traigent.cloud.client import (
     CloudServiceError,
     SessionContractError,
 )
-from traigent.cloud.governance import promotion_policy_to_wire
+from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentExecutionResponse,
@@ -266,6 +266,12 @@ class ApiOperations:
                 return await self._post_session_creation(
                     legacy_payload, headers, connector
                 )
+        except SessionContractError:
+            # Review round 3: contract failures must reach the caller AS
+            # THEMSELVES — the generic wrap below would demote them to a
+            # plain CloudServiceError and the local-fallback layer would
+            # absorb them.
+            raise
         except aiohttp.ClientConnectorError as e:
             self._handle_connector_error(e)
         except aiohttp.ClientError as e:
@@ -368,10 +374,9 @@ class ApiOperations:
         wire_policy = promotion_policy_to_wire(session_request.promotion_policy)
         if wire_policy:
             payload["promotion_policy"] = wire_policy
-        if session_request.tvl_governance:
-            # already the closed name/type/governed summary; the BE
-            # normalizer rejects anything else loudly (allowlist rebuild).
-            payload["tvl_governance"] = session_request.tvl_governance
+        wire_governance = tvl_governance_to_wire(session_request.tvl_governance)
+        if wire_governance:
+            payload["tvl_governance"] = wire_governance
         return payload
 
     def _build_legacy_session_payload(

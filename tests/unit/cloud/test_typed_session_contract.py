@@ -178,6 +178,72 @@ class TestPayloadChokePoint:
         assert payload["promotion_policy"]["require_calibration"]["enabled"] is True
 
 
+class TestContractErrorSurvivesWrapping:
+    @pytest.mark.asyncio
+    async def test_invalid_contract_propagates_through_create_api(self, monkeypatch):
+        """Review round 3 (codex): the broad exception handler in
+        create_traigent_session_via_api re-wrapped SessionContractError as a
+        plain CloudServiceError, so an UNGOVERNED session with an invalid
+        TRAIGENT_SESSION_CONTRACT was absorbed into the local fallback. The
+        contract error must survive to the caller AS ITSELF."""
+        from traigent.cloud.client import SessionContractError
+
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "yolo")
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        ops = _ops()
+        ops.client.auth_manager.augment_headers = AsyncMock(return_value={})
+        monkeypatch.setattr(ops, "_build_connector", lambda: None)
+        with pytest.raises(SessionContractError):
+            await ops.create_traigent_session_via_api(_request())
+
+
+class TestGovernanceChokePoint:
+    def test_typed_payload_filters_governance_at_the_wire(self, monkeypatch):
+        """Review round 3 (codex): tvl_governance rode the payload VERBATIM —
+        a direct SessionCreationRequest caller could put value/evidence
+        blobs on the wire (the leak happens at TRANSMISSION, even if the
+        new BE normalizer would reject it). Allowlist at the choke point."""
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        leaky_governance = {
+            "cvars": [
+                {
+                    "name": "retriever.k",
+                    "type": "int",
+                    "governed": True,
+                    "examples": ["SECRET_VALUE_c4d9"],
+                }
+            ],
+            "certificates": [
+                {
+                    "cvar_name": "retriever.k",
+                    "decision": "CERTIFIED_SELECTION",
+                    "freshness_hash": "a" * 64,
+                    "evidence": {"n": 20},
+                }
+            ],
+            "internal_debug_blob": {"signals": [0.42]},
+        }
+        payload = _ops()._build_session_payload(
+            _request(tvl_governance=leaky_governance), 5
+        )
+        blob = json.dumps(payload["tvl_governance"])
+        assert "SECRET_VALUE_c4d9" not in blob
+        assert "examples" not in blob
+        assert "evidence" not in blob
+        assert "internal_debug_blob" not in blob
+        # the contract-known fields survive intact
+        assert payload["tvl_governance"]["cvars"] == [
+            {"name": "retriever.k", "type": "int", "governed": True}
+        ]
+        assert payload["tvl_governance"]["certificates"] == [
+            {
+                "cvar_name": "retriever.k",
+                "decision": "CERTIFIED_SELECTION",
+                "freshness_hash": "a" * 64,
+            }
+        ]
+
+
 class TestGovernedNoSilentFallback:
     """Review round 2 (codex): SessionOperations.create_session caught every
     CloudServiceError into a LOCAL fallback — masking laundering refusals,
@@ -232,6 +298,25 @@ class TestGovernedNoSilentFallback:
         )
         assert result.session_id == "local_fallback_1"
         ops._create_local_fallback_session.assert_called_once()
+
+    def test_governed_without_api_key_stays_local_by_design(self, monkeypatch):
+        """ADJUDICATED (round 3): no API key is an explicit local-only
+        configuration, NOT a cloud failure — strict enforcement runs fully
+        locally and NO backend record exists that could launder strict mode
+        (nothing is falsely certified anywhere). Failing loud here would
+        break every local strict-mode user. The fallback stays, with a
+        WARNING so the declared governance / missing-cloud mismatch is
+        visible."""
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        ops = self._session_ops(AssertionError("backend must not be called"))
+        ops.client.auth_manager.has_api_key = Mock(return_value=False)
+        result = ops.create_session(
+            function_name="answer_question",
+            search_space={"model": {"choices": ["a"]}},
+            promotion_policy=STRICT_POLICY,
+        )
+        assert result.session_id == "local_fallback_1"
+        ops.client._create_traigent_session_via_api.assert_not_called()
 
 
 class TestGovernanceBuilders:

@@ -149,6 +149,62 @@ def build_tvl_governance(config_space: Any) -> dict[str, Any] | None:
     return {"cvars": cvars}
 
 
+def tvl_governance_to_wire(governance: Any) -> dict[str, Any] | None:
+    """Project a governance summary onto the closed wire shape (allowlist).
+
+    Review round 3 (codex): the summary rode the create payload VERBATIM, so
+    a direct SessionCreationRequest caller could put value/evidence blobs on
+    the wire — and the leak happens at TRANSMISSION, regardless of what the
+    backend's normalizer later rejects. Only the contract-known fields
+    survive: cvars {name, type, governed}, certificates {cvar_name,
+    decision, freshness_hash}, policies {name, strategy}. A projection, not
+    a validator — the backend's allowlist rebuild is the enforcement point.
+    """
+    if not isinstance(governance, dict) or not governance:
+        return None
+
+    wire: dict[str, Any] = {}
+
+    cvars = governance.get("cvars")
+    if isinstance(cvars, list):
+        projected = [
+            {key: entry[key] for key in ("name", "type", "governed") if key in entry}
+            for entry in cvars
+            if isinstance(entry, dict)
+        ]
+        projected = [entry for entry in projected if entry.get("name")]
+        if projected:
+            wire["cvars"] = projected
+
+    certificates = governance.get("certificates")
+    if isinstance(certificates, list):
+        projected = [
+            {
+                key: entry[key]
+                for key in ("cvar_name", "decision", "freshness_hash")
+                if key in entry
+            }
+            for entry in certificates
+            if isinstance(entry, dict)
+        ]
+        projected = [entry for entry in projected if entry.get("cvar_name")]
+        if projected:
+            wire["certificates"] = projected
+
+    policies = governance.get("policies")
+    if isinstance(policies, list):
+        projected = [
+            {key: entry[key] for key in ("name", "strategy") if key in entry}
+            for entry in policies
+            if isinstance(entry, dict)
+        ]
+        projected = [entry for entry in projected if entry.get("name")]
+        if projected:
+            wire["policies"] = projected
+
+    return wire or None
+
+
 def build_certified_selection(
     trial_id: Any, certificates_by_cvar: Any
 ) -> dict[str, Any] | None:
