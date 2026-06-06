@@ -339,6 +339,9 @@ class TestBuildSessionPayload:
         request.dataset_metadata = {}
         request.configuration_space = {}
         request.objectives = []
+        # bare Mock auto-attributes must not reach the policy serializer
+        request.promotion_policy = None
+        request.tvl_governance = None
 
         payload = self.ops._build_session_payload(request, 20)
 

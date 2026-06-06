@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import CloudServiceError, SessionContractError
 from traigent.cloud.models import (
     OptimizationFinalizationResponse,
     OptimizationSession,
@@ -271,6 +271,16 @@ class SessionOperations:
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
 
+        # Phase 8 (review round 2): the local-availability fallback is for
+        # NON-governed sessions only. A governed/strict session that cannot
+        # be created on the backend fails LOUD — quietly degrading to a
+        # local-only run would mask laundering refusals, contract
+        # misconfiguration, and old-BE typed rejection as success.
+        governed = bool(promotion_policy or tvl_governance)
+
+        def _must_fail_loud(exc: Exception) -> bool:
+            return governed or isinstance(exc, SessionContractError)
+
         async def _create_session_async() -> SessionCreationResult:
             # Preflight: check if API key exists before attempting any HTTP call
             has_key = self.client.auth_manager.has_api_key()
@@ -419,6 +429,8 @@ class SessionOperations:
 
             except AuthenticationError as e:
                 await self._reset_client_session("create_session auth_failure")
+                if _must_fail_loud(e):
+                    raise
                 logger.debug("Backend auth failed for '%s': %s", function_name, e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
@@ -431,6 +443,8 @@ class SessionOperations:
 
             except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
+                if _must_fail_loud(e):
+                    raise
                 logger.debug("Backend unavailable for '%s': %s", function_name, e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
@@ -466,6 +480,8 @@ class SessionOperations:
             raise  # User input errors must propagate
 
         except AuthenticationError as exc:
+            if _must_fail_loud(exc):
+                raise
             logger.debug(
                 "Backend auth failed for '%s': %s",
                 function_name,
@@ -481,6 +497,8 @@ class SessionOperations:
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
+            if _must_fail_loud(exc):
+                raise
             logger.debug(
                 "Error in create_session for function '%s': %s",
                 function_name,
@@ -499,7 +517,10 @@ class SessionOperations:
         except Exception as exc:
             # Last-resort fallback for unexpected errors (e.g. from
             # session_bridge or event loop machinery).  Ensures SDK
-            # never crashes during session creation.
+            # never crashes during session creation — except for
+            # governed/contract failures, which must stay loud.
+            if _must_fail_loud(exc):
+                raise
             logger.debug(
                 "Unexpected error in create_session for function '%s': %s",
                 function_name,

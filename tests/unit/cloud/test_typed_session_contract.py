@@ -144,6 +144,96 @@ class TestAutoFallback:
         assert len(attempts) == 1  # NO legacy retry for governed sessions
 
 
+class TestPayloadChokePoint:
+    def test_typed_payload_filters_policy_at_the_wire(self, monkeypatch):
+        """Review round 2 (codex): promotion_policy_to_wire is allowlist-style
+        but the typed payload sent the request's policy VERBATIM — a direct
+        SessionCreationRequest caller could serialize value/evidence-shaped
+        blobs. The serializer must sit on the actual request-body choke
+        point, not only on the orchestrator path."""
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        leaky_policy = {
+            **STRICT_POLICY,
+            "internal_debug_blob": {"signals": [0.42, 0.43]},
+            "chance_constraints": [
+                {
+                    "metric": "accuracy",
+                    "threshold": 0.9,
+                    "confidence": 0.95,
+                    "examples": ["SECRET_PROMPT_b7e1"],
+                }
+            ],
+        }
+        payload = _ops()._build_session_payload(
+            _request(promotion_policy=leaky_policy), 5
+        )
+        blob = json.dumps(payload["promotion_policy"])
+        assert "internal_debug_blob" not in blob
+        assert "SECRET_PROMPT_b7e1" not in blob
+        assert "examples" not in blob
+        # the contract-known fields survive intact
+        assert payload["promotion_policy"]["chance_constraints"] == [
+            {"metric": "accuracy", "threshold": 0.9, "confidence": 0.95}
+        ]
+        assert payload["promotion_policy"]["require_calibration"]["enabled"] is True
+
+
+class TestGovernedNoSilentFallback:
+    """Review round 2 (codex): SessionOperations.create_session caught every
+    CloudServiceError into a LOCAL fallback — masking laundering refusals,
+    invalid contract env values, and governed typed-create rejection from an
+    old BE as a quiet local-only run. Governed/contract failures fail LOUD."""
+
+    @staticmethod
+    def _session_ops(create_error):
+        from traigent.cloud.session_operations import SessionOperations
+
+        ops = SessionOperations.__new__(SessionOperations)
+        ops.client = Mock()
+        ops.client.auth_manager.has_api_key = Mock(return_value=True)
+        ops.client._create_traigent_session_via_api = AsyncMock(
+            side_effect=create_error
+        )
+        ops._create_local_fallback_session = Mock(return_value="local_fallback_1")
+        return ops
+
+    def test_governed_create_failure_raises_never_falls_back(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        ops = self._session_ops(CloudServiceError("typed create rejected"))
+        with pytest.raises(CloudServiceError):
+            ops.create_session(
+                function_name="answer_question",
+                search_space={"model": {"choices": ["a"]}},
+                promotion_policy=STRICT_POLICY,
+            )
+        ops._create_local_fallback_session.assert_not_called()
+
+    def test_contract_error_raises_even_for_ungoverned(self, monkeypatch):
+        from traigent.cloud.client import SessionContractError
+
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        ops = self._session_ops(
+            SessionContractError("TRAIGENT_SESSION_CONTRACT must be one of ...")
+        )
+        with pytest.raises(SessionContractError):
+            ops.create_session(
+                function_name="answer_question",
+                search_space={"model": {"choices": ["a"]}},
+            )
+        ops._create_local_fallback_session.assert_not_called()
+
+    def test_ungoverned_backend_failure_still_falls_back(self, monkeypatch):
+        """The availability fallback is FOR non-governed sessions — keep it."""
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        ops = self._session_ops(CloudServiceError("backend unavailable"))
+        result = ops.create_session(
+            function_name="answer_question",
+            search_space={"model": {"choices": ["a"]}},
+        )
+        assert result.session_id == "local_fallback_1"
+        ops._create_local_fallback_session.assert_called_once()
+
+
 class TestGovernanceBuilders:
     def test_promotion_policy_dataclass_to_wire(self):
         from traigent.tvl.models import PromotionPolicy, RequireCalibration

@@ -884,6 +884,14 @@ class OptimizationOrchestrator:
         """
         if not self._is_strict_evidence_mode():
             return None
+        # The FIRST trial seeds the incumbent as comparison initialization,
+        # NOT as certification — terminal strict selection only names a
+        # winner after >=1 explicit gate promotion (the _certified_promotions
+        # guard in result assembly). Mirror it here so the wire report can
+        # never overclaim a winner the SDK result itself refuses to certify.
+        # An absent attribute reads 0 ⇒ fail closed.
+        if not getattr(self, "_certified_promotions", 0):
+            return None
         incumbent = self._best_trial_cached
         if incumbent is None or not getattr(incumbent, "trial_id", None):
             return None

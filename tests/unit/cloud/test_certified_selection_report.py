@@ -107,10 +107,11 @@ class TestBuildCertifiedSelection:
 class _OrchestratorStub:
     """Minimal host for the real _build_certified_selection_report method."""
 
-    def __init__(self, *, strict, incumbent, resolver):
+    def __init__(self, *, strict, incumbent, resolver, promotions=1):
         self._strict = strict
         self._best_trial_cached = incumbent
         self.knob_resolver = resolver
+        self._certified_promotions = promotions
 
     def _is_strict_evidence_mode(self):
         return self._strict
@@ -190,6 +191,21 @@ class TestOrchestratorReportConditions:
             strict=True,
             incumbent=types.SimpleNamespace(trial_id="trial_7"),
             resolver=_resolver(governed=True, with_certificate=False),
+        )
+        assert _bind_report_method(stub)() is None
+
+    def test_no_report_without_certified_promotion(self):
+        """Review round 2 (codex): the FIRST trial seeds the incumbent as
+        comparison initialization, NOT as certification — terminal strict
+        selection requires _certified_promotions > 0 before naming a winner
+        (test_fail_closed_promotion pins it). The wire report must mirror
+        that guard or it overclaims a winner the SDK result itself refuses
+        to certify."""
+        stub = _OrchestratorStub(
+            strict=True,
+            incumbent=types.SimpleNamespace(trial_id="trial_7"),
+            resolver=_resolver(governed=True, with_certificate=True),
+            promotions=0,
         )
         assert _bind_report_method(stub)() is None
 

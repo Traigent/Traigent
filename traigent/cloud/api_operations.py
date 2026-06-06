@@ -14,7 +14,9 @@ from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudRemoteExecutionUnavailableError,
     CloudServiceError,
+    SessionContractError,
 )
+from traigent.cloud.governance import promotion_policy_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentExecutionResponse,
@@ -295,7 +297,7 @@ class ApiOperations:
 
         contract = os.getenv("TRAIGENT_SESSION_CONTRACT", "auto").strip().lower()
         if contract not in {"auto", "typed", "legacy"}:
-            raise CloudServiceError(
+            raise SessionContractError(
                 "TRAIGENT_SESSION_CONTRACT must be one of auto|typed|legacy; "
                 f"got {contract!r}"
             )
@@ -323,7 +325,7 @@ class ApiOperations:
         contract = self._session_contract()
         if contract == "legacy":
             if self._is_governed_request(session_request):
-                raise CloudServiceError(
+                raise SessionContractError(
                     "strict/governed sessions require the typed session "
                     "contract; TRAIGENT_SESSION_CONTRACT=legacy cannot carry "
                     "promotion_policy/tvl_governance (refusing to launder "
@@ -359,9 +361,16 @@ class ApiOperations:
                 **metadata,
             },
         }
-        if session_request.promotion_policy:
-            payload["promotion_policy"] = session_request.promotion_policy
+        # CHOKE POINT (review round 2): the allowlist serializer runs on the
+        # actual request body, not only on the orchestrator path — a direct
+        # SessionCreationRequest caller must not be able to serialize
+        # unknown/value-shaped policy data (RFC 0001 P8 content freedom).
+        wire_policy = promotion_policy_to_wire(session_request.promotion_policy)
+        if wire_policy:
+            payload["promotion_policy"] = wire_policy
         if session_request.tvl_governance:
+            # already the closed name/type/governed summary; the BE
+            # normalizer rejects anything else loudly (allowlist rebuild).
             payload["tvl_governance"] = session_request.tvl_governance
         return payload
 
