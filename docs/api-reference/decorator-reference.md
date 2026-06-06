@@ -36,6 +36,7 @@ def optimize(
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
+    safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
 
     # TVL integration
     tvl_spec: str | Path | None = None,
@@ -45,8 +46,32 @@ def optimize(
     # Grouped option bundles (preferred)
     evaluation: EvaluationOptions | dict[str, Any] | None = None,
     injection: InjectionOptions | dict[str, Any] | None = None,
+    effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
+    strategy: str | None = None,
+    strategy_params: Mapping[str, Any] | None = None,
+
+    # Multi-agent configuration
+    agents: dict[str, AgentDefinition] | None = None,
+    agent_prefixes: list[str] | None = None,
+    agent_measures: dict[str, list[str]] | None = None,
+    global_measures: list[str] | None = None,
+
+    # Config persistence
+    auto_load_best: bool = False,
+    load_from: str | None = None,
+    config_id: str | None = None,
+    best_config_source: str = "off",
+    best_config_strict: bool = False,
+    best_config_cache_dir: str | None = None,
+    best_config_cache_ttl_seconds: int = 24 * 60 * 60,
+    best_config_stale_ok_ttl_seconds: int | None = None,
+    enable_auto_load_dev_logs: bool | None = None,
+
+    # Guided generation
+    prompt_rewrite: dict[str, Any] | None = None,
+    grow_dataset: dict[str, Any] | None = None,
 
     # Legacy compatibility
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
@@ -424,7 +449,8 @@ def my_function(prompt: str) -> str:
     ...
 ```
 
-Complete Example: See [06_custom_evaluator.py](../../walkthrough/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation.
+Complete example: see the repository's custom evaluator walkthrough for a full
+LLM-as-Judge implementation.
 
 #### `injection`
 
@@ -470,6 +496,8 @@ from traigent.config.parallel import ParallelConfig
         privacy_enabled=False,
         max_total_examples=1000,
         samples_include_pruned=True,
+        reps_per_trial=1,
+        reps_aggregation="mean",
     ),
     ...
 )
@@ -484,6 +512,10 @@ from traigent.config.parallel import ParallelConfig
 - `privacy_enabled`: Redact sensitive data
 - `max_total_examples`: Global sample budget
 - `samples_include_pruned`: Count pruned trials in budget
+- `reps_per_trial`: Repetitions per configuration. OSS SDK accepts only `1`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
+- `reps_aggregation`: Repetition aggregation method. OSS SDK accepts only `"mean"`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
+- `hybrid_api_endpoint`, `tunable_id`, `hybrid_api_transport`, `hybrid_api_transport_type`, `hybrid_api_batch_size`, `hybrid_api_batch_parallelism`, `hybrid_api_keep_alive`, `hybrid_api_heartbeat_interval`, `hybrid_api_timeout`, `hybrid_api_auth_header`, `hybrid_api_auto_discover_tvars`: Hybrid API execution controls.
+- `cloud_fallback_policy`: Legacy/future cloud fallback behavior. It does not enable `execution_mode="cloud"` in 0.12.0.
 
 #### `mock`
 
@@ -665,4 +697,4 @@ def my_agent(query: str) -> str:
 - [Execution Modes Guide](../guides/execution-modes.md) - Execution mode details
 - [Thread Pool Examples](./thread-pool-examples.md) - Context propagation with threads
 - [Telemetry Documentation](./telemetry.md) - Data collection and privacy
-- [Custom Evaluator Example](../../walkthrough/real/06_custom_evaluator.py) - LLM-as-Judge implementation
+- Custom evaluator walkthrough in the repository examples - LLM-as-Judge implementation

@@ -67,7 +67,9 @@ Example: `http://your-service:8080/traigent/v1/capabilities`
 
 ## Authentication (Optional)
 
-If your service requires authentication, accept an `Authorization` header (for example, bearer token).
+If your service requires authentication, accept the configured token in both
+`Authorization` and `x-api-key` headers. The SDK sets both headers from
+`hybrid_api_auth_header` for compatibility.
 
 Configure the Traigent SDK client with:
 - `hybrid_api_auth_header="Bearer <token>"`
@@ -818,4 +820,4 @@ Optional extension:
 ## Related Documentation
 
 - [Client Integration Guide](./hybrid-mode-client-guide.md) - Implementation patterns and examples
-- [TraigentService Wrapper](../traigent/wrapper/) - Decorator-based SDK for building services
+- TraigentService wrapper: see the inline wrapper example in the Client Integration Guide.

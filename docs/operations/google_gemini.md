@@ -8,8 +8,9 @@ discovery surfaces shipped in this repository.
 # Required for real runs
 export GOOGLE_API_KEY="<key>"   # or GEMINI_API_KEY
 
-# Mock mode (dry-run, no SDK needed)
-# export GEMINI_MOCK=true
+# Local mock mode: export TRAIGENT_MOCK_LLM=true, or call
+# traigent.testing.enable_mock_mode_for_quickstart() in tutorial code.
+# Provider-specific *_MOCK env vars are ignored.
 ```
 
 ## Dependencies

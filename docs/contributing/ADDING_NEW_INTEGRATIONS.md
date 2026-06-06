@@ -528,5 +528,4 @@ For reference, study these existing implementations:
 ## License
 
 By contributing, you agree to follow Traigent's Contributor License Agreement
-(CLA) policy. See
-[`../../CONTRIBUTOR-LICENSING.md`](../../CONTRIBUTOR-LICENSING.md).
+(CLA) policy. See `CONTRIBUTOR-LICENSING.md` in the repository root.

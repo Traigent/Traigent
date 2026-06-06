@@ -3,8 +3,8 @@
 ## Overview
 The `traigent/integrations/` directory contains the framework integration system that enables zero-code optimization across multiple LLM providers and frameworks. This system uses a hybrid plugin + framework override architecture.
 
-**Total Files**: 27 Python files (~8,241 lines)
-**Total Integrations**: 7+ major providers with 20+ framework variants
+**Total Files**: 66 Python files, regenerated from the current `traigent/integrations/` tree.
+**Total Integrations**: Built-in coverage spans OpenAI, Anthropic, LangChain, Bedrock, Azure OpenAI, Cohere, Gemini, HuggingFace, LiteLLM, LlamaIndex, Mistral, PydanticAI, vector stores, and observability integrations.
 
 ---
 
@@ -622,7 +622,7 @@ log_override_details: bool = False
 **Features**:
 - Sync and streaming interfaces
 - boto3 optional import
-- Mock mode support (BEDROCK_MOCK=true)
+- Mock mode support through `TRAIGENT_MOCK_LLM=true` or the in-code quickstart helper. Provider-specific `*_MOCK` environment variables are ignored.
 - Anthropic Messages API format
 
 ---
@@ -682,12 +682,13 @@ langchain_nvidia
 
 ---
 
-## Vector Stores (Placeholder for Future)
+## Vector Stores
 
 ### 20. **vector_stores/__init__.py** (5 lines)
-**Purpose**: Future vector store integrations
+**Purpose**: Vector store integration package
 
-**Status**: Framework in place, implementations pending
+**Status**: Implementations are present for ChromaDB, Pinecone, and Weaviate,
+with a shared base plugin.
 
 ---
 
@@ -814,43 +815,34 @@ OpenAI SDK (optional):
 
 ## Known Gaps & TODOs
 
-### Missing Implementations
-1. **Vector Store Integrations** - Placeholder exists, no implementations
-   - Pinecone, Weaviate, Milvus, etc.
-
-2. **Cohere Plugin** - Referenced in framework_override.py but no dedicated plugin
-   - Parameter mappings exist in hardcoded form
-   - Needs dedicated CoherPlugin class
-
-3. **HuggingFace Plugin** - Referenced but no dedicated plugin
-   - Parameter mappings exist in hardcoded form
-   - Needs dedicated HuggingFacePlugin class
+### Implemented Plugin Families
+The current integrations tree includes dedicated plugins for Cohere and
+HuggingFace, plus vector-store plugins for ChromaDB, Pinecone, and Weaviate.
+Do not treat those families as missing when planning integration work.
 
 ### Partial Implementations
-4. **Bedrock Async Support** - Limited async/await integration
-5. **Azure OpenAI Streaming** - Streaming support incomplete
-6. **Gemini Streaming** - Streaming support incomplete
+1. **Bedrock Async Support** - Limited async/await integration
+2. **Azure OpenAI Streaming** - Streaming support incomplete
+3. **Gemini Streaming** - Streaming support incomplete
 
 ### Feature Gaps
-7. **Batch Endpoints** - Limited batch processing support for some providers
-8. **Vision/Multimodal** - No vision parameter handling (OpenAI vision, Claude vision)
-9. **Structured Output** - No JSON mode / structured output support
-10. **Custom Endpoints** - Limited custom endpoint override support
+4. **Batch Endpoints** - Limited batch processing support for some providers
+5. **Vision/Multimodal** - No vision parameter handling (OpenAI vision, Claude vision)
+6. **Structured Output** - No JSON mode / structured output support
+7. **Custom Endpoints** - Limited custom endpoint override support
 
 ### Documentation Gaps
-11. No TODO/FIXME comments found in integration code (clean!)
-12. Some complex logic lacks inline documentation
-13. Plugin contribution guide missing
+8. No TODO/FIXME comments found in integration code (clean!)
+9. Some complex logic lacks inline documentation
+10. Plugin contribution guide missing
 
 ---
 
 ## Enhancement Opportunities
 
 ### High Priority
-1. Create `CoherPlugin` for Cohere SDK integration
-2. Create `HuggingFacePlugin` for HuggingFace integration
-3. Implement vector store integration framework
-4. Add streaming support documentation
+1. Keep provider-specific plugin docs synchronized with `traigent/integrations/llms/`.
+2. Add streaming support documentation.
 
 ### Medium Priority
 5. Add vision/multimodal parameter support

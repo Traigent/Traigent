@@ -172,23 +172,14 @@ response = client.chat.completions.create(
 
 ## Built-in Plugins
 
-### OpenAI Plugin (`openai_plugin.py`)
+The built-in plugin surface is regenerated from the current
+`traigent/integrations/` tree. It includes:
 
-- **Packages**: `openai`
-- **Models**: GPT-4, GPT-3.5, Davinci, etc.
-- **Special Features**: Function calling, streaming, vision
-
-### LangChain Plugin (`langchain_plugin.py`)
-
-- **Packages**: `langchain`, `langchain-*` sub-packages
-- **Special Features**: Dynamic discovery, RAG parameters, chain configuration
-- **Auto-Discovery**: Scans for installed LangChain packages
-
-### Anthropic Plugin (`anthropic_plugin.py`)
-
-- **Packages**: `anthropic`
-- **Models**: Claude 3, Claude 2, Claude Instant
-- **Special Features**: System prompts, tool use
+- **LLM providers and frameworks**: OpenAI, Anthropic, LangChain, Bedrock, Azure OpenAI, Cohere, Gemini, HuggingFace, LiteLLM, LlamaIndex, and Mistral.
+- **PydanticAI**: PydanticAI handler and plugin support under `integrations/pydantic_ai/`.
+- **Vector stores**: ChromaDB, Pinecone, Weaviate, and the shared vector-store base plugin.
+- **Observability integrations**: MLflow, Weights & Biases, and workflow trace integration files under `integrations/observability/`.
+- **Supporting surfaces**: model discovery, provider registries, mock adapter, response wrapping, validation, and parameter normalization utilities.
 
 ## Advanced Features
 

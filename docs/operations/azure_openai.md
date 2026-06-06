@@ -11,8 +11,9 @@ export AZURE_OPENAI_API_KEY="<key>"
 # Optional: API version override (default: 2024-02-15-preview)
 # export AZURE_OPENAI_API_VERSION=2024-10-21
 
-# Mock mode (dry-run, no SDK needed)
-# export AZURE_OPENAI_MOCK=true
+# Local mock mode: export TRAIGENT_MOCK_LLM=true, or call
+# traigent.testing.enable_mock_mode_for_quickstart() in tutorial code.
+# Provider-specific *_MOCK env vars are ignored.
 
 # Note: use `--provider azure` in the experiment scripts below.
 ```
