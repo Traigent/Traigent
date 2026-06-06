@@ -36,6 +36,7 @@ markdown_extensions:
 
 nav:
   - Home: README.md
+  - JavaScript SDK: https://traigent.github.io/Traigent/js/
   - Getting Started:
       - Overview: getting-started/README.md
       - Quickstart: getting-started/GETTING_STARTED.md

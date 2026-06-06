@@ -33,6 +33,17 @@ jobs:
       - name: Build
         run: mkdocs build
 
+      # The JS SDK docs are served as a /js/ subsite (built from the traigent-js
+      # repo). gh-deploy replaces the whole branch, so preserve /js/ across
+      # Python-docs deploys until traigent-js publishes its own site.
+      - name: Preserve /js/ subsite
+        run: |
+          git fetch origin gh-pages --depth 1 || exit 0
+          git show origin/gh-pages:js/index.html >/dev/null 2>&1 || exit 0
+          git worktree add /tmp/ghp origin/gh-pages
+          cp -r /tmp/ghp/js site/js
+          git worktree remove /tmp/ghp --force
+
       - name: Deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
