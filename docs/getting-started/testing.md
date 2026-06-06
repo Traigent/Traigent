@@ -35,7 +35,7 @@ TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest -k "test_optimization" 
 
 The `[test]` extra includes:
 
-- **pytest>=7.0.0** - Testing framework
+- **pytest>=9.0.3** - Testing framework
 - **pytest-asyncio>=0.21.0** - Async test support
 - **pytest-cov>=4.0.0** - Coverage reporting
 - **pytest-mock>=3.10.0** - Mocking utilities
@@ -220,8 +220,8 @@ async def test_optimization_basic():
 ### Import Errors
 
 ```bash
-# Make sure package is installed in editable mode
-pip install -e ".[recommended]"
+# Make sure the recommended bundle is installed
+pip install "traigent[recommended]"
 
 # Check installation
 python -c "import traigent; print(traigent.__version__)"
@@ -277,7 +277,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@v3

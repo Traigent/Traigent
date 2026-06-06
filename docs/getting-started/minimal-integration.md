@@ -43,7 +43,7 @@ Minimal checklist:
 
 ## Environment Minimum
 
-1. `TRAIGENT_API_KEY` configured.
+1. Authentication configured with `traigent auth device-login`, `traigent onboard`, or `TRAIGENT_API_KEY` for CI/non-interactive environments.
 2. `TRAIGENT_API_URL` configured (if not using default backend URL).
 3. For hybrid mode scripts using `requests`, set `User-Agent: Traigent-SDK/1.0`.
 
