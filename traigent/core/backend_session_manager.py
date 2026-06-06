@@ -329,6 +329,9 @@ class BackendSessionManager:
         start_time: float,
         max_total_examples: int | None = None,
         agent_configuration: AgentConfiguration | None = None,
+        objectives: list[Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        tvl_governance: dict[str, Any] | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -397,6 +400,9 @@ class BackendSessionManager:
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,
+                objectives=objectives,
+                promotion_policy=promotion_policy,
+                tvl_governance=tvl_governance,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(result)
@@ -977,6 +983,7 @@ class BackendSessionManager:
         self,
         session_id: str | None,
         optimization_status: OptimizationStatus,
+        certified_selection: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Finalize backend session and return summary.
 
@@ -1000,14 +1007,22 @@ class BackendSessionManager:
             else "failed"
         )
 
+        # The certified report only accompanies a COMPLETED finalize — a
+        # failed run must never carry a certified winner.
+        report = certified_selection if final_status == "completed" else None
+
         if hasattr(self._backend_client, "finalize_session_sync"):
             result: dict[str, Any] | None = self._backend_client.finalize_session_sync(  # type: ignore[assignment]
-                session_id, final_status == "completed"
+                session_id,
+                final_status == "completed",
+                certified_selection=report,
             )
             return result
 
         result = self._backend_client.finalize_session(  # type: ignore[assignment]
-            session_id, final_status == "completed"
+            session_id,
+            final_status == "completed",
+            certified_selection=report,
         )
         return result
 

@@ -889,6 +889,93 @@ class OptimizationOrchestrator:
             return True
         return bool(getattr(policy, "chance_constraints", None))
 
+    def _build_wire_governance(
+        self,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Project the declared governance onto the wire (RFC 0001 P8).
+
+        promotion_policy: from the promotion gate's declared policy.
+        tvl_governance: cvar names/types/governed flags from the resolver's
+        DECLARED bindings (the same source _is_strict_evidence_mode trusts) —
+        never runtime or calibrated state. Both None for ungoverned sessions
+        so their wire payload stays byte-identical.
+        """
+        from traigent.cloud.governance import (
+            build_tvl_governance,
+            promotion_policy_to_wire,
+        )
+
+        gate = self._promotion_gate
+        policy = getattr(gate, "policy", None) if gate is not None else None
+        wire_policy = promotion_policy_to_wire(policy)
+
+        wire_governance = None
+        resolver = getattr(self, "knob_resolver", None)
+        space = getattr(resolver, "_space", None) if resolver is not None else None
+        if space is not None:
+            wire_governance = build_tvl_governance(space)
+        return wire_policy, wire_governance
+
+    def _build_certified_selection_report(self) -> dict[str, Any] | None:
+        """Phase 8: the client-attested certified-selection finalize report.
+
+        Built ONLY when every condition holds (mirror of the server's
+        fail-closed rules so a 400 means a bug, not a flow): strict evidence
+        mode, a certified incumbent exists, the resolver's DECLARED governed
+        cvars are each backed by a CERTIFIED certificate with an issued
+        hash. Any gap ⇒ None ⇒ the honest no-winner finalize. The incumbent's
+        trial_id is the BACKEND id (trials are submitted under it), so the
+        server can bind the winner to its own record.
+        """
+        if not self._is_strict_evidence_mode():
+            return None
+        # The FIRST trial seeds the incumbent as comparison initialization,
+        # NOT as certification — terminal strict selection only names a
+        # winner after >=1 explicit gate promotion (the _certified_promotions
+        # guard in result assembly). Mirror it here so the wire report can
+        # never overclaim a winner the SDK result itself refuses to certify.
+        # An absent attribute reads 0 ⇒ fail closed.
+        if not getattr(self, "_certified_promotions", 0):
+            return None
+        incumbent = self._best_trial_cached
+        if incumbent is None or not getattr(incumbent, "trial_id", None):
+            return None
+        resolver = getattr(self, "knob_resolver", None)
+        space = getattr(resolver, "_space", None) if resolver is not None else None
+        if space is None:
+            return None
+
+        try:
+            from traigent.knobs.bindings import Calibrated, is_governed
+        except Exception:  # pragma: no cover - knobs is a hard dependency
+            return None
+
+        governed = [
+            name
+            for name, knob in dict(getattr(space, "knobs", {}) or {}).items()
+            if isinstance(getattr(knob, "binding", None), Calibrated)
+            and is_governed(knob.binding)
+        ]
+        if not governed:
+            return None
+
+        calibrated_inputs = getattr(resolver, "_calibrated_inputs", {}) or {}
+        certificates: dict[str, Any] = {}
+        for name in governed:
+            certificate = getattr(calibrated_inputs.get(name), "certificate", None)
+            if certificate is None:
+                logger.debug(
+                    "certified_selection withheld: governed cvar %s has no "
+                    "certificate at finalize",
+                    name,
+                )
+                return None
+            certificates[name] = certificate
+
+        from traigent.cloud.governance import build_certified_selection
+
+        return build_certified_selection(incumbent.trial_id, certificates)
+
     def _withhold_promotion(self, reason: str) -> bool:
         """Fail closed: record + log a strict-mode withheld promotion."""
         self._strict_withheld_promotions.append(reason)
@@ -1938,7 +2025,10 @@ class OptimizationOrchestrator:
                 descriptor.identifier,
             )
 
-        # Create backend session using manager
+        # Create backend session using manager. Governance crosses the wire
+        # content-free (Phase 8): the declared promotion policy and the
+        # cvar summary from DECLARED bindings — never values or evidence.
+        wire_policy, wire_governance = self._build_wire_governance()
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -1947,6 +2037,9 @@ class OptimizationOrchestrator:
             max_total_examples=self.max_total_examples,
             start_time=self._start_time or time.time(),
             agent_configuration=self._agent_configuration,
+            objectives=list(self.optimizer.objectives or []),
+            promotion_policy=wire_policy,
+            tvl_governance=wire_governance,
         )
         session_id: str | None = session_context.session_id
 
@@ -2402,7 +2495,9 @@ class OptimizationOrchestrator:
         self.backend_session_manager.submit_session_aggregation(result, session_id)
 
         session_summary = self.backend_session_manager.finalize_session(
-            session_id, self._status
+            session_id,
+            self._status,
+            certified_selection=self._build_certified_selection_report(),
         )
         self.backend_session_manager.attach_session_metadata(
             result, session_id, session_summary
