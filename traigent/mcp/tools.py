@@ -41,16 +41,20 @@ V1_TOOL_NAMES: tuple[str, ...] = (
     "list_recommendation_agent_types",
     "recommend_configuration_space",
     "detect_tvars",
+    "scaffold_eval",
     "validate_dataset",
     "estimate_cost",
     "run_optimization",
     "get_results",
+    "export_evidence",
 )
 
 _REAL_SPEND_MESSAGE = (
     "Real optimization spends provider tokens/money. Re-run with confirm=true "
     "and an explicit positive cost_limit to start a real run."
 )
+_EVAL_MANIFEST_SUFFIX = ".traigent-eval.json"
+_APPROVED_EVAL_STATUSES = {"approved", "user_approved"}
 
 
 class ToolInputError(ValueError):
@@ -111,6 +115,31 @@ def _resolve_cwd_file(
         raise ToolInputError(f"{field_name} must be a file: {resolved}")
     if suffix is not None and resolved.suffix != suffix:
         raise ToolInputError(f"{field_name} must be a {suffix} file: {resolved}")
+    return cast(Path, resolved)
+
+
+def _resolve_cwd_output_file(
+    file_path: str | Path,
+    *,
+    field_name: str,
+    suffix: str | None = None,
+) -> Path:
+    root = Path.cwd().resolve()
+    try:
+        resolved = validate_path(Path(file_path).expanduser(), root, must_exist=False)
+    except PathTraversalError as exc:
+        raise ToolInputError(
+            f"{field_name} must stay under the current working directory: {root}"
+        ) from exc
+
+    if suffix is not None and resolved.suffix != suffix:
+        raise ToolInputError(f"{field_name} must be a {suffix} file: {resolved}")
+    try:
+        resolved.parent.relative_to(root)
+    except ValueError as exc:
+        raise ToolInputError(
+            f"{field_name} parent must stay under the current working directory: {root}"
+        ) from exc
     return cast(Path, resolved)
 
 
@@ -354,6 +383,92 @@ def validate_dataset_tool(path: str) -> dict[str, Any]:
     return payload
 
 
+def _eval_manifest_path(dataset_path: Path) -> Path:
+    return dataset_path.with_name(dataset_path.name + _EVAL_MANIFEST_SUFFIX)
+
+
+def _draft_eval_row(index: int, agent_type: str) -> dict[str, Any]:
+    return {
+        "input": {
+            "query": f"REVIEW_ME_{index:03d}",
+            "context": f"Draft {agent_type} evaluation example. Replace before real evidence.",
+        },
+        "output": f"REVIEW_ME_EXPECTED_{index:03d}",
+    }
+
+
+def scaffold_eval_tool(
+    agent_type: str = "agent",
+    output_path: str = "eval.draft.jsonl",
+    example_count: int = 3,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Create a reviewable draft evaluation JSONL plus approval manifest."""
+    if example_count < 1 or example_count > 50:
+        return _failure("example_count must be between 1 and 50.")
+
+    try:
+        resolved_path = _resolve_cwd_output_file(
+            output_path,
+            field_name="output_path",
+            suffix=".jsonl",
+        )
+    except ToolInputError as exc:
+        return _failure(str(exc), code="path_rejected")
+
+    manifest_path = _eval_manifest_path(resolved_path)
+    if not overwrite and (resolved_path.exists() or manifest_path.exists()):
+        return _failure(
+            "Draft eval output or manifest already exists. Re-run with overwrite=true "
+            "or choose a different output_path.",
+            code="already_exists",
+        )
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [_draft_eval_row(index, agent_type) for index in range(1, example_count + 1)]
+    resolved_path.write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    now = datetime.now(UTC).isoformat()
+    manifest = {
+        "schema_version": "traigent.eval_provenance.v1",
+        "dataset_path": str(resolved_path),
+        "dataset_sha256": None,
+        "provenance": "draft_scaffold",
+        "approval_status": "draft",
+        "generated_by": "traigent.mcp.scaffold_eval",
+        "generated_at": now,
+        "approved_by": None,
+        "approved_at": None,
+        "notes": [
+            "Generated examples are draft evidence only.",
+            "Real optimization refuses this dataset until approval_status is user_approved or approved.",
+        ],
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    validation = validate_dataset_tool(str(resolved_path))
+    return {
+        "ok": True,
+        "dataset_path": str(resolved_path),
+        "manifest_path": str(manifest_path),
+        "example_count": example_count,
+        "approval_status": "draft",
+        "evidence_status": "draft_evidence",
+        "validation": validation,
+        "next_steps": [
+            "Review or replace every generated example.",
+            "Set manifest approval_status to user_approved only after human review.",
+            "Do not use draft evidence to certify final improvement.",
+        ],
+    }
+
+
 def _count_dataset_examples(path: Path) -> int:
     if path.suffix == ".jsonl":
         with path.open(encoding="utf-8") as handle:
@@ -554,6 +669,69 @@ def _run_loaded_optimizations(
     return summaries, stdout_buffer.getvalue(), stderr_buffer.getvalue()
 
 
+def _iter_eval_manifests(root: Path) -> Iterator[Path]:
+    excluded_dirs = {".git", ".venv", "node_modules", "__pycache__"}
+    for path in root.rglob(f"*{_EVAL_MANIFEST_SUFFIX}"):
+        if any(part in excluded_dirs for part in path.parts):
+            continue
+        if path.is_file():
+            yield path
+
+
+def _read_eval_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Eval manifest must be a JSON object: {path}")
+    return cast(dict[str, Any], payload)
+
+
+def _find_unapproved_eval_manifests(root: Path) -> list[dict[str, Any]]:
+    unapproved: list[dict[str, Any]] = []
+    for manifest_path in _iter_eval_manifests(root):
+        try:
+            manifest = _read_eval_manifest(manifest_path)
+        except Exception:
+            unapproved.append(
+                {
+                    "manifest_path": str(manifest_path),
+                    "approval_status": "malformed",
+                    "provenance": "unknown",
+                }
+            )
+            continue
+
+        approval_status = str(manifest.get("approval_status", "")).strip().lower()
+        provenance = str(manifest.get("provenance", "")).strip().lower()
+        if approval_status not in _APPROVED_EVAL_STATUSES:
+            unapproved.append(
+                {
+                    "manifest_path": str(manifest_path),
+                    "dataset_path": manifest.get("dataset_path"),
+                    "approval_status": approval_status or "missing",
+                    "provenance": provenance or "missing",
+                }
+            )
+    return unapproved
+
+
+def _eval_approval_summary(root: Path) -> dict[str, Any]:
+    manifests = list(_iter_eval_manifests(root))
+    unapproved = _find_unapproved_eval_manifests(root)
+    approved_count = max(0, len(manifests) - len(unapproved))
+    if unapproved:
+        status = "draft"
+    elif approved_count > 0:
+        status = "user_approved"
+    else:
+        status = "unknown"
+    return {
+        "approval_status": status,
+        "manifest_count": len(manifests),
+        "approved_manifest_count": approved_count,
+        "unapproved_manifests": unapproved,
+    }
+
+
 def run_optimization_tool(
     script_path: str | None = None,
     mode: Literal["mock", "real"] = "mock",
@@ -575,18 +753,6 @@ def run_optimization_tool(
                 "refused": True,
                 "message": "Real optimization requires an explicit positive cost_limit.",
             }
-        from traigent.utils.env_config import is_mock_llm
-
-        if is_mock_llm():
-            return {
-                "ok": False,
-                "refused": True,
-                "message": (
-                    "Real optimization cannot run while mock mode is active in this "
-                    "server process. Restart the MCP server without mock mode for a "
-                    "real spend run."
-                ),
-            }
 
     if script_path is None:
         return _failure("script_path is required for run_optimization v1.")
@@ -600,6 +766,33 @@ def run_optimization_tool(
         )
     except ToolInputError as exc:
         return _failure(str(exc), code="path_rejected")
+
+    if mode == "real":
+        unapproved_evals = _find_unapproved_eval_manifests(resolved_script.parent)
+        if unapproved_evals:
+            return {
+                "ok": False,
+                "refused": True,
+                "code": "draft_eval_unapproved",
+                "message": (
+                    "Real optimization refuses unapproved draft evaluation data. "
+                    "Review or replace the dataset, then set approval_status to "
+                    "user_approved in the eval manifest."
+                ),
+                "unapproved_evals": unapproved_evals,
+            }
+        from traigent.utils.env_config import is_mock_llm
+
+        if is_mock_llm():
+            return {
+                "ok": False,
+                "refused": True,
+                "message": (
+                    "Real optimization cannot run while mock mode is active in this "
+                    "server process. Restart the MCP server without mock mode for a "
+                    "real spend run."
+                ),
+            }
 
     effective_trials = max_trials or (4 if mode == "mock" else 10)
     effective_algorithm = algorithm or "random"
@@ -710,4 +903,90 @@ def get_results_tool(result_name: str | None = None) -> dict[str, Any]:
         "storage_dir": str(persistence.base_dir),
         "result_name": result_name,
         "result": _serialize_loaded_result(result),
+    }
+
+
+def export_evidence_tool(
+    result_name: str | None = None,
+    output_dir: str = ".traigent/evidence",
+) -> dict[str, Any]:
+    """Export a local evidence bundle from saved optimization results."""
+    persistence = PersistenceManager(".traigent")
+    if result_name is None:
+        results = persistence.list_results()
+        if not results:
+            return _failure("No local optimization results found.", code="not_found")
+        result_name = str(results[0]["name"])
+
+    try:
+        result = persistence.load_result(result_name)
+    except FileNotFoundError as exc:
+        return _failure(str(exc), code="not_found")
+    except (PathTraversalError, ValueError) as exc:
+        return _failure(str(exc), code="path_rejected")
+
+    try:
+        resolved_output_dir = validate_path(
+            Path(output_dir).expanduser(),
+            Path.cwd().resolve(),
+            must_exist=False,
+        )
+    except PathTraversalError as exc:
+        return _failure(str(exc), code="path_rejected")
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+
+    result_payload = _serialize_loaded_result(result)
+    approval_summary = _eval_approval_summary(Path.cwd().resolve())
+    evidence_status = (
+        "user_approved_evidence"
+        if approval_summary["approval_status"] == "user_approved"
+        else "draft_evidence"
+    )
+    bundle = {
+        "schema_version": "traigent.evidence_bundle.v1",
+        "created_at": datetime.now(UTC).isoformat(),
+        "result_name": result_name,
+        "evidence_status": evidence_status,
+        "dataset_approval": approval_summary,
+        "result": result_payload,
+        "limitations": [
+            "Generated or unapproved evaluation data cannot certify final improvement.",
+            "Mock-mode scores prove plumbing only.",
+            "Report claims as scoped to the evaluated slice and selected configuration.",
+        ],
+    }
+
+    safe_name = sanitize_identifier(result_name)
+    json_path = resolved_output_dir / f"{safe_name}.evidence.json"
+    md_path = resolved_output_dir / f"{safe_name}.evidence.md"
+    json_path.write_text(
+        json.dumps(bundle, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+
+    md_lines = [
+        "# Traigent Evidence Bundle",
+        "",
+        f"- Result: `{result_name}`",
+        f"- Evidence status: `{evidence_status}`",
+        f"- Dataset approval: `{approval_summary['approval_status']}`",
+        f"- Best score: `{result_payload.get('best_score')}`",
+        f"- Best config: `{json.dumps(result_payload.get('best_config'), sort_keys=True, default=str)}`",
+        "",
+        "## Limitations",
+        "",
+        "- Generated or unapproved evaluation data cannot certify final improvement.",
+        "- Mock-mode scores prove plumbing only.",
+        "- Claims must stay scoped to the evaluated slice and selected configuration.",
+        "",
+    ]
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+    return {
+        "ok": True,
+        "result_name": result_name,
+        "evidence_status": evidence_status,
+        "dataset_approval": approval_summary,
+        "json_path": str(json_path),
+        "markdown_path": str(md_path),
     }
