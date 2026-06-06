@@ -64,6 +64,7 @@ __all__ = [
     "self_refine",
     "react_tool_loop",
     "verification_gate",
+    "moe",
 ]
 
 #: §3.10 standard telemetry measure names, per constructor kind. Content-free:
@@ -669,4 +670,101 @@ def verification_gate(
         members=dict(members or {}),
         provenance=prov,
         telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
+
+
+def moe(
+    name: str,
+    *,
+    experts: tuple[str, ...],
+    aggregate: str = "vote",
+    judge_stage: str | None = None,
+    accept_threshold: str | None = None,
+    expert_tuned_params: tuple[tuple[str, ...], ...] | None = None,
+    judge_tuned_params: tuple[str, ...] = (),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Ensemble(arms=[stage(expert_1)..stage(expert_m)], aggregate, committee)``.
+
+    Mixture-of-experts is the committee form of an ensemble: each distinct
+    expert stage contributes one representative candidate, then aggregation is
+    either majority vote or ``judge_max``. Sampling-form cardinality is
+    deliberately absent; use ``self_consistency``/``best_of_n`` for repeated
+    draws from one generator.
+    """
+    if (
+        not isinstance(experts, tuple)
+        or len(experts) < 2
+        or any(not isinstance(expert, str) or not expert for expert in experts)
+    ):
+        raise ValueError("moe experts must be at least two non-empty stage names")
+    if len(set(experts)) != len(experts):
+        raise ValueError("moe experts must be distinct")
+
+    if aggregate not in {"vote", "judge"}:
+        raise ValueError("moe aggregate must be 'vote' or 'judge'")
+    if expert_tuned_params is None:
+        expert_tuned_params = tuple(() for _ in experts)
+    elif len(expert_tuned_params) != len(experts):
+        raise ValueError(
+            "invalid_tuned_param: expert_tuned_params must declare exactly one "
+            f"tuple per expert (got {len(expert_tuned_params)} for "
+            f"{len(experts)} expert(s)); omit expert_tuned_params entirely to "
+            "leave all experts undeclared"
+        )
+
+    if aggregate == "vote":
+        if judge_stage is not None:
+            raise ValueError("aggregate='vote' forbids judge_stage")
+        if judge_tuned_params:
+            raise ValueError("aggregate='vote' forbids judge_tuned_params")
+        aggregate_decl = AggregateDecl(
+            kind=AggregateKind.MAJORITY_VOTE,
+            accept=(
+                AcceptDecl(stat=StatKind.VOTE_MARGIN, threshold=accept_threshold)
+                if accept_threshold is not None
+                else None
+            ),
+        )
+    else:
+        if not isinstance(judge_stage, str) or not judge_stage:
+            raise ValueError("aggregate='judge' requires judge_stage")
+        if judge_stage in experts:
+            raise ValueError("aggregate='judge' judge_stage must be distinct")
+        if accept_threshold is not None:
+            raise ValueError("aggregate='judge' does not support accept_threshold")
+        aggregate_decl = AggregateDecl(
+            kind=AggregateKind.JUDGE_MAX,
+            judge=StageArm(judge_stage, judge_tuned_params),
+        )
+
+    params = {
+        "name": name,
+        "experts": list(experts),
+        "aggregate": aggregate,
+        "judge_stage": judge_stage,
+        "accept_threshold": accept_threshold,
+        "expert_tuned_params": [list(tp) for tp in expert_tuned_params],
+        "judge_tuned_params": list(judge_tuned_params),
+    }
+    prov = _provenance("moe", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.ENSEMBLE,
+        body=EnsembleBody(
+            arms=tuple(
+                StageArm(expert, expert_tuned_params[i])
+                for i, expert in enumerate(experts)
+            ),
+            aggregate=aggregate_decl,
+            cardinality=None,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.ENSEMBLE],
     )
