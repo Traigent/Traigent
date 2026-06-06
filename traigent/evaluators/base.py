@@ -26,7 +26,9 @@ from traigent.evaluators.dataset_registry import (
     resolve_dataset_reference,
 )
 from traigent.evaluators.metrics_tracker import (
+    USER_METRIC_KEY_PATTERN,
     aggregate_user_custom_metrics,
+    enforce_user_metric_ceiling,
     extract_llm_metrics,
     is_reserved_metric_key,
 )
@@ -768,6 +770,22 @@ class BaseEvaluator(ABC):
             logger.debug(f"Overriding metric: {name}")
         self._metric_registry[name] = func
 
+    def _evaluator_computable_metric_names(self) -> frozenset[str]:
+        """Names this evaluator can compute itself, beyond the static reserved set.
+
+        The static :data:`RESERVED_METRIC_KEYS` cannot enumerate metrics that are
+        only known at runtime — registered custom metrics and RAGAS metrics
+        (``context_precision`` etc.) that the evaluator computes and writes into
+        the trial metrics. A user-supplied tuple key with one of these names must
+        NOT overwrite the evaluator's computed value, so this set is threaded into
+        every user-metric merge site as ``extra_reserved``. The registry IS the
+        evaluator-computable set, so we derive it at runtime rather than hand-copy
+        RAGAS names into the frozenset (which would drift).
+        """
+        names: set[str] = set(self._metric_registry)
+        names.update(getattr(self, "_ragas_metric_names", set()))
+        return frozenset(names)
+
     def compute_metrics(
         self,
         outputs: list[Any],
@@ -1058,9 +1076,11 @@ class BaseEvaluator(ABC):
 
         Strict, conservative unpack rule (back-compat is absolute): the return
         is unpacked ONLY when ``raw`` is EXACTLY a length-2 ``tuple`` whose
-        second element is a ``Mapping`` with all-identifier keys (every key is a
-        ``str`` satisfying ``str.isidentifier()``, matching the MeasuresDict wire
-        contract) and all-numeric (``int``/``float``, excluding ``bool``)
+        second element is a ``Mapping`` with all-wire-valid keys (every key is a
+        ``str`` matching :data:`USER_METRIC_KEY_PATTERN`, the ASCII identifier
+        pattern that exactly mirrors the ``MeasuresDict`` wire contract — NOT
+        ``str.isidentifier()``, which accepts Unicode identifiers the wire
+        rejects) and all-numeric (``int``/``float``, excluding ``bool``)
         values. In that case element ``[0]`` becomes the output used for ALL
         downstream purposes (accuracy comparison, ``actual_output`` storage,
         scoring functions) and element ``[1]`` becomes the per-example user
@@ -1068,8 +1088,10 @@ class BaseEvaluator(ABC):
 
         EVERY other shape is left untouched and returned as raw output with no
         user metrics — longer/shorter tuples, a non-tuple, a ``[1]`` that is not
-        a Mapping (e.g. a list), a Mapping with any non-``str`` / non-identifier
-        key (e.g. ``"bad-key"``), or a Mapping with any non-numeric / ``bool``
+        a Mapping (e.g. a list), a Mapping with any non-``str`` key or any key
+        rejected by :data:`USER_METRIC_KEY_PATTERN` (e.g. ``"bad-key"`` or the
+        Unicode identifier ``"π_metric"``), or a Mapping with any non-numeric /
+        ``bool``
         value. This makes the rule idempotent: an already-unpacked output (whose
         ``[0]`` is not itself such a 2-tuple) is a no-op, so calling this at more
         than one boundary is safe.
@@ -1090,7 +1112,7 @@ class BaseEvaluator(ABC):
         if not isinstance(candidate, Mapping):
             return raw, None
         for key, value in candidate.items():
-            if not isinstance(key, str) or not key.isidentifier():
+            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
                 return raw, None
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 return raw, None
@@ -1103,24 +1125,37 @@ class BaseEvaluator(ABC):
         user_metrics: dict[str, float] | None,
         *,
         context: str,
+        extra_reserved: frozenset[str] | None = None,
     ) -> None:
         """Merge per-example user metrics into ``target`` without overriding.
 
         User keys are first-class but NEVER override an evaluator-computed key.
-        Two guards, applied regardless of merge ordering or ``setdefault``
-        timing (so a reserved key is protected even when the evaluator writes it
-        AFTER this merge):
+        Guards, applied regardless of merge ordering or ``setdefault`` timing (so
+        a reserved key is protected even when the evaluator writes it AFTER this
+        merge):
 
-        * a key in :data:`RESERVED_METRIC_KEYS` is skipped and warning-logged —
-          the user asked for a key they cannot have (e.g. ``success_rate``,
-          ``latency``, ``examples_attempted``);
+        * a key in :data:`RESERVED_METRIC_KEYS` OR in ``extra_reserved`` is
+          skipped and warning-logged — the user asked for a key they cannot have
+          (e.g. ``success_rate``, ``latency``, ``examples_attempted``, or a
+          runtime-only evaluator-computable name such as the RAGAS metric
+          ``context_precision``). ``extra_reserved`` defaults to this evaluator's
+          own metric-registry + RAGAS names;
         * a key already present in ``target`` is skipped (the evaluator's own
           value wins).
+
+        Unlike the shared aggregator's DEBUG split, the reserved-key skip here
+        WARNS: this method receives the GENUINELY user-supplied tuple dict, so a
+        collision is a real user mistake worth surfacing.
         """
         if not user_metrics:
             return
+        reserved_extra = (
+            extra_reserved
+            if extra_reserved is not None
+            else self._evaluator_computable_metric_names()
+        )
         for key, value in user_metrics.items():
-            if is_reserved_metric_key(key):
+            if is_reserved_metric_key(key) or key in reserved_extra:
                 logger.warning(
                     "Skipping user metric %r (%s): %r is a reserved "
                     "evaluator-computed key and cannot be overwritten",
@@ -2933,9 +2968,24 @@ class SimpleScoringEvaluator(BaseEvaluator):
             aggregated_metrics,
             successful_example_metrics,
             context="simple-scoring trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
         )
 
         aggregated_metrics.setdefault("examples_attempted", len(example_results))
+
+        # Authoritative final-union cap. ``aggregate_user_custom_metrics`` above
+        # caps the union as it MERGES user keys, but reserved evaluator keys are
+        # added to ``aggregated_metrics`` AFTER that (the custom/LLM/RAGAS
+        # aggregations and ``examples_attempted`` here), so the per-merge cap
+        # alone cannot bound the FINAL union. Re-apply the ceiling as the LAST
+        # step before returning trial metrics so >50 flat metrics can never
+        # escape; only user keys are dropped (evaluator keys are never
+        # sacrificed), matching the local lane's enforce-ceiling call.
+        enforce_user_metric_ceiling(
+            aggregated_metrics,
+            context="simple-scoring trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
 
         # Log results
         success_count = sum(1 for result in example_results if result.is_successful)

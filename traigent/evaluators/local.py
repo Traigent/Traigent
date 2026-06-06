@@ -1354,8 +1354,13 @@ class LocalEvaluator(BaseEvaluator):
             custom_aggregated = self._compute_aggregated_custom_metrics(example_results)
             aggregated_metrics.update(custom_aggregated)
 
-        # Add comprehensive metrics from tracker using helper
-        comprehensive_metrics = metrics_tracker.format_for_backend()
+        # Add comprehensive metrics from tracker using helper. Thread the
+        # evaluator's runtime-only computable names (registry + RAGAS) so a
+        # user tuple key cannot overwrite an evaluator-computed value during the
+        # tracker's user-metric aggregation pass.
+        comprehensive_metrics = metrics_tracker.format_for_backend(
+            extra_reserved=self._evaluator_computable_metric_names()
+        )
         self._merge_comprehensive_metrics(aggregated_metrics, comprehensive_metrics)
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
@@ -1365,7 +1370,9 @@ class LocalEvaluator(BaseEvaluator):
         # must not push the union past the MeasuresDict ceiling. Only user keys
         # are dropped; reserved evaluator keys are never sacrificed.
         enforce_user_metric_ceiling(
-            aggregated_metrics, context="local trial aggregation"
+            aggregated_metrics,
+            context="local trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
         )
 
         # Generate summary_stats for all modes except CLOUD (needed for insights)
