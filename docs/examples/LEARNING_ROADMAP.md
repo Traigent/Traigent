@@ -34,8 +34,8 @@ Outcome: you can experiment with new metrics, evaluate RAG systems, and integrat
 
 ## Running and debugging
 ```bash
-pip install -e ".[examples]"
-export TRAIGENT_MOCK_LLM=true
+pip install "traigent[recommended]"
+# In local tutorial code, call enable_mock_mode_for_quickstart() before running LLM examples.
 ls examples/datasets/<example-name>
 rg "optimize(" examples
 ```

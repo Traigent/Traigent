@@ -58,4 +58,4 @@ These are not part of the core 8-step path, but they complement it:
 
 ## Browse source
 
-[walkthrough/mock/](../walkthrough/mock/)
+Browse source in the repository: `walkthrough/mock/`.

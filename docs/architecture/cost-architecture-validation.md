@@ -26,6 +26,11 @@ The following items from this validation were implemented on
   - `claude-haiku`, `claude-sonnet`, `claude-opus`.
 - Hybrid aggregated metrics now emit both `cost` and `total_cost`, and orchestrator
   extraction uses `total_cost` with `cost` fallback.
+- 0.12.0 adds pre-trial model price coverage checks before any cloud or local
+  trial dispatch: unpriced models warn in normal mode and fail before a trial
+  when `TRAIGENT_STRICT_COST_ACCOUNTING=true`. Custom pricing can be supplied
+  with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` or
+  `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`.
 - CI/pre-commit guardrail added to prevent reintroducing
   `cost_from_tokens(..., strict=False)` in runtime post-call paths
   (allowlisted only for query pricing helper usage).

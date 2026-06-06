@@ -80,6 +80,35 @@ The older plural spelling `TRAIGENT_TRACES_ENABLED` remains as a deprecated
 alias when the canonical flag is unset; if both are set,
 `TRAIGENT_TRACE_ENABLED` takes precedence.
 
+### Agent Workflow Spans
+
+0.12.0 exposes a public helper for adding sanitized agent/node spans to the
+active optimization workflow trace:
+
+```python
+from collections.abc import Mapping
+from typing import Any
+
+from traigent.observability import add_agent_span
+
+def add_agent_span(
+    node_id: str,
+    *,
+    span_type: str = "agent",
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cost_usd: float | None = None,
+    latency_ms: float | None = None,
+    model: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> None
+```
+
+The helper is safe to call from user code. If no active optimization trial or
+workflow trace manager exists, it logs at debug level and returns. Metadata is
+limited to safe numeric values, sensitive keys such as prompt/response/output
+are dropped, and model identifiers are validated before emission.
+
 ## How Telemetry is Used
 
 Telemetry data is used for:

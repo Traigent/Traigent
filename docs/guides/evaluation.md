@@ -498,7 +498,7 @@ Best accuracy: 0.00
 - [Execution Modes](execution-modes.md)
 - [Parallel Configuration](parallel-configuration.md)
 - [API Reference](../api-reference/)
-- [Examples](../../examples/)
+- [Examples](../examples/)
 
 ---
 

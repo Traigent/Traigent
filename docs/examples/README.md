@@ -52,7 +52,7 @@ examples/
 ## How to run
 ```bash
 # Install from repo root (includes example deps)
-pip install -e ".[examples]"
+pip install "traigent[recommended]"
 
 # Optional: browse the gallery in a browser
 python -m http.server 8000

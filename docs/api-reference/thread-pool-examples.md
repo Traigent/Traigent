@@ -458,4 +458,4 @@ async def process_items_async(items):
 - [API Reference](./complete-function-specification.md) - Full API documentation
 - [Parallel Configuration Guide](../guides/parallel-configuration.md) - Concurrency tuning and precedence
 - [Evaluation Guide](../guides/evaluation.md) - Parallel evaluation and concurrency tips
-- [Context Management Source](../../traigent/config/context.py) - Implementation details
+- Context management implementation: see `traigent/config/context.py` in the repository source.

@@ -63,7 +63,7 @@ examples/
 ## Run instructions
 ```bash
 cd /path/to/Traigent
-pip install -e ".[examples]"
+pip install "traigent[recommended]"
 python examples/core/simple-prompt/run.py
 ```
 
