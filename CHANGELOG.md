@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-06
+
 ### Added
 - **Content-logging opt-out for optimization logs** (#1069). `TRAIGENT_LOG_EXAMPLE_CONTENT=false`
   (or `OptimizationLogger(..., log_example_content=False)`) keeps per-trial ids and metrics on
