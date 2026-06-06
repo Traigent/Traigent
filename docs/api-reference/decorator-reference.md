@@ -462,7 +462,7 @@ from traigent.api.decorators import InjectionOptions
 
 @traigent.optimize(
     injection=InjectionOptions(
-        injection_mode="context",  # or "parameter", "attribute", "seamless"
+        injection_mode="context",  # or "parameter", "seamless"
         config_param="config",  # required when injection_mode="parameter"
         auto_override_frameworks=True,
         framework_targets=["OpenAI", "Anthropic"],
@@ -473,7 +473,7 @@ from traigent.api.decorators import InjectionOptions
 
 **InjectionOptions Fields**:
 
-- `injection_mode`: How to inject config ("context", "parameter", "attribute", "seamless")
+- `injection_mode`: How to inject config ("context", "parameter", "seamless")
 - `config_param`: Parameter name when using "parameter" mode
 - `auto_override_frameworks`: Auto-detect framework classes
 - `framework_targets`: Explicit list of framework classes
@@ -505,7 +505,7 @@ from traigent.config.parallel import ParallelConfig
 
 **ExecutionOptions Fields**:
 
-- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "cloud" is reserved for future remote execution.
+- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "hybrid_api" for external API-backed trial execution; "privacy" as a legacy alias for "hybrid" with privacy enabled; "cloud" is reserved for future remote execution and fails closed.
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
 - `parallel_config`: Concurrency configuration
@@ -561,21 +561,27 @@ The `**runtime_overrides` parameter accepts additional settings:
 ```python
 @traigent.optimize(
     algorithm="optuna",  # "grid", "random", "bayesian", "optuna"
-    max_trials=50,
-    timeout=3600,  # seconds
     ...
 )
+```
+
+Run controls such as `max_trials` and `timeout` are passed to `.optimize()`:
+
+```python
+result = await my_agent.optimize(max_trials=50, timeout=3600)
 ```
 
 **Cost Controls**:
 
 ```python
-@traigent.optimize(
+result = await my_agent.optimize(
     cost_limit=5.00,  # USD
-    cost_approved=False,  # Prompt for approval
-    ...
+    cost_approved=False,  # Real bool only; strings do not approve
 )
 ```
+
+Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not
+approve.
 
 **Metric-Limit Controls**:
 

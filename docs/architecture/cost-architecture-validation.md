@@ -26,11 +26,25 @@ The following items from this validation were implemented on
   - `claude-haiku`, `claude-sonnet`, `claude-opus`.
 - Hybrid aggregated metrics now emit both `cost` and `total_cost`, and orchestrator
   extraction uses `total_cost` with `cost` fallback.
-- 0.12.0 adds pre-trial model price coverage checks before any cloud or local
-  trial dispatch: unpriced models warn in normal mode and fail before a trial
-  when `TRAIGENT_STRICT_COST_ACCOUNTING=true`. Custom pricing can be supplied
-  with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` or
-  `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`.
+- 0.12.0 + #1166 adds pre-trial model price coverage checks before any cloud,
+  hybrid_api, or local trial dispatch. The preflight scans model IDs from
+  `configuration_space` and, when no model key is tunable, from the
+  current/default config. Mock mode skips the check. Priced models and models
+  covered by `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` or
+  `TRAIGENT_CUSTOM_MODEL_PRICING_FILE` proceed.
+  - If `TRAIGENT_STRICT_COST_ACCOUNTING=true`, any unpriced model raises
+    `UnknownModelError` before trial 1.
+  - Otherwise, Traigent proceeds with a warning only when cost-sensitive
+    execution is pre-approved: `cost_approved=True` as a real Python bool,
+    `TRAIGENT_COST_APPROVED=true` as the exact env value, or a valid XDG
+    approval token. String runtime values such as `"true"` and env values such
+    as `1`/`yes` do not approve.
+  - In an interactive TTY with no pre-approval, Traigent prints a blocking
+    stderr `y/N` prompt; only `y`/`yes` proceeds with a warning. Decline, empty
+    input, EOF, or interrupt raises `UnknownModelError` before trial 1.
+  - In a non-interactive shell with no pre-approval, Traigent fail-closes with
+    `UnknownModelError` before trial 1 and tells the user to add custom pricing,
+    set exact `TRAIGENT_COST_APPROVED=true`, or rerun interactively.
 - CI/pre-commit guardrail added to prevent reintroducing
   `cost_from_tokens(..., strict=False)` in runtime post-call paths
   (allowlisted only for query pricing helper usage).

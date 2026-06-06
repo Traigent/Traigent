@@ -2,11 +2,12 @@
 
 Python SDK <= 0.11.x supported Python-orchestrated JavaScript optimization through `execution={"runtime": "node"}` as a temporary bridge. Python SDK 0.12.0 removes that bridge.
 
-Use the native JavaScript SDK instead:
+The Python JS bridge was removed. The native JS SDK publish is pending; do not
+document `npm install @traigent/sdk` as available yet. Use the JS SDK source
+checkout instructions when available.
 
-- install `@traigent/sdk`
-- define optimization metadata with `optimize(spec)(agentFn)`
-- run optimization with `await wrapped.optimize(...)`
+The current native TypeScript SDK support exists in the internal `traigent-js`
+repo; npm publication for `@traigent/sdk` is pending.
 
 Migration reference:
 

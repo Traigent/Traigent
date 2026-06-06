@@ -62,7 +62,7 @@ python -c "import traigent; print(traigent.__version__)"
 ```
 
 **Checklist:**
-- [ ] All three show version `0.10.0`
+- [ ] All three show version `0.12.0`
 - [ ] `traigent info` shows expected features and integrations
 - [ ] No import warnings when loading traigent module
 
