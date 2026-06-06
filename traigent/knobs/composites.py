@@ -1112,6 +1112,8 @@ def cal_fold(program: CompositeProgram) -> frozenset[str]:
     members: frozenset[str] = frozenset()
     for root in roots(program):
         members |= _cal_of_node(program.composites[root], program.composites)
-    if program.cvars:
-        return members & program.cvars
-    return members
+    # ALWAYS intersect — an empty cvar namespace means an empty Cal set, never
+    # a raw fall-through (codex delta round: the falsy-empty check leaked a
+    # TUNED cardinality into the Cal set — the §3.5/§3.6 boundary dual of the
+    # leafT cut).
+    return members & program.cvars

@@ -716,3 +716,28 @@ class TestDerivedFunctions:
         prog = CompositeProgram(composites={"solo": node})
         validate_program(prog)
         assert cal_fold(prog) == frozenset()
+
+
+class TestCalFoldBoundary:
+    def test_cal_fold_never_returns_a_tuned_cardinality(self):
+        """Dual of the leafT boundary (codex delta round): with an EMPTY cvar
+        namespace the fold must STILL intersect — a tuned cardinality is a
+        leafT member (§3.5), never a Cal member (§3.6)."""
+        ens = CompositeNode(
+            name="ens",
+            kind=CompositeKind.ENSEMBLE,
+            ensemble=EnsembleBody(
+                arms=(StageArm("a"),),
+                cardinality="k",
+                aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE),
+            ),
+        )
+        prog = CompositeProgram(
+            composites={"ens": ens},
+            tvars=frozenset({"k"}),
+            tvar_types={"k": "int"},
+            cvars=frozenset(),
+        )
+        validate_program(prog)
+        assert "k" in leaf_tvars(prog, CompositeArm("ens"))
+        assert cal_fold(prog) == frozenset()
