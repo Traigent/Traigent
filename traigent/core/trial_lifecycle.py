@@ -390,6 +390,16 @@ class TrialLifecycle:
                 examples_attempted=examples_attempted,
                 total_cost=total_cost,
                 optuna_trial_id=optuna_trial_id,
+                # Thread the evaluator's runtime-only computable names (registry +
+                # RAGAS + user metric functions) into the final-union cap so an
+                # evaluator-computed objective like ``f1`` is never dropped as a
+                # user key. Guard with getattr: custom evaluators may not subclass
+                # BaseEvaluator and so may lack this method.
+                extra_reserved=getattr(
+                    orchestrator.evaluator,
+                    "_evaluator_computable_metric_names",
+                    lambda: frozenset(),
+                )(),
             )
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)

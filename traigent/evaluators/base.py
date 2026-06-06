@@ -774,16 +774,29 @@ class BaseEvaluator(ABC):
         """Names this evaluator can compute itself, beyond the static reserved set.
 
         The static :data:`RESERVED_METRIC_KEYS` cannot enumerate metrics that are
-        only known at runtime — registered custom metrics and RAGAS metrics
-        (``context_precision`` etc.) that the evaluator computes and writes into
-        the trial metrics. A user-supplied tuple key with one of these names must
-        NOT overwrite the evaluator's computed value, so this set is threaded into
-        every user-metric merge site as ``extra_reserved``. The registry IS the
-        evaluator-computable set, so we derive it at runtime rather than hand-copy
-        RAGAS names into the frozenset (which would drift).
+        only known at runtime — three runtime sources the evaluator computes and
+        writes into the trial metrics:
+
+        * registered custom metrics (``_metric_registry``);
+        * RAGAS metrics (``context_precision`` etc., tracked in
+          ``_ragas_metric_names``);
+        * user-passed custom metric functions (``self.metric_functions``, set on
+          ``SimpleScoringEvaluator`` / ``LocalEvaluator``). These are NEVER
+          registered into ``_metric_registry`` — they are invoked directly — so
+          a name like ``f1`` would otherwise be invisible here. Omitting them let
+          a user tuple key named ``f1`` overwrite the evaluator-computed ``f1``,
+          and let the final-union cap treat the evaluator's own ``f1`` as a
+          droppable user key under ceiling pressure.
+
+        A user-supplied tuple key with one of these names must NOT overwrite the
+        evaluator's computed value, so this set is threaded into every
+        user-metric merge site (and the final factory cap) as ``extra_reserved``.
+        We derive it at runtime rather than hand-copy names into a frozenset
+        (which would drift).
         """
         names: set[str] = set(self._metric_registry)
         names.update(getattr(self, "_ragas_metric_names", set()))
+        names.update(getattr(self, "metric_functions", None) or {})
         return frozenset(names)
 
     def compute_metrics(

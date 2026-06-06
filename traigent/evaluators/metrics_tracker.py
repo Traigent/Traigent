@@ -106,6 +106,17 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         "examples_attempted",
         "examples_consumed",
         "execution_time_ms",
+        # TRANSPORT-reserved: the submission lane passes the measures array and
+        # summary_stats object THROUGH the metrics dict and extracts them BY NAME
+        # in ``trial_operations._extract_measures_from_metrics``; the submission
+        # validator ``validators._validate_metrics_no_misplaced_fields`` HARD-
+        # rejects either name inside a metrics dict. A user tuple key with one of
+        # these names is wire-valid (identifier + numeric) and would otherwise
+        # ride into metrics and break submission — and the caps must never drop
+        # the system's own transport entries. Reserving them skips user keys with
+        # these names (WARNING) at merge.
+        "measures",
+        "summary_stats",
     }
 )
 

@@ -341,8 +341,17 @@ def build_success_result(
     examples_attempted: int | None,
     total_cost: float | None,
     optuna_trial_id: int | None,
+    extra_reserved: frozenset[str] = frozenset(),
 ) -> TrialResult:
-    """Create a successful :class:`TrialResult` instance."""
+    """Create a successful :class:`TrialResult` instance.
+
+    ``extra_reserved`` carries the evaluator's runtime-only computable metric
+    names (registered custom metrics, RAGAS metrics, user-passed metric
+    functions) that the static :data:`RESERVED_METRIC_KEYS` cannot enumerate.
+    The final-union ceiling below uses it so an evaluator-computed runtime name
+    (e.g. ``f1``, ``context_precision``) is never mistaken for a droppable user
+    key under ceiling pressure.
+    """
     trial_metadata = _build_success_trial_metadata(
         eval_result,
         examples_attempted,
@@ -389,13 +398,17 @@ def build_success_result(
     # the final union — a 50-key eval_result + total_cost would ship 51. Re-apply
     # the ceiling here as the last metric mutation: only NON-reserved user keys
     # are dropped (deterministically, warning-logged); the evaluator/assembly
-    # reserved keys are never sacrificed. The static RESERVED_METRIC_KEYS already
-    # covers every key written here and by the evaluator lanes (accuracy, score,
-    # duration, the token/cost family, examples_attempted, total_cost, ...), so no
-    # extra_reserved is needed at this site.
+    # reserved keys are never sacrificed. The static RESERVED_METRIC_KEYS covers
+    # the keys written here and the standard evaluator-lane keys (accuracy, score,
+    # duration, the token/cost family, examples_attempted, total_cost, ...), but
+    # NOT the evaluator's runtime-only computable names (registered custom metrics,
+    # RAGAS metrics, user metric functions such as ``f1``). Those arrive via
+    # ``extra_reserved`` so the cap never sacrifices an evaluator-computed runtime
+    # objective (e.g. ``f1``) to fit a flood of user keys.
     enforce_user_metric_ceiling(
         trial_result.metrics,
         context=f"trial {trial_id} final assembly",
+        extra_reserved=extra_reserved,
     )
 
     if getattr(eval_result, "summary_stats", None):
