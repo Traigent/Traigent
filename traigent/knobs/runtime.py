@@ -1,8 +1,10 @@
 """The composite EXECUTION runtime — the full §3.2 algebra (RFC 0002).
 
-This module executes EVERY ``placement: post`` composite kind end-to-end:
-the post-cascade (cross-referenced as RFC 0001 §3.8), the ensemble (sampling
-and committee forms, ``majority_vote`` / ``judge_max``), and the loop
+This module executes EVERY composite kind end-to-end: the post-cascade
+(cross-referenced as RFC 0001 §3.8), the PRE-cascade dispatch/router (§3.2
+``route(x) = arm_j where j = min({i < m : σ_i(x) ≥ θ_i} ∪ {m})`` — left-to-right
+gates, first-match-wins, exactly one terminal-like arm runs), the ensemble
+(sampling and committee forms, ``majority_vote`` / ``judge_max``), and the loop
 (``signal_accept`` / ``external_accept`` / ``exhausted`` stops), closed under
 nested-composite arms, plus the §3.8 K-chain unroll executor.
 
@@ -766,12 +768,17 @@ def _execute_cascade(
     signals: Mapping[str, Callable[..., Any]],
     predicates: Mapping[str, Callable[..., Any]],
 ) -> CompositeRunResult:
-    """Execute one post-cascade body for one item (§3.2 / §3.2.1)."""
-    if body.placement is not Placement.POST:
-        raise NotImplementedError(
-            f"composite-runtime: pre-cascade (dispatch) execution is deferred to "
-            f"a follow-up packet (composite {node.name!r}); this packet executes "
-            "the post-cascade kind only"
+    """Execute one cascade body for one item (§3.2 / §3.2.1).
+
+    Dispatches on placement: ``post`` runs the §3.8 escalation cascade (the
+    fast :class:`CascadePolicy` path, or the manual driver when a GATED
+    nested-composite arm needs the nested arm's own vote); ``pre`` runs the
+    §3.2 dispatch (router) executor — gates score the input LEFT TO RIGHT,
+    first match wins, exactly one routed arm runs (terminal-like).
+    """
+    if body.placement is Placement.PRE:
+        return _execute_pre_cascade(
+            node, body, stages, registry, config, calibrated_values, signals, predicates
         )
 
     # F1: a GATED nested-composite arm needs the manual driver (the gate must
@@ -799,6 +806,235 @@ def _execute_cascade(
         output=step.output,
         result_kind=ResultKind.OUTPUT,
         measures=_cascade_measures(step, body),
+        error=None,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Pre-cascade DISPATCH execution (§3.2 routing; the router path)              #
+# --------------------------------------------------------------------------- #
+
+
+class _SignalRaised(Exception):
+    """A pre-gate signal RAISED — the §3.2 absorbing-error case (NOT inadequate).
+
+    §3.2 is explicit and DELIBERATELY asymmetric with the loop ``signal_accept``
+    stop: an absent/abstaining/non-numeric signal VALUE is *inadequate* (route
+    onward — fail-toward-the-stronger-arm), but a signal that *raises* fails the
+    item's evaluation (never silently routes), feeding the fail-closed law under
+    strict modes. This wrapper carries the original exception's detail so the
+    dispatch driver can map it to a fail-closed ``error`` result.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+def _dispatch_adequate(
+    gate: Any,
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+) -> tuple[bool, float | None, float | None]:
+    """Evaluate ONE pre-gate against the dispatch input (§3.2 ``σ_i(x) ≥ θ_i``).
+
+    Returns ``(adequate, sigma, theta)``:
+
+    - ``adequate`` is ``σ(x) ≥ θ`` — selecting arm ``i``;
+    - ``sigma`` / ``theta`` are the resolved finite values when the gate was
+      evaluated numerically (for the §3.10 ``dispatch_signal_margin``);
+      ``sigma`` is ``None`` when the signal abstained (absent/None/non-numeric/
+      non-finite — INADEQUATE per §3.2, route onward), in which case ``theta``
+      is still returned for symmetry but the margin is not emitted.
+
+    The signal is invoked with the dispatch input ``config`` (the item/config
+    payload the stages receive) as a SINGLE positional argument — the SAME
+    one-argument convention the ``signal_accept`` loop stop uses, with the
+    dispatch payload instead of the threaded loop state. ``SignalUse.inputs``
+    for a pre-gate is an opaque calibration/freshness declaration (§3.2 item 11
+    ``signal_inputs``), NOT a runtime input filter, so it never narrows what the
+    signal observes (mirrors the loop's documented note).
+
+    A missing/non-finite threshold raises (a calibration defect → ``error`` at
+    the caller, exactly as POST does). A signal that RAISES is the §3.2
+    absorbing-error case (re-raised as :class:`_SignalRaised`).
+    """
+    # θ is read LIVE and fails closed on missing/non-finite (calibration defect).
+    theta = _resolve_threshold(gate.threshold, calibrated_values)
+
+    signal_use = gate.signal  # presence guaranteed by IR (signal_below requires it)
+    signal_id = signal_use.signal
+    # The signal is preflighted into the registry (fail-closed); guard anyway.
+    if signal_id not in signals:  # pragma: no cover - preflight short-circuits
+        raise ValueError(
+            f"signal {signal_id!r} is not provided (fail-closed: a missing "
+            "dispatch signal fails the item's evaluation)"
+        )
+    try:
+        raw = signals[signal_id](config)
+    except Exception as exc:  # noqa: BLE001 - a RAISING signal is absorbing (§3.2)
+        raise _SignalRaised(f"{type(exc).__name__}: {exc}") from exc
+
+    # An absent/abstaining/non-numeric value is INADEQUATE (§3.2): route onward,
+    # NEVER an error. bool is not a number (parity with the §3.10 measure rule).
+    if raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return False, None, theta
+    sigma = float(raw)
+    if not math.isfinite(sigma):
+        # A non-finite σ cannot satisfy ``σ ≥ θ``; treat as abstaining (§3.2
+        # fail-toward-the-stronger-arm), NOT an error.
+        return False, None, theta
+    return sigma >= theta, sigma, theta
+
+
+def _run_routed_arm(
+    arm: Arm,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> _ArmOutcome:
+    """Execute the routed arm — TERMINAL-like (§3.2.1: its result IS final).
+
+    A stage arm runs exactly like a non-gated cascade arm (a routed stage is
+    never feeding a gate — routing already decided — so a non-voting
+    representative is fine; a key_fn'd stage still votes for its representative).
+    A nested-composite arm runs its OWN §3.2 semantics (any kind), mirroring the
+    POST terminal-nested branch — the dispatch restriction "gated arms must be
+    margin-bearing" does NOT apply because a PRE-routed arm is terminal, never
+    gated. The arm's ``no_accept`` becomes the cascade's ``no_accept`` (NO
+    re-route) and its ``error`` is absorbing — both surfaced via
+    :class:`_ArmOutcome.kind`.
+    """
+    if isinstance(arm, StageArm):
+        # gated=False: the routed stage feeds no gate (routing already decided).
+        return _evaluate_stage_arm(arm, stages, gated=False, config=config)
+    inner = _execute_node(
+        registry[arm.ref],
+        stages,
+        registry,
+        config,
+        calibrated_values,
+        signals,
+        predicates,
+    )
+    return _ArmOutcome(
+        output=inner.output,
+        vote=None,
+        kind=inner.result_kind,
+        error=inner.error,
+    )
+
+
+def _pre_cascade_measures(
+    selected: int,
+    adequacy: dict[int, int],
+    selected_margin: float | None,
+) -> dict[str, Any]:
+    """The §3.10 pre-cascade (dispatch) telemetry — content-free.
+
+    - ``route_selected``: the selected arm index (ALWAYS emitted);
+    - ``gate_signal_adequate``: an INDEX-keyed ``{i: 0|1}`` map of per-gate
+      adequacy for every EVALUATED gate (gates not reached — beyond the
+      selected arm — are absent, never a false 0);
+    - ``dispatch_signal_margin``: ``σ_sel − θ_sel``, emitted ONLY when a GATED
+      arm was selected (``selected_margin is not None``); OMITTED for terminal
+      fall-through (no gate selected the terminal arm).
+    """
+    measures: dict[str, Any] = {
+        "route_selected": selected,
+        "gate_signal_adequate": adequacy,
+    }
+    if selected_margin is not None:
+        measures["dispatch_signal_margin"] = selected_margin
+    return measures
+
+
+def _execute_pre_cascade(
+    node: CompositeNode,
+    body: CascadeBody,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> CompositeRunResult:
+    """Execute one pre-cascade (dispatch) body for one item (§3.2 / §3.2.1).
+
+    The §3.2 dispatch law::
+
+        route(x) = arm_j  where  j = min({ i < m : σ_i(x) ≥ θ_i } ∪ {m})
+
+    Gates are evaluated LEFT TO RIGHT on the dispatch input ``config``; the
+    FIRST adequate gate selects its arm and STOPS (no other gate is even
+    evaluated); all gates inadequate → the terminal fallback arm ``m``. Exactly
+    ONE arm executes. Semantics:
+
+    - an absent/abstaining/non-numeric/non-finite signal VALUE is INADEQUATE —
+      routing continues to the next gate / terminal arm (§3.2
+      fail-toward-the-stronger-arm), NEVER an error;
+    - a signal that RAISES is the §3.2 absorbing ``error`` — no arm executes;
+    - a reached gate's missing/non-finite THRESHOLD is a calibration defect →
+      ``error`` (fail closed, exactly as POST);
+    - the routed arm is TERMINAL: its ``no_accept`` is the cascade's
+      ``no_accept`` (NO re-route, §3.2.1) and its ``error`` is absorbing.
+    """
+    gates = body.gates
+    last = len(body.arms) - 1  # the terminal fallback arm index (m)
+    adequacy: dict[int, int] = {}
+    selected_index = last
+    selected_margin: float | None = None
+
+    for index, gate in enumerate(gates):
+        try:
+            adequate, sigma, theta = _dispatch_adequate(
+                gate, config, calibrated_values, signals
+            )
+        except _SignalRaised as raised:
+            # §3.2: a signal that RAISES fails the item (absorbing error).
+            return _error(f"composite-runtime: {raised.detail}")
+        except Exception as exc:  # noqa: BLE001 - missing/non-finite θ -> error
+            return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+        adequacy[index] = 1 if adequate else 0
+        if adequate:
+            selected_index = index
+            # σ and θ are both finite here (adequate implies a numeric σ).
+            selected_margin = float(sigma) - float(theta)  # type: ignore[arg-type]
+            break
+
+    # Exactly the selected arm executes (the routed arm is TERMINAL-like).
+    try:
+        outcome = _run_routed_arm(
+            body.arms[selected_index],
+            stages,
+            registry,
+            config,
+            calibrated_values,
+            signals,
+            predicates,
+        )
+    except Exception as exc:  # noqa: BLE001 - error is absorbing (§3.2.1)
+        return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+
+    measures = _pre_cascade_measures(selected_index, adequacy, selected_margin)
+
+    if outcome.kind is ResultKind.ERROR:
+        return _error(
+            outcome.error
+            or f"composite-runtime: routed arm {selected_index} failed (no detail)"
+        )
+    if outcome.kind is ResultKind.NO_ACCEPT:
+        # §3.2.1: the routed arm's no_accept IS the cascade's no_accept — routing
+        # selects the arm; it does NOT re-route on non-acceptance.
+        return _no_accept(measures)
+    return CompositeRunResult(
+        output=outcome.output,
+        result_kind=ResultKind.OUTPUT,
+        measures=measures,
         error=None,
     )
 
@@ -1597,6 +1833,18 @@ def _preflight_reachable(
                         f"provided for composite {node.name!r} (fail-closed: a "
                         "missing predicate fails the item's evaluation)"
                     )
+        elif isinstance(body, CascadeBody) and body.placement is Placement.PRE:
+            # A pre-cascade (dispatch) gate's routing signal must be in the
+            # registry FAIL-CLOSED — a missing dispatch signal fails the item's
+            # evaluation BEFORE any arm runs, mirroring the signal_accept stop
+            # preflight (the IR guarantees a signal_below gate carries a signal).
+            for gate in body.gates:
+                if gate.signal is not None and gate.signal.signal not in signals:
+                    return _error(
+                        f"composite-runtime: signal {gate.signal.signal!r} is not "
+                        f"provided for composite {node.name!r} (fail-closed: a "
+                        "missing dispatch signal fails the item's evaluation)"
+                    )
 
         # Recurse into every present nested composite ref (missing refs already
         # short-circuited above, so every ref here resolves).
@@ -1722,9 +1970,11 @@ def execute_composite(
         §3.2.1 algebra tag and whose ``measures`` is the §3.10 telemetry.
 
     Raises:
-        NotImplementedError: for a ``placement: pre`` cascade or a
-            nested-composite LOOP body — each named explicitly (deferred, never
-            faked). Every other deferral has been replaced by tested behavior.
+        NotImplementedError: for a nested-composite LOOP body — the one
+            remaining v1 deferral, named explicitly (never faked). The
+            ``placement: pre`` cascade (dispatch/router) now executes
+            end-to-end; every other deferral has been replaced by tested
+            behavior.
     """
     sigs: Mapping[str, Callable[..., Any]] = signals or {}
     preds: Mapping[str, Callable[..., Any]] = predicates or {}

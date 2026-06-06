@@ -180,37 +180,14 @@ class TestBinaryCascadeExecution:
 
 
 class TestSurvivingDeferrals:
-    """The two genuinely-deferred surfaces (pre-cascade dispatch + a
-    nested-composite LOOP body) raise NotImplementedError naming the gap.
+    """The one genuinely-deferred surface (a nested-composite LOOP body) raises
+    NotImplementedError naming the gap.
 
     Every OTHER former deferral (ensemble/loop roots, nested-composite cascade
-    AND ensemble arms, the K-chain unroll) is now executed end-to-end — proven
-    by the execution test classes below.
+    AND ensemble arms, the K-chain unroll, AND the pre-cascade dispatch
+    executor) is now executed end-to-end — proven by the execution test classes
+    below (pre-cascade dispatch: ``TestPreCascadeDispatch``).
     """
-
-    def test_pre_cascade_dispatch_raises_not_implemented(self):
-        node = CompositeNode(
-            name="dispatch",
-            kind=CompositeKind.CASCADE,
-            body=CascadeBody(
-                arms=(StageArm("a"), StageArm("b")),
-                gates=(
-                    GateDecl(
-                        kind=GateKind.SIGNAL_BELOW,
-                        threshold="t",
-                        signal=SignalUse(signal="router"),
-                    ),
-                ),
-                placement=Placement.PRE,
-            ),
-        )
-        with pytest.raises(NotImplementedError, match="pre-cascade"):
-            execute_composite(
-                node,
-                {"a": _stage(["x"]), "b": _stage(["y"])},
-                config={},
-                calibrated_values={"t": 0.5},
-            )
 
     def test_nested_composite_loop_body_raises_not_implemented(self):
         # A loop whose BODY is a nested composite has no v1 state-producing
@@ -1826,3 +1803,345 @@ def test_kchain_teeth_condition1_violation_diverges_detectably():
     # Concretely: the live loop accepts later (lower ambient start) than the
     # chain (which begins after the loop already advanced the shared counter).
     assert loop.measures["iterations_used"] != chain.measures["iterations_used"]
+
+
+# --------------------------------------------------------------------------- #
+# Pre-cascade DISPATCH execution (§3.2 / §3.2.1 / §3.10) — the router path     #
+# --------------------------------------------------------------------------- #
+
+
+def _pre_cascade(
+    arms,
+    gates_signals,
+    *,
+    name="dispatch",
+):
+    """A ``placement: pre`` cascade IR node.
+
+    ``arms`` is a tuple of stage names (or ``CompositeArm`` objects); the LAST
+    is the terminal fallback (no gate). ``gates_signals`` is a tuple of
+    ``(threshold, signal_name)`` pairs, one per non-terminal arm
+    (``|gates| = |arms| - 1``), each a ``signal_below`` PRE gate.
+    """
+    arm_objs = tuple(StageArm(a) if isinstance(a, str) else a for a in arms)
+    gate_objs = tuple(
+        GateDecl(
+            kind=GateKind.SIGNAL_BELOW,
+            threshold=threshold,
+            signal=SignalUse(signal=sig),
+        )
+        for threshold, sig in gates_signals
+    )
+    return CompositeNode(
+        name=name,
+        kind=CompositeKind.CASCADE,
+        body=CascadeBody(arms=arm_objs, gates=gate_objs, placement=Placement.PRE),
+    )
+
+
+class _SpyStage:
+    """A stage runner that records whether it was called (route-isolation proof)."""
+
+    def __init__(self, value):
+        self.value = value
+        self.called = False
+
+    def runner(self):
+        def run(_item):
+            self.called = True
+            return [self.value]
+
+        return StageRunner(run=run, key_fn=lambda x: x, samples=1)
+
+
+class TestPreCascadeDispatch:
+    """The §3.2 pre-cascade (dispatch) law: route(x) = arm_j where
+    j = min({i < m : σ_i(x) >= θ_i} ∪ {m}). FIRST-MATCH-WINS, exactly ONE arm
+    executes; the routed arm is TERMINAL (its no_accept/error is final, no
+    re-route)."""
+
+    def test_routes_to_first_adequate_arm_only(self):
+        # σ_0 = 0.9 >= θ_0 0.5 -> arm 0 selected; arms 1, 2 must NOT run.
+        a0, a1, a2 = _SpyStage("A0"), _SpyStage("A1"), _SpyStage("A2")
+        node = _pre_cascade(("a0", "a1", "a2"), (("t0", "s0"), ("t1", "s1")))
+        result = execute_composite(
+            node,
+            {"a0": a0.runner(), "a1": a1.runner(), "a2": a2.runner()},
+            config={},
+            calibrated_values={"t0": 0.5, "t1": 0.5},
+            signals={"s0": lambda _x: 0.9, "s1": lambda _x: 0.9},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A0"
+        assert a0.called is True
+        assert a1.called is False  # first-match-wins: no other arm runs
+        assert a2.called is False
+
+    def test_fall_through_to_terminal_when_all_gates_inadequate(self):
+        # σ_0, σ_1 both < θ -> terminal arm 2 selected.
+        a0, a1, a2 = _SpyStage("A0"), _SpyStage("A1"), _SpyStage("A2")
+        node = _pre_cascade(("a0", "a1", "a2"), (("t0", "s0"), ("t1", "s1")))
+        result = execute_composite(
+            node,
+            {"a0": a0.runner(), "a1": a1.runner(), "a2": a2.runner()},
+            config={},
+            calibrated_values={"t0": 0.5, "t1": 0.5},
+            signals={"s0": lambda _x: 0.1, "s1": lambda _x: 0.1},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A2"  # terminal fallback
+        assert a0.called is False
+        assert a1.called is False
+        assert a2.called is True
+        assert result.measures["route_selected"] == 2
+        # terminal fall-through: NO dispatch_signal_margin (no gated selection).
+        assert "dispatch_signal_margin" not in result.measures
+
+    def test_second_gate_adequate_when_first_inadequate(self):
+        # σ_0 < θ (inadequate), σ_1 >= θ -> arm 1 selected; arm 0 never runs.
+        a0, a1, a2 = _SpyStage("A0"), _SpyStage("A1"), _SpyStage("A2")
+        node = _pre_cascade(("a0", "a1", "a2"), (("t0", "s0"), ("t1", "s1")))
+        result = execute_composite(
+            node,
+            {"a0": a0.runner(), "a1": a1.runner(), "a2": a2.runner()},
+            config={},
+            calibrated_values={"t0": 0.5, "t1": 0.5},
+            signals={"s0": lambda _x: 0.1, "s1": lambda _x: 0.9},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A1"
+        assert a0.called is False  # arm 0 never runs
+        assert a1.called is True
+        assert a2.called is False
+        assert result.measures["route_selected"] == 1
+
+    def test_absent_value_signal_is_inadequate_continues(self):
+        # σ_0 returns None (abstaining) -> inadequate, route onward to arm 1.
+        a0, a1 = _SpyStage("A0"), _SpyStage("A1")
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {"a0": a0.runner(), "a1": a1.runner()},
+            config={},
+            calibrated_values={"t0": 0.5},
+            signals={"s0": lambda _x: None},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A1"  # fell through to terminal
+        assert a0.called is False
+        assert a1.called is True
+
+    def test_non_numeric_signal_value_is_inadequate_continues(self):
+        # σ_0 returns a string (non-numeric) -> inadequate, no crash, continue.
+        a0, a1 = _SpyStage("A0"), _SpyStage("A1")
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {"a0": a0.runner(), "a1": a1.runner()},
+            config={},
+            calibrated_values={"t0": 0.5},
+            signals={"s0": lambda _x: "not-a-number"},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A1"
+        assert a0.called is False
+        assert a1.called is True
+
+    def test_signal_that_raises_is_absorbing_error(self):
+        # §3.2: a signal that RAISES fails the item's evaluation (never silently
+        # routes). ERROR is absorbing; no arm executes.
+        a0, a1 = _SpyStage("A0"), _SpyStage("A1")
+
+        def boom(_x):
+            raise RuntimeError("signal blew up")
+
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {"a0": a0.runner(), "a1": a1.runner()},
+            config={},
+            calibrated_values={"t0": 0.5},
+            signals={"s0": boom},
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert result.output is None
+        assert "RuntimeError" in (result.error or "")
+        assert a0.called is False  # no arm executed
+        assert a1.called is False
+
+    def test_routed_arm_no_accept_is_cascade_no_accept_no_reroute(self):
+        # The routed arm yields no_accept -> the cascade's result is no_accept;
+        # routing selects the arm, it does NOT re-route on non-acceptance.
+        a1 = _SpyStage("A1")  # the later arm must NOT run
+
+        def no_accept_arm(_item, _state=None):  # pragma: no cover - via runner
+            return None
+
+        # arm 0 is a nested composite that yields no_accept (an ensemble whose
+        # accept gate fails); arm 1 is the terminal fallback that must NOT run.
+        inner = self_consistency(
+            "inner", stage="ia", cardinality="k", accept_threshold="acc"
+        ).structure
+        node = _pre_cascade((CompositeArm("inner"), "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {
+                "ia": _stage(["X", "Y"]),  # split -> margin 0 < acc -> no_accept
+                "a1": a1.runner(),
+            },
+            config={"k": 2},
+            calibrated_values={"t0": 0.5, "acc": 0.9},
+            signals={"s0": lambda _x: 0.9},  # routes to arm 0
+            registry={"dispatch": node, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.NO_ACCEPT
+        assert a1.called is False  # NO re-route to the later arm
+        assert result.measures["route_selected"] == 0
+
+    def test_routed_arm_error_is_cascade_error(self):
+        # The routed arm raises -> absorbing error (§3.2.1).
+        def explode(_item):
+            raise RuntimeError("routed arm blew up")
+
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {
+                "a0": StageRunner(run=explode, key_fn=lambda x: x, samples=1),
+                "a1": _stage(["A1"]),
+            },
+            config={},
+            calibrated_values={"t0": 0.5},
+            signals={"s0": lambda _x: 0.9},  # routes to arm 0
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "RuntimeError" in (result.error or "")
+        assert result.output is None
+
+    def test_threshold_read_live_at_decide_time(self):
+        # The SAME structure routes differently purely as a function of the LIVE
+        # calibrated_values — θ is read at decide time, never snapshotted.
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        stages = {"a0": _stage(["A0"]), "a1": _stage(["A1"])}
+        sigs = {"s0": lambda _x: 0.6}
+        adequate = execute_composite(
+            node, stages, config={}, calibrated_values={"t0": 0.5}, signals=sigs
+        )
+        inadequate = execute_composite(
+            node, stages, config={}, calibrated_values={"t0": 0.9}, signals=sigs
+        )
+        assert adequate.output == "A0"  # 0.6 >= 0.5 -> arm 0
+        assert inadequate.output == "A1"  # 0.6 < 0.9 -> terminal arm 1
+
+    def test_missing_calibrated_threshold_for_reached_gate_is_error(self):
+        # A reached gate whose threshold CVAR is unset fails CLOSED (calibration
+        # defect), exactly as POST does — never silently inadequate.
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {"a0": _stage(["A0"]), "a1": _stage(["A1"])},
+            config={},
+            calibrated_values={},  # 't0' absent
+            signals={"s0": lambda _x: 0.9},
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert result.output is None
+
+    def test_preflight_missing_dispatch_signal_is_error_before_execution(self):
+        # FAIL-CLOSED preflight: a pre-gate signal not in the registry is an
+        # error BEFORE any arm/signal runs (mirrors signal_accept loop preflight).
+        a0, a1 = _SpyStage("A0"), _SpyStage("A1")
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {"a0": a0.runner(), "a1": a1.runner()},
+            config={},
+            calibrated_values={"t0": 0.5},
+            signals={},  # 's0' absent -> fail closed up front
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "not provided" in (result.error or "")
+        assert "s0" in (result.error or "")
+        assert a0.called is False  # nothing ran
+        assert a1.called is False
+
+    def test_preflight_missing_signal_in_unreached_nested_pre_arm_is_error(self):
+        # The deep preflight reaches a nested PRE-cascade arm too: a missing
+        # dispatch signal inside an unselected nested arm fails closed up front.
+        inner = _pre_cascade(
+            ("ia0", "ia1"), (("it0", "needed_sig"),), name="inner"
+        )
+        outer = _pre_cascade((CompositeArm("inner"), "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            outer,
+            {
+                "ia0": _stage(["IA0"]),
+                "ia1": _stage(["IA1"]),
+                "a1": _stage(["A1"]),
+            },
+            config={},
+            calibrated_values={"t0": 0.5, "it0": 0.5},
+            signals={"s0": lambda _x: 0.1},  # 'needed_sig' absent
+            registry={"dispatch": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "needed_sig" in (result.error or "")
+
+    def test_gated_selection_emits_dispatch_signal_margin(self):
+        # A GATED selection (not terminal) carries dispatch_signal_margin =
+        # σ_sel − θ_sel; gate_signal_adequate is an index-keyed adequacy map.
+        node = _pre_cascade(("a0", "a1", "a2"), (("t0", "s0"), ("t1", "s1")))
+        result = execute_composite(
+            node,
+            {"a0": _stage(["A0"]), "a1": _stage(["A1"]), "a2": _stage(["A2"])},
+            config={},
+            calibrated_values={"t0": 0.5, "t1": 0.5},
+            signals={"s0": lambda _x: 0.2, "s1": lambda _x: 0.8},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.measures["route_selected"] == 1
+        assert result.measures["dispatch_signal_margin"] == pytest.approx(0.3)
+        # gate 0 evaluated inadequate (0), gate 1 evaluated adequate (1).
+        assert result.measures["gate_signal_adequate"] == {0: 0, 1: 1}
+
+    def test_telemetry_flattens_through_composite_measures_no_collision(self):
+        from traigent.knobs.telemetry import (
+            composite_measures,
+            merge_composite_measures,
+        )
+
+        node = _pre_cascade(("a0", "a1", "a2"), (("t0", "s0"), ("t1", "s1")))
+        result = execute_composite(
+            node,
+            {"a0": _stage(["A0"]), "a1": _stage(["A1"]), "a2": _stage(["A2"])},
+            config={},
+            calibrated_values={"t0": 0.5, "t1": 0.5},
+            signals={"s0": lambda _x: 0.2, "s1": lambda _x: 0.8},
+        )
+        flat = composite_measures(result)
+        assert flat["composite_route_selected"] == 1
+        assert flat["composite_dispatch_signal_margin"] == pytest.approx(0.3)
+        # the index-keyed gate_signal_adequate map flattens per gate index.
+        assert flat["composite_gate_0_signal_adequate"] == 0
+        assert flat["composite_gate_1_signal_adequate"] == 1
+        # merges into a user metrics dict without collision.
+        merged = merge_composite_measures({"accuracy": 0.9}, result)
+        assert merged["accuracy"] == 0.9
+        assert merged["composite_route_selected"] == 1
+
+    def test_terminal_telemetry_omits_dispatch_margin_and_flattens(self):
+        from traigent.knobs.telemetry import composite_measures
+
+        node = _pre_cascade(("a0", "a1"), (("t0", "s0"),))
+        result = execute_composite(
+            node,
+            {"a0": _stage(["A0"]), "a1": _stage(["A1"])},
+            config={},
+            calibrated_values={"t0": 0.5},
+            signals={"s0": lambda _x: 0.1},  # inadequate -> terminal
+        )
+        flat = composite_measures(result)
+        assert flat["composite_route_selected"] == 1
+        assert "composite_dispatch_signal_margin" not in flat
+        # the single evaluated gate is recorded inadequate.
+        assert flat["composite_gate_0_signal_adequate"] == 0
