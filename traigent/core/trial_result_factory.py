@@ -16,6 +16,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
 from traigent.utils.logging import get_logger
@@ -378,6 +379,24 @@ def build_success_result(
             float,
             trial_id,
         )
+
+    # Authoritative final-union ceiling — the SINGLE cap that bounds what every
+    # lane actually ships on a successful trial. Both evaluator lanes already cap
+    # ``eval_result.metrics`` (the local lane's enforce_user_metric_ceiling /
+    # format_for_backend pre-trims, the SimpleScoring lane's own ceiling), but
+    # this assembly site writes reserved keys (``examples_attempted``,
+    # ``total_cost``) AFTER those caps ran, so the per-lane cap alone cannot bound
+    # the final union — a 50-key eval_result + total_cost would ship 51. Re-apply
+    # the ceiling here as the last metric mutation: only NON-reserved user keys
+    # are dropped (deterministically, warning-logged); the evaluator/assembly
+    # reserved keys are never sacrificed. The static RESERVED_METRIC_KEYS already
+    # covers every key written here and by the evaluator lanes (accuracy, score,
+    # duration, the token/cost family, examples_attempted, total_cost, ...), so no
+    # extra_reserved is needed at this site.
+    enforce_user_metric_ceiling(
+        trial_result.metrics,
+        context=f"trial {trial_id} final assembly",
+    )
 
     if getattr(eval_result, "summary_stats", None):
         trial_result.summary_stats = redact_sensitive_data(  # type: ignore[attr-defined]
