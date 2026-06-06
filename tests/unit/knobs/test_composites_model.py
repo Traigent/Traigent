@@ -726,7 +726,7 @@ class TestCalFoldBoundary:
         ens = CompositeNode(
             name="ens",
             kind=CompositeKind.ENSEMBLE,
-            ensemble=EnsembleBody(
+            body=EnsembleBody(
                 arms=(StageArm("a"),),
                 cardinality="k",
                 aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE),
