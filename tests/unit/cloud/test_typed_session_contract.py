@@ -299,7 +299,9 @@ class TestGovernedNoSilentFallback:
         assert result.session_id == "local_fallback_1"
         ops._create_local_fallback_session.assert_called_once()
 
-    def test_governed_without_api_key_stays_local_by_design(self, monkeypatch):
+    def test_governed_without_api_key_stays_local_by_design(
+        self, monkeypatch, caplog
+    ):
         """ADJUDICATED (round 3): no API key is an explicit local-only
         configuration, NOT a cloud failure — strict enforcement runs fully
         locally and NO backend record exists that could launder strict mode
@@ -310,13 +312,19 @@ class TestGovernedNoSilentFallback:
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         ops = self._session_ops(AssertionError("backend must not be called"))
         ops.client.auth_manager.has_api_key = Mock(return_value=False)
-        result = ops.create_session(
-            function_name="answer_question",
-            search_space={"model": {"choices": ["a"]}},
-            promotion_policy=STRICT_POLICY,
-        )
+        with caplog.at_level("WARNING", logger="traigent.cloud.session_operations"):
+            result = ops.create_session(
+                function_name="answer_question",
+                search_space={"model": {"choices": ["a"]}},
+                promotion_policy=STRICT_POLICY,
+            )
         assert result.session_id == "local_fallback_1"
         ops.client._create_traigent_session_via_api.assert_not_called()
+        # the governance/no-cloud mismatch must be VISIBLE, not silent
+        assert any(
+            "no API key" in record.message and "Governed" in record.message
+            for record in caplog.records
+        )
 
 
 class TestGovernanceBuilders:
