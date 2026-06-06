@@ -105,7 +105,7 @@ class TestBinaryCascadeExecution:
         assert result.output == "A"  # the cheap arm's representative
         assert result.measures["stage_selected"] == 0
         assert result.measures["escalation_rate"] == 0.0
-        assert result.measures["gate_margin_pass_rate"] == {GATE: 1.0}
+        assert result.measures["gate_margin_pass_rate"] == {0: 1.0}
 
     def test_escalates_below_theta(self):
         # cheap split 2/3 -> margin 0.666... < theta 0.9 -> escalate to strong
@@ -120,7 +120,7 @@ class TestBinaryCascadeExecution:
         assert result.output == "STRONG"  # the escalated expert arm
         assert result.measures["stage_selected"] == 1
         assert result.measures["escalation_rate"] == 1.0
-        assert result.measures["gate_margin_pass_rate"] == {GATE: 0.0}
+        assert result.measures["gate_margin_pass_rate"] == {0: 0.0}
 
     def test_threshold_is_read_live_not_snapshotted(self):
         # The SAME structure escalates or not purely as a function of the LIVE
@@ -387,3 +387,31 @@ class TestGovernanceNoChangeProof:
         assert build_certified_selection("trial1", {GATE: no_decision}) is None
         # and an entirely empty certificate set is likewise withheld.
         assert build_certified_selection("trial1", {}) is None
+
+
+class TestPerGateTelemetryIndexed:
+    def test_duplicate_threshold_refs_keep_per_gate_values(self):
+        """Codex runtime-round blocker: keying per-gate telemetry on the
+        threshold NAME collapses duplicated refs (legal in n_cascade) — a
+        3-arm cascade reusing 'theta' lost the first gate's 0.0. Per-gate
+        measures are keyed by GATE INDEX (§3.10: per-gate)."""
+        from traigent.knobs.patterns import n_cascade
+
+        knob = n_cascade(
+            "tri",
+            stages=("a", "b", "c"),
+            thresholds=("theta", "theta"),
+        )
+        stages = {
+            # split 1/3 -> margin ~0.33 < theta 0.5 -> escalate past gate 0
+            "a": _stage(["x", "y", "z"]),
+            # unanimous -> margin 1.0 >= 0.5 -> gate 1 stops here
+            "b": _stage(["k", "k", "k"]),
+            "c": _stage(["k", "k", "k"]),
+        }
+        result = execute_composite(
+            knob.structure, stages, config={}, calibrated_values={"theta": 0.5}
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        per_gate = result.measures["gate_margin_pass_rate"]
+        assert per_gate == {0: 0.0, 1: 1.0}  # BOTH gates preserved by INDEX

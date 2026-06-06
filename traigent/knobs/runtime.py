@@ -82,8 +82,8 @@ class StageRunner:
     different count, mirroring :class:`~traigent.knobs.cascade.StageSpec`).
 
     A bare ``Callable`` may be supplied directly in the ``stages`` mapping; it
-    is wrapped as a single-sample, identity-keyed runner (a leaf stage that
-    feeds no gate). A stage that DOES feed a margin gate must be supplied as a
+    is wrapped as a NON-VOTING single-sample runner (``key_fn=None`` — a leaf
+    stage that feeds no gate; supplying one to a gated position fails closed). A stage that DOES feed a margin gate must be supplied as a
     :class:`StageRunner` carrying a ``key_fn``.
     """
 
@@ -200,7 +200,8 @@ def _cascade_measures(step: CascadeStep, body: CascadeBody) -> dict[str, Any]:
 
     ``escalation_rate`` is the per-run 0/1 escalated indicator (1 iff any
     escalation happened); ``stage_selected`` is the selected arm index;
-    ``gate_margin_pass_rate`` is a per-gate map over the gates actually
+    ``gate_margin_pass_rate`` is a per-gate map (keyed by gate INDEX —
+    threshold names may repeat across gates) over the gates actually
     EVALUATED: 1.0 where the gate did not escalate (the margin passed) and 0.0
     where it did. A gate is evaluated for arm ``i`` iff stage ``i`` ran and was
     not the selected terminal stage (i.e. ``i < stage_selected``: those
@@ -209,14 +210,17 @@ def _cascade_measures(step: CascadeStep, body: CascadeBody) -> dict[str, Any]:
     """
     selected = step.stage_index
     escalated = 1 if step.escalations > 0 else 0
-    per_gate: dict[str, float] = {}
-    for index, gate in enumerate(body.gates):
+    # Keyed by GATE INDEX, not threshold name: duplicate threshold refs across
+    # gates are legal (n_cascade may reuse one CVAR) and name-keying collapsed
+    # per-gate values (codex runtime-round blocker). §3.10: per-gate.
+    per_gate: dict[int, float] = {}
+    for index, _gate in enumerate(body.gates):
         if index < selected:
             # stage index < selected ran a gate that escalated.
-            per_gate[gate.threshold] = 0.0
+            per_gate[index] = 0.0
         elif index == selected and index < len(body.arms) - 1:
             # the selected non-terminal stage's gate evaluated and STOPPED.
-            per_gate[gate.threshold] = 1.0
+            per_gate[index] = 1.0
         # gates beyond the selected stage never evaluated — omitted (honest).
     return {
         "escalation_rate": float(escalated),
