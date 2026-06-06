@@ -1,0 +1,32 @@
+---Trace---
+------State 0 (loop)-------
+univ={Time$0, Time$1, Time$2, Time$3, Float$0, Float$1, Float$2, Float$3, Permit$0, Permit$1, True$0, False$0, CostEnforcer$0, ordering/Ord$0, -16, -15, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+Int={-16, -15, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+seq/Int={0, 1, 2}
+String={}
+none={}
+this/Time={Time$0, Time$1, Time$2, Time$3}
+this/Float={Float$0, Float$1, Float$2, Float$3}
+this/Float<:value={Float$0->1, Float$1->0, Float$2->9, Float$3->8}
+this/Permit={Permit$0, Permit$1}
+this/Permit<:id={Permit$0->1, Permit$1->2}
+this/Permit<:amount={Permit$0->Float$0, Permit$1->Float$3}
+this/Permit<:active={Permit$0->Time$0->False$0, Permit$0->Time$1->False$0, Permit$0->Time$2->True$0, Permit$0->Time$3->True$0, Permit$1->Time$0->False$0, Permit$1->Time$1->False$0, Permit$1->Time$2->False$0, Permit$1->Time$3->True$0}
+this/True={True$0}
+this/False={False$0}
+this/Bool={True$0, False$0}
+this/CostEnforcer={CostEnforcer$0}
+this/CostEnforcer<:accumulated_cost={CostEnforcer$0->Time$0->Float$1, CostEnforcer$0->Time$1->Float$1, CostEnforcer$0->Time$2->Float$1, CostEnforcer$0->Time$3->Float$1}
+this/CostEnforcer<:reserved_cost={CostEnforcer$0->Time$0->Float$1, CostEnforcer$0->Time$1->Float$1, CostEnforcer$0->Time$2->Float$0, CostEnforcer$0->Time$3->Float$2}
+this/CostEnforcer<:in_flight_count={CostEnforcer$0->Time$0->0, CostEnforcer$0->Time$1->0, CostEnforcer$0->Time$2->1, CostEnforcer$0->Time$3->2}
+this/CostEnforcer<:active_permits={CostEnforcer$0->Time$2->Permit$0, CostEnforcer$0->Time$3->Permit$0, CostEnforcer$0->Time$3->Permit$1}
+this/CostEnforcer<:permit_counter={CostEnforcer$0->Time$0->0, CostEnforcer$0->Time$1->0, CostEnforcer$0->Time$2->1, CostEnforcer$0->Time$3->2}
+this/CostEnforcer<:limit={CostEnforcer$0->Float$2}
+this/CostEnforcer<:mock_mode={CostEnforcer$0->True$0}
+ordering/Ord={ordering/Ord$0}
+ordering/Ord<:First={ordering/Ord$0->Time$0}
+ordering/Ord<:Next={ordering/Ord$0->Time$0->Time$1, ordering/Ord$0->Time$1->Time$2, ordering/Ord$0->Time$2->Time$3}
+skolem $showAcquireReachable_e={CostEnforcer$0}
+skolem $showAcquireReachable_p={Permit$1}
+skolem $showAcquireReachable_t={Time$2}
+skolem $showAcquireReachable_estimated={Float$3}

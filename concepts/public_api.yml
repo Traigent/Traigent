@@ -1,0 +1,56 @@
+id: CONC-PublicAPI
+name: Public API
+purpose: "Expose user-facing decorators and helpers to start optimization runs with minimal code changes."
+state:
+  - name: global_config
+    type: "dict[str, Any]"
+    description: "Process-wide configuration defaults for optimization runs."
+  - name: optimize_defaults
+    type: "dict[str, Any]"
+    description: "Default parameter values for @traigent.optimize options."
+actions:
+  - name: register_optimize
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: options
+        type: "dict[str, Any]"
+    outputs:
+      - case: wrapped
+        fields:
+          - name: optimized_function
+            type: "OptimizedFunction"
+      - case: error
+        fields:
+          - name: error
+            type: "Exception"
+    description: "Validate and wrap a user function with optimization, evaluation, and injection settings."
+  - name: validate_parameters
+    inputs:
+      - name: options
+        type: "dict[str, Any]"
+    outputs:
+      - case: valid
+        fields:
+          - name: normalized_options
+            type: "dict[str, Any]"
+      - case: invalid
+        fields:
+          - name: error
+            type: "ValidationError"
+    description: "Ensure optimize() arguments conform to supported schema and feature flags."
+  - name: build_configuration
+    inputs:
+      - name: options
+        type: "dict[str, Any]"
+    outputs:
+      - case: constructed
+        fields:
+          - name: optimize_config
+            type: "dict[str, Any]"
+    description: "Assemble evaluation, injection, execution, and mock mode bundles for downstream orchestration."
+operational_principle:
+  - "Optimization must be opt-in per function via @traigent.optimize."
+  - "Invalid parameters are surfaced early with descriptive errors."
+version: 1
+status: active

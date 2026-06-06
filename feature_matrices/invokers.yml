@@ -1,0 +1,215 @@
+# Invoker Feature Matrix
+# Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-INVOKERS REQ-INV-006 REQ-TRACE-GAP-004
+#
+# This matrix tracks implementation completeness for function invocation strategies.
+
+id: MATRIX-INVOKERS
+module_type: invoker
+requirement: REQ-INV-006
+last_updated: "2025-12-04"
+description: "Function invocation strategy implementations and their feature coverage"
+
+base_contract:
+  class: BaseInvoker
+  code_unit: traigent/invokers/base.py
+  required_methods:
+    - name: invoke
+      signature: "(self, func, config, input_data) -> InvocationResult"
+      description: "Invoke function with configuration and input"
+      is_async: true
+
+    - name: invoke_batch
+      signature: "(self, func, config, input_batch) -> list[InvocationResult]"
+      description: "Invoke function on multiple inputs"
+      is_async: true
+
+    - name: supports_streaming
+      signature: "(self) -> bool"
+      description: "Check if invoker supports streaming"
+
+    - name: supports_batch
+      signature: "(self) -> bool"
+      description: "Check if invoker supports batch processing"
+
+  optional_methods:
+    - name: validate_function
+      signature: "(self, func) -> None"
+      description: "Validate function can be invoked"
+      default_behavior: "Checks callable"
+
+    - name: validate_config
+      signature: "(self, config) -> None"
+      description: "Validate configuration"
+      default_behavior: "Checks is dict"
+
+    - name: validate_input
+      signature: "(self, input_data) -> None"
+      description: "Validate input data"
+      default_behavior: "Checks is dict"
+
+    - name: invoke_with_retry
+      signature: "(self, func, config, input_data) -> InvocationResult"
+      description: "Invoke with retry logic"
+      is_async: true
+      default_behavior: "Retries up to max_retries times"
+
+  class_constants:
+    - name: MAX_TIMEOUT_SECONDS
+      value: 3600
+      description: "Maximum timeout (1 hour)"
+
+    - name: MAX_RETRIES
+      value: 10
+      description: "Maximum retry attempts"
+
+capabilities:
+  - id: CAP-INV-LOCAL
+    name: "Local Invoker"
+    description: "Local function invocation with timeout and retry support"
+    implementations:
+      - class_name: LocalInvoker
+        code_unit: traigent/invokers/local.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - invoke
+          - invoke_batch
+          - supports_streaming
+          - supports_batch
+        features:
+          streaming: false
+          batch: true
+          retry: true
+          timeout: true
+        notes: "Primary invoker for local execution"
+
+  - id: CAP-INV-BATCH
+    name: "Batch Invoker"
+    description: "Optimized batch processing invoker"
+    implementations:
+      - class_name: BatchInvoker
+        code_unit: traigent/invokers/batch.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - invoke
+          - invoke_batch
+          - supports_streaming
+          - supports_batch
+        features:
+          streaming: false
+          batch: true
+          retry: true
+          timeout: true
+          parallel: true
+        notes: "Extends LocalInvoker with optimized batch processing"
+
+  - id: CAP-INV-STREAMING
+    name: "Streaming Invoker"
+    description: "Streaming function invocation for LLM responses"
+    implementations:
+      - class_name: StreamingInvoker
+        code_unit: traigent/invokers/streaming.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - invoke
+          - invoke_batch
+          - invoke_streaming
+          - supports_streaming
+          - supports_batch
+        features:
+          streaming: true
+          batch: true
+          retry: true
+          timeout: true
+          chunk_timeout: true
+          buffer_size: true
+        notes: "Extends LocalInvoker with streaming response support for LLM functions"
+
+# Summary Statistics
+summary:
+  total_implementations: 3
+  complete: 3
+  partial: 0
+  missing: 0
+  coverage_percentage: 100.0
+
+# Feature Support Matrix
+feature_support:
+  streaming:
+    full_support:
+      - StreamingInvoker
+    not_supported:
+      - LocalInvoker
+      - BatchInvoker
+    notes: "StreamingInvoker added 2025-12-04 for LLM streaming use cases"
+
+  batch_processing:
+    full_support:
+      - LocalInvoker
+      - BatchInvoker
+      - StreamingInvoker
+
+  retry_logic:
+    full_support:
+      - LocalInvoker
+      - BatchInvoker
+      - StreamingInvoker
+
+  timeout:
+    full_support:
+      - LocalInvoker
+      - BatchInvoker
+      - StreamingInvoker
+
+  parallel_execution:
+    full_support:
+      - BatchInvoker
+    not_supported:
+      - LocalInvoker
+      - StreamingInvoker
+
+# Identified Gaps (Updated 2025-12-04)
+identified_gaps:
+  - id: GAP-INV-001
+    type: capability
+    name: "No streaming invoker"
+    priority: medium
+    status: RESOLVED
+    resolution: "StreamingInvoker implemented 2025-12-04"
+
+  - id: GAP-INV-002
+    type: capability
+    name: "No remote invoker"
+    priority: low
+    description: "No invoker for remote function execution"
+    recommendation: "Consider RemoteInvoker for distributed execution"
+
+  - id: GAP-INV-003
+    type: capability
+    name: "Limited invoker variety"
+    priority: low
+    status: RESOLVED
+    resolution: "Now have 3 invokers covering local, batch, and streaming use cases"
+
+# Expected Future Capabilities
+roadmap:
+  - id: CAP-INV-STREAMING
+    name: "Streaming Invoker"
+    description: "Support for streaming LLM responses"
+    priority: medium
+    status: COMPLETED
+    completion_date: "2025-12-04"
+
+  - id: CAP-INV-REMOTE
+    name: "Remote Invoker"
+    description: "Invoke functions on remote workers"
+    priority: low
+    status: proposed
+
+  - id: CAP-INV-ASYNC-BATCH
+    name: "Async Batch Invoker"
+    description: "True async batch processing with asyncio.gather"
+    priority: medium
+    status: proposed

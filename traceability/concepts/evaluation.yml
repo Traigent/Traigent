@@ -1,0 +1,58 @@
+id: CONC-Evaluation
+name: Evaluation
+purpose: "Load datasets, run evaluations locally, and compute metrics including token/cost telemetry."
+state:
+  - name: dataset_registry
+    type: "dict[str, DatasetRegistryEntry]"
+    description: "Registered datasets and metadata used during resolution."
+  - name: metric_functions
+    type: "dict[str, Callable]"
+    description: "Available metric functions including RAG/RAGAS integrations."
+actions:
+  - name: load_dataset
+    inputs:
+      - name: source
+        type: "str"
+    outputs:
+      - case: dataset
+        fields:
+          - name: dataset
+            type: "Dataset"
+      - case: error
+        fields:
+          - name: error
+            type: "ValidationError"
+    description: "Resolve dataset paths/registry entries within allowed roots and build Dataset objects."
+  - name: evaluate_example
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: example
+        type: "dict[str, Any]"
+    outputs:
+      - case: result
+        fields:
+          - name: example_result
+            type: "ExampleResult"
+      - case: error
+        fields:
+          - name: error
+            type: "EvaluationError"
+    description: "Invoke user function against an example and capture outputs, errors, and token metadata."
+  - name: compute_metrics
+    inputs:
+      - name: results
+        type: "list[ExampleResult]"
+      - name: metrics
+        type: "list[str]"
+    outputs:
+      - case: metrics
+        fields:
+          - name: aggregated
+            type: "dict[str, Any]"
+    description: "Aggregate metrics, compute RAG/RAGAS when configured, and track costs/latency."
+operational_principle:
+  - "Dataset resolution must enforce trusted roots and deny traversal."
+  - "Metric extraction should gracefully handle missing provider telemetry."
+version: 1
+status: active

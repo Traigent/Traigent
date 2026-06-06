@@ -1,0 +1,26 @@
+id: SYNC-IntegrationHook
+name: "Framework/plugin hook-up"
+functionalities: [FUNC-INTEGRATIONS, FUNC-INVOKERS]
+when:
+  - concept: CONC-ConfigInjection
+    action: resolve_provider
+    match:
+      bind:
+        options: "?options"
+then:
+  - concept: CONC-Integrations
+    action: register_plugin
+    args:
+      plugin: "?options.plugin"
+  - concept: CONC-Integrations
+    action: enable_provider
+    args:
+      provider_name: "?options.provider"
+      options: "?options"
+  - concept: CONC-Invocation
+    action: prepare_arguments
+    args:
+      function: "?function"
+      config: "?options.configuration"
+version: 1
+status: active

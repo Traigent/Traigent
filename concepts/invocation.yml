@@ -1,0 +1,56 @@
+id: CONC-Invocation
+name: Invocation
+purpose: "Execute optimized functions locally or in batch, applying configs and capturing standardized results."
+state:
+  - name: parallel_config
+    type: "ParallelConfig"
+    description: "Resolved parallel execution preferences for local/batch runs."
+  - name: result_schema
+    type: "type[InvocationResult]"
+    description: "Standardized result envelope for invocations."
+actions:
+  - name: invoke_local
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: config
+        type: "dict[str, Any]"
+      - name: example
+        type: "dict[str, Any] | None"
+    outputs:
+      - case: completed
+        fields:
+          - name: invocation_result
+            type: "InvocationResult"
+    description: "Run a single invocation with injected config and return status/metrics."
+  - name: invoke_batch
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: examples
+        type: "list[dict[str, Any]]"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: batch_completed
+        fields:
+          - name: results
+            type: "list[InvocationResult]"
+    description: "Execute function across examples in parallel with progress callbacks and error isolation."
+  - name: prepare_arguments
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: prepared
+        fields:
+          - name: bound_args
+            type: "dict[str, Any]"
+    description: "Bind config into function signature according to injection mode before invocation."
+operational_principle:
+  - "Invocation must honor execution_mode and parallel limits without mutating caller inputs."
+  - "Errors are captured and surfaced via standardized result payloads."
+version: 1
+status: active

@@ -1,0 +1,60 @@
+id: CONC-ConfigInjection
+name: Configuration Injection
+purpose: "Inject sampled configuration values into optimized functions safely via AST rewrites and runtime shims."
+state:
+  - name: transformer_cache
+    type: "dict[str, Any]"
+    description: "Cache of transformed functions keyed by config hash."
+  - name: runtime_shim_stats
+    type: "dict[str, int]"
+    description: "Counters for AST rewrites, runtime shims, and fallback reasons."
+actions:
+  - name: apply_ast_transform
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: transformed
+        fields:
+          - name: wrapped_function
+            type: "Callable[..., Any]"
+      - case: unchanged
+        fields:
+          - name: original_function
+            type: "Callable[..., Any]"
+    description: "Rewrite in-function assignments to use sampled configuration values when possible."
+  - name: apply_runtime_shim
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: shimmed
+        fields:
+          - name: wrapped_function
+            type: "Callable[..., Any]"
+      - case: skipped
+        fields:
+          - name: reason
+            type: "str"
+    description: "Inject config into signature defaults/kwargs when AST rewrite made no changes but parameters overlap."
+  - name: resolve_provider
+    inputs:
+      - name: mode
+        type: "str"
+      - name: options
+        type: "dict[str, Any]"
+    outputs:
+      - case: provider
+        fields:
+          - name: injection_provider
+            type: "ConfigurationProvider"
+    description: "Return context/parameter/attribute-based provider according to injection_mode and options."
+operational_principle:
+  - "Caller-supplied arguments are never overridden by injected configs."
+  - "Injection must remain deterministic across execution modes and parallel trials."
+version: 1
+status: active

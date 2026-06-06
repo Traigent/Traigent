@@ -1,0 +1,54 @@
+id: CONC-Storage
+name: Storage
+purpose: "Persist optimization sessions, trial results, and cache data on local disk with locking and resumability."
+state:
+  - name: storage_path
+    type: "Path"
+    description: "Base directory for sessions, cache, and locks."
+  - name: locks
+    type: "dict[str, Any]"
+    description: "Active file locks to coordinate concurrent writers."
+actions:
+  - name: create_session
+    inputs:
+      - name: function_name
+        type: "str"
+      - name: optimization_config
+        type: "dict[str, Any] | None"
+    outputs:
+      - case: session_created
+        fields:
+          - name: session_id
+            type: "str"
+    description: "Initialize a new session record with timestamps and metadata."
+  - name: store_trial
+    inputs:
+      - name: session_id
+        type: "str"
+      - name: trial_result
+        type: "dict[str, Any]"
+    outputs:
+      - case: stored
+        fields:
+          - name: status
+            type: "bool"
+    description: "Persist trial configs, scores, and metadata with atomic locking."
+  - name: load_session
+    inputs:
+      - name: session_id
+        type: "str"
+    outputs:
+      - case: loaded
+        fields:
+          - name: session
+            type: "OptimizationSession"
+      - case: missing
+        fields:
+          - name: error
+            type: "TraigentStorageError"
+    description: "Load a previously stored session and reconstruct trial objects."
+operational_principle:
+  - "Storage operations must be safe under concurrent processes using lock files."
+  - "Fallback storage locations respect environment overrides."
+version: 1
+status: active

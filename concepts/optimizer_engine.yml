@@ -1,0 +1,54 @@
+id: CONC-OptimizerEngine
+name: Optimizer Engine
+purpose: "Provide optimization algorithms and registries that suggest configurations and track results."
+state:
+  - name: optimizer_registry
+    type: "dict[str, BaseOptimizer]"
+    description: "Registered optimizer implementations with metadata."
+  - name: checkpoints
+    type: "dict[str, Any]"
+    description: "Checkpoint state for Optuna/remote optimizers."
+actions:
+  - name: suggest_next
+    inputs:
+      - name: history
+        type: "list[dict[str, Any]]"
+    outputs:
+      - case: suggestion
+        fields:
+          - name: config
+            type: "dict[str, Any]"
+      - case: error
+        fields:
+          - name: error
+            type: "Exception"
+    description: "Produce the next configuration candidate based on optimizer strategy."
+  - name: record_outcome
+    inputs:
+      - name: config
+        type: "dict[str, Any]"
+      - name: metrics
+        type: "dict[str, Any]"
+    outputs:
+      - case: recorded
+        fields:
+          - name: status
+            type: "bool"
+    description: "Update optimizer state, pruning signals, and checkpoints after evaluation."
+  - name: register_optimizer
+    inputs:
+      - name: name
+        type: "str"
+      - name: optimizer
+        type: "BaseOptimizer"
+    outputs:
+      - case: registered
+        fields:
+          - name: registry_size
+            type: "int"
+    description: "Expose built-in and plugin optimizers through a shared registry."
+operational_principle:
+  - "Suggestions must respect objective directions and constraints expressed in config space."
+  - "Remote and Optuna-based optimizers should persist checkpoints when available."
+version: 1
+status: active

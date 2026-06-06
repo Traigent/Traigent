@@ -1,0 +1,58 @@
+id: CONC-AnalyticsTelemetry
+name: Analytics & Telemetry
+purpose: "Analyze optimization runs for insights, cost forecasting, anomalies, and emit telemetry/visualizations."
+state:
+  - name: analytics_models
+    type: "dict[str, Any]"
+    description: "Engines for meta-learning, predictive analysis, and cost optimization."
+  - name: telemetry_sinks
+    type: "list[str]"
+    description: "Enabled telemetry backends (Optuna, MLflow, W&B, local analytics)."
+actions:
+  - name: compute_insights
+    inputs:
+      - name: results
+        type: "list[dict[str, Any]]"
+    outputs:
+      - case: insights
+        fields:
+          - name: summary
+            type: "dict[str, Any]"
+    description: "Generate optimization insights, parameter importance, and recommendations."
+  - name: detect_anomalies
+    inputs:
+      - name: metrics
+        type: "dict[str, Any]"
+    outputs:
+      - case: events
+        fields:
+          - name: anomalies
+            type: "list[dict[str, Any]]"
+    description: "Run anomaly/regression detectors on cost/performance metrics."
+  - name: emit_telemetry
+    inputs:
+      - name: trial
+        type: "dict[str, Any]"
+      - name: context
+        type: "dict[str, Any]"
+    outputs:
+      - case: emitted
+        fields:
+          - name: sinks
+            type: "list[str]"
+    description: "Send trial/session telemetry to Optuna hooks, trackers, and local analytics."
+  - name: visualize_results
+    inputs:
+      - name: trials
+        type: "list[dict[str, Any]]"
+    outputs:
+      - case: figures
+        fields:
+          - name: artifacts
+            type: "list[str]"
+    description: "Produce plots or markdown summaries of optimization performance."
+operational_principle:
+  - "Telemetry emission should be optional and conditional on user settings."
+  - "Analytics must not leak sensitive config values in outputs."
+version: 1
+status: active

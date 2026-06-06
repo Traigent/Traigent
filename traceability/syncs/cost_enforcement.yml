@@ -1,0 +1,145 @@
+id: SYNC-CostEnforcement
+name: "Cost enforcement flow"
+functionalities: [FUNC-ORCH-LIFECYCLE, FUNC-COST-CONTROL]
+
+# Sync 1: Permit acquisition before trial execution
+- id: SYNC-CostEnforcement-Acquire
+  name: "Acquire permit before trial"
+  when:
+    - concept: CONC-Orchestration
+      action: run_trial
+      match:
+        bind:
+          trial_index: "?trial_index"
+          function: "?function"
+  where:
+    - bind:
+        cost_enforcer: "?orchestrator.cost_enforcer"
+        estimated_cost: "?cost_enforcer._estimated_cost"
+  then:
+    - concept: CONC-CostEnforcement
+      action: acquire_permit
+      args:
+        estimated_amount: "?estimated_cost"
+      bind:
+        permit: "?permit"
+    - condition: "?permit.is_granted == False"
+      action: cancel_trial
+      reason: "cost_limit_reached"
+
+# Sync 2: Track cost after successful trial
+- id: SYNC-CostEnforcement-Track
+  name: "Track cost after trial completion"
+  when:
+    - concept: CONC-Orchestration
+      action: run_trial
+      match:
+        case: completed
+        bind:
+          trial_result: "?trial_result"
+          permit: "?permit"
+  where:
+    - bind:
+        actual_cost: "?trial_result.cost"
+  then:
+    - concept: CONC-CostEnforcement
+      action: track_cost
+      args:
+        actual_cost: "?actual_cost"
+        permit: "?permit"
+    - concept: CONC-Analytics
+      action: record_cost_metric
+      args:
+        trial_id: "?trial_result.trial_id"
+        cost: "?actual_cost"
+
+# Sync 3: Release permit on trial exception
+- id: SYNC-CostEnforcement-Exception
+  name: "Release permit on exception"
+  when:
+    - concept: CONC-Orchestration
+      action: run_trial
+      match:
+        case: failed
+        bind:
+          error: "?error"
+          permit: "?permit"
+  where:
+    - condition: "?permit.active == True"
+  then:
+    - concept: CONC-CostEnforcement
+      action: release_permit
+      args:
+        permit: "?permit"
+    - concept: CONC-Analytics
+      action: record_trial_failure
+      args:
+        error: "?error"
+        permit_released: true
+
+# Sync 4: Mock mode bypass
+- id: SYNC-CostEnforcement-MockBypass
+  name: "Mock mode bypasses cost tracking"
+  when:
+    - concept: CONC-CostEnforcement
+      action: acquire_permit
+      match:
+        bind:
+          mock_mode: "?mock_mode_cached"
+  where:
+    - condition: "?mock_mode == True"
+  then:
+    - return:
+        permit:
+          id: 0
+          amount: "?estimated_cost"
+          active: true
+        skip_tracking: true
+
+# Sync 5: Unknown cost fallback
+- id: SYNC-CostEnforcement-UnknownCost
+  name: "Fallback when cost extraction fails"
+  when:
+    - concept: CONC-CostEnforcement
+      action: track_cost
+      match:
+        bind:
+          actual_cost: null
+  where:
+    - bind:
+        require_tracking: "env.TRAIGENT_REQUIRE_COST_TRACKING"
+  then:
+    - condition: "?require_tracking == 'true'"
+      action: raise_error
+      error: "CostTrackingRequiredError"
+    - condition: "?require_tracking != 'true'"
+      concept: CONC-CostEnforcement
+      action: enter_unknown_cost_mode
+    - concept: CONC-CostEnforcement
+      action: release_permit
+      args:
+        permit: "?permit"
+
+# Sync 6: Stop condition integration
+- id: SYNC-CostEnforcement-StopCondition
+  name: "Cost limit stop condition"
+  when:
+    - concept: CONC-Orchestration
+      action: check_stop_conditions
+      match:
+        bind:
+          trials: "?trials"
+  where:
+    - bind:
+        cost_status: "?cost_enforcer.get_status()"
+  then:
+    - condition: "?cost_status.remaining_budget <= 0"
+      concept: CONC-Orchestration
+      action: set_stop_reason
+      args:
+        reason: "cost_limit_reached"
+        accumulated: "?cost_status.accumulated_cost_usd"
+        limit: "?cost_status.limit_usd"
+
+version: 1
+status: active

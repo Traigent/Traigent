@@ -1,0 +1,22 @@
+id: SYNC-StorageLogging
+name: "Session/trial persistence"
+functionalities: [FUNC-STORAGE, FUNC-ANALYTICS]
+when:
+  - concept: CONC-Orchestration
+    action: run_trial
+    match:
+      bind:
+        trial_result: "?trial_result"
+then:
+  - concept: CONC-Storage
+    action: store_trial
+    args:
+      session_id: "?session_id"
+      trial_result: "?trial_result"
+  - concept: CONC-AnalyticsTelemetry
+    action: emit_telemetry
+    args:
+      trial: "?trial_result"
+      context: "?context"
+version: 1
+status: active
