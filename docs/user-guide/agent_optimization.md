@@ -554,6 +554,6 @@ logger.setLevel(logging.DEBUG)
 
 ## Next Steps
 
-- See the [examples catalog](../../docs/examples/START_HERE.md) for runnable examples
+- See the [examples catalog](../examples/START_HERE.md) for runnable examples
 - Review [Execution Modes](../guides/execution-modes.md) for local/cloud/hybrid context
 - Read [Architecture Overview](../architecture/ARCHITECTURE.md) for system design details

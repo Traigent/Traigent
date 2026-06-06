@@ -42,7 +42,7 @@ credential with the same boundary. It belongs in your local AWS credential
 environment or tooling, not in Traigent backend configuration.
 
 For the broader credential and telemetry boundary, see the
-[Credential & data trust model](../../SECURITY.md#credential--data-trust-model).
+[Credential & data trust model](../security/trust_model.md).
 
 ## Dependency Installation
 Ensure you installed integration dependencies:

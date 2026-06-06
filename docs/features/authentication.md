@@ -168,7 +168,7 @@ credentials resolved by the provider SDKs on the local machine. They are not
 Traigent API keys and are not sent to Traigent backend endpoints.
 
 For the full boundary, including Bedrock and telemetry/content logging, see
-the [Credential & data trust model](../../SECURITY.md#credential--data-trust-model)
+the [Credential & data trust model](../security/trust_model.md)
 and the [telemetry documentation](../api-reference/telemetry.md).
 
 ## Priority Order
