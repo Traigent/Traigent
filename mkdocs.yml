@@ -59,6 +59,12 @@ nav:
       - Prompt Management: features/prompt_management.md
       - Seamless Injection: features/seamless_injection.md
       - Strict Metrics Nulls: features/strict_metrics_nulls.md
+      - Onboarding & CLI: features/onboarding.md
+      - Local MCP Server: features/mcp-server.md
+      - Configuration Recommendations: features/recommendations.md
+      - Strategy Presets: features/strategy-presets.md
+      - Safety Gates: features/safety-gates.md
+      - Agent Observability Spans: features/observability-spans.md
       - Hybrid Mode API Contract: hybrid-mode-api-contract.md
       - Hybrid Mode Client Guide: hybrid-mode-client-guide.md
       - Walkthrough: walkthrough.md
