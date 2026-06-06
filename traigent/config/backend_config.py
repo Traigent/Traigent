@@ -76,7 +76,7 @@ class BackendConfig:
             parsed = urlparse(f"https://{parsed.path}")
 
         if not parsed.scheme or not parsed.netloc:
-            logger.warning("Failed to normalize backend origin from '%s'", value)
+            logger.warning("Failed to normalize configured backend origin")
             return None
 
         normalized = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
@@ -103,7 +103,7 @@ class BackendConfig:
             parsed = urlparse(f"https://{parsed.path}")
 
         if not parsed.scheme or not parsed.netloc:
-            logger.warning("Failed to parse backend url '%s'", value)
+            logger.warning("Failed to parse configured backend URL")
             return (None, None)
 
         origin = urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
