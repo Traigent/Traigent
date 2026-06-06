@@ -1056,6 +1056,405 @@ class TestNestedCompositeArms:
 
 
 # --------------------------------------------------------------------------- #
+# F1: nested composite arms in GATED cascade positions (§3.2.1)               #
+# --------------------------------------------------------------------------- #
+
+
+def _mv_ensemble(name, *, stage_name, accept_threshold=None):
+    """A nested majority_vote ensemble (the ONLY legal gated nested arm, §3.2)."""
+    accept = (
+        AcceptDecl(stat=StatKind.VOTE_MARGIN, threshold=accept_threshold)
+        if accept_threshold is not None
+        else None
+    )
+    return CompositeNode(
+        name=name,
+        kind=CompositeKind.ENSEMBLE,
+        body=EnsembleBody(
+            arms=(StageArm(stage_name),),
+            aggregate=AggregateDecl(
+                kind=AggregateKind.MAJORITY_VOTE, accept=accept
+            ),
+            cardinality="k",
+        ),
+    )
+
+
+class TestGatedNestedCompositeArm:
+    """F1: a nested majority_vote ensemble sitting in a GATED cascade position.
+
+    (a) Its OWN vote stats must feed the cascade gate (margin surfaced), so it
+        no longer errors with 'feeds a gate but has no key_fn'.
+    (b) A gated arm's no_accept ESCALATES (i < m); only the terminal arm's
+        no_accept becomes the cascade's no_accept (§3.2.1).
+    """
+
+    def _outer(self):
+        return CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(CompositeArm("inner"), StageArm("b")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),),
+                placement=Placement.POST,
+            ),
+        )
+
+    def test_gated_nested_ensemble_high_margin_stops_and_returns_its_output(self):
+        # inner unanimous: vote margin 1.0 >= gate t 0.5 -> NO escalate; the
+        # cascade selects the nested ensemble arm and returns ITS output.
+        inner = _mv_ensemble("inner", stage_name="i")
+        outer = self._outer()
+        stages = {"i": _stage(["A", "A", "A"]), "b": _stage(["B"])}
+        result = execute_composite(
+            outer,
+            stages,
+            config={"k": 3},
+            calibrated_values={"t": 0.5},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A"  # the nested ensemble's selected output
+        assert result.measures["stage_selected"] == 0
+        assert result.measures["escalation_rate"] == 0.0
+
+    def test_gated_nested_ensemble_low_margin_escalates(self):
+        # inner split 1/3: vote margin ~0.33 < gate t 0.9 -> ESCALATE to b.
+        inner = _mv_ensemble("inner", stage_name="i")
+        outer = self._outer()
+        stages = {"i": _stage(["x", "y", "z"]), "b": _stage(["B"])}
+        result = execute_composite(
+            outer,
+            stages,
+            config={"k": 3},
+            calibrated_values={"t": 0.9},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "B"  # escalated to the expert stage arm
+        assert result.measures["stage_selected"] == 1
+        assert result.measures["escalation_rate"] == 1.0
+
+    def test_gated_nested_no_accept_escalates_to_next_stage(self):
+        # F1(b) PROBE: inner has an accept gate that FAILS (margin 0.5 < acc 0.9)
+        # -> nested no_accept. At a GATED position (i < m) that no_accept MUST
+        # escalate to the next stage, NOT become the cascade's no_accept.
+        inner = _mv_ensemble("inner", stage_name="i", accept_threshold="acc")
+        outer = self._outer()
+        stages = {"i": _stage(["p", "q"]), "b": _stage(["B"])}
+        result = execute_composite(
+            outer,
+            stages,
+            config={"k": 2},
+            calibrated_values={"t": 0.5, "acc": 0.9},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "B"  # escalated past the no_accept gated arm
+        assert result.measures["stage_selected"] == 1
+        assert result.measures["escalation_rate"] == 1.0
+
+    def test_terminal_nested_no_accept_still_yields_cascade_no_accept(self):
+        # Contrast: a no_accept at the TERMINAL arm DOES become cascade
+        # no_accept (the existing §3.2.1 propagation must be preserved).
+        inner = _mv_ensemble("inner", stage_name="i", accept_threshold="acc")
+        outer = CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(StageArm("a"), CompositeArm("inner")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),),
+                placement=Placement.POST,
+            ),
+        )
+        stages = {"a": _stage(["x", "y"]), "i": _stage(["p", "q"])}
+        result = execute_composite(
+            outer,
+            stages,
+            config={"k": 2},
+            calibrated_values={"t": 0.9, "acc": 0.9},  # a escalates; inner no_accept
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.NO_ACCEPT
+
+    def test_gated_nested_error_propagates_as_error(self):
+        # A nested ERROR is absorbing even at a gated position.
+        inner = _mv_ensemble("inner", stage_name="i")
+        outer = self._outer()
+
+        def boom(_i):
+            raise RuntimeError("nested ensemble stage exploded")
+
+        stages = {
+            "i": StageRunner(run=boom, key_fn=lambda x: x, samples=1),
+            "b": _stage(["B"]),
+        }
+        result = execute_composite(
+            outer,
+            stages,
+            config={"k": 1},
+            calibrated_values={"t": 0.5},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.ERROR
+
+
+# --------------------------------------------------------------------------- #
+# F2: single-arm SAMPLING ensemble over a CompositeArm body                   #
+# --------------------------------------------------------------------------- #
+
+
+class TestSamplingEnsembleNestedComposite:
+    def test_sampling_runs_nested_composite_k_times_keyed_by_output(self):
+        # F2 PROBE: a single-arm (sampling) ensemble whose ONE arm is a
+        # CompositeArm must run the nested composite k times (each run = one
+        # candidate, keyed by its output) — NOT KeyError on stages[ref].
+        leaf = CompositeNode(
+            name="leaf",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(arms=(StageArm("s"),), gates=()),
+        )
+        samp = CompositeNode(
+            name="samp",
+            kind=CompositeKind.ENSEMBLE,
+            body=EnsembleBody(
+                arms=(CompositeArm("leaf"),),
+                aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE),
+                cardinality="k",
+            ),
+        )
+        # leaf produces a value that depends on a per-call counter so the k runs
+        # are observable as k distinct candidate evaluations.
+        calls = {"n": 0}
+
+        def s(_item):
+            calls["n"] += 1
+            # first two runs -> 'A', third -> 'B' (majority A, margin 2/3).
+            return "A" if calls["n"] <= 2 else "B"
+
+        result = execute_composite(
+            samp,
+            {"s": s},
+            config={"k": 3},
+            calibrated_values={},
+            registry={"samp": samp, "leaf": leaf},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A"  # 2/3 majority over the nested runs
+        assert result.measures["candidates_evaluated"] == 3
+        assert result.measures["vote_margin"] == pytest.approx(2 / 3)
+        assert calls["n"] == 3  # the nested composite ran EXACTLY k times
+
+
+# --------------------------------------------------------------------------- #
+# F3: committee arms contribute EXACTLY ONE candidate (the selected output)   #
+# --------------------------------------------------------------------------- #
+
+
+class TestCommitteeOneCandidatePerArm:
+    def test_multisample_committee_stage_arm_contributes_one_candidate(self):
+        # F3 PROBE: a samples=3 member must NOT get triple vote weight. With
+        # a=[A,A,A] and b=[B] the committee has EXACTLY 2 candidates (A, B),
+        # vote_margin 0.5 — NOT 4 candidates / 0.75 (which could falsely pass a
+        # stat_at_least accept gate).
+        comm = CompositeNode(
+            name="comm",
+            kind=CompositeKind.ENSEMBLE,
+            body=EnsembleBody(
+                arms=(StageArm("a"), StageArm("b")),
+                aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE),
+            ),
+        )
+        stages = {"a": _stage(["A", "A", "A"]), "b": _stage(["B"])}
+        result = execute_composite(
+            comm, stages, config={}, calibrated_values={}, registry={"comm": comm}
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.measures["candidates_evaluated"] == 2  # one per arm
+        assert result.measures["vote_margin"] == pytest.approx(0.5)
+
+    def test_committee_arm_selected_output_is_its_majority_winner(self):
+        # Each multisample committee arm contributes its OWN majority winner.
+        # a=[A,A,B] -> winner A; b=[C,C,D] -> winner C; committee = {A, C},
+        # a 2-way tie at margin 0.5 (deterministic representative).
+        comm = CompositeNode(
+            name="comm",
+            kind=CompositeKind.ENSEMBLE,
+            body=EnsembleBody(
+                arms=(StageArm("a"), StageArm("b")),
+                aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE),
+            ),
+        )
+        stages = {"a": _stage(["A", "A", "B"]), "b": _stage(["C", "C", "D"])}
+        result = execute_composite(
+            comm, stages, config={}, calibrated_values={}, registry={"comm": comm}
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.measures["candidates_evaluated"] == 2
+        assert result.measures["vote_margin"] == pytest.approx(0.5)
+        assert result.output in {"A", "C"}  # one arm's selected winner
+
+    def test_inflated_weight_does_not_falsely_pass_accept_gate(self):
+        # The bug's HARM: with the old 4-candidate / 0.75 margin a 0.7 accept
+        # threshold would FALSELY pass. The correct 0.5 margin must FAIL it.
+        comm = CompositeNode(
+            name="comm",
+            kind=CompositeKind.ENSEMBLE,
+            body=EnsembleBody(
+                arms=(StageArm("a"), StageArm("b")),
+                aggregate=AggregateDecl(
+                    kind=AggregateKind.MAJORITY_VOTE,
+                    accept=AcceptDecl(stat=StatKind.VOTE_MARGIN, threshold="acc"),
+                ),
+            ),
+        )
+        stages = {"a": _stage(["A", "A", "A"]), "b": _stage(["B"])}
+        result = execute_composite(
+            comm,
+            stages,
+            config={},
+            calibrated_values={"acc": 0.7},
+            registry={"comm": comm},
+        )
+        # correct margin 0.5 < 0.7 -> honest no_accept (NOT a false OUTPUT)
+        assert result.result_kind is ResultKind.NO_ACCEPT
+
+
+# --------------------------------------------------------------------------- #
+# F5: deep fail-closed preflight over ALL reachable composites                #
+# --------------------------------------------------------------------------- #
+
+
+class TestDeepPreflight:
+    def test_missing_stage_in_unselected_nested_arm_is_error_upfront(self):
+        # F5 PROBE: 'a' is unanimous so the gate STOPS at it and the nested
+        # 'inner' arm is never selected — yet 'inner' references stage 'z' which
+        # is not provided. The deep preflight must fail closed BEFORE any arm
+        # runs, never return the root's silent output.
+        inner = CompositeNode(
+            name="inner",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(arms=(StageArm("z"),), gates=()),
+        )
+        outer = CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(StageArm("a"), CompositeArm("inner")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),),
+                placement=Placement.POST,
+            ),
+        )
+        result = execute_composite(
+            outer,
+            {"a": _stage(["A", "A", "A"])},  # 'z' (inside inner) absent
+            config={},
+            calibrated_values={"t": 0.5},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "missing stage callable" in (result.error or "")
+        assert "z" in (result.error or "")
+
+    def test_missing_signal_in_unreached_nested_loop_is_error_upfront(self):
+        # A nested signal_accept loop arm whose signal is not provided fails
+        # closed upfront even if the loop arm is never selected.
+        innerloop = CompositeNode(
+            name="innerloop",
+            kind=CompositeKind.LOOP,
+            body=LoopBody(
+                body=StageArm("lb"),
+                stop=StopDecl(
+                    kind=StopKind.SIGNAL_ACCEPT,
+                    threshold="lt",
+                    signal=SignalUse(signal="needed_sig", inputs=()),
+                ),
+                state_keys=(),
+                max_iters=2,
+            ),
+        )
+        outer = CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(StageArm("a"), CompositeArm("innerloop")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),),
+                placement=Placement.POST,
+            ),
+        )
+        result = execute_composite(
+            outer,
+            {"a": _stage(["A", "A", "A"]), "lb": lambda _i: "x"},
+            config={},
+            calibrated_values={"t": 0.5, "lt": 0.5},
+            registry={"outer": outer, "innerloop": innerloop},
+            signals={},  # 'needed_sig' absent
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "not provided" in (result.error or "")
+        assert "needed_sig" in (result.error or "")
+
+    def test_missing_predicate_in_unreached_nested_loop_is_error_upfront(self):
+        innerloop = CompositeNode(
+            name="innerloop",
+            kind=CompositeKind.LOOP,
+            body=LoopBody(
+                body=StageArm("lb"),
+                stop=StopDecl(kind=StopKind.EXTERNAL_ACCEPT, predicate="needed_pred"),
+                state_keys=(),
+                max_iters=2,
+            ),
+        )
+        outer = CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(StageArm("a"), CompositeArm("innerloop")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),),
+                placement=Placement.POST,
+            ),
+        )
+        result = execute_composite(
+            outer,
+            {"a": _stage(["A", "A", "A"]), "lb": lambda _i: "x"},
+            config={},
+            calibrated_values={"t": 0.5},
+            registry={"outer": outer, "innerloop": innerloop},
+            predicates={},  # 'needed_pred' absent
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "not provided" in (result.error or "")
+        assert "needed_pred" in (result.error or "")
+
+    def test_all_present_deep_chain_executes_normally(self):
+        # Sanity: when every reachable leaf/signal/predicate IS provided the
+        # preflight is transparent (no spurious error).
+        inner = CompositeNode(
+            name="inner",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(arms=(StageArm("z"),), gates=()),
+        )
+        outer = CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(StageArm("a"), CompositeArm("inner")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),),
+                placement=Placement.POST,
+            ),
+        )
+        result = execute_composite(
+            outer,
+            {"a": _stage(["A", "A", "A"]), "z": lambda _i: "Z"},
+            config={},
+            calibrated_values={"t": 0.5},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.OUTPUT
+        assert result.output == "A"  # gate stops at the unanimous first arm
+
+
+# --------------------------------------------------------------------------- #
 # K-chain unroll execution (§3.8) + trace-equality property + teeth twin      #
 # --------------------------------------------------------------------------- #
 
@@ -1133,6 +1532,42 @@ class TestKChainExecutionBasics:
         )
         assert result.result_kind is ResultKind.ERROR
 
+    def test_kchain_body_error_is_error_parity_with_live_loop(self):
+        # F4 PROBE: a body that reports an ERROR result-kind must ABSORB to an
+        # error in BOTH executors. The live loop already does; the K-chain used
+        # to treat the ERROR cell's .output as a produced output ('output bad')
+        # — fail-closed parity broken. After the fix both yield ERROR.
+        knob = _refine_knob(max_iters=4)
+
+        def err_body():
+            def run(_item, _state):
+                # ERROR result whose state WOULD cross theta if (wrongly) read
+                # as an output — exposing the K-chain's 'output bad' divergence.
+                return LoopBodyResult(
+                    output="bad", state={"draft": 1.0}, result_kind=ResultKind.ERROR
+                )
+
+            return LoopBodyRunner(run=run)
+
+        signal = lambda s: s["draft"]
+        loop = execute_composite(
+            knob.structure,
+            {"body": err_body()},
+            config={},
+            calibrated_values={"theta": 0.9},
+            signals={"quality": signal},
+        )
+        chain = execute_kchain(
+            knob.unroll(4),
+            err_body(),
+            config={},
+            calibrated_values={"theta": 0.9},
+            signals={"quality": signal},
+        )
+        assert loop.result_kind is ResultKind.ERROR
+        assert chain.result_kind is ResultKind.ERROR
+        assert chain.output is None  # never a produced 'output bad'
+
 
 @settings(max_examples=120, deadline=None)
 @given(
@@ -1169,6 +1604,75 @@ def test_kchain_trace_equals_live_loop_under_conditions_1_3(k, values, theta):
     chain_result = execute_kchain(
         chain,
         _seq_body(values),  # fresh body with the SAME deterministic sequence
+        config={},
+        calibrated_values={"theta": theta},
+        signals={"quality": signal},
+    )
+
+    assert loop.result_kind is chain_result.result_kind
+    assert loop.output == chain_result.output
+    assert loop.measures.get("iterations_used") == chain_result.measures.get(
+        "iterations_used"
+    )
+    assert loop.measures.get("stop_reason") == chain_result.measures.get("stop_reason")
+
+
+def _seq_body_with_error(values, error_at):
+    """A deterministic body that reports an ERROR result-kind at iteration
+    ``error_at`` (1-based), otherwise behaving like :func:`_seq_body`.
+
+    The ERROR cell is the §3.2.1 absorbing error a body honestly reports — the
+    live loop and the K-chain MUST absorb it identically (F4 parity). ``None``
+    error_at means no error cell (a pure value body)."""
+    counter = {"i": 0}
+
+    def run(_item, _state):
+        counter["i"] += 1
+        i = counter["i"]  # 1-based iteration index
+        v = values[min(i - 1, len(values) - 1)]
+        if error_at is not None and i == error_at:
+            return LoopBodyResult(
+                output=v, state={"draft": v}, result_kind=ResultKind.ERROR
+            )
+        return LoopBodyResult(output=v, state={"draft": v})
+
+    return LoopBodyRunner(run=run)
+
+
+@settings(max_examples=120, deadline=None)
+@given(
+    k=st.integers(min_value=1, max_value=4),
+    values=st.lists(
+        st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+        min_size=4,
+        max_size=4,
+    ),
+    theta=st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+    error_at=st.integers(min_value=1, max_value=4),
+)
+def test_kchain_trace_equals_live_loop_with_error_result_kind_bodies(
+    k, values, theta, error_at
+):
+    """§3.8 claim C5 EXTENDED (reviewer non-blocker, F4): the trace-equality
+    holds even when the body reports an ERROR result-kind (the §3.2.1 absorbing
+    error). Whether the error cell is reached before acceptance or not, BOTH
+    executors produce the SAME trace — proving fail-closed parity over the full
+    result-kind codomain, not just OUTPUT/no_accept."""
+    knob = _refine_knob(max_iters=k)
+    node = knob.structure
+    chain = knob.unroll(k)
+    signal = lambda s: s["draft"]
+
+    loop = execute_composite(
+        node,
+        {"body": _seq_body_with_error(values, error_at)},
+        config={},
+        calibrated_values={"theta": theta},
+        signals={"quality": signal},
+    )
+    chain_result = execute_kchain(
+        chain,
+        _seq_body_with_error(values, error_at),
         config={},
         calibrated_values={"theta": theta},
         signals={"quality": signal},

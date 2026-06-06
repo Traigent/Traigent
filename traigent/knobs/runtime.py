@@ -440,6 +440,290 @@ def _nested_cascade_stage(
     return StageSpec(name=arm.ref, run=_run, key_fn=None, samples=1)
 
 
+@dataclass(frozen=True, slots=True)
+class _ArmOutcome:
+    """One cascade arm's evaluated outcome for the manual driver (F1).
+
+    ``vote`` is the margin-bearing producer's :class:`VoteStats` (a stage's vote
+    over its samples, OR a nested majority_vote ensemble's OWN vote surfaced to
+    the gate); ``None`` for a non-voting terminal arm. ``kind`` is the §3.2.1
+    outcome of THIS arm (``output`` / ``no_accept`` / ``error``).
+    """
+
+    output: Any
+    vote: VoteStats | None
+    kind: ResultKind
+    error: str | None = None
+
+
+def _has_gated_nested_arm(body: CascadeBody) -> bool:
+    """A cascade has a GATED nested-composite arm iff a :class:`CompositeArm`
+    sits at a NON-terminal index (i < m-1, i.e. a position followed by a gate).
+
+    Only this case needs the manual driver (the gate must read the nested arm's
+    OWN vote stats, and a gated arm's no_accept must ESCALATE — neither of which
+    the shipped ``CascadePolicy.decide`` supports for a synthetic stage). The
+    stage-only and terminal-nested cases keep the engine fast path verbatim.
+    """
+    last = len(body.arms) - 1
+    return any(isinstance(arm, CompositeArm) for arm in body.arms[:last])
+
+
+def _run_nested_majority_vote(
+    node: CompositeNode,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> _ArmOutcome:
+    """Run a nested majority_vote ensemble and SURFACE its VoteStats (F1a).
+
+    The ONLY legal gated nested arm is a ``majority_vote`` ensemble (the §3.2
+    margin-bearing-arm rule, ``gate_arm_incompatible``), whose own vote feeds the
+    cascade gate. This collects the nested candidates, runs the SHIPPED
+    ``vote_over`` (never a reimplementation), applies the nested ensemble's OWN
+    accept gate, and returns the representative output + the surfaced vote:
+    ``no_accept`` (accept-gate failure / all-excluded-by-no_accept) and ``error``
+    (absorbing) are reported via :class:`_ArmOutcome.kind` so the cascade driver
+    can ESCALATE (gated) or propagate (§3.2.1).
+    """
+    body = node.body
+    if not (
+        isinstance(body, EnsembleBody)
+        and body.aggregate.kind is AggregateKind.MAJORITY_VOTE
+    ):
+        # Defensive: the IR forbids a non-margin-bearing gated nested arm; if one
+        # reaches here it is a fail-closed error (never a silent gate read).
+        return _ArmOutcome(
+            output=None,
+            vote=None,
+            kind=ResultKind.ERROR,
+            error=(
+                f"composite-runtime: gated nested arm {node.name!r} is not a "
+                "majority_vote ensemble (no margin to feed the gate)"
+            ),
+        )
+    try:
+        candidates, excluded_no_accept = _collect_candidates(
+            body, stages, registry, config, calibrated_values, signals, predicates
+        )
+    except Exception as exc:  # noqa: BLE001 - error is absorbing (§3.2.1)
+        return _ArmOutcome(
+            output=None,
+            vote=None,
+            kind=ResultKind.ERROR,
+            error=f"composite-runtime: {type(exc).__name__}: {exc}",
+        )
+
+    if not candidates:
+        # All-excluded-by-no_accept -> no_accept; truly-no-candidates -> error.
+        if excluded_no_accept > 0:
+            return _ArmOutcome(output=None, vote=None, kind=ResultKind.NO_ACCEPT)
+        return _ArmOutcome(
+            output=None,
+            vote=None,
+            kind=ResultKind.ERROR,
+            error="composite-runtime: nested ensemble produced no candidates",
+        )
+
+    output, vote = _majority_vote(candidates)
+    accept = body.aggregate.accept
+    if accept is not None:
+        try:
+            if not _accept_passes(accept, vote, calibrated_values):
+                # The nested ensemble's accept gate failed -> nested no_accept;
+                # the surfaced vote is still carried for the gate's margin read.
+                return _ArmOutcome(output=None, vote=vote, kind=ResultKind.NO_ACCEPT)
+        except Exception as exc:  # noqa: BLE001 - non-finite threshold -> error
+            return _ArmOutcome(
+                output=None,
+                vote=None,
+                kind=ResultKind.ERROR,
+                error=f"composite-runtime: {type(exc).__name__}: {exc}",
+            )
+    return _ArmOutcome(output=output, vote=vote, kind=ResultKind.OUTPUT)
+
+
+def _evaluate_stage_arm(
+    arm: StageArm,
+    stages: Mapping[str, StageEntry],
+    *,
+    gated: bool,
+    config: Mapping[str, Any],
+) -> _ArmOutcome:
+    """Evaluate a leaf stage arm for the manual driver, mirroring the engine.
+
+    Reproduces ``CascadePolicy.decide``'s per-stage semantics verbatim (sample
+    cardinality enforcement, ``vote_over`` over the keys, deterministic
+    representative). A gated stage with no ``key_fn`` is the SAME fail-closed
+    error the engine raises ("feeds a gate but has no key_fn").
+    """
+    runner = _coerce_stage_runner(stages[arm.name])
+    samples = list(runner.run(config))
+    if len(samples) != runner.samples:
+        raise ValueError(
+            f"stage {arm.name!r} declared samples={runner.samples} "
+            f"but produced {len(samples)}"
+        )
+    if runner.key_fn is None:
+        if gated:
+            raise ValueError(
+                f"stage {arm.name!r} feeds a gate but has no key_fn comparator; "
+                "voting stages require one"
+            )
+        representative = samples[0] if samples else None
+        return _ArmOutcome(output=representative, vote=None, kind=ResultKind.OUTPUT)
+    keys = [runner.key_fn(sample) for sample in samples]
+    vote = vote_over(keys, len(samples))
+    representative = next(
+        (
+            sample
+            for sample, key in zip(samples, keys, strict=False)
+            if key == vote.top_key
+        ),
+        samples[0] if samples else None,
+    )
+    return _ArmOutcome(output=representative, vote=vote, kind=ResultKind.OUTPUT)
+
+
+def _drive_cascade(
+    body: CascadeBody,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> CompositeRunResult:
+    """The manual post-cascade driver for the GATED-nested-arm case (F1).
+
+    Reuses the SHIPPED gate math (:meth:`Gate.should_escalate`) and ``vote_over``
+    — never a reimplementation. Semantics (§3.2.1):
+
+    - a gated arm's ``no_accept`` ESCALATES (i < m); only the TERMINAL arm's
+      ``no_accept`` becomes the cascade's ``no_accept`` (F1b);
+    - a gated nested majority_vote ensemble's OWN vote feeds the gate (F1a);
+    - an ``error`` is absorbing (propagates to the cascade error).
+    """
+    gates: list[Gate] = []
+    for gate in body.gates:
+        if gate.kind is not IRGateKind.MARGIN_BELOW:  # pragma: no cover - IR-guarded
+            return _error(
+                f"composite-runtime: post-cascade gate kind {gate.kind.value!r} "
+                "is not executable (margin_below only)"
+            )
+        gates.append(
+            Gate(
+                kind=GateKind.MARGIN_BELOW,
+                threshold_ref=_build_threshold_ref(gate.threshold, calibrated_values),
+            )
+        )
+
+    escalations = 0
+    last = len(body.arms) - 1
+    for index, arm in enumerate(body.arms):
+        is_last = index == last
+        try:
+            if isinstance(arm, StageArm):
+                outcome = _evaluate_stage_arm(
+                    arm, stages, gated=not is_last, config=config
+                )
+            elif is_last:
+                # A terminal nested arm: any composite kind; no vote needed.
+                inner = _execute_node(
+                    registry[arm.ref],
+                    stages,
+                    registry,
+                    config,
+                    calibrated_values,
+                    signals,
+                    predicates,
+                )
+                outcome = _ArmOutcome(
+                    output=inner.output,
+                    vote=None,
+                    kind=inner.result_kind,
+                    error=inner.error,
+                )
+            else:
+                # A GATED nested arm MUST be a majority_vote ensemble (F1a).
+                outcome = _run_nested_majority_vote(
+                    registry[arm.ref],
+                    stages,
+                    registry,
+                    config,
+                    calibrated_values,
+                    signals,
+                    predicates,
+                )
+        except Exception as exc:  # noqa: BLE001 - error is absorbing (§3.2.1)
+            return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+
+        if outcome.kind is ResultKind.ERROR:
+            return _error(
+                outcome.error
+                or f"composite-runtime: cascade arm {index} failed (no detail)"
+            )
+
+        if is_last:
+            step = CascadeStep(
+                stage_index=index,
+                stage_name="",
+                output=outcome.output,
+                representative=outcome.output,
+                vote=outcome.vote,
+                escalations=escalations,
+            )
+            if outcome.kind is ResultKind.NO_ACCEPT:
+                # Only the terminal arm's no_accept becomes the cascade's (F1b).
+                return _no_accept(_cascade_measures(step, body))
+            return CompositeRunResult(
+                output=outcome.output,
+                result_kind=ResultKind.OUTPUT,
+                measures=_cascade_measures(step, body),
+                error=None,
+            )
+
+        # A non-terminal (gated) arm.
+        if outcome.kind is ResultKind.NO_ACCEPT:
+            # F1b: a gated arm's no_accept ESCALATES to the next stage.
+            escalations += 1
+            continue
+        runtime_gate = gates[index]
+        if outcome.vote is None:  # pragma: no cover - guarded above for stages
+            return _error(
+                f"composite-runtime: gated cascade arm {index} has no vote to "
+                "feed the gate (margin-bearing arm required)"
+            )
+        try:
+            escalate = runtime_gate.should_escalate(outcome.vote)
+        except Exception as exc:  # noqa: BLE001 - non-finite/unset threshold
+            return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+        if escalate:
+            escalations += 1
+            continue
+        step = CascadeStep(
+            stage_index=index,
+            stage_name="",
+            output=outcome.output,
+            representative=outcome.output,
+            vote=outcome.vote,
+            escalations=escalations,
+        )
+        return CompositeRunResult(
+            output=outcome.output,
+            result_kind=ResultKind.OUTPUT,
+            measures=_cascade_measures(step, body),
+            error=None,
+        )
+
+    return _error(  # pragma: no cover - the loop always returns at the last arm
+        "composite-runtime: cascade driver reached an unreachable terminal state"
+    )
+
+
 def _cascade_measures(step: CascadeStep, body: CascadeBody) -> dict[str, Any]:
     """The §3.10 cascade telemetry for one decided cascade — content-free.
 
@@ -479,6 +763,14 @@ def _execute_cascade(
             f"composite-runtime: pre-cascade (dispatch) execution is deferred to "
             f"a follow-up packet (composite {node.name!r}); this packet executes "
             "the post-cascade kind only"
+        )
+
+    # F1: a GATED nested-composite arm needs the manual driver (the gate must
+    # read the nested arm's OWN vote, and a gated arm's no_accept ESCALATES).
+    # Every other shape keeps the shipped CascadePolicy.decide fast path.
+    if _has_gated_nested_arm(body):
+        return _drive_cascade(
+            body, stages, registry, config, calibrated_values, signals, predicates
         )
 
     policy = _adapt_cascade(
@@ -536,28 +828,64 @@ def _collect_candidates(
     if body.cardinality is not None:  # sampling form
         k = _resolve_cardinality(body.cardinality, config, calibrated_values)
         arm = body.arms[0]
-        runner = _coerce_stage_runner(stages[_stage_name(arm)])
-        samples = list(runner.run(config))
-        key_fn = runner.key_fn or (lambda x: x)
-        candidates = [_Candidate(output=s, key=key_fn(s)) for s in samples]
-        # Sampling over a stage produces k outputs; cap the declared vote
-        # denominator at k so margins never exceed 1 (the vote_over contract).
-        if len(candidates) != k:
-            raise ValueError(
-                f"sampling ensemble arm {_stage_name(arm)!r} declared k={k} "
-                f"but produced {len(candidates)} samples"
+        if isinstance(arm, StageArm):
+            runner = _coerce_stage_runner(stages[arm.name])
+            samples = list(runner.run(config))
+            key_fn = runner.key_fn or (lambda x: x)
+            candidates = [_Candidate(output=s, key=key_fn(s)) for s in samples]
+            # Sampling over a stage produces k outputs; cap the declared vote
+            # denominator at k so margins never exceed 1 (the vote_over contract).
+            if len(candidates) != k:
+                raise ValueError(
+                    f"sampling ensemble arm {arm.name!r} declared k={k} "
+                    f"but produced {len(candidates)} samples"
+                )
+            return candidates, excluded_no_accept
+        # F2: a single-arm SAMPLING ensemble over a nested COMPOSITE runs that
+        # composite k times — each run is ONE candidate (keyed by its output via
+        # the nested run's own selection semantics). A nested error is absorbing;
+        # a nested no_accept excludes that draw (§3.2.1).
+        node = registry[arm.ref]
+        sampled: list[_Candidate] = []
+        for _draw in range(k):
+            inner = _execute_node(
+                node, stages, registry, config, calibrated_values, signals, predicates
             )
-        return candidates, excluded_no_accept
+            if inner.result_kind is ResultKind.ERROR:
+                raise RuntimeError(
+                    f"sampling ensemble arm {arm.ref!r} failed: {inner.error}"
+                )
+            if inner.result_kind is ResultKind.NO_ACCEPT:
+                excluded_no_accept += 1
+                continue
+            sampled.append(_Candidate(output=inner.output, key=inner.output))
+        return sampled, excluded_no_accept
 
     candidates = []  # committee form
     for arm in body.arms:
         if isinstance(arm, StageArm):
             runner = _coerce_stage_runner(stages[arm.name])
             samples = list(runner.run(config))
+            if not samples:
+                continue  # an arm that produced nothing contributes no candidate
+            # F3: a committee arm contributes EXACTLY ONE candidate — its
+            # SELECTED output (the majority winner over its OWN samples per the
+            # RFC 0001 vote semantics), NOT one candidate per raw sample (which
+            # would give a multi-sample member inflated vote weight).
             key_fn = runner.key_fn or (lambda x: x)
-            # A committee arm contributes its (single) representative output.
-            for sample in samples:
-                candidates.append(_Candidate(output=sample, key=key_fn(sample)))
+            arm_keys = [key_fn(sample) for sample in samples]
+            arm_vote = vote_over(arm_keys, len(arm_keys))
+            representative = next(
+                (
+                    sample
+                    for sample, key in zip(samples, arm_keys, strict=False)
+                    if key == arm_vote.top_key
+                ),
+                samples[0],
+            )
+            candidates.append(
+                _Candidate(output=representative, key=key_fn(representative))
+            )
         else:  # nested-composite committee arm
             inner = _execute_node(
                 registry[arm.ref],
@@ -1099,6 +1427,14 @@ def execute_kchain(
             result = raw if isinstance(raw, LoopBodyResult) else LoopBodyResult(raw)
         except Exception as exc:  # noqa: BLE001 - body exception is absorbing
             return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+        if result.result_kind is ResultKind.ERROR:
+            # F4 parity: a body ERROR result-kind is the §3.2.1 absorbing error
+            # — the SAME outcome the live loop produces. The chain must NOT
+            # treat the error cell's .output as a produced output (fail closed).
+            return _error(
+                f"composite-runtime: K-chain body of {chain.signal!r} failed: "
+                f"{result.error if isinstance(result, CompositeRunResult) else 'error'}"
+            )
         if result.result_kind is ResultKind.NO_ACCEPT:
             # a no_accept body iteration: escalate (no accepted state to test).
             state = _restrict_state(result.state, state_keys)
@@ -1192,6 +1528,90 @@ def _missing_composite_refs(
     elif isinstance(body, LoopBody) and isinstance(body.body, CompositeArm):
         refs = [body.body.ref]
     return [ref for ref in refs if ref not in registry]
+
+
+def _preflight_reachable(
+    root: CompositeNode,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> CompositeRunResult | None:
+    """F5: a deep fail-closed preflight over ALL composites reachable from the
+    root through the registry (§3.2.1).
+
+    The per-node check in :func:`_execute_node` only sees the CURRENT node, so a
+    missing leaf stage/signal/predicate inside an UNSELECTED nested arm would
+    slip through and the root would return a silent output. This walks the whole
+    reachable sub-DAG up front: ANY reachable missing composite ref, leaf stage
+    callable, ``signal_accept`` signal, or ``external_accept`` predicate is a
+    fail-closed ``error`` BEFORE any arm runs. Returns the error result, or
+    ``None`` when every reachable obligation is satisfied.
+    """
+    visited: set[str] = set()
+    stack: list[CompositeNode] = [root]
+    while stack:
+        node = stack.pop()
+        if node.name in visited:
+            continue
+        visited.add(node.name)
+
+        missing_stages = _missing_stage_names(node, stages)
+        if missing_stages:
+            return _error(
+                "composite-runtime: missing stage callable(s) "
+                f"{sorted(missing_stages)!r} for composite {node.name!r} "
+                "(fail-closed: a missing stage fails the item's evaluation)"
+            )
+        missing_refs = _missing_composite_refs(node, registry)
+        if missing_refs:
+            return _error(
+                "composite-runtime: missing composite ref(s) "
+                f"{sorted(missing_refs)!r} for composite {node.name!r} "
+                "(fail-closed: an unresolved nested arm fails the item's evaluation)"
+            )
+
+        body = node.body
+        if isinstance(body, LoopBody):
+            stop = body.stop
+            if stop.kind is StopKind.SIGNAL_ACCEPT and stop.signal is not None:
+                if stop.signal.signal not in signals:
+                    return _error(
+                        f"composite-runtime: signal {stop.signal.signal!r} is not "
+                        f"provided for composite {node.name!r} (fail-closed: a "
+                        "missing signal fails the item's evaluation)"
+                    )
+            elif stop.kind is StopKind.EXTERNAL_ACCEPT and stop.predicate is not None:
+                if stop.predicate not in predicates:
+                    return _error(
+                        f"composite-runtime: predicate {stop.predicate!r} is not "
+                        f"provided for composite {node.name!r} (fail-closed: a "
+                        "missing predicate fails the item's evaluation)"
+                    )
+
+        # Recurse into every present nested composite ref (missing refs already
+        # short-circuited above, so every ref here resolves).
+        for arm in _reachable_refs(node):
+            child = registry.get(arm)
+            if child is not None and child.name not in visited:
+                stack.append(child)
+    return None
+
+
+def _reachable_refs(node: CompositeNode) -> list[str]:
+    """The nested-composite refs a node directly references (arms + judge +
+    loop body) — the edges of the §3.2 reference sub-DAG the preflight walks."""
+    body = node.body
+    refs: list[str] = []
+    if isinstance(body, (CascadeBody, EnsembleBody)):
+        refs = [arm.ref for arm in body.arms if isinstance(arm, CompositeArm)]
+        if isinstance(body, EnsembleBody) and isinstance(
+            body.aggregate.judge, CompositeArm
+        ):
+            refs.append(body.aggregate.judge.ref)
+    elif isinstance(body, LoopBody) and isinstance(body.body, CompositeArm):
+        refs = [body.body.ref]
+    return refs
 
 
 def _execute_node(
@@ -1306,4 +1726,10 @@ def execute_composite(
     # and the single-node default both work).
     if knob.name not in reg:
         reg = {**reg, knob.name: knob}
+    # F5: deep fail-closed preflight over EVERY reachable composite — a missing
+    # leaf stage/signal/predicate inside an unselected nested arm fails closed
+    # up front, before any arm runs (never a silent root output).
+    preflight = _preflight_reachable(knob, stages, reg, sigs, preds)
+    if preflight is not None:
+        return preflight
     return _execute_node(knob, stages, reg, config, calibrated_values, sigs, preds)
