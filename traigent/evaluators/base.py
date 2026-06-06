@@ -1048,6 +1048,75 @@ class BaseEvaluator(ABC):
 
     # Common evaluation methods to reduce duplication in subclasses
 
+    @staticmethod
+    def _unpack_user_metrics(raw: Any) -> tuple[Any, dict[str, float] | None]:
+        """Split a decorated function's return into (output, per-example metrics).
+
+        Strict, conservative unpack rule (back-compat is absolute): the return
+        is unpacked ONLY when ``raw`` is EXACTLY a length-2 ``tuple`` whose
+        second element is a ``Mapping`` with all-``str`` keys and all-numeric
+        (``int``/``float``, excluding ``bool``) values. In that case element
+        ``[0]`` becomes the output used for ALL downstream purposes (accuracy
+        comparison, ``actual_output`` storage, scoring functions) and element
+        ``[1]`` becomes the per-example user metrics dict.
+
+        EVERY other shape is left untouched and returned as raw output with no
+        user metrics — longer/shorter tuples, a non-tuple, a ``[1]`` that is not
+        a Mapping (e.g. a list), a Mapping with any non-``str`` key, or a Mapping
+        with any non-numeric / ``bool`` value. This makes the rule idempotent: an
+        already-unpacked output (whose ``[0]`` is not itself such a 2-tuple) is a
+        no-op, so calling this at more than one boundary is safe.
+
+        The numeric values are coerced to ``float`` so they aggregate by mean and
+        satisfy the ``MeasuresDict`` numeric contract downstream.
+
+        Args:
+            raw: The raw value returned by the user's decorated function.
+
+        Returns:
+            ``(output, user_metrics)`` where ``user_metrics`` is ``None`` unless
+            the strict 2-tuple shape matched.
+        """
+        if not (type(raw) is tuple and len(raw) == 2):
+            return raw, None
+        output, candidate = raw
+        if not isinstance(candidate, Mapping):
+            return raw, None
+        for key, value in candidate.items():
+            if not isinstance(key, str):
+                return raw, None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return raw, None
+        user_metrics = {key: float(value) for key, value in candidate.items()}
+        return output, user_metrics
+
+    def _merge_user_metrics(
+        self,
+        target: dict[str, Any],
+        user_metrics: dict[str, float] | None,
+        *,
+        context: str,
+    ) -> None:
+        """Merge per-example user metrics into ``target`` without overriding.
+
+        User keys are first-class but NEVER override an evaluator-computed key:
+        a user key already present in ``target`` is skipped (the evaluator's own
+        value wins) and a debug line records the skip. This protects computed
+        keys such as ``accuracy`` from being shadowed by a user-supplied metric.
+        """
+        if not user_metrics:
+            return
+        for key, value in user_metrics.items():
+            if key in target:
+                logger.debug(
+                    "Skipping user metric %r (%s): evaluator already set it to %r",
+                    key,
+                    context,
+                    target[key],
+                )
+                continue
+            target[key] = value
+
     def _prepare_call_arguments(
         self,
         func: Callable[..., Any],
@@ -2102,10 +2171,16 @@ class BaseEvaluator(ABC):
             # Default evaluation with correlation key
             capture_key = self._get_capture_key_context()
             with capture_key(example_id):
-                output, error = await self._execute_function(
+                raw_output, error = await self._execute_function(
                     func, config, example.input_data, executor
                 )
             execution_time = time.time() - start_time
+
+            # Strict 2-tuple unpack: a (output, numeric-metrics) return becomes
+            # output[0] for ALL downstream purposes (actual_output, accuracy,
+            # scoring); the metrics ride to per-example custom metrics. Any other
+            # shape is left untouched (back-compat).
+            output, user_metrics = self._unpack_user_metrics(raw_output)
 
             result = ExampleResult(
                 example_id=example_id,
@@ -2117,6 +2192,7 @@ class BaseEvaluator(ABC):
                 success=(error is None),
                 error_message=error,
                 metadata=example.metadata.copy() if example.metadata else {},
+                user_metrics=user_metrics,
             )
 
             # Record to tracing span
@@ -2713,9 +2789,15 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 with _maybe_restore_trial_context(trial_ctx):
                     with ConfigurationContext(config):
                         if asyncio.iscoroutinefunction(func):
-                            output = await func(**example.input_data)
+                            raw_output = await func(**example.input_data)
                         else:
-                            output = func(**example.input_data)
+                            raw_output = func(**example.input_data)
+
+                # Strict 2-tuple unpack: a (output, numeric-metrics) return
+                # becomes output[0] for ALL downstream purposes; the metrics
+                # merge into this example's metrics (no-override). Any other
+                # shape is left untouched (back-compat).
+                output, user_metrics = self._unpack_user_metrics(raw_output)
 
                 per_example_duration = time.time() - example_start_time
 
@@ -2730,6 +2812,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 # Add LLM metrics if captured
                 if llm_metrics:
                     self._add_llm_metrics_to_example(example_metrics, llm_metrics)
+
+                # Merge per-example user metrics (never overriding computed keys).
+                self._merge_user_metrics(
+                    example_metrics, user_metrics, context="simple-scoring lane"
+                )
 
                 # Calculate execution time
                 execution_time = per_example_duration

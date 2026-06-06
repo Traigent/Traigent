@@ -966,6 +966,26 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             ExampleMetrics for this output
         """
+        # Strict 2-tuple unpack: a (output, numeric-metrics) return becomes
+        # output[0] for ALL downstream purposes (LLM/meta extraction, accuracy,
+        # scoring). This is idempotent: in detailed mode the boundary already
+        # unpacked actual_output, so this is a no-op there; in non-detailed mode
+        # the raw tuple still rides ``outputs`` and is unpacked here. Any other
+        # shape is left untouched (back-compat).
+        output, unpacked_user_metrics = self._unpack_user_metrics(output)
+
+        # Per-example user metrics: prefer the carrier the boundary already
+        # attached to the ExampleResult (detailed mode); fall back to the
+        # value unpacked here (non-detailed mode).
+        user_metrics = unpacked_user_metrics
+        if (
+            example_results
+            and index < len(example_results)
+            and example_results[index] is not None
+            and getattr(example_results[index], "user_metrics", None) is not None
+        ):
+            user_metrics = example_results[index].user_metrics
+
         # Extract LLM metrics
         example_metric = self._extract_llm_metrics_for_output(
             output, index, config, dataset, all_captured_responses
@@ -989,6 +1009,12 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_value = self._calculate_example_accuracy(actual_value, expected_output)
         if accuracy_value is not None:
             example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
+
+        # Merge per-example user metrics into custom_metrics, never overriding
+        # an evaluator-computed key (e.g. accuracy stays the computed value).
+        self._merge_user_metrics(
+            example_metric.custom_metrics, user_metrics, context="local lane"
+        )
 
         # Transfer metrics from example_results if available
         if example_results and index < len(example_results):

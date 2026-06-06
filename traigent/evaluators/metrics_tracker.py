@@ -2,6 +2,7 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability CONC-Quality-Observability FUNC-EVAL-METRICS REQ-EVAL-005 SYNC-OptimizationFlow
 
+import math
 import os
 import statistics
 import time
@@ -321,7 +322,74 @@ class MetricsTracker:
                 aggregated, "tokens_per_second", "mean"
             )
 
+        # Mean-aggregate user-supplied per-example custom metrics (e.g. the
+        # composite_* telemetry keys from a (output, metrics_dict) return) the
+        # same way accuracy aggregates above. These are rates/means/counts, so
+        # mean across examples is the correct trial-level value. Standard keys
+        # already produced above are excluded so we never double-count or
+        # clobber the canonical aggregation.
+        self._aggregate_user_custom_metrics(formatted)
+
         return formatted
+
+    #: Keys ``format_for_backend`` already produces via dedicated, non-mean
+    #: aggregation (accuracy/score by mean elsewhere; tokens/cost as the
+    #: tracker's own statistics). User custom keys outside this set are
+    #: mean-aggregated as-is.
+    _RESERVED_BACKEND_METRIC_KEYS = frozenset(
+        {
+            "score",
+            "accuracy",
+            "success",
+            "duration",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "response_time_ms",
+            "cost",
+            "input_cost",
+            "output_cost",
+            "total_cost",
+            "tokens_per_second",
+            "total_examples",
+            "successful_examples",
+        }
+    )
+
+    def _aggregate_user_custom_metrics(self, formatted: dict[str, Any]) -> None:
+        """Mean-aggregate non-reserved custom metrics into ``formatted``.
+
+        Mirrors the accuracy mean-aggregation in ``format_for_backend``: for
+        every custom-metric key that is NOT a reserved/standard key, average
+        its finite numeric values across the successful examples and write the
+        mean into ``formatted``. Non-numeric or non-finite values are skipped
+        (the wire channel carries finite numbers only). Reserved keys already
+        present in ``formatted`` are never overwritten.
+        """
+        if not self.example_metrics:
+            return
+
+        values_by_key: dict[str, list[float]] = {}
+        for metric in self.example_metrics:
+            if not metric.success:
+                continue
+            for key, value in metric.custom_metrics.items():
+                if key in self._RESERVED_BACKEND_METRIC_KEYS:
+                    continue
+                if isinstance(value, bool) or value is None:
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(numeric):
+                    continue
+                values_by_key.setdefault(key, []).append(numeric)
+
+        for key, values in values_by_key.items():
+            if not values or key in formatted:
+                continue
+            formatted[key] = sum(values) / len(values)
 
     def _empty_backend_format(self) -> dict[str, Any]:
         """Return empty backend format structure when error occurs."""

@@ -213,12 +213,22 @@ def answer(text: str) -> tuple[str, dict[str, float]]:
     return str(run.output), metrics
 ```
 
+The evaluator unpacks a return that is EXACTLY a length-2 tuple
+`(output, metrics)` whose `metrics` is a `Mapping` with all-string keys and
+all-numeric (non-`bool`) values: `output` (element `[0]`) is used for accuracy,
+`actual_output`, and scoring, while `metrics` (element `[1]`) mean-aggregates
+across examples onto the trial — every other return shape is left untouched, so
+existing string/dict returns are unaffected. A user metric never overrides an
+evaluator-computed key (e.g. a user-supplied `accuracy` is skipped and the
+computed accuracy is kept).
+
 On submission, the SDK splits off the reserved `measures` / `summary_stats`
 keys and validates the remaining numeric metrics (your `accuracy` plus the
 `composite_*` keys) through `MeasuresDict` before posting them in the trial
-result body. The integration test
-`tests/unit/cloud/test_composite_measures_submission.py` asserts the
-`composite_*` keys appear in the posted body.
+result body. The integration tests in
+`tests/unit/cloud/test_composite_measures_submission.py` assert the
+`composite_*` keys appear in the posted body — both from a pre-merged metrics
+dict and end-to-end from a tuple-returning function through the real evaluator.
 
 ## See also
 
