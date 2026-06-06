@@ -36,6 +36,7 @@ markdown_extensions:
 
 nav:
   - Home: README.md
+  - JavaScript SDK: https://traigent.github.io/Traigent/js/
   - Getting Started:
       - Overview: getting-started/README.md
       - Quickstart: getting-started/GETTING_STARTED.md
@@ -45,6 +46,7 @@ nav:
       - Portal Dev Laptop Agent: getting-started/portal-dev-laptop-agent.md
   - Concepts:
       - Guided Generation: concepts/guided-generation.md
+      - Composite-Knob IR: concepts/composite-knob-ir.md
       - Configuration Spaces: user-guide/configuration-spaces.md
       - Constraint Expressions: tvl/CONSTRAINT_EXPRESSIONS.md
       - Dataflow Detection: features/dataflow-detection.md

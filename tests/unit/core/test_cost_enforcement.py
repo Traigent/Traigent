@@ -11,6 +11,7 @@ import threading
 from collections.abc import Generator
 from datetime import UTC
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +28,7 @@ from traigent.core.cost_enforcement import (
     CostTrackingRequiredError,
     OptimizationAborted,
     Permit,
+    normalize_cost_approved,
 )
 from traigent.core.stop_conditions import CostLimitStopCondition
 
@@ -64,6 +66,35 @@ UNKNOWN_COST_PAIRWISE_CASES = [
 ]
 
 
+class _CostEnforcerSink:
+    def __init__(self) -> None:
+        self.cost_enforcer: CostEnforcer | None = None
+
+    def set_cost_enforcer(self, cost_enforcer: CostEnforcer) -> None:
+        self.cost_enforcer = cost_enforcer
+
+
+class _StopConditionSink:
+    def __init__(self) -> None:
+        self.cost_enforcer: CostEnforcer | None = None
+
+    def register_cost_limit_condition(self, cost_enforcer: CostEnforcer) -> None:
+        self.cost_enforcer = cost_enforcer
+
+
+def _setup_orchestrator_cost_enforcer(cost_approved: object) -> CostEnforcer:
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    orchestrator = cast(
+        Any, OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+    )
+    orchestrator.config = {"cost_limit": 1.0, "cost_approved": cost_approved}
+    orchestrator.parallel_execution_manager = _CostEnforcerSink()
+    orchestrator._stop_condition_manager = _StopConditionSink()
+    orchestrator._setup_cost_enforcer()
+    return cast(CostEnforcer, orchestrator.cost_enforcer)
+
+
 class TestCostEnforcerConfig:
     """Tests for CostEnforcerConfig defaults and validation."""
 
@@ -87,6 +118,39 @@ class TestCostEnforcerConfig:
         assert config.approved is True
         assert config.warning_threshold == 0.8
         assert config.fallback_trial_limit == 20
+
+
+class TestCostApprovalNormalization:
+    """Tests for fail-closed runtime approval parameter parsing."""
+
+    def test_normalize_cost_approved_accepts_only_real_true(self) -> None:
+        assert normalize_cost_approved(True) is True
+        assert normalize_cost_approved(False) is False
+        assert normalize_cost_approved(None) is False
+
+    @pytest.mark.parametrize("value", ["true", "false", 1])
+    def test_normalize_cost_approved_rejects_non_bool_values(
+        self, caplog: pytest.LogCaptureFixture, value: object
+    ) -> None:
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            assert normalize_cost_approved(value) is False
+
+        assert repr(value) in caplog.text
+        assert f"type: {type(value).__name__}" in caplog.text
+
+    def test_orchestrator_string_cost_approved_does_not_approve_cost_enforcer(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            enforcer = _setup_orchestrator_cost_enforcer("true")
+
+        assert enforcer.config.approved is False
+        assert "Ignoring non-boolean cost_approved='true' (type: str)" in caplog.text
+
+    def test_orchestrator_bool_cost_approved_approves_cost_enforcer(self) -> None:
+        enforcer = _setup_orchestrator_cost_enforcer(True)
+
+        assert enforcer.config.approved is True
 
 
 class TestCostEnforcerBasic:
@@ -703,6 +767,24 @@ class TestCostEnforcerEnvironmentVariables:
         with patch.dict(os.environ, {"TRAIGENT_COST_APPROVED": "true"}):
             enforcer = CostEnforcer()
             assert enforcer.config.approved is True
+
+    def test_cost_approved_env_one_does_not_approve(self, tmp_path: Path) -> None:
+        """TRAIGENT_COST_APPROVED=1 is not an approval token."""
+        with patch.dict(os.environ, {"TRAIGENT_COST_APPROVED": "1"}):
+            enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0))
+            enforcer._approval_token_path = tmp_path / "missing-cost-approval.token"
+            assert enforcer.config.approved is False
+            with patch.object(enforcer, "_request_user_approval", return_value=False):
+                assert enforcer.check_and_approve(2.0) is False
+
+    def test_cost_approved_env_true_approves(self) -> None:
+        """TRAIGENT_COST_APPROVED=true approves cost-sensitive execution."""
+        with patch.dict(os.environ, {"TRAIGENT_COST_APPROVED": "true"}):
+            enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0))
+            with patch.object(enforcer, "_request_user_approval") as request_approval:
+                assert enforcer.check_and_approve(2.0) is True
+
+        request_approval.assert_not_called()
 
     def test_invalid_env_uses_default(self) -> None:
         """Invalid environment values fall back to defaults."""

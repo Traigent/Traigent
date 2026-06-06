@@ -5,7 +5,7 @@
 The `results.convergence_info` field is a dictionary containing statistics about how the optimization progressed over trials. Use it to understand whether the optimizer found a good solution or whether more trials might help.
 
 ```python
-results = func.optimize(dataset="data.jsonl")
+results = func.optimize()
 info = results.convergence_info
 ```
 
@@ -130,7 +130,7 @@ def should_run_more_trials(results) -> bool:
     return False
 
 
-results = func.optimize(dataset="data.jsonl")
+results = func.optimize()
 if should_run_more_trials(results):
     print("Consider re-running with higher max_trials")
 ```

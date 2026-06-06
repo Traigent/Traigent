@@ -37,7 +37,7 @@ The `OptimizationResult` dataclass is returned by `func.optimize()` and contains
 ### Usage
 
 ```python
-results = func.optimize(dataset="data.jsonl")
+results = func.optimize()
 
 # Direct field access
 print(results.best_config)       # {"model": "gpt-4o", "temperature": 0.0}

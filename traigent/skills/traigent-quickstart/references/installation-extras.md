@@ -2,6 +2,12 @@
 
 Full reference of optional dependency groups available via `pip install 'traigent[extra_name]'`.
 
+For most users, start with:
+
+```bash
+pip install "traigent[recommended]"
+```
+
 ## Extras Table
 
 | Extra           | Description                                        | Key Packages                                                                 |
@@ -10,24 +16,27 @@ Full reference of optional dependency groups available via `pip install 'traigen
 | `bayesian`      | Bayesian optimization algorithms                   | scikit-learn, scipy                                                          |
 | `integrations`  | Framework integrations                             | LangChain (+ community/anthropic/openai/google), OpenAI, Anthropic, Groq, Google GenAI, MLflow, W&B, python-dotenv, boto3, faiss-cpu |
 | `dspy`          | DSPy prompt optimization                           | dspy-ai                                                                      |
-| `pydanticai`    | PydanticAI agent framework                         | pydantic-ai                                                                  |
-| `security`      | Enterprise security features                       | PyJWT, passlib, FastAPI, Starlette, uvicorn, redis, defusedxml, pyotp        |
+| `pydanticai`    | PydanticAI agent framework                         | pydantic-ai-slim                                                             |
+| `security`      | Enterprise security features                       | passlib, FastAPI, Starlette, uvicorn, redis, defusedxml, pyotp               |
 | `visualization` | Visualization and plotting                         | matplotlib, plotly                                                           |
-| `hybrid`        | Portal-tracked local execution and external hybrid API integrations | httpx with HTTP/2                                                            |
+| `hybrid`        | Portal-tracked local execution and external hybrid API integrations | httpx with HTTP/2, claude-code-sdk, mcp                                      |
 | `tracing`       | OpenTelemetry tracing                              | opentelemetry-api, opentelemetry-sdk, opentelemetry-exporter-otlp            |
 | `test`          | Testing dependencies                               | pytest, pytest-asyncio, pytest-cov, pytest-mock, pytest-timeout, pytest-xdist, coverage, ragas, rapidfuzz, hypothesis |
 | `dev`           | Development tools (linting + testing)              | pytest suite, black, isort, flake8, mypy, pre-commit, ruff, bandit           |
 | `docs`          | Documentation generation                           | mkdocs, mkdocs-material, mkdocstrings                                        |
 | `ml`            | Machine learning bundle                            | bayesian + analytics + numpy + scipy                                         |
 | `cloud`         | Reserved dependencies for future remote execution; not needed for portal-tracked `hybrid` runs | security + boto3                                                             |
+| `recommended`   | Recommended end-user bundle for running optimizations | integrations, analytics, bayesian, visualization, hybrid, pydanticai         |
 | `all`           | All optional features combined                     | analytics, bayesian, integrations, pydanticai, security, visualization, test, tracing, hybrid |
-| `enterprise`    | Enterprise bundle with all production features     | analytics, bayesian, integrations, security, visualization, test, tracing, ml, cloud, hybrid  |
 
 ## Install Commands
 
 ### pip
 
 ```bash
+# Recommended install
+pip install "traigent[recommended]"
+
 # Individual extras
 pip install 'traigent[analytics]'
 pip install 'traigent[bayesian]'
@@ -45,8 +54,8 @@ pip install 'traigent[ml]'
 pip install 'traigent[cloud]'
 
 # Combined bundles
+pip install 'traigent[recommended]'
 pip install 'traigent[all]'
-pip install 'traigent[enterprise]'
 
 # Multiple extras at once
 pip install 'traigent[integrations,analytics,visualization]'
@@ -62,8 +71,7 @@ These packages are installed with the base `pip install traigent`:
 - requests (sync HTTP fallback)
 - jsonschema (schema validation)
 - cryptography (encryption)
-- claude-code-sdk (Claude Code integration)
-- mcp (Model Context Protocol)
+- PyJWT[crypto] (JWT signing and verification)
 - backoff (retry with backoff)
 - litellm (LLM provider abstraction)
 - rank-bm25 (BM25 retrieval)
@@ -74,4 +82,5 @@ These packages are installed with the base `pip install traigent`:
 
 - Requires Python >= 3.11.
 - `faiss-cpu` (in `integrations`) is not available on Windows.
-- The `all` and `enterprise` bundles include most extras. The difference is that `enterprise` also includes `ml` and `cloud` bundles.
+- The `recommended` bundle installs `integrations`, `analytics`, `bayesian`, `visualization`, `hybrid`, and `pydanticai`.
+- The `all` bundle includes most extras for broad local development and testing.

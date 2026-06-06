@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Unpriced models now block instead of warn-and-continue.** When a real run includes
+  models with no known pricing, the SDK now requires explicit confirmation: interactive
+  terminals get a blocking prompt; non-interactive runs fail closed before any trial.
+  Pre-approve with `cost_approved=True` (must be a real boolean) or
+  `TRAIGENT_COST_APPROVED=true` (exact value), or supply custom pricing via
+  `TRAIGENT_CUSTOM_MODEL_PRICING_JSON`/`_FILE`. `TRAIGENT_STRICT_COST_ACCOUNTING=true`
+  still hard-fails without prompting; mock runs are unaffected.
+
 ## [0.12.0] - 2026-06-06
 
 ### Added

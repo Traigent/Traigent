@@ -60,10 +60,11 @@ from traigent.api.functions import recommend_configuration_space
 space = recommend_configuration_space("rag", min_impact="medium")
 
 @tg.optimize(configuration_space=space["configuration_space"])
-def answer_question(query: str, **config: object) -> str:
+def answer_question(query: str) -> str:
+    cfg = tg.get_config()
     return query
 ```
 
-Honesty note: recommendations are catalog-backed starter guidance. The public
-response intentionally does not expose private signal-taxonomy details, and the
-result is not proof that a knob will improve your task.
+Honesty note: recommendations are catalog-backed starter guidance. They are not
+proof that a knob will improve your task; validate them on your own evaluation
+dataset before treating them as winners.

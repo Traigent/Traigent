@@ -87,9 +87,8 @@ env keys.
 
 ## Using it (TypeScript SDK)
 
-`@traigent/sdk` exposes the parity surface — `GuidancePlan*` Zod DTOs, the
-`PromptRewriter` / `ExampleSynthesizer` / `GuidanceLoop` / `BackendGuidanceProvider`
-engines, and `promptRewrite?` / `growDataset?` fields on `OptimizationSpec`.
+Native TypeScript SDK support exists in the internal `traigent-js` repo; npm
+publication for `@traigent/sdk` is pending.
 
 ## Required-by-design
 
@@ -99,5 +98,5 @@ compass is essential, and that keeps the signals protected.
 
 ## See also
 
-- Runnable offline example: [`examples/core/guided-generation/`](../../examples/core/guided-generation/README.md)
+- Runnable offline example: `examples/core/guided-generation/` in the source repository
 - Contract: `TraigentSchema/traigent_schema/schemas/guidance/`

@@ -50,6 +50,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcer,
     CostEnforcerConfig,
     Permit,
+    normalize_cost_approved,
 )
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import VendorErrorCategory
@@ -434,7 +435,7 @@ class OptimizationOrchestrator:
         """Map public agent types to workflow graph node types."""
 
         if agent.agent_type in {"llm", "retriever", "router", "tool"}:
-            return agent.agent_type
+            return cast(str, agent.agent_type)
         return "agent"
 
     def _register_declared_workflow_trace_nodes(self) -> None:
@@ -602,12 +603,12 @@ class OptimizationOrchestrator:
     def _setup_cost_enforcer(self) -> None:
         """Initialize cost enforcer for cost limit enforcement."""
         cost_limit = self.config.get("cost_limit")
-        cost_approved = self.config.get("cost_approved", False)
+        cost_approved = normalize_cost_approved(self.config.get("cost_approved", False))
         cost_config = None
         if cost_limit is not None or cost_approved:
             cost_config = CostEnforcerConfig(
                 limit=float(cost_limit) if cost_limit else DEFAULT_COST_LIMIT_USD,
-                approved=bool(cost_approved),
+                approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
         self.parallel_execution_manager.set_cost_enforcer(self.cost_enforcer)
@@ -997,7 +998,10 @@ class OptimizationOrchestrator:
 
         from traigent.cloud.governance import build_certified_selection
 
-        return build_certified_selection(incumbent.trial_id, certificates)
+        return cast(
+            dict[str, Any] | None,
+            build_certified_selection(incumbent.trial_id, certificates),
+        )
 
     def _withhold_promotion(self, reason: str) -> bool:
         """Fail closed: record + log a strict-mode withheld promotion."""
@@ -1135,9 +1139,11 @@ class OptimizationOrchestrator:
             return True
 
         minimization = is_minimization_objective(primary_objective)
+        new_score_value = cast(float, new_score)
+        current_score_value = cast(float, current_score)
         if minimization:
-            return new_score < current_score
-        return new_score > current_score
+            return new_score_value < current_score_value
+        return new_score_value > current_score_value
 
     def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
         if not self.optimizer.objectives:
@@ -2162,7 +2168,7 @@ class OptimizationOrchestrator:
                     raw_result
                 )
             )
-            return session_id
+            return cast(str, session_id)
         else:
             # Return a mock session ID if no backend client
             mock_session_id = f"mock-session-{self._optimization_id[:8]}"
