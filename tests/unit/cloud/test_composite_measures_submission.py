@@ -34,7 +34,7 @@ import pytest
 from traigent.cloud.trial_operations import TrialOperations
 from traigent.knobs.patterns import binary_cascade
 from traigent.knobs.runtime import StageRunner, execute_composite
-from traigent.knobs.telemetry import composite_measures
+from traigent.knobs.telemetry import composite_measures, merge_composite_measures
 
 GATE = "router_margin_threshold"
 
@@ -65,7 +65,7 @@ def _evaluate_one_item_metrics() -> dict[str, float]:
         calibrated_values={GATE: 0.9},
     )
     metrics: dict[str, float] = {"accuracy": 1.0}
-    metrics.update(composite_measures(run))
+    merge_composite_measures(metrics, run)
     return metrics
 
 

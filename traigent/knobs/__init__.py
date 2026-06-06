@@ -46,7 +46,7 @@ from .kinds import KnobKind
 from .resolution import ResolutionError, ResolutionNode, ResolutionRejection
 from .resolver import CalibratedInput, KnobResolver, ResolvedConfiguration
 from .signals import SignalObservation, SignalSpec
-from .telemetry import composite_measures
+from .telemetry import composite_measures, merge_composite_measures
 
 __all__ = [
     "CTX_EXT_KEYS",
@@ -81,6 +81,7 @@ __all__ = [
     "VoteStats",
     "canonical_hash",
     "composite_measures",
+    "merge_composite_measures",
     "conformal_evidence_floor",
     "issue_certificate",
     "knob_to_parameter_range",

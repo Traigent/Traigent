@@ -42,7 +42,9 @@ if TYPE_CHECKING:  # avoid importing the runtime module at import time
 
 __all__ = [
     "MAX_COMPOSITE_MEASURES",
+    "TOTAL_MEASURES_CEILING",
     "composite_measures",
+    "merge_composite_measures",
 ]
 
 logger = get_logger(__name__)
@@ -53,6 +55,12 @@ logger = get_logger(__name__)
 #: cardinality guard. Truncation is deterministic and logged — never raised
 #: mid-trial (a telemetry overflow must not fail the user's optimization).
 MAX_COMPOSITE_MEASURES = 40
+
+#: The backend ``MeasuresDict`` cardinality cap applies to the WHOLE submitted
+#: metrics dict (user metrics + composite telemetry together) — not to the
+#: composite keys alone. ``merge_composite_measures`` enforces it at the merge
+#: boundary (codex round: the per-flattener cap alone over-claimed 'headroom').
+TOTAL_MEASURES_CEILING = 50
 
 
 def _is_finite_number(value: object) -> bool:
@@ -143,6 +151,18 @@ def composite_measures(
     gate_entries.sort(key=lambda item: item[0])
     ordered.extend((key, rate) for _index, key, rate in gate_entries)
 
+    # Injectivity guard (codex round): a scalar literally named
+    # 'gate_0_margin_pass_rate' and the standard per-gate map both flatten to
+    # the same key — duplicates RAISE rather than silently last-write-win.
+    seen: set[str] = set()
+    for key, _value in ordered:
+        if key in seen:
+            raise ValueError(
+                f"composite_measures: flattened key {key!r} collides with "
+                "another measure — §3.10 names must flatten injectively"
+            )
+        seen.add(key)
+
     if len(ordered) > MAX_COMPOSITE_MEASURES:
         dropped = [key for key, _ in ordered[MAX_COMPOSITE_MEASURES:]]
         logger.warning(
@@ -155,3 +175,58 @@ def composite_measures(
         ordered = ordered[:MAX_COMPOSITE_MEASURES]
 
     return dict(ordered)
+
+
+def merge_composite_measures(
+    metrics: dict[str, float | int],
+    run: CompositeRunResult,
+    *,
+    prefix: str = "composite",
+) -> dict[str, float | int]:
+    """Merge a composite run's flattened telemetry into a user metrics dict,
+    fail-closed at both merge hazards (codex round):
+
+    * the ``{prefix}_*`` namespace is RESERVED — a user metric already named
+      e.g. ``composite_escalation_rate`` raises ``ValueError`` (never a silent
+      overwrite);
+    * the backend ``MeasuresDict`` ceiling (:data:`TOTAL_MEASURES_CEILING`)
+      applies to the WHOLE dict — composite keys are truncated
+      deterministically (and the drop logged) so the total never exceeds it;
+      user metrics are never dropped.
+
+    Returns the SAME dict instance, mutated, for ergonomic
+    ``return merge_composite_measures(metrics, run)`` use.
+    """
+    flattened = composite_measures(run, prefix=prefix)
+
+    collisions = sorted(set(metrics) & set(flattened))
+    if collisions:
+        raise ValueError(
+            f"metrics dict already carries reserved {prefix}_* key(s) "
+            f"{collisions[:5]} — the composite telemetry namespace is "
+            "reserved; rename the user metric(s) or choose another prefix"
+        )
+
+    budget = TOTAL_MEASURES_CEILING - len(metrics)
+    if budget <= 0:
+        logger.warning(
+            "merge_composite_measures: user metrics already at the %d-key "
+            "ceiling; ALL %d composite measure(s) dropped",
+            TOTAL_MEASURES_CEILING,
+            len(flattened),
+        )
+        return metrics
+    if len(flattened) > budget:
+        keep = dict(list(flattened.items())[:budget])
+        dropped = [k for k in flattened if k not in keep]
+        logger.warning(
+            "merge_composite_measures: total measures would exceed the "
+            "%d-key ceiling; %d composite key(s) dropped deterministically: %s",
+            TOTAL_MEASURES_CEILING,
+            len(dropped),
+            sorted(dropped),
+        )
+        flattened = keep
+
+    metrics.update(flattened)
+    return metrics

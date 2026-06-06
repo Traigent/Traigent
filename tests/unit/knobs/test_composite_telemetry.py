@@ -256,3 +256,57 @@ class TestEdgeCases:
 
     def test_reexported_from_knobs_package(self) -> None:
         assert composite_measures_reexport is composite_measures
+
+
+def _run_with_measures(measures):
+    return CompositeRunResult(
+        output=None, result_kind=ResultKind.OUTPUT, measures=measures
+    )
+
+
+class TestCodexRoundBlockers:
+    def test_flatten_collision_raises(self):
+        """Blocker 3: a scalar named gate_0_margin_pass_rate and the standard
+        per-gate map both flatten to the same key — duplicates must RAISE,
+        never silently last-write-win."""
+        run = _run_with_measures(
+            {
+                "gate_0_margin_pass_rate": 0.5,
+                "gate_margin_pass_rate": {0: 1.0},
+            }
+        )
+        with pytest.raises(ValueError, match="collid|duplicate"):
+            composite_measures(run)
+
+    def test_merge_rejects_user_key_collisions(self):
+        """Blocker 1: merging into a user metrics dict that already carries a
+        composite_* key must fail LOUD (reserved namespace), never overwrite."""
+        from traigent.knobs.telemetry import merge_composite_measures
+
+        run = _run_with_measures({"escalation_rate": 1.0})
+        user_metrics = {"accuracy": 0.9, "composite_escalation_rate": 123.0}
+        with pytest.raises(ValueError, match="collid|reserved"):
+            merge_composite_measures(user_metrics, run)
+
+    def test_merge_enforces_the_total_measures_ceiling(self):
+        """Blocker 2: the 50-key MeasuresDict cap applies to the WHOLE
+        submitted metrics dict — the merge truncates composite keys
+        deterministically (logged) so the TOTAL never exceeds 50."""
+        from traigent.knobs.telemetry import merge_composite_measures
+
+        run = _run_with_measures({"gate_margin_pass_rate": {i: 1.0 for i in range(30)}})
+        user_metrics = {f"user_metric_{i}": float(i) for i in range(45)}
+        merged = merge_composite_measures(dict(user_metrics), run)
+        assert len(merged) <= 50
+        # user metrics are NEVER dropped — only composite keys yield
+        for k in user_metrics:
+            assert k in merged
+
+    def test_merge_happy_path(self):
+        from traigent.knobs.telemetry import merge_composite_measures
+
+        run = _run_with_measures({"escalation_rate": 1.0, "stage_selected": 1})
+        merged = merge_composite_measures({"accuracy": 0.9}, run)
+        assert merged["accuracy"] == 0.9
+        assert merged["composite_escalation_rate"] == 1.0
+        assert merged["composite_stage_selected"] == 1

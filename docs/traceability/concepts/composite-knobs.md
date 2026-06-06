@@ -154,7 +154,7 @@ backend cap of 50 keys per trial (`traigent.cloud.dtos.MeasuresDict`).
 It flattens the run's measures into identifier-safe, numeric-only keys:
 
 ```python
-from traigent.knobs.telemetry import composite_measures
+from traigent.knobs.telemetry import composite_measures, merge_composite_measures
 
 composite_measures(run)
 # {
@@ -189,7 +189,7 @@ channel as ordinary numeric metrics:
 ```python
 import traigent
 from traigent.knobs.runtime import execute_composite
-from traigent.knobs.telemetry import composite_measures
+from traigent.knobs.telemetry import composite_measures, merge_composite_measures
 
 
 @traigent.optimize(
@@ -209,7 +209,7 @@ def answer(text: str) -> tuple[str, dict[str, float]]:
         calibrated_values={"router_margin_threshold": params["router_margin_threshold"]},
     )
     metrics = {"accuracy": 1.0 if str(run.output) == "STRONG" else 0.0}
-    metrics.update(composite_measures(run))  # composite_* keys ride the wire
+    merge_composite_measures(metrics, run)  # composite_* keys ride the wire
     return str(run.output), metrics
 ```
 

@@ -45,7 +45,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 from traigent.knobs.patterns import binary_cascade
 from traigent.knobs.runtime import StageRunner, execute_composite
-from traigent.knobs.telemetry import composite_measures
+from traigent.knobs.telemetry import composite_measures, merge_composite_measures
 from traigent.tvl.models import PromotionPolicy
 from traigent.tvl.promotion_gate import ObjectiveSpec, PromotionGate
 
@@ -118,7 +118,7 @@ def _evaluate_config(
         # Merge the composite's §3.10 telemetry into the per-item metrics. In a
         # hybrid/cloud run, this exact dict is what rides the measures channel.
         item_metrics: dict[str, float] = {"accuracy": accuracy_samples[-1]}
-        item_metrics.update(composite_measures(run))
+        merge_composite_measures(item_metrics, run)
         last_measures = item_metrics
 
     return accuracy_samples, last_measures
@@ -186,7 +186,7 @@ def main() -> None:
 #         )
 #         # The composite_* keys become per-trial measures on the wire.
 #         metrics = {"accuracy": 1.0 if str(run.output) == _EXPECTED else 0.0}
-#         metrics.update(composite_measures(run))
+#         merge_composite_measures(metrics, run)
 #         return str(run.output), metrics
 #
 # Requires a reachable backend and credentials (TRAIGENT_API_KEY,
