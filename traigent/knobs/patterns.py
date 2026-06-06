@@ -58,10 +58,15 @@ __all__ = [
     "KChainStage",
     "best_of_n",
     "binary_cascade",
+    "fallback",
     "n_cascade",
+    "router",
     "self_consistency",
     "self_debug",
     "self_refine",
+    "react_tool_loop",
+    "verification_gate",
+    "moe",
 ]
 
 #: §3.10 standard telemetry measure names, per constructor kind. Content-free:
@@ -495,4 +500,470 @@ def self_refine(
         members=dict(members or {}),
         provenance=prov,
         telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
+
+
+def react_tool_loop(
+    name: str,
+    *,
+    stage: str,
+    signal: str,
+    tool_confidence_min: str,
+    max_tool_calls: int,
+    state_keys: tuple[str, ...] = (
+        "scratchpad",
+        "tool_calls",
+        "observations",
+        "confidence",
+        "last_error",
+    ),
+    signal_inputs: tuple[str, ...] = (
+        "scratchpad",
+        "tool_calls",
+        "observations",
+        "confidence",
+        "last_error",
+    ),
+    stage_tuned_params: tuple[str, ...] = (
+        "planner_style",
+        "tool_allowlist",
+        "observation_format",
+        "failure_handler",
+    ),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Loop(body=stage(a), state_keys, stop=signal_accept(tool_confidence, θ), max_iters=K)``.
+
+    A catalog ReAct-style tool loop over the existing loop algebra only. Each
+    body invocation is assumed to perform at most one ReAct tool step, so
+    ``max_tool_calls`` maps to the sealed IR's literal ``max_iters`` bound. If
+    the opaque stage performs multiple tool calls per invocation, this is a
+    max-ReAct-iterations bound, not a precise tool-call cap.
+
+    ``tool_cost_cap`` is deliberately not part of this expansion: the current
+    algebra has no cost stop/gate or mid-loop budget hook, so this factory does
+    not enforce cost stopping. Add a future cost-stop proposal before making
+    that claim.
+
+    CALIBRATION RECIPE:
+    - CVAR ``tool_confidence_min`` binds ``calibration.signal`` to this
+      factory's ``signal`` arg.
+    - Target ``P(accepted state meets task target | sigma >= theta) >= p``
+      over held-out ReAct trajectories.
+    - ``depends_on`` must cover the body stage TVARs.
+    """
+    params = {
+        "name": name,
+        "stage": stage,
+        "signal": signal,
+        "tool_confidence_min": tool_confidence_min,
+        "max_tool_calls": max_tool_calls,
+        "state_keys": list(state_keys),
+        "signal_inputs": list(signal_inputs),
+        "stage_tuned_params": list(stage_tuned_params),
+    }
+    prov = _provenance("react_tool_loop", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.LOOP,
+        body=LoopBody(
+            body=StageArm(stage, stage_tuned_params),
+            stop=StopDecl(
+                kind=StopKind.SIGNAL_ACCEPT,
+                threshold=tool_confidence_min,
+                signal=SignalUse(signal=signal, inputs=signal_inputs),
+            ),
+            state_keys=state_keys,
+            max_iters=max_tool_calls,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
+
+
+def verification_gate(
+    name: str,
+    *,
+    stage: str,
+    verifier_signal: str,
+    verifier_pass_threshold: str,
+    verification_style: str,
+    verification_question_count: str,
+    verifier_model: str,
+    independent_context: str,
+    revision_policy: str,
+    max_iters: int = 2,
+    state_keys: tuple[str, ...] = (
+        "draft",
+        "verification_questions",
+        "verification_answers",
+        "verifier_pass_score",
+        "contradiction_score",
+        "revision",
+        "independent_context",
+    ),
+    signal_inputs: tuple[str, ...] = (
+        "draft",
+        "verification_answers",
+        "independent_context",
+    ),
+    contradiction_score_max: str | None = None,
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """CoVe-style verifier loop: ``signal_accept(verifier_signal, θ)``.
+
+    This is a loop-family catalog macro over the sealed IR: the stage produces
+    threaded verification state, then the verifier signal accepts when
+    ``verifier_signal(state) >= verifier_pass_threshold``. Exhaustion yields
+    the runtime's ordinary ``no_accept`` result.
+
+    Not expressible in v1: a simultaneous ``contradiction_score_max`` stop, dual
+    verifier-pass plus improvement/contradiction thresholds on one loop
+    decision, or a tuned structural repair bound such as ``max_repair_rounds``;
+    ``max_iters`` is the literal IR bound.
+
+    CALIBRATION RECIPE:
+    - CVAR ``verifier_pass_threshold`` binds ``calibration.signal`` to
+      ``verifier_signal``.
+    - Target ``P(accepted output satisfies verification target |
+      verifier_pass_score >= theta) >= p`` over held-out generate-verify
+      trajectories.
+    """
+    if contradiction_score_max is not None:
+        raise ValueError(
+            "unsupported_compound_stop: verification_gate cannot express "
+            "contradiction_score_max until the loop IR supports compound stop "
+            "decisions"
+        )
+
+    stage_tuned_params = (
+        verification_style,
+        verification_question_count,
+        verifier_model,
+        independent_context,
+        revision_policy,
+    )
+    params = {
+        "name": name,
+        "stage": stage,
+        "verifier_signal": verifier_signal,
+        "verifier_pass_threshold": verifier_pass_threshold,
+        "verification_style": verification_style,
+        "verification_question_count": verification_question_count,
+        "verifier_model": verifier_model,
+        "independent_context": independent_context,
+        "revision_policy": revision_policy,
+        "max_iters": max_iters,
+        "state_keys": list(state_keys),
+        "signal_inputs": list(signal_inputs),
+        "contradiction_score_max": contradiction_score_max,
+    }
+    prov = _provenance("verification_gate", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.LOOP,
+        body=LoopBody(
+            body=StageArm(stage, stage_tuned_params),
+            stop=StopDecl(
+                kind=StopKind.SIGNAL_ACCEPT,
+                threshold=verifier_pass_threshold,
+                signal=SignalUse(signal=verifier_signal, inputs=signal_inputs),
+            ),
+            state_keys=state_keys,
+            max_iters=max_iters,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
+
+
+def moe(
+    name: str,
+    *,
+    experts: tuple[str, ...],
+    aggregate: str = "vote",
+    judge_stage: str | None = None,
+    accept_threshold: str | None = None,
+    expert_tuned_params: tuple[tuple[str, ...], ...] | None = None,
+    judge_tuned_params: tuple[str, ...] = (),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Ensemble(arms=[stage(expert_1)..stage(expert_m)], aggregate, committee)``.
+
+    Mixture-of-experts is the committee form of an ensemble: each distinct
+    expert stage contributes one representative candidate, then aggregation is
+    either majority vote or ``judge_max``. Sampling-form cardinality is
+    deliberately absent; use ``self_consistency``/``best_of_n`` for repeated
+    draws from one generator.
+
+    CALIBRATION RECIPE:
+    - CVAR ``accept_threshold`` (vote form only) binds
+      ``calibration.signal='vote_margin'``.
+    - Target ``P(majority output correct | vote_margin >= theta) >= p`` with
+      all experts run once per item.
+    - ``depends_on`` covers all expert ``tuned_params``.
+    """
+    if (
+        not isinstance(experts, tuple)
+        or len(experts) < 2
+        or any(not isinstance(expert, str) or not expert for expert in experts)
+    ):
+        raise ValueError(
+            "committee_arity: moe requires at least two non-empty expert stage names"
+        )
+    if len(set(experts)) != len(experts):
+        raise ValueError("duplicate_stage: moe experts must be distinct")
+
+    if aggregate not in {"vote", "judge"}:
+        raise ValueError("invalid_aggregate: moe aggregate must be 'vote' or 'judge'")
+    if expert_tuned_params is None:
+        expert_tuned_params = tuple(() for _ in experts)
+    elif len(expert_tuned_params) != len(experts):
+        raise ValueError(
+            "invalid_tuned_param: expert_tuned_params must declare exactly one "
+            f"tuple per expert (got {len(expert_tuned_params)} for "
+            f"{len(experts)} expert(s)); omit expert_tuned_params entirely to "
+            "leave all experts undeclared"
+        )
+
+    if aggregate == "vote":
+        if judge_stage is not None:
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='vote' forbids judge_stage"
+            )
+        if judge_tuned_params:
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='vote' forbids "
+                "judge_tuned_params"
+            )
+        aggregate_decl = AggregateDecl(
+            kind=AggregateKind.MAJORITY_VOTE,
+            accept=(
+                AcceptDecl(stat=StatKind.VOTE_MARGIN, threshold=accept_threshold)
+                if accept_threshold is not None
+                else None
+            ),
+        )
+    else:
+        if not isinstance(judge_stage, str) or not judge_stage:
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='judge' requires judge_stage"
+            )
+        if judge_stage in experts:
+            raise ValueError(
+                "duplicate_stage: aggregate='judge' judge_stage must be distinct"
+            )
+        if accept_threshold is not None:
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='judge' does not support "
+                "accept_threshold"
+            )
+        aggregate_decl = AggregateDecl(
+            kind=AggregateKind.JUDGE_MAX,
+            judge=StageArm(judge_stage, judge_tuned_params),
+        )
+
+    params = {
+        "name": name,
+        "experts": list(experts),
+        "aggregate": aggregate,
+        "judge_stage": judge_stage,
+        "accept_threshold": accept_threshold,
+        "expert_tuned_params": [list(tp) for tp in expert_tuned_params],
+        "judge_tuned_params": list(judge_tuned_params),
+    }
+    prov = _provenance("moe", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.ENSEMBLE,
+        body=EnsembleBody(
+            arms=tuple(
+                StageArm(expert, expert_tuned_params[i])
+                for i, expert in enumerate(experts)
+            ),
+            aggregate=aggregate_decl,
+            cardinality=None,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.ENSEMBLE],
+    )
+
+
+def _telemetry_names_for(node: CompositeNode) -> tuple[str, ...]:
+    """Return the declared standard telemetry tuple for a concrete shape."""
+    if node.kind is CompositeKind.CASCADE:
+        body = node.body
+        if not isinstance(body, CascadeBody):  # pragma: no cover - IR guarded
+            raise ValueError(
+                "unknown_composite_field: cascade telemetry requires CascadeBody"
+            )
+        cascade_by_placement = {
+            Placement.POST: _TELEMETRY[CompositeKind.CASCADE],
+            Placement.PRE: (
+                "route_selected",
+                "dispatch_signal_margin",
+                "gate_signal_adequate",
+            ),
+        }
+        return cascade_by_placement[body.placement]
+    return _TELEMETRY[node.kind]
+
+
+def router(
+    name: str,
+    *,
+    arms: tuple[str, ...],
+    signals: tuple[str, ...],
+    thresholds: tuple[str, ...],
+    tuned_params: tuple[tuple[str, ...], ...] | None = None,
+    signal_inputs: tuple[tuple[str, ...], ...] | None = None,
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Cascade(arms=[stage(a_i)], gates=[signal_below σ_i θ_i], pre)``.
+
+    Dispatch evaluates gates left-to-right before any arm runs. The first
+    adequate signal selects its arm; an abstaining signal routes onward; a
+    malformed or raising signal is an absorbing runtime error. The terminal arm
+    is ungated.
+
+    CALIBRATION RECIPE:
+    - Each ``thresholds[i]`` CVAR is route-conditional:
+      ``calibration.signal=signals[i]``.
+    - Target ``P(arm_i adequate | sigma_i(x) >= theta_i) >= p`` on a
+      calibration split, verified on a held-out route-validation split.
+    - ``signal_inputs[i]`` must be freshness-covered.
+    """
+    if len(signals) != len(thresholds):
+        raise ValueError(
+            "cascade_arity: router requires exactly one signal per threshold "
+            f"(got {len(signals)} signal(s) for {len(thresholds)} threshold(s))"
+        )
+    if tuned_params is None:
+        tuned_params = tuple(() for _ in arms)
+    elif len(tuned_params) != len(arms):
+        raise ValueError(
+            "invalid_tuned_param: tuned_params must declare exactly one tuple "
+            f"per arm (got {len(tuned_params)} for {len(arms)} arm(s)); omit "
+            "tuned_params entirely to leave all arms undeclared"
+        )
+    if signal_inputs is None:
+        signal_inputs = tuple(() for _ in signals)
+    elif len(signal_inputs) != len(signals):
+        raise ValueError(
+            "invalid_signal_use: signal_inputs must declare exactly one tuple "
+            f"per signal (got {len(signal_inputs)} for {len(signals)} signal(s))"
+        )
+
+    params = {
+        "name": name,
+        "arms": list(arms),
+        "signals": list(signals),
+        "thresholds": list(thresholds),
+        "tuned_params": [list(tp) for tp in tuned_params],
+        "signal_inputs": [list(inputs) for inputs in signal_inputs],
+    }
+    prov = _provenance("router", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.CASCADE,
+        body=CascadeBody(
+            arms=tuple(StageArm(arm, tuned_params[i]) for i, arm in enumerate(arms)),
+            gates=tuple(
+                GateDecl(
+                    kind=GateKind.SIGNAL_BELOW,
+                    threshold=threshold,
+                    signal=SignalUse(signal=signals[i], inputs=signal_inputs[i]),
+                )
+                for i, threshold in enumerate(thresholds)
+            ),
+            placement=Placement.PRE,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_telemetry_names_for(structure),
+    )
+
+
+def fallback(
+    name: str,
+    *,
+    arms: tuple[str, ...],
+    thresholds: tuple[str, ...],
+    tuned_params: tuple[tuple[str, ...], ...] | None = None,
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Cascade(arms=[stage(a_i)], gates=[margin_below θ_i], post)``.
+
+    A leaf StageRunner cannot signal failure. Non-terminal arms that need to
+    fall back must be no_accept-capable (a nested composite with an accept
+    threshold) OR use real margin thresholds (theta > 0) for
+    disagreement-based escalation; with the theta=0.0 convention leaf arms
+    NEVER escalate. v1 fallback is no_accept-triggered, NOT error-triggered;
+    errors stay absorbing.
+
+    CALIBRATION RECIPE:
+    - Each ``thresholds[i]`` CVAR is a margin-floor CVAR with
+      ``calibration.signal='vote_margin'``.
+    - The ``theta=0.0`` convention makes the margin gate inert so ONLY
+      ``no_accept`` escalates.
+    - Any ``theta > 0`` turns it into an ordinary margin cascade.
+    """
+    if tuned_params is None:
+        tuned_params = tuple(() for _ in arms)
+    elif len(tuned_params) != len(arms):
+        raise ValueError(
+            "invalid_tuned_param: tuned_params must declare exactly one tuple "
+            f"per arm (got {len(tuned_params)} for {len(arms)} arm(s)); omit "
+            "tuned_params entirely to leave all arms undeclared"
+        )
+
+    params = {
+        "name": name,
+        "arms": list(arms),
+        "thresholds": list(thresholds),
+        "tuned_params": [list(tp) for tp in tuned_params],
+    }
+    prov = _provenance("fallback", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.CASCADE,
+        body=CascadeBody(
+            arms=tuple(StageArm(arm, tuned_params[i]) for i, arm in enumerate(arms)),
+            gates=tuple(
+                GateDecl(kind=GateKind.MARGIN_BELOW, threshold=threshold)
+                for threshold in thresholds
+            ),
+            placement=Placement.POST,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_telemetry_names_for(structure),
     )
