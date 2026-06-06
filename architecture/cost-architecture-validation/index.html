@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -4957,11 +4985,25 @@
 <li><code>claude-haiku</code>, <code>claude-sonnet</code>, <code>claude-opus</code>.</li>
 <li>Hybrid aggregated metrics now emit both <code>cost</code> and <code>total_cost</code>, and orchestrator
   extraction uses <code>total_cost</code> with <code>cost</code> fallback.</li>
-<li>0.12.0 adds pre-trial model price coverage checks before any cloud or local
-  trial dispatch: unpriced models warn in normal mode and fail before a trial
-  when <code>TRAIGENT_STRICT_COST_ACCOUNTING=true</code>. Custom pricing can be supplied
-  with <code>TRAIGENT_CUSTOM_MODEL_PRICING_JSON</code> or
-  <code>TRAIGENT_CUSTOM_MODEL_PRICING_FILE</code>.</li>
+<li>0.12.0 + #1166 adds pre-trial model price coverage checks before any cloud,
+  hybrid_api, or local trial dispatch. The preflight scans model IDs from
+  <code>configuration_space</code> and, when no model key is tunable, from the
+  current/default config. Mock mode skips the check. Priced models and models
+  covered by <code>TRAIGENT_CUSTOM_MODEL_PRICING_JSON</code> or
+  <code>TRAIGENT_CUSTOM_MODEL_PRICING_FILE</code> proceed.</li>
+<li>If <code>TRAIGENT_STRICT_COST_ACCOUNTING=true</code>, any unpriced model raises
+    <code>UnknownModelError</code> before trial 1.</li>
+<li>Otherwise, Traigent proceeds with a warning only when cost-sensitive
+    execution is pre-approved: <code>cost_approved=True</code> as a real Python bool,
+    <code>TRAIGENT_COST_APPROVED=true</code> as the exact env value, or a valid XDG
+    approval token. String runtime values such as <code>"true"</code> and env values such
+    as <code>1</code>/<code>yes</code> do not approve.</li>
+<li>In an interactive TTY with no pre-approval, Traigent prints a blocking
+    stderr <code>y/N</code> prompt; only <code>y</code>/<code>yes</code> proceeds with a warning. Decline, empty
+    input, EOF, or interrupt raises <code>UnknownModelError</code> before trial 1.</li>
+<li>In a non-interactive shell with no pre-approval, Traigent fail-closes with
+    <code>UnknownModelError</code> before trial 1 and tells the user to add custom pricing,
+    set exact <code>TRAIGENT_COST_APPROVED=true</code>, or rerun interactively.</li>
 <li>CI/pre-commit guardrail added to prevent reintroducing
   <code>cost_from_tokens(..., strict=False)</code> in runtime post-call paths
   (allowlisted only for query pricing helper usage).</li>

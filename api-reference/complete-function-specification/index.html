@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -5078,11 +5106,13 @@
     <span class="c1"># Legacy compatibility</span>
     <span class="n">legacy</span><span class="p">:</span> <span class="n">LegacyOptimizeArgs</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">runtime_overrides</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OptimizedFunction</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span> <span class="n">Any</span><span class="p">]</span>
 </code></pre></div>
 <blockquote>
 <p><strong>New in 0.8.0</strong> – The decorator now uses keyword-only arguments with grouped option bundles. Legacy arguments are supported via the <code>legacy</code> parameter or directly in <code>**runtime_overrides</code>. Conflicting values between a bundle and a direct keyword raise <code>TypeError</code>.</p>
 </blockquote>
+<p><code>optimize(...)</code> is a decorator factory. Applying the returned decorator to a
+function returns Traigent's optimized wrapper.</p>
 <p><strong>Core Parameters</strong></p>
 <table>
 <thead>
@@ -5242,7 +5272,7 @@ object with structured constraints.</p>
 </tr>
 </tbody>
 </table>
-<p><strong>ExecutionOptions Fields</strong> (open-source builds run in <code>edge_analytics</code> only; other modes are roadmap-compatible but not currently provisioned)</p>
+<p><strong>ExecutionOptions Fields</strong></p>
 <table>
 <thead>
 <tr>
@@ -5257,7 +5287,7 @@ object with structured constraints.</p>
 <td><code>execution_mode</code></td>
 <td><code>str</code></td>
 <td><code>"edge_analytics"</code></td>
-<td><code>"edge_analytics"</code> runs locally. <code>"hybrid"</code> runs trials locally and submits sessions/trial metrics to the backend for portal tracking. <code>"cloud"</code> is reserved for future remote execution and fails closed with guidance to use <code>"hybrid"</code>. <code>"privacy"</code> is accepted as a legacy alias for <code>"hybrid"</code> and sets <code>privacy_enabled=True</code>.</td>
+<td><code>"edge_analytics"</code> runs locally. <code>"hybrid"</code> runs trials locally and submits sessions/trial metrics to the backend for portal tracking. <code>"hybrid_api"</code> delegates trial execution to an external service implementing the Traigent Hybrid API contract. <code>"privacy"</code> is accepted as a legacy alias for <code>"hybrid"</code> and sets <code>privacy_enabled=True</code>. <code>"cloud"</code> is reserved for future remote execution and fails closed with guidance to use <code>"hybrid"</code>.</td>
 </tr>
 <tr>
 <td><code>local_storage_path</code></td>
@@ -5612,7 +5642,7 @@ object with structured constraints.</p>
 </tr>
 <tr>
 <td><code>cost_approved</code></td>
-<td>Skip cost approval prompt.</td>
+<td>Skip cost approval prompt only when passed as real Python <code>True</code>; strings such as <code>"true"</code> are ignored. Env approval requires exact <code>TRAIGENT_COST_APPROVED=true</code>; <code>1</code>/<code>yes</code> do not approve.</td>
 </tr>
 <tr>
 <td><code>metric_limit</code> / <code>metric_name</code> / <code>metric_include_pruned</code></td>
@@ -5650,10 +5680,11 @@ object with structured constraints.</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_best_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
 </code></pre></div>
 <h4 id="current_config"><code>.current_config</code><a class="headerlink" href="#current_config" title="Permanent link">&para;</a></h4>
-<p><strong>Get/set current configuration</strong></p>
+<p><strong>Get current configuration</strong></p>
 <div class="highlight"><pre><span></span><code><span class="nd">@property</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">current_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
 </code></pre></div>
+<p><code>current_config</code> is read-only. Change the active override with <code>.set_config()</code>.</p>
 <h4 id="set_config"><code>.set_config()</code><a class="headerlink" href="#set_config" title="Permanent link">&para;</a></h4>
 <p><strong>Set current configuration</strong></p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">set_config</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span>
@@ -5806,7 +5837,7 @@ task-local heuristics and do not provide a statistical certificate.</p>
 <span class="k">class</span><span class="w"> </span><span class="nc">OptimizationResult</span><span class="p">:</span>
     <span class="n">trials</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">TrialResult</span><span class="p">]</span>
     <span class="n">best_config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
-    <span class="n">best_score</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">best_score</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span>
     <span class="n">optimization_id</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">duration</span><span class="p">:</span> <span class="nb">float</span>
     <span class="n">convergence_info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
@@ -5819,10 +5850,15 @@ task-local heuristics and do not provide a statistical certificate.</p>
     <span class="n">total_cost</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">total_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="n">preset_selection</span><span class="p">:</span> <span class="n">PresetSelection</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">stop_reason</span><span class="p">:</span> <span class="n">StopReason</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">experiment_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">cloud_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">run_label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 </code></pre></div>
 <p><strong>Properties:</strong>
 - <code>total_trials</code>: Total number of trials executed
-- <code>successful_trials</code>: Number of trials that completed successfully
+- <code>successful_trials</code>: List of trials that completed successfully
 - <code>success_rate</code>: Ratio of successful trials to total trials</p>
 <h3 id="trialresult">TrialResult<a class="headerlink" href="#trialresult" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span>
@@ -5835,6 +5871,7 @@ task-local heuristics and do not provide a statistical certificate.</p>
     <span class="n">timestamp</span><span class="p">:</span> <span class="n">datetime</span>
     <span class="n">error_message</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="n">error</span><span class="p">:</span> <span class="n">TrialError</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 </code></pre></div>
 <p><strong>Properties:</strong>
 - <code>is_successful</code>: Whether the trial completed successfully (<code>status == TrialStatus.COMPLETED</code>)</p>
@@ -5842,14 +5879,17 @@ task-local heuristics and do not provide a statistical certificate.</p>
 - <code>get_metric(name: str, default: float | None = None) -&gt; float | None</code>: Get a specific metric value</p>
 <h3 id="trialstatus">TrialStatus<a class="headerlink" href="#trialstatus" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TrialStatus</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">NOT_STARTED</span> <span class="o">=</span> <span class="s2">&quot;not_started&quot;</span>
     <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
     <span class="n">RUNNING</span> <span class="o">=</span> <span class="s2">&quot;running&quot;</span>
     <span class="n">COMPLETED</span> <span class="o">=</span> <span class="s2">&quot;completed&quot;</span>
     <span class="n">FAILED</span> <span class="o">=</span> <span class="s2">&quot;failed&quot;</span>
+    <span class="n">CANCELLED</span> <span class="o">=</span> <span class="s2">&quot;cancelled&quot;</span>
     <span class="n">PRUNED</span> <span class="o">=</span> <span class="s2">&quot;pruned&quot;</span>
 </code></pre></div>
 <h3 id="optimizationstatus">OptimizationStatus<a class="headerlink" href="#optimizationstatus" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">OptimizationStatus</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">NOT_STARTED</span> <span class="o">=</span> <span class="s2">&quot;not_started&quot;</span>
     <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
     <span class="n">RUNNING</span> <span class="o">=</span> <span class="s2">&quot;running&quot;</span>
     <span class="n">COMPLETED</span> <span class="o">=</span> <span class="s2">&quot;completed&quot;</span>

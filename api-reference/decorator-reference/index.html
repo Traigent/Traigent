@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -4816,7 +4844,7 @@ LLM-as-Judge implementation.</p>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">injection</span><span class="o">=</span><span class="n">InjectionOptions</span><span class="p">(</span>
-        <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;parameter&quot;, &quot;attribute&quot;, &quot;seamless&quot;</span>
+        <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;parameter&quot;, &quot;seamless&quot;</span>
         <span class="n">config_param</span><span class="o">=</span><span class="s2">&quot;config&quot;</span><span class="p">,</span>  <span class="c1"># required when injection_mode=&quot;parameter&quot;</span>
         <span class="n">auto_override_frameworks</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="n">framework_targets</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;OpenAI&quot;</span><span class="p">,</span> <span class="s2">&quot;Anthropic&quot;</span><span class="p">],</span>
@@ -4826,7 +4854,7 @@ LLM-as-Judge implementation.</p>
 </code></pre></div>
 <p><strong>InjectionOptions Fields</strong>:</p>
 <ul>
-<li><code>injection_mode</code>: How to inject config ("context", "parameter", "attribute", "seamless")</li>
+<li><code>injection_mode</code>: How to inject config ("context", "parameter", "seamless")</li>
 <li><code>config_param</code>: Parameter name when using "parameter" mode</li>
 <li><code>auto_override_frameworks</code>: Auto-detect framework classes</li>
 <li><code>framework_targets</code>: Explicit list of framework classes</li>
@@ -4856,7 +4884,7 @@ LLM-as-Judge implementation.</p>
 </code></pre></div>
 <p><strong>ExecutionOptions Fields</strong>:</p>
 <ul>
-<li><code>execution_mode</code>: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "cloud" is reserved for future remote execution.</li>
+<li><code>execution_mode</code>: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "hybrid_api" for external API-backed trial execution; "privacy" as a legacy alias for "hybrid" with privacy enabled; "cloud" is reserved for future remote execution and fails closed.</li>
 <li><code>local_storage_path</code>: Custom storage directory</li>
 <li><code>minimal_logging</code>: Reduce log verbosity</li>
 <li><code>parallel_config</code>: Concurrency configuration</li>
@@ -4905,18 +4933,20 @@ or custom) is unchanged — there is no fabricated random-score path.</p>
 <p><strong>Optimization Algorithm</strong>:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;optuna&quot;</span><span class="p">,</span>  <span class="c1"># &quot;grid&quot;, &quot;random&quot;, &quot;bayesian&quot;, &quot;optuna&quot;</span>
-    <span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
-    <span class="n">timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">,</span>  <span class="c1"># seconds</span>
     <span class="o">...</span>
 <span class="p">)</span>
+</code></pre></div>
+<p>Run controls such as <code>max_trials</code> and <code>timeout</code> are passed to <code>.optimize()</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>Cost Controls</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">cost_limit</span><span class="o">=</span><span class="mf">5.00</span><span class="p">,</span>  <span class="c1"># USD</span>
-    <span class="n">cost_approved</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Prompt for approval</span>
-    <span class="o">...</span>
+    <span class="n">cost_approved</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Real bool only; strings do not approve</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>Env approval requires exact <code>TRAIGENT_COST_APPROVED=true</code>; <code>1</code>/<code>yes</code> do not
+approve.</p>
 <p><strong>Metric-Limit Controls</strong>:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">metric_limit</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>  <span class="c1"># Soft cumulative metric stop</span>

@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -5419,7 +5447,7 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
     <span class="k">return</span> <span class="s2">&quot;&quot;</span>  <span class="c1"># Execution is delegated to the external hybrid API</span>
 
-<span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best metrics: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_metrics</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>

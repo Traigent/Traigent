@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -3987,7 +4015,10 @@
 <li><strong>Parameter Optimization</strong>: Automatically tune model selection, temperature, prompts, and other parameters</li>
 <li><strong>Multi-Objective Optimization</strong>: Balance accuracy, cost, latency, and other metrics simultaneously</li>
 <li><strong>Framework Integration</strong>: Native support for LangChain, DSPy, OpenAI, Anthropic, and more</li>
-<li><strong>Flexible Execution</strong>: Run locally (edge analytics) or in the cloud</li>
+<li><strong>Flexible Execution</strong>: Run locally (<code>edge_analytics</code>), with backend tracking
+  (<code>hybrid</code>), or through an external Hybrid API service (<code>hybrid_api</code>).
+  <code>privacy</code> is a legacy alias for <code>hybrid</code> with privacy enabled; <code>cloud</code> is
+  reserved and fails closed.</li>
 <li><strong>TVL Specifications</strong>: Define optimization specs in YAML for version control and collaboration</li>
 </ul>
 <hr />
@@ -4341,16 +4372,15 @@
     <span class="c1"># Configure evaluation</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;test_cases.jsonl&quot;</span><span class="p">},</span>
 
-    <span class="c1"># Set budget</span>
-    <span class="n">exploration</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;budget&quot;</span><span class="p">:</span> <span class="mi">50</span><span class="p">}</span>
+    <span class="c1"># Runtime limits are passed to .optimize()</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
     <span class="c1"># Your LLM logic here</span>
     <span class="k">return</span> <span class="n">response</span>
 
-<span class="c1"># Run optimization</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+<span class="c1"># Run optimization from synchronous code</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">cost_limit</span><span class="o">=</span><span class="mf">50.0</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Accuracy: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_metrics</span><span class="p">[</span><span class="s1">&#39;accuracy&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>

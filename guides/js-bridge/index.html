@@ -816,6 +816,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -3698,12 +3726,11 @@
 
 <h1 id="js-bridge-removed">JS Bridge Removed<a class="headerlink" href="#js-bridge-removed" title="Permanent link">&para;</a></h1>
 <p>Python SDK &lt;= 0.11.x supported Python-orchestrated JavaScript optimization through <code>execution={"runtime": "node"}</code> as a temporary bridge. Python SDK 0.12.0 removes that bridge.</p>
-<p>Use the native JavaScript SDK instead:</p>
-<ul>
-<li>install <code>@traigent/sdk</code></li>
-<li>define optimization metadata with <code>optimize(spec)(agentFn)</code></li>
-<li>run optimization with <code>await wrapped.optimize(...)</code></li>
-</ul>
+<p>The Python JS bridge was removed. The native JS SDK publish is pending; do not
+document <code>npm install @traigent/sdk</code> as available yet. Use the JS SDK source
+checkout instructions when available.</p>
+<p>The current native TypeScript SDK support exists in the internal <code>traigent-js</code>
+repo; npm publication for <code>@traigent/sdk</code> is pending.</p>
 <p>Migration reference:</p>
 <ul>
 <li>https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md</li>

@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -5884,7 +5912,7 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
 <span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">|</span> <span class="n">top_p</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">0.9</span><span class="p">))</span>
 </code></pre></div>
 <h3 id="in-decorator">In Decorator<a class="headerlink" href="#in-decorator" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">optimize</span><span class="p">,</span> <span class="n">Range</span><span class="p">,</span> <span class="n">Choices</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">optimize</span><span class="p">,</span> <span class="n">Range</span><span class="p">,</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">get_config</span>
 
 <span class="n">temperature</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">)</span>
 <span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">])</span>
@@ -5898,8 +5926,9 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
         <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">),</span>
     <span class="p">],</span>
 <span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">my_llm_call</span><span class="p">(</span><span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="o">...</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">my_llm_call</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">get_config</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">],</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">])</span>
 </code></pre></div>
 <hr />
 <h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
@@ -6074,7 +6103,7 @@ representative sample configs and ensure parameter names line up with config key
 <hr />
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../../examples/tvl/tutorials/README.md">TVL Tutorials</a> - TVL usage examples and tutorials</li>
+<li><a href="../../user-guide/tuned_variables/">Tuned Variables</a> - Tuned variable usage examples and concepts</li>
 <li><a href="../../user-guide/configuration-spaces/">Configuration Spaces</a> - Defining parameter ranges</li>
 </ul>
 

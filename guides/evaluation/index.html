@@ -816,6 +816,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -4492,29 +4520,22 @@ with an explicit error and log at ERROR level. The contract is
 </ul>
 <h2 id="custom-evaluators-advanced-patterns">Custom Evaluators - Advanced Patterns<a class="headerlink" href="#custom-evaluators-advanced-patterns" title="Permanent link">&para;</a></h2>
 <h3 id="pattern-1-rag-quality-evaluator">Pattern 1: RAG Quality Evaluator<a class="headerlink" href="#pattern-1-rag-quality-evaluator" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.metrics.rag</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">calculate_relevance</span><span class="p">,</span>
-    <span class="n">calculate_faithfulness</span><span class="p">,</span>
-    <span class="n">calculate_context_precision</span>
-<span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">token_overlap</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+    <span class="n">output_tokens</span> <span class="o">=</span> <span class="p">{</span><span class="n">token</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">token</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">output</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">()}</span>
+    <span class="n">expected_tokens</span> <span class="o">=</span> <span class="p">{</span><span class="n">token</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">token</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">expected</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">()}</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">expected_tokens</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">output_tokens</span> <span class="o">&amp;</span> <span class="n">expected_tokens</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">expected_tokens</span><span class="p">)</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">rag_evaluator</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate RAG system quality&quot;&quot;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rag_evaluator</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
     <span class="n">retrieved_docs</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;retrieved_docs&quot;</span><span class="p">,</span> <span class="p">[])</span>
+    <span class="n">context_text</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">doc</span><span class="p">)</span> <span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">retrieved_docs</span><span class="p">)</span>
 
-    <span class="c1"># Calculate RAG-specific metrics</span>
-    <span class="n">relevance</span> <span class="o">=</span> <span class="n">calculate_relevance</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">retrieved_docs</span><span class="p">)</span>
-    <span class="n">faithfulness</span> <span class="o">=</span> <span class="n">calculate_faithfulness</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">retrieved_docs</span><span class="p">)</span>
-    <span class="n">answer_similarity</span> <span class="o">=</span> <span class="n">semantic_similarity</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">expected</span><span class="p">)</span>
+    <span class="n">answer_similarity</span> <span class="o">=</span> <span class="n">token_overlap</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">expected</span><span class="p">)</span>
+    <span class="n">context_support</span> <span class="o">=</span> <span class="n">token_overlap</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">context_text</span><span class="p">)</span>
 
-    <span class="c1"># Weighted combination</span>
-    <span class="n">score</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="mf">0.4</span> <span class="o">*</span> <span class="n">answer_similarity</span> <span class="o">+</span>
-        <span class="mf">0.3</span> <span class="o">*</span> <span class="n">relevance</span> <span class="o">+</span>
-        <span class="mf">0.3</span> <span class="o">*</span> <span class="n">faithfulness</span>
-    <span class="p">)</span>
-
-    <span class="k">return</span> <span class="n">score</span>
+    <span class="k">return</span> <span class="mf">0.7</span> <span class="o">*</span> <span class="n">answer_similarity</span> <span class="o">+</span> <span class="mf">0.3</span> <span class="o">*</span> <span class="n">context_support</span>
 </code></pre></div>
 <h3 id="pattern-2-classification-evaluator">Pattern 2: Classification Evaluator<a class="headerlink" href="#pattern-2-classification-evaluator" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="n">f1_score</span><span class="p">,</span> <span class="n">precision_score</span><span class="p">,</span> <span class="n">recall_score</span>

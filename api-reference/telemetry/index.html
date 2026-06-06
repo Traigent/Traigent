@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -4597,7 +4625,8 @@
 - Algorithm used (grid, random, bayesian, optuna)
 - Number of trials executed
 - Total optimization duration
-- Execution mode (edge_analytics, cloud, etc.)
+- Execution mode (<code>edge_analytics</code>, <code>hybrid</code>, <code>hybrid_api</code>; <code>privacy</code> is a
+  legacy alias for <code>hybrid</code>, and <code>cloud</code> is reserved/fails closed)
 - Stop conditions triggered
 - Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set <code>TRAIGENT_TVAR_OBSERVATION=off</code> to disable them, or use <code>TRAIGENT_TVAR_OBSERVATION=hashed</code> (default) to hash free-form string values. Only <code>off</code> and <code>hashed</code> are supported; unsupported values fall back to <code>hashed</code>.</p>
 <p><strong>Performance Metrics</strong>:

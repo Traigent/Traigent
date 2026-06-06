@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -3860,12 +3888,13 @@ apply guidance.</p>
 <span class="n">space</span> <span class="o">=</span> <span class="n">recommend_configuration_space</span><span class="p">(</span><span class="s2">&quot;rag&quot;</span><span class="p">,</span> <span class="n">min_impact</span><span class="o">=</span><span class="s2">&quot;medium&quot;</span><span class="p">)</span>
 
 <span class="nd">@tg</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">configuration_space</span><span class="o">=</span><span class="n">space</span><span class="p">[</span><span class="s2">&quot;configuration_space&quot;</span><span class="p">])</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">answer_question</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">config</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">answer_question</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">tg</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
     <span class="k">return</span> <span class="n">query</span>
 </code></pre></div>
-<p>Honesty note: recommendations are catalog-backed starter guidance. The public
-response intentionally does not expose private signal-taxonomy details, and the
-result is not proof that a knob will improve your task.</p>
+<p>Honesty note: recommendations are catalog-backed starter guidance. They are not
+proof that a knob will improve your task; validate them on your own evaluation
+dataset before treating them as winners.</p>
 
 
 

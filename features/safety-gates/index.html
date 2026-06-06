@@ -814,6 +814,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite-Knob IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -3864,8 +3892,19 @@ content.</p>
 <h2 id="cost-coverage-preflight">Cost Coverage Preflight<a class="headerlink" href="#cost-coverage-preflight" title="Permanent link">&para;</a></h2>
 <p>Real runs check model cost coverage before trials start. Unknown or unpriced
 models are detected from the configuration space or current/default config.</p>
-<p>By default, missing pricing emits a warning and the affected results report
-<code>$0</code>. To fail before any trial starts, enable strict cost accounting:</p>
+<p>With <code>TRAIGENT_STRICT_COST_ACCOUNTING=true</code>, unpriced models always raise
+<code>UnknownModelError</code> before any trial and no prompt is shown.</p>
+<p>To proceed after acknowledging that affected results will report <code>$0</code> cost while
+your provider may still bill you, use one explicit approval:</p>
+<ul>
+<li>pass <code>cost_approved=True</code> as a real Python boolean; strings such as <code>"true"</code> are ignored,</li>
+<li>set <code>TRAIGENT_COST_APPROVED=true</code>; <code>1</code>, <code>yes</code>, and <code>on</code> do not approve this gate,</li>
+<li>or create the XDG cost approval token (<code>approved</code> or <code>approved:&lt;limit&gt;</code>).</li>
+</ul>
+<p>Approved runs still emit the unpriced-model warning. Mock LLM quickstart mode
+skips this model-pricing preflight, but it is a test/demo mode, not a production
+billing bypass.</p>
+<p>To fail before any trial starts, enable strict cost accounting:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_STRICT_COST_ACCOUNTING</span><span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
 <p>Provide explicit pricing for private or unsupported models with:</p>
