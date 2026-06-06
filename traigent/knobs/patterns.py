@@ -1,0 +1,487 @@
+"""The pattern catalog v1: named macros over the composite algebra (RFC 0002).
+
+Patterns are the human-facing layer. Each catalog factory is a pure function
+of validated params that expands DETERMINISTICALLY into the sealed algebra of
+:mod:`traigent.knobs.composites`, stamping every emitted node with a closed
+:class:`~traigent.knobs.composites.Provenance` value (``pattern = <name>``,
+``param_hash = H_c(canonical validated params)``). Raw pattern params are
+NEVER stored — only their canonical hash rides provenance (§3.7, the P8
+admission-contract canary).
+
+A factory returns a :class:`CompositeKnob`: a declaration bundle the caller
+spreads into a ``ConfigSpace``. It exposes ``.structure`` (the IR root node),
+``.members`` (the member ``Knob`` declarations — bindings stay
+``Tuned | Calibrated | Fixed``; a composite never binds a value), ``.provenance``,
+and ``.telemetry_names`` (the §3.10 per-kind standard measure names). Adding a
+pattern is an SDK release, not a language or schema change; the algebra never
+grows because a pattern was added.
+
+INTEGRATION BOUNDARY (deliberate, captain decision): factories return
+DECLARATIONS only. Deep orchestrator/resolver wiring is a follow-up packet —
+nothing here touches ``traigent.core`` or ``traigent.cloud``.
+
+Unroll (§3.8): ``self_refine`` (a ``signal_accept`` loop) is unroll-eligible
+and exposes :meth:`CompositeKnob.unroll` returning the internal K-chain IR.
+``self_debug`` (an ``external_accept`` loop) offers no unroll and raises.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from .bindings import Knob
+from .canonical import canonical_hash
+from .composites import (
+    AcceptDecl,
+    AggregateDecl,
+    AggregateKind,
+    CascadeBody,
+    CompositeKind,
+    CompositeNode,
+    EnsembleBody,
+    GateDecl,
+    GateKind,
+    LoopBody,
+    Placement,
+    Provenance,
+    SignalUse,
+    StageArm,
+    StatKind,
+    StopDecl,
+    StopKind,
+)
+
+__all__ = [
+    "CompositeKnob",
+    "KChain",
+    "KChainStage",
+    "best_of_n",
+    "binary_cascade",
+    "n_cascade",
+    "self_consistency",
+    "self_debug",
+    "self_refine",
+]
+
+#: §3.10 standard telemetry measure names, per constructor kind. Content-free:
+#: counts, rates, enums, finite numbers only (P8 discipline).
+_TELEMETRY: dict[CompositeKind, tuple[str, ...]] = {
+    CompositeKind.CASCADE: (
+        "escalation_rate",
+        "stage_selected",
+        "gate_margin_pass_rate",
+    ),
+    CompositeKind.ENSEMBLE: (
+        "vote_agreement",
+        "vote_margin",
+        "candidates_evaluated",
+        "candidates_excluded",
+    ),
+    CompositeKind.LOOP: ("iterations_used", "stop_reason"),
+}
+
+
+# --------------------------------------------------------------------------- #
+# K-chain IR (§3.8 Loop -> K-chain semantic compilation)                      #
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True, slots=True)
+class KChainStage:
+    """One stage of an unrolled ``signal_accept`` loop (§3.8).
+
+    ``body`` is the loop body specialized to iteration ``index``'s threaded
+    state; ``escalate_when`` carries the acceptance-direction complement
+    ``σ(state_i) < θ`` (the chain escalates to stage ``i+1`` exactly when the
+    ``signal_accept`` stop has NOT fired).
+    """
+
+    index: int
+    body: StageArm
+    escalate_when: str  # human-readable record of the escalation predicate
+
+
+@dataclass(frozen=True, slots=True)
+class KChain:
+    """The internal K-chain execution form of a ``signal_accept`` loop (§3.8).
+
+    This is an SDK intermediate representation, NOT a surface ``Cascade_post``
+    (the v1 gate registry has no state-predicate gate). ``signal``/``threshold``
+    are the loop stop's ``SignalUse.signal`` and threshold CVAR; ``state_keys``
+    are the declared threaded-state keys.
+    """
+
+    signal: str
+    threshold: str
+    state_keys: tuple[str, ...]
+    stages: tuple[KChainStage, ...]
+    provenance: Provenance | None = None
+
+
+# --------------------------------------------------------------------------- #
+# CompositeKnob: the factory return type                                      #
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeKnob:
+    """A named composite declaration bundle (the pattern-factory return type).
+
+    ``structure`` is the IR root :class:`CompositeNode`; ``members`` are the
+    member ``Knob`` declarations the caller spreads into their ``ConfigSpace``
+    (bindings stay ``Tuned | Calibrated | Fixed`` — a composite NEVER binds a
+    value); ``provenance`` is stamped by the expander (``pattern = <name>``,
+    ``param_hash`` only — raw params never stored); ``telemetry_names`` is the
+    §3.10 per-kind standard measure tuple.
+    """
+
+    name: str
+    structure: CompositeNode
+    members: dict[str, Knob[Any]] = field(default_factory=dict)
+    provenance: Provenance | None = None
+    telemetry_names: tuple[str, ...] = ()
+
+    @property
+    def kind(self) -> CompositeKind:
+        return self.structure.kind
+
+    def unroll(self, k: int) -> KChain:
+        """Return the §3.8 K-chain IR (``signal_accept`` loops only).
+
+        Raises ``ValueError`` for any non-``signal_accept`` loop (an
+        ``external_accept``/``exhausted`` loop offers no unroll) or any
+        non-loop composite.
+        """
+        body = self.structure.body
+        if not isinstance(body, LoopBody):
+            raise ValueError(
+                f"unroll is only defined for loop composites; "
+                f"{self.name!r} is a {self.structure.kind.value}"
+            )
+        if body.stop.kind is not StopKind.SIGNAL_ACCEPT:
+            raise ValueError(
+                f"unroll is only defined for signal_accept loops; "
+                f"{self.name!r} stop kind is {body.stop.kind.value}"
+            )
+        if k < 1:
+            raise ValueError(f"unroll K must be >= 1, got {k}")
+        if not isinstance(body.body, StageArm):
+            raise ValueError("unroll v1 supports a stage-bodied loop only")
+        # A signal_accept stop always carries signal + threshold (guaranteed by
+        # StopDecl.__post_init__); guard explicitly so this holds under -O too.
+        if body.stop.signal is None or body.stop.threshold is None:
+            raise ValueError("signal_accept stop is missing its signal/threshold")
+        signal = body.stop.signal.signal
+        threshold = body.stop.threshold
+        stages = tuple(
+            KChainStage(
+                index=i,
+                body=body.body,
+                escalate_when=f"{signal}(state_{i}) < {threshold}",
+            )
+            for i in range(1, k + 1)
+        )
+        return KChain(
+            signal=signal,
+            threshold=threshold,
+            state_keys=body.state_keys,
+            stages=stages,
+            provenance=self.provenance,
+        )
+
+
+def _provenance(name: str, params: dict[str, Any]) -> Provenance:
+    """Stamp closed-shape provenance: ``pattern`` + ``param_hash`` only.
+
+    ``param_hash`` is ``H_c`` of the CANONICAL validated params; the raw
+    ``params`` dict is hashed and discarded — it never enters the returned
+    object (the P8 canary asserts a sentinel param value never serializes).
+    """
+    return Provenance(pattern=name, param_hash=canonical_hash(params))
+
+
+# --------------------------------------------------------------------------- #
+# Catalog v1 (§3.7)                                                           #
+# --------------------------------------------------------------------------- #
+
+
+def binary_cascade(
+    name: str,
+    *,
+    base_stage: str,
+    expert_stage: str,
+    threshold: str,
+    base_tuned_params: tuple[str, ...] = (),
+    expert_tuned_params: tuple[str, ...] = (),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Cascade(arms=[stage(base), stage(expert)], gates=[margin_below θ], post)``.
+
+    The RFC 0001 cascade policy's exact shape — the migration target (§4).
+    """
+    params = {
+        "name": name,
+        "base_stage": base_stage,
+        "expert_stage": expert_stage,
+        "threshold": threshold,
+        "base_tuned_params": list(base_tuned_params),
+        "expert_tuned_params": list(expert_tuned_params),
+    }
+    prov = _provenance("binary_cascade", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.CASCADE,
+        body=CascadeBody(
+            arms=(
+                StageArm(base_stage, base_tuned_params),
+                StageArm(expert_stage, expert_tuned_params),
+            ),
+            gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold=threshold),),
+            placement=Placement.POST,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.CASCADE],
+    )
+
+
+def n_cascade(
+    name: str,
+    *,
+    stages: tuple[str, ...],
+    thresholds: tuple[str, ...],
+    tuned_params: tuple[tuple[str, ...], ...] | None = None,
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Cascade(arms=[stage(a_1)..stage(a_m)], gates=[θ_1..θ_{m-1}], post)``.
+
+    Ordered escalation. ``|thresholds|`` must equal ``|stages| - 1`` (the IR
+    enforces ``cascade_arity``). ``tuned_params``, when given, is one tuple per
+    stage.
+    """
+    if tuned_params is None:
+        tuned_params = tuple(() for _ in stages)
+    params = {
+        "name": name,
+        "stages": list(stages),
+        "thresholds": list(thresholds),
+        "tuned_params": [list(tp) for tp in tuned_params],
+    }
+    prov = _provenance("n_cascade", params)
+    arms = tuple(
+        StageArm(stage, tuned_params[i] if i < len(tuned_params) else ())
+        for i, stage in enumerate(stages)
+    )
+    gates = tuple(
+        GateDecl(kind=GateKind.MARGIN_BELOW, threshold=theta) for theta in thresholds
+    )
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.CASCADE,
+        body=CascadeBody(arms=arms, gates=gates, placement=Placement.POST),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.CASCADE],
+    )
+
+
+def self_consistency(
+    name: str,
+    *,
+    stage: str,
+    cardinality: str,
+    accept_threshold: str | None = None,
+    stage_tuned_params: tuple[str, ...] = (),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Ensemble(arms=[stage(a)], cardinality=k, majority_vote, accept?)``.
+
+    ``k`` may be tuned or calibrated. An optional ``accept_threshold`` adds a
+    ``stat_at_least(vote_margin, θ)`` acceptance decl (§3.7 note).
+    """
+    params = {
+        "name": name,
+        "stage": stage,
+        "cardinality": cardinality,
+        "accept_threshold": accept_threshold,
+        "stage_tuned_params": list(stage_tuned_params),
+    }
+    prov = _provenance("self_consistency", params)
+    accept = (
+        AcceptDecl(stat=StatKind.VOTE_MARGIN, threshold=accept_threshold)
+        if accept_threshold is not None
+        else None
+    )
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.ENSEMBLE,
+        body=EnsembleBody(
+            arms=(StageArm(stage, stage_tuned_params),),
+            aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE, accept=accept),
+            cardinality=cardinality,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.ENSEMBLE],
+    )
+
+
+def best_of_n(
+    name: str,
+    *,
+    stage: str,
+    judge_stage: str,
+    cardinality: str,
+    stage_tuned_params: tuple[str, ...] = (),
+    judge_tuned_params: tuple[str, ...] = (),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Ensemble(arms=[stage(a)], cardinality=k, judge_max(stage(judge)))``.
+
+    The judge output contract (finite numeric score) is §3.2 execution
+    semantics — runtime-enforced, not part of this declaration.
+    """
+    params = {
+        "name": name,
+        "stage": stage,
+        "judge_stage": judge_stage,
+        "cardinality": cardinality,
+        "stage_tuned_params": list(stage_tuned_params),
+        "judge_tuned_params": list(judge_tuned_params),
+    }
+    prov = _provenance("best_of_n", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.ENSEMBLE,
+        body=EnsembleBody(
+            arms=(StageArm(stage, stage_tuned_params),),
+            aggregate=AggregateDecl(
+                kind=AggregateKind.JUDGE_MAX,
+                judge=StageArm(judge_stage, judge_tuned_params),
+            ),
+            cardinality=cardinality,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.ENSEMBLE],
+    )
+
+
+def self_debug(
+    name: str,
+    *,
+    stage: str,
+    predicate: str,
+    max_iters: int,
+    state_keys: tuple[str, ...] = ("attempt", "critique"),
+    stage_tuned_params: tuple[str, ...] = (),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Loop(body=stage(a), state_keys, stop=external_accept(tests), max_iters=K)``.
+
+    The "2-step knob" at ``max_iters = 1``. The ``external_accept`` stop is an
+    opaque runtime predicate — NO unroll (§3.8); :meth:`CompositeKnob.unroll`
+    raises.
+    """
+    params = {
+        "name": name,
+        "stage": stage,
+        "predicate": predicate,
+        "max_iters": max_iters,
+        "state_keys": list(state_keys),
+        "stage_tuned_params": list(stage_tuned_params),
+    }
+    prov = _provenance("self_debug", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.LOOP,
+        body=LoopBody(
+            body=StageArm(stage, stage_tuned_params),
+            stop=StopDecl(kind=StopKind.EXTERNAL_ACCEPT, predicate=predicate),
+            state_keys=state_keys,
+            max_iters=max_iters,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
+
+
+def self_refine(
+    name: str,
+    *,
+    stage: str,
+    signal: str,
+    threshold: str,
+    max_iters: int,
+    state_keys: tuple[str, ...] = ("draft",),
+    signal_inputs: tuple[str, ...] = (),
+    stage_tuned_params: tuple[str, ...] = (),
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Loop(body=stage(a), state_keys, stop=signal_accept(σ, θ), max_iters=K)``.
+
+    The calibrated ``signal_accept`` stop is unroll-eligible (§3.8):
+    :meth:`CompositeKnob.unroll` returns the K-chain IR. ``signal_inputs``, when
+    non-empty, must be a subset of ``state_keys`` (the IR enforces
+    ``stop_signal_outside_state``).
+    """
+    params = {
+        "name": name,
+        "stage": stage,
+        "signal": signal,
+        "threshold": threshold,
+        "max_iters": max_iters,
+        "state_keys": list(state_keys),
+        "signal_inputs": list(signal_inputs),
+        "stage_tuned_params": list(stage_tuned_params),
+    }
+    prov = _provenance("self_refine", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.LOOP,
+        body=LoopBody(
+            body=StageArm(stage, stage_tuned_params),
+            stop=StopDecl(
+                kind=StopKind.SIGNAL_ACCEPT,
+                threshold=threshold,
+                signal=SignalUse(signal=signal, inputs=signal_inputs),
+            ),
+            state_keys=state_keys,
+            max_iters=max_iters,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
