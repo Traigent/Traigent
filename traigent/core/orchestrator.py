@@ -699,6 +699,10 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # The backend session id for the active run. Read by the
+        # certified-selection report guard to verify the incumbent's trial id
+        # was backend-acknowledged before attesting a winner.
+        self._active_session_id: str | None = None
         # RFC 0001 (knob bindings): optional resolver injecting Fixed/CVAR
         # values post-suggest, pre-validation. None => byte-identical legacy
         # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
@@ -941,6 +945,25 @@ class OptimizationOrchestrator:
         incumbent = self._best_trial_cached
         if incumbent is None or not getattr(incumbent, "trial_id", None):
             return None
+        # The report binds the winner to its BACKEND trial id. If the
+        # incumbent's id was never minted+acknowledged by the backend (the
+        # slot request or result submission failed), the server cannot bind
+        # it — sending a report would be a 400 at best and an attestation of
+        # an unbound winner at worst. Fail closed: send NO report (the
+        # risk-register rule for the unbindable case).
+        manager = getattr(self, "backend_session_manager", None)
+        ack = (
+            getattr(manager, "is_trial_backend_acknowledged", None) if manager else None
+        )
+        session_id = getattr(self, "_active_session_id", None)
+        if callable(ack):
+            if session_id is None or not ack(session_id, incumbent.trial_id):
+                logger.debug(
+                    "certified_selection withheld: incumbent trial %s is not "
+                    "backend-acknowledged (unbindable)",
+                    incumbent.trial_id,
+                )
+                return None
         resolver = getattr(self, "knob_resolver", None)
         space = getattr(resolver, "_space", None) if resolver is not None else None
         if space is None:
@@ -2048,6 +2071,7 @@ class OptimizationOrchestrator:
             tvl_governance=wire_governance,
         )
         session_id: str | None = session_context.session_id
+        self._active_session_id = session_id
 
         if session_id:
             self._initialize_logger(session_id, func, dataset)

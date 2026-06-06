@@ -24,7 +24,10 @@ from traigent.cloud.models import SessionCreationRequest
 STRICT_POLICY = {
     "dominance": "epsilon_pareto",
     "alpha": 0.05,
-    "require_calibration": {"enabled": True, "hash_covered_context": ["model_versions"]},
+    "require_calibration": {
+        "enabled": True,
+        "hash_covered_context": ["model_versions"],
+    },
 }
 
 GOVERNANCE = {"cvars": [{"name": "retriever.k", "type": "int", "governed": True}]}
@@ -72,9 +75,7 @@ class TestContractGate:
         the compatibility flag: legacy CANNOT carry strict mode."""
         monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
         with pytest.raises(CloudServiceError, match="launder|legacy"):
-            _ops()._build_session_payload(
-                _request(promotion_policy=STRICT_POLICY), 5
-            )
+            _ops()._build_session_payload(_request(promotion_policy=STRICT_POLICY), 5)
 
     def test_legacy_contract_for_ungoverned_keeps_old_shape(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
@@ -299,9 +300,7 @@ class TestGovernedNoSilentFallback:
         assert result.session_id == "local_fallback_1"
         ops._create_local_fallback_session.assert_called_once()
 
-    def test_governed_without_api_key_stays_local_by_design(
-        self, monkeypatch, caplog
-    ):
+    def test_governed_without_api_key_stays_local_by_design(self, monkeypatch, caplog):
         """ADJUDICATED (round 3): no API key is an explicit local-only
         configuration, NOT a cloud failure — strict enforcement runs fully
         locally and NO backend record exists that could launder strict mode
@@ -422,3 +421,42 @@ class TestGovernanceBuilders:
             }
 
         assert build_tvl_governance(Space()) is None
+
+
+class TestTypedSpaceNormalization:
+    """Live-E2E finding (composites E2E-B): the decorator's SHORTHAND
+    configuration space (name -> list of choices) rode the typed create
+    verbatim and the backend's typed path 400s ('must be an object with a
+    "type" field'). The typed payload builder normalizes shorthands; already-
+    typed entries pass through byte-identical; unknown shapes are NOT
+    silently guessed."""
+
+    def test_list_shorthand_normalizes_to_categorical(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(
+            _request(
+                configuration_space={"variant": ["cheap", "strong"], "k": [1, 2, 3]}
+            ),
+            5,
+        )
+        assert payload["configuration_space"]["variant"] == {
+            "type": "categorical",
+            "choices": ["cheap", "strong"],
+        }
+        assert payload["configuration_space"]["k"] == {
+            "type": "categorical",
+            "choices": [1, 2, 3],
+        }
+
+    def test_typed_entries_pass_through_unchanged(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        typed = {"model": {"type": "categorical", "choices": ["a", "b"]}}
+        payload = _ops()._build_session_payload(_request(configuration_space=typed), 5)
+        assert payload["configuration_space"] == typed
+
+    def test_unknown_shapes_not_silently_guessed(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        weird = {"x": 42}
+        payload = _ops()._build_session_payload(_request(configuration_space=weird), 5)
+        # passed through for the backend to reject LOUDLY — never invented
+        assert payload["configuration_space"] == weird

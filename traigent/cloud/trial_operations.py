@@ -356,6 +356,115 @@ class TrialOperations:
             )
             return False
 
+    async def request_trial_slot(
+        self,
+        session_id: str,
+    ) -> str | None:
+        """Acquire a BACKEND-minted trial id (configuration_run) for a session.
+
+        The backend mints configuration_run ids only through its
+        ``POST /sessions/{id}/next-trial`` endpoint; a result POST is bound to
+        the session by the trial id the backend itself minted, so the SDK MUST
+        obtain that id before submitting (a client-hashed id 404s with
+        "Trial ... not found in session"). The optimizer still drives the
+        config locally — this call is used purely to allocate the trial slot,
+        and the backend's own suggested config is irrelevant to the SDK.
+
+        Returns:
+            The backend-minted trial id, or ``None`` when no slot could be
+            acquired (offline mode, transport unavailable, non-2xx, or the
+            backend declined to suggest a further trial). ``None`` NEVER means
+            "use a client id" — callers fail closed on it (Rule 2: no fake
+            trial acknowledgment).
+        """
+        # Skip backend calls in offline mode — None lets callers distinguish
+        # "skipped" from "acquired" (Rule 2: no fake completion).
+        if is_backend_offline():
+            logger.debug(
+                "Offline mode: skipping trial-slot request for session %s",
+                session_id,
+            )
+            return None
+
+        if not AIOHTTP_AVAILABLE:
+            logger.warning("aiohttp not available, skipping trial-slot request")
+            return None
+
+        try:
+            headers = await self.client.auth_manager.augment_headers(
+                _JSON_CONTENT_TYPE_HEADER
+            )
+            connector = self._create_localhost_connector()
+            async with aiohttp.ClientSession(connector=connector) as session:
+                api_base = (
+                    self.client.backend_config.api_base_url
+                    or BackendConfig.get_backend_api_url()
+                )
+                url = f"{api_base}/sessions/{session_id}/next-trial"
+                request_body = {"session_id": session_id, "previous_results": []}
+                async with session.post(
+                    url,
+                    json=request_body,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    if response.status in [200, 201]:
+                        data = await response.json()
+                        suggestion = (
+                            data.get("suggestion") if isinstance(data, dict) else None
+                        )
+                        trial_id = (
+                            suggestion.get("trial_id")
+                            if isinstance(suggestion, dict)
+                            else None
+                        )
+                        if isinstance(trial_id, str) and trial_id:
+                            logger.debug(
+                                "Acquired backend trial slot %s for session %s",
+                                trial_id,
+                                session_id,
+                            )
+                            return trial_id
+                        logger.info(
+                            "Backend next-trial returned no slot for session %s "
+                            "(should_continue=%s)",
+                            session_id,
+                            (
+                                data.get("should_continue")
+                                if isinstance(data, dict)
+                                else None
+                            ),
+                        )
+                        return None
+                    if response.status == 403:
+                        error_msg = await response.text()
+                        self._log_ownership_forbidden(
+                            session_id,
+                            "Requesting trial slot",
+                            response.status,
+                            error_msg,
+                        )
+                        return None
+                    logger.warning(
+                        "Failed to acquire trial slot for session %s: HTTP %s",
+                        session_id,
+                        response.status,
+                    )
+                    return None
+        except Exception as exc:
+            if is_backend_offline():
+                logger.debug(
+                    "Offline mode: trial-slot request encountered %s; skipping",
+                    exc,
+                )
+                return None
+            logger.exception(
+                "Error requesting trial slot for session %s (%s)",
+                session_id,
+                self._describe_backend(),
+            )
+            return None
+
     def _extract_measures_from_metrics(
         self, metrics: dict[str, Any]
     ) -> tuple[Any, Any, dict[str, Any]]:

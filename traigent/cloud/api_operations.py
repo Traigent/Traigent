@@ -76,6 +76,23 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _typed_configuration_space(space: Any) -> Any:
+    """Normalize the decorator's SHORTHAND configuration space to the typed
+    contract (live composites-E2E finding): a bare list/tuple of choices
+    becomes {"type": "categorical", "choices": [...]}; entries already
+    carrying a "type" pass through unchanged; anything else passes through
+    for the backend to reject LOUDLY (never silently guessed)."""
+    if not isinstance(space, dict):
+        return space
+    normalized: dict[str, Any] = {}
+    for name, entry in space.items():
+        if isinstance(entry, (list, tuple)):
+            normalized[name] = {"type": "categorical", "choices": list(entry)}
+        else:
+            normalized[name] = entry
+    return normalized
+
+
 class ApiOperations:
     """Handles backend API operations."""
 
@@ -357,7 +374,9 @@ class ApiOperations:
 
         payload: dict[str, Any] = {
             "function_name": session_request.function_name,
-            "configuration_space": session_request.configuration_space,
+            "configuration_space": _typed_configuration_space(
+                session_request.configuration_space
+            ),
             "objectives": list(session_request.objectives or []),
             "dataset_metadata": dataset_metadata,
             "max_trials": max_trials,

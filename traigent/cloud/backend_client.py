@@ -1104,6 +1104,17 @@ class BackendIntegratedClient:
         """
         return self._trial_ops.register_trial_start_sync(session_id, trial_id, config)
 
+    async def request_trial_slot(self, session_id: str) -> str | None:
+        """Acquire a backend-minted trial id (configuration_run) for a session.
+        Delegates to trial_operations module.
+
+        Returns:
+            The backend-minted trial id, or ``None`` when no slot could be
+            acquired (offline / transport unavailable / non-2xx / backend
+            declined). ``None`` never means "use a client id".
+        """
+        return await self._trial_ops.request_trial_slot(session_id)
+
     def _generate_trial_id(
         self,
         session_id: str,

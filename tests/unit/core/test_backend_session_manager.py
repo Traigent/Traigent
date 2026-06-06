@@ -30,6 +30,9 @@ def mock_backend_client():
     client.upload_example_features = Mock(return_value=True)
     client.submit_result = Mock()
     client.register_trial_start = AsyncMock()
+    # The backend mints the configuration_run id via next-trial; the manager
+    # rebinds the trial to it before submitting results.
+    client.request_trial_slot = AsyncMock(return_value="be_trial_mint_1")
     client._submit_trial_result_via_session = AsyncMock(return_value=True)
     client.update_trial_weighted_scores = AsyncMock(return_value=True)
     client.finalize_session = Mock(return_value={"status": "completed"})
@@ -223,10 +226,133 @@ class TestBackendSessionManagerTrialSubmission:
 
         assert result is True
 
-        # Verify backend calls
+        # Verify backend calls: the manager acquires a backend-minted trial
+        # slot (next-trial) and submits the result under THAT id, rebinding
+        # the trial in place.
         mock_backend_client.submit_result.assert_called_once()
-        mock_backend_client.register_trial_start.assert_called_once()
+        mock_backend_client.request_trial_slot.assert_called_once_with(
+            "test-session-id"
+        )
         mock_backend_client._submit_trial_result_via_session.assert_called_once()
+        submit_kwargs = (
+            mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        )
+        assert submit_kwargs["trial_id"] == "be_trial_mint_1"
+        # The trial object's id is rebound to the backend slot so the
+        # incumbent the certified report reads carries the backend id.
+        assert mock_trial_result.trial_id == "be_trial_mint_1"
+        # And the backend acknowledged that slot.
+        assert backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "be_trial_mint_1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_fails_closed_when_no_backend_slot(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """When the backend declines to mint a trial slot (next-trial returns
+        no id), the manager MUST NOT submit a result under a client-hashed id
+        (it would 404) and MUST NOT acknowledge the trial — the certified
+        report later withholds for this unbindable incumbent (Rule 1/2)."""
+        mock_backend_client.request_trial_slot = AsyncMock(return_value=None)
+        original_id = mock_trial_result.trial_id
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        # No remote result submission attempted (no fake completion).
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        # The trial id is NOT rebound to a fabricated backend id.
+        assert mock_trial_result.trial_id == original_id
+        # And it is NOT acknowledged — the report guard will withhold.
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", original_id
+        )
+
+    @pytest.mark.asyncio
+    async def test_submission_carries_only_the_tuned_projection(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """P8 content-freedom on the submission path (live-E2E finding): the
+        resolved trial config carries injected CALIBRATED values; the wire
+        submission must carry ONLY the tuned search-space keys — a calibrated
+        value (e.g. a fitted threshold) must never ride to the backend, and
+        the backend's create-time key-subset validation would reject it
+        anyway (silently voiding the trial record)."""
+        backend_session_manager._optimizer.config_space = {"variant": ["a", "b"]}
+        mock_trial_result.config = {"variant": "a", "threshold": 0.7}
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_3"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=True
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        kwargs = mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        assert kwargs["config"] == {"variant": "a"}
+        assert "threshold" not in kwargs["config"]  # P8 canary
+        # the LOCAL trial result keeps its full resolved view
+        assert mock_trial_result.config == {"variant": "a", "threshold": 0.7}
+
+    @pytest.mark.asyncio
+    async def test_slot_allocated_but_submit_failed_is_never_attestable(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Codex lane-fix round (non-blocking, pinned): a slot CAN be
+        allocated and the trial id rebound before the result submission
+        fails — that half-bound state is intentional (the id is real, the
+        backend holds a pending trial) but it must NEVER become an
+        attestation path: no acknowledgment without a truthy submission."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_1"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=False
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        # rebound (documented half-bound state — the backend DID mint it)
+        assert mock_trial_result.trial_id == "trial_backend_minted_1"
+        # but NEVER acknowledged — the certified report withholds.
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "trial_backend_minted_1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_slot_allocated_but_submit_raised_is_never_attestable(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Same pin for the raising path: a transport error after slot
+        allocation must not acknowledge."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_2"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            side_effect=ConnectionError("boom")
+        )
+
+        try:
+            await backend_session_manager.submit_trial(
+                trial_result=mock_trial_result,
+                session_id="test-session-id",
+            )
+        except ConnectionError:
+            pass  # propagation policy is the manager's existing behavior
+
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "trial_backend_minted_2"
+        )
 
     @pytest.mark.asyncio
     async def test_submit_trial_without_backend(

@@ -92,6 +92,14 @@ class BackendSessionManager:
         # trip "already started" errors on the backend side.
         self._started_trials: set[tuple[str, str]] = set()
 
+        # Tracks (session_id, backend_trial_id) pairs the backend MINTED and
+        # ACCEPTED a result for. The certified-selection report binds the
+        # winner to its backend trial id, so the report builder consults this
+        # set: an incumbent whose id is absent here is unbindable and the
+        # report is withheld (Rule 1/2: never attest a winner the backend
+        # never acknowledged).
+        self._acknowledged_trials: set[tuple[str, str]] = set()
+
     @property
     def backend_tracking_enabled(self) -> bool:
         """Whether remote backend tracking is active for this run."""
@@ -504,6 +512,56 @@ class BackendSessionManager:
 
         return True
 
+    def is_trial_backend_acknowledged(self, session_id: str, trial_id: str) -> bool:
+        """Whether the backend minted+accepted a result for ``trial_id``.
+
+        The certified-selection report builder consults this to fail closed:
+        an incumbent whose backend slot was never acknowledged cannot be bound
+        to a server record, so no report is sent for it.
+        """
+        return (session_id, trial_id) in self._acknowledged_trials
+
+    async def _acquire_backend_trial_id(
+        self, session_id: str, trial_result: TrialResult
+    ) -> str | None:
+        """Acquire (once per started trial) a backend-minted trial id.
+
+        Reuses a previously acquired backend id for the same client trial so
+        retries of submit_trial don't burn extra slots. Returns ``None`` when
+        the backend declined to mint a slot (offline / transport / non-2xx),
+        in which case the caller fails closed.
+        """
+        client = self._backend_client
+        if client is None:
+            return None
+
+        client_trial_id = str(trial_result.trial_id)
+        # If this trial already mapped to an acknowledged backend id, reuse it.
+        for sid, bid in self._started_trials:
+            if sid == session_id and bid == client_trial_id:
+                # client_trial_id already IS a backend id from a prior pass.
+                return client_trial_id
+
+        requester = getattr(client, "request_trial_slot", None)
+        if not callable(requester):
+            return None
+        try:
+            slot = requester(session_id)
+            backend_trial_id = await slot if inspect.isawaitable(slot) else slot
+        except Exception as exc:
+            logger.debug(
+                "Backend trial-slot request failed for session %s trial %s: %s",
+                session_id,
+                client_trial_id,
+                exc,
+            )
+            return None
+
+        if isinstance(backend_trial_id, str) and backend_trial_id:
+            self._started_trials.add((session_id, backend_trial_id))
+            return backend_trial_id
+        return None
+
     async def _log_trial_to_backend(
         self,
         session_id: str,
@@ -626,33 +684,45 @@ class BackendSessionManager:
         status = status_mapping.get(trial_result.status, "FAILED")
 
         try:
-            trial_key = (session_id, trial_result.trial_id)
-            if trial_key not in self._started_trials:
-                try:
-                    start_call = self._backend_client.register_trial_start(
-                        session_id=session_id,
-                        trial_id=trial_result.trial_id,
-                        config=trial_result.config,
-                    )
-                    start_ok: Any = (
-                        await start_call
-                        if inspect.isawaitable(start_call)
-                        else start_call
-                    )
-                    if start_ok:
-                        self._started_trials.add(trial_key)
-                except Exception as exc:
-                    logger.debug(
-                        "Trial start registration failed for session %s trial %s: %s",
-                        session_id,
-                        trial_result.trial_id,
-                        exc,
-                    )
+            # The backend binds a result to a session by the configuration_run
+            # id IT minted (via next-trial). A client-hashed id 404s with
+            # "Trial ... not found in session". So acquire a backend slot and
+            # rebind this trial to it BEFORE submitting. The optimizer still
+            # owns the config; the slot is purely the backend's trial handle.
+            backend_trial_id = await self._acquire_backend_trial_id(
+                session_id, trial_result
+            )
+            if backend_trial_id is None:
+                # Fail closed: no acknowledged backend slot ⇒ NO submission and
+                # NO acknowledgment. The certified-selection report will then
+                # withhold for this incumbent (never attest an unbound winner).
+                logger.warning(
+                    "No backend trial slot acquired for session %s "
+                    "(client trial %s); skipping submission (fail closed)",
+                    session_id,
+                    trial_result.trial_id,
+                )
+                return
+            # Rebind in place: _best_trial_cached holds this same object, so the
+            # incumbent's trial_id becomes the backend id the report needs.
+            trial_result.trial_id = backend_trial_id
 
+            # P8 content-freedom (live-E2E finding): the resolved trial
+            # config carries injected CALIBRATED values; the wire submission
+            # carries ONLY the tuned search-space projection — a fitted
+            # calibrated value never rides to the backend (and the backend's
+            # create-time key-subset validation would reject it anyway,
+            # silently voiding the trial record).
+            tuned_keys = set(getattr(self._optimizer, "config_space", {}) or {})
+            wire_config = {
+                k: v
+                for k, v in (trial_result.config or {}).items()
+                if not tuned_keys or k in tuned_keys
+            }
             submitted_result = self._backend_client._submit_trial_result_via_session(
                 session_id=session_id,
-                trial_id=trial_result.trial_id,
-                config=trial_result.config,
+                trial_id=backend_trial_id,
+                config=wire_config,
                 metrics=metrics_payload,
                 status=status,
                 error_message=trial_result.error_message,
@@ -667,13 +737,16 @@ class BackendSessionManager:
             if not submitted:
                 logger.warning(
                     "Backend session endpoint rejected trial %s for session %s",
-                    trial_result.trial_id,
+                    backend_trial_id,
                     session_id,
                 )
             else:
+                # Record the acknowledged backend slot so the certified-selection
+                # report can verify this incumbent is bindable.
+                self._acknowledged_trials.add((session_id, backend_trial_id))
                 logger.info(
                     "Submitted trial %s for session %s (status=%s, metrics_keys=%s)",
-                    trial_result.trial_id,
+                    backend_trial_id,
                     session_id,
                     status,
                     sorted(metrics_payload.keys()),

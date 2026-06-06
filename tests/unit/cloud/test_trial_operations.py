@@ -793,3 +793,125 @@ class TestMeasuresLogging:
         assert not any(
             "No measures found for trial trial_xyz" in msg for msg in caplog.messages
         )
+
+
+def _mk_slot_client():
+    """Backend client stub configured for request_trial_slot HTTP mocking."""
+    mock_client = Mock()
+    mock_client.backend_config = Mock()
+    mock_client.backend_config.backend_base_url = "http://localhost:5000"
+    mock_client.backend_config.api_base_url = "http://localhost:5000/api/v1"
+    mock_client.auth_manager = AsyncMock()
+    mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+    return mock_client
+
+
+def _aiohttp_post_returning(mock_response):
+    """Build (mock_aiohttp ClientSession factory, mock_session) for a POST."""
+    mock_post_ctx = AsyncMock()
+    mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_session = AsyncMock()
+    mock_session.post = Mock(return_value=mock_post_ctx)
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+    return mock_session_ctx, mock_session
+
+
+class TestRequestTrialSlot:
+    """The backend mints configuration_run ids only via next-trial; the SDK
+    must obtain that id before submitting results (a client hash 404s)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_backend_minted_trial_id(self) -> None:
+        ops = TrialOperations(_mk_slot_client())
+
+        mock_response = Mock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={
+                "should_continue": True,
+                "suggestion": {
+                    "trial_id": "trial_be_minted_abc",
+                    "session_id": "sess-1",
+                    "config": {"variant": "cheap"},
+                },
+            }
+        )
+        mock_session_ctx, mock_session = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+            trial_id = await ops.request_trial_slot("sess-1")
+
+        assert trial_id == "trial_be_minted_abc"
+        # It hit the next-trial endpoint (where the backend mints the slot).
+        url = mock_session.post.call_args.args[0]
+        assert url.endswith("/sessions/sess-1/next-trial")
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_suggestion(self) -> None:
+        """Backend declines to suggest a further trial ⇒ None (fail closed;
+        never fabricate a client id)."""
+        ops = TrialOperations(_mk_slot_client())
+
+        mock_response = Mock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"should_continue": False, "suggestion": None}
+        )
+        mock_session_ctx, _ = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+            assert await ops.request_trial_slot("sess-1") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_non_2xx(self) -> None:
+        ops = TrialOperations(_mk_slot_client())
+
+        mock_response = Mock()
+        mock_response.status = 404
+        mock_response.text = AsyncMock(return_value="not found")
+        mock_session_ctx, _ = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+            assert await ops.request_trial_slot("sess-1") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_in_offline_mode(self) -> None:
+        """Offline mode skips the backend entirely (no fake slot)."""
+        mock_client = _mk_slot_client()
+        ops = TrialOperations(mock_client)
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline",
+            return_value=True,
+        ):
+            assert await ops.request_trial_slot("sess-1") is None
+        mock_client.auth_manager.augment_headers.assert_not_awaited()

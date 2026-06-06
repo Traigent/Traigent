@@ -307,7 +307,13 @@ class TestBuildSessionPayload:
         payload = self.ops._build_session_payload(request, 10)
 
         assert payload["function_name"] == "test_func"
-        assert payload["configuration_space"] == {"param": [1, 2, 3]}
+        # DELIBERATELY EVOLVED (live composites-E2E finding): the shorthand
+        # list form now normalizes to the typed contract the backend's typed
+        # path actually accepts — the verbatim pass-through 400'd on every
+        # decorator call with bare-list spaces.
+        assert payload["configuration_space"] == {
+            "param": {"type": "categorical", "choices": [1, 2, 3]}
+        }
         assert payload["objectives"] == ["accuracy"]
         assert payload["max_trials"] == 10
         assert "problem_statement" not in payload
