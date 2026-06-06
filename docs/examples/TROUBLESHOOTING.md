@@ -3,8 +3,8 @@
 Fast fixes for the most common issues. Start here, then dive deeper if needed.
 
 ## One-minute fixes
-- Missing API keys: set `TRAIGENT_MOCK_LLM=true`.
-- Import errors: run `pip install -e ".[examples]"` from repo root.
+- Missing API keys: call `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial code.
+- Import errors: run `pip install "traigent[recommended]"`.
 - High cost or latency: lower `max_trials` and pick cheaper models.
 - Slow runs: shrink the configuration space; enable caching; reduce concurrency.
 - Empty/poor results: verify dataset paths and that objectives match your goal.
@@ -12,10 +12,11 @@ Fast fixes for the most common issues. Start here, then dive deeper if needed.
 ## Setup and keys
 ```bash
 # Install
-pip install -e ".[examples]"
+pip install "traigent[recommended]"
 
-# Mock mode (no keys)
-export TRAIGENT_MOCK_LLM=true
+# Mock mode in local tutorial code
+# from traigent.testing import enable_mock_mode_for_quickstart
+# enable_mock_mode_for_quickstart()
 
 # Real keys
 export OPENAI_API_KEY="sk-..." # pragma: allowlist secret
@@ -39,7 +40,7 @@ export ANTHROPIC_API_KEY="sk-ant-..." # pragma: allowlist secret
 - Reproduce issues: run a single trial with a tiny dataset to isolate bad configs.
 
 ## Integration hiccups
-- LangChain/OpenAI/Anthropic: install integrations via `pip install -e ".[integrations]"` (or include with `.[examples]`/`.[all]`).
+- LangChain/OpenAI/Anthropic: install integrations via `pip install "traigent[integrations]"` (or include them with `traigent[recommended]`).
 - Network: increase `request_timeout`, set proxies if required.
 
 ## Prevention checklist

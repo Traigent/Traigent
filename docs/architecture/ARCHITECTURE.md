@@ -413,4 +413,4 @@ print(f"Accuracy: {result.best_metrics['accuracy']:.2%}")
 
 ## Learn More
 
-- [Examples](../../examples/)
+- Examples in the repository source (`examples/`)

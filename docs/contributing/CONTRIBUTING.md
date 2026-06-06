@@ -205,8 +205,8 @@ Traigent/
 Traigent accepts external contributions only after a signed Contributor License
 Agreement (CLA). Contributions are merged into a project whose open-source
 releases are licensed under AGPLv3, and Traigent may also offer the project
-under separate commercial terms. See
-[`../../CONTRIBUTOR-LICENSING.md`](../../CONTRIBUTOR-LICENSING.md).
+under separate commercial terms. See `CONTRIBUTOR-LICENSING.md` in the
+repository root.
 
 ## Thank You
 

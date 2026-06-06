@@ -162,9 +162,10 @@ def classifier(text):
 
 For testing without real API calls:
 
-```bash
-export TRAIGENT_MOCK_LLM=true
-python your_script.py
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
 ```
 
 Mock mode provides:
@@ -330,8 +331,10 @@ def summarizer(text):
    ERROR log.
 
 5. **Use Mock Mode for Testing**
-   ```bash
-   export TRAIGENT_MOCK_LLM=true
+   ```python
+   from traigent.testing import enable_mock_mode_for_quickstart
+
+   enable_mock_mode_for_quickstart()
    ```
 
 ### Issue: Inconsistent Results
@@ -461,5 +464,5 @@ def qa_system(question, temperature=0.5, max_tokens=100):
 ## Next Steps
 
 - [Custom Evaluator Patterns](../examples/API_PATTERNS.md)
-- [Dataset Creation Tools](../../examples/datasets/)
+- Dataset creation tools are available in the repository examples.
 - [Troubleshooting Guide](../README.md#troubleshooting)

@@ -7,19 +7,12 @@ This guide covers Traigent's tuned variables system, which provides domain-aware
 Tuned variables in Traigent consist of two components:
 
 1. **Core SDK** (`traigent.tuned_variables`): Callable auto-discovery from source code
-2. **Plugin** (`traigent-tuned-variables`): Domain presets, variable analysis, and TunedCallable pattern
+2. **Recommendation catalog**: `traigent recommend` plus `recommend_configuration_space()` and `list_recommendation_agent_types()` for evidence-backed configuration-space suggestions
 
 ## Installation
 
 ```bash
-# Core tuned variables (included with the SDK; run from the Traigent repo root)
-pip install -e ".[recommended]"
-
-# Plugin with domain presets and analysis
-pip install traigent-tuned-variables
-
-# With DSPy integration
-pip install traigent-tuned-variables[dspy]
+pip install "traigent[recommended]"
 ```
 
 ---
@@ -162,320 +155,42 @@ compatible = filter_by_signature(all_funcs, target_sig, strict=False)
 
 ---
 
-## Part 2: Domain Presets (Plugin)
+## Part 2: Recommendation Catalog
 
-The `traigent-tuned-variables` plugin provides pre-configured parameter ranges that encode domain knowledge.
+Traigent 0.12.0 exposes configuration-space recommendations through the core SDK and CLI. There is no separate `traigent-tuned-variables` package to install for this path.
 
-### LLM Presets
-
-```python
-from traigent_tuned_variables import LLMPresets
-import traigent
-
-@traigent.optimize(
-    temperature=LLMPresets.temperature(creative=True),  # Range(0.7, 1.5)
-    top_p=LLMPresets.top_p(),                          # Range(0.1, 1.0)
-    max_tokens=LLMPresets.max_tokens(task="medium"),   # IntRange(256, 1024)
-    model=LLMPresets.model(provider="openai", tier="balanced"),
-    objectives=["accuracy", "cost"],
-)
-def my_agent(query: str) -> str:
-    ...
-```
-
-**Available LLM Presets:**
-
-| Method | Description | Default Range |
-| ------ | ----------- | ------------- |
-| `temperature(conservative=False, creative=False)` | Temperature control | 0.0-1.0 (default), 0.0-0.5 (conservative), 0.7-1.5 (creative) |
-| `top_p()` | Nucleus sampling | 0.1-1.0 |
-| `frequency_penalty()` | Frequency penalty | 0.0-2.0 |
-| `presence_penalty()` | Presence penalty | 0.0-2.0 |
-| `max_tokens(task="short"\|"medium"\|"long")` | Token limit | short: 50-256, medium: 256-1024, long: 1024-4096 |
-| `model(provider=None, tier="fast"\|"balanced"\|"quality")` | Model selection | Provider/tier dependent |
-
-### RAG Presets
-
-```python
-from traigent_tuned_variables import RAGPresets
-
-@traigent.optimize(
-    k=RAGPresets.k_retrieval(max_k=10),      # IntRange(1, 10)
-    chunk_size=RAGPresets.chunk_size(),       # IntRange(100, 1000, step=100)
-    objectives=["accuracy"],
-)
-def rag_agent(query: str) -> str:
-    ...
-```
-
-### Prompting Presets
-
-```python
-from traigent_tuned_variables import PromptingPresets
-
-@traigent.optimize(
-    strategy=PromptingPresets.strategy(),       # CoT, few-shot, etc.
-    context_format=PromptingPresets.context_format(),
-    objectives=["accuracy"],
-)
-def prompt_agent(query: str) -> str:
-    ...
-```
-
-### Environment-Based Model Configuration
-
-Model presets use environment variables for flexibility:
+### CLI
 
 ```bash
-# Override model lists via environment
-export TRAIGENT_MODELS_OPENAI_FAST="gpt-4o-mini"
-export TRAIGENT_MODELS_OPENAI_BALANCED="gpt-4o-mini,gpt-4o"
-export TRAIGENT_MODELS_ANTHROPIC_QUALITY="claude-3-opus-20240229"
+traigent recommend --list-types
+traigent recommend rag
+traigent recommend code_gen --min-impact medium
 ```
+
+The recommendations are advisory catalog entries. They include task-local evidence notes and suggested ranges, but they are not a statistical certificate for your dataset. Validate returned knobs on your own evaluation dataset.
+
+### Python API
+
+```python
+from traigent import (
+    list_recommendation_agent_types,
+    recommend_configuration_space,
+)
+
+agent_types = list_recommendation_agent_types()
+recommendations = recommend_configuration_space("rag", min_impact="medium")
+configuration_space = recommendations["configuration_space"]
+```
+
+You can pass the returned `configuration_space` into `@traigent.optimize(...)` after reviewing it for your task and provider constraints.
+
+### Provider Override Variables
+
+SDK provider override variables such as `TRAIGENT_MODELS_OPENAI_FAST`, `TRAIGENT_MODELS_OPENAI_BALANCED`, and `TRAIGENT_MODELS_ANTHROPIC_QUALITY` are available when using integration/provider presets. They are not tied to a separate tuned-variables plugin.
 
 ---
 
-## Part 3: TunedCallable Pattern (Plugin)
-
-`TunedCallable` is a composition pattern for function-valued variables with per-callable parameters.
-
-### Basic Usage
-
-```python
-from traigent_tuned_variables import TunedCallable
-from traigent.api.parameter_ranges import Range
-import traigent
-
-# Define callables with per-callable parameters
-retrievers = TunedCallable(
-    name="retriever",
-    callables={
-        "similarity": similarity_search,
-        "mmr": mmr_search,
-        "bm25": bm25_search,
-    },
-    parameters={
-        "mmr": {"lambda_mult": Range(0.0, 1.0)},
-        "bm25": {"b": Range(0.0, 1.0), "k1": Range(0.5, 2.0)},
-    },
-)
-
-@traigent.optimize(
-    retriever=retrievers.as_choices(),  # Converts to Choices
-    objectives=["accuracy"],
-)
-def my_agent(query: str) -> str:
-    config = traigent.get_config()
-
-    # Invoke the selected callable
-    docs = retrievers.invoke(config["retriever"], query=query)
-    return generate_answer(query, docs)
-```
-
-### Full Configuration Space
-
-For per-callable parameters, use `get_full_space()`:
-
-```python
-# Get full config space including per-callable params
-space = retrievers.get_full_space()
-# Returns: {
-#     "retriever": Choices(["similarity", "mmr", "bm25"]),
-#     "retriever.mmr.lambda_mult": Range(0.0, 1.0),
-#     "retriever.bm25.b": Range(0.0, 1.0),
-#     "retriever.bm25.k1": Range(0.5, 2.0),
-# }
-
-@traigent.optimize(**space, objectives=["accuracy"])
-def my_agent(query: str) -> str:
-    config = traigent.get_config()
-
-    # Extract only params for selected callable
-    params = retrievers.extract_callable_params(config)
-    # If retriever="mmr", returns: {"lambda_mult": 0.7}
-
-    fn = retrievers.get_callable(config["retriever"])
-    docs = fn(query=query, **params)
-    return generate_answer(query, docs)
-```
-
-### Pre-built Callables
-
-The plugin includes pre-built `Retrievers` and `ContextFormatters`:
-
-```python
-from traigent_tuned_variables import Retrievers, ContextFormatters
-
-@traigent.optimize(
-    retriever=Retrievers.as_choices(),
-    context_format=ContextFormatters.as_choices(),
-    objectives=["accuracy"],
-)
-def rag_agent(query: str) -> str:
-    config = traigent.get_config()
-
-    docs = Retrievers.invoke(config["retriever"], vector_store, query)
-    formatted = ContextFormatters.invoke(config["context_format"], docs)
-
-    return llm(f"{formatted}\n\nQuestion: {query}")
-```
-
----
-
-## Part 4: Variable Analysis (Plugin)
-
-After optimization, use `VariableAnalyzer` to understand which variables matter and which values to prune.
-
-### Basic Analysis
-
-```python
-from traigent_tuned_variables import VariableAnalyzer
-
-# After optimization completes
-result = my_agent.optimize()
-
-# Analyze for a specific objective
-analyzer = VariableAnalyzer(result)
-analysis = analyzer.analyze("accuracy")
-
-# View elimination suggestions
-for suggestion in analysis.elimination_suggestions:
-    print(f"{suggestion.variable}: {suggestion.action.value}")
-    print(f"  Reason: {suggestion.reason}")
-    print(f"  Importance: {suggestion.importance_score:.3f}")
-```
-
-### Multi-Objective Analysis
-
-```python
-# Analyze across multiple objectives
-analysis = analyzer.analyze_multi_objective(
-    objectives=["accuracy", "cost", "latency"],
-    aggregation="mean",  # or "max", "min"
-)
-
-# Get Pareto-dominated values
-for var_name, frontier_values in analysis.pareto_frontier_values.items():
-    print(f"{var_name}: Keep {frontier_values}")
-```
-
-### Refined Configuration Space
-
-Get a pruned configuration space for the next optimization round:
-
-```python
-# Get refined space with dominated values removed
-refined_space = analyzer.get_refined_space(
-    objectives=["accuracy", "cost"],
-    prune_low_importance=True,    # Remove low-importance variables
-    prune_dominated_values=True,  # Remove dominated categorical values
-    narrow_ranges=True,           # Narrow numeric ranges
-)
-
-# Use refined space for next optimization
-@traigent.optimize(**refined_space, objectives=["accuracy", "cost"])
-def my_agent_v2(query: str) -> str:
-    ...
-```
-
-### Variable Importance
-
-```python
-# Get importance scores
-importance = analyzer.get_variable_importance("accuracy")
-for var, score in sorted(importance.items(), key=lambda x: -x[1]):
-    print(f"{var}: {score:.3f}")
-```
-
-### Value Rankings
-
-```python
-# Rank categorical values by performance
-rankings = analyzer.get_value_rankings("model", "accuracy")
-for ranking in rankings:
-    status = " (dominated)" if ranking.is_dominated else ""
-    print(f"{ranking.value}: {ranking.mean_score:.3f}{status}")
-```
-
-### Objective Direction Support
-
-The analyzer respects optimization direction for each objective:
-
-```python
-analyzer = VariableAnalyzer(
-    result,
-    directions={
-        "accuracy": "maximize",
-        "cost": "minimize",
-        "latency": "minimize",
-    }
-)
-```
-
----
-
-## Complete Example
-
-```python
-import traigent
-from traigent.tuned_variables import discover_callables
-from traigent_tuned_variables import (
-    LLMPresets,
-    RAGPresets,
-    VariableAnalyzer,
-    TunedCallable,
-)
-from traigent.api.parameter_ranges import Range
-import my_retrievers
-
-# 1. Discover callables from module
-discovered = discover_callables(
-    my_retrievers,
-    pattern=r"^search_",
-    required_params=["query"],
-)
-
-# 2. Create TunedCallable with per-callable params
-retrievers = TunedCallable(
-    name="retriever",
-    callables={name: info.callable for name, info in discovered.items()},
-    parameters={
-        "search_mmr": {"lambda_mult": Range(0.0, 1.0)},
-    },
-)
-
-# 3. Define optimization with domain presets
-@traigent.optimize(
-    retriever=retrievers.as_choices(),
-    k=RAGPresets.k_retrieval(),
-    temperature=LLMPresets.temperature(),
-    model=LLMPresets.model(tier="balanced"),
-    objectives=["accuracy", "cost"],
-)
-def optimized_rag(query: str) -> str:
-    config = traigent.get_config()
-
-    docs = retrievers.invoke(config["retriever"], query=query, k=config["k"])
-    return generate_with_llm(query, docs, config["temperature"], config["model"])
-
-# 4. Run optimization
-result = optimized_rag.optimize()
-
-# 5. Analyze results
-analyzer = VariableAnalyzer(
-    result,
-    directions={"accuracy": "maximize", "cost": "minimize"},
-)
-analysis = analyzer.analyze_multi_objective(["accuracy", "cost"])
-
-# 6. Get refined space for next iteration
-refined = analyzer.get_refined_space(["accuracy", "cost"])
-print(f"Refined space has {len(refined)} variables (down from original)")
-```
-
----
-
-## Part 5: Tuned Variable Detection (SDK)
+## Part 3: Tuned Variable Detection (SDK)
 
 The SDK includes a static analysis engine that automatically detects likely tunable variables in your existing Python functions — before you write any optimization code. It combines AST-based name matching, data-flow analysis, and optional LLM heuristics.
 
@@ -750,17 +465,13 @@ class TunedVariableCandidate:
 | `SourceLocation` | Frozen dataclass: line/col position in source |
 | `SuggestedRange` | Frozen dataclass with `range_type` and `kwargs`; `.to_parameter_range_code()` |
 
-### traigent_tuned_variables
+### Recommendation APIs
 
-| Class | Description |
-| ----- | ----------- |
-| `LLMPresets` | Pre-configured LLM parameter ranges |
-| `RAGPresets` | Pre-configured RAG parameter ranges |
-| `PromptingPresets` | Pre-configured prompting parameter ranges |
-| `TunedCallable` | Composition pattern for function-valued variables |
-| `VariableAnalyzer` | Post-optimization variable analysis |
-| `Retrievers` | Pre-built retriever callables |
-| `ContextFormatters` | Pre-built context formatting callables |
+| Symbol | Description |
+| ------ | ----------- |
+| `traigent recommend` | CLI for listing agent types and showing recommendation catalog entries |
+| `list_recommendation_agent_types()` | Return valid agent/task types for recommendation queries |
+| `recommend_configuration_space(agent_type, *, min_impact=None, min_confidence=None)` | Return advisory configuration-space recommendations for an agent/task type |
 
 ---
 

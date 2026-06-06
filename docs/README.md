@@ -6,6 +6,15 @@
 
 ## 🚀 Quick Start
 
+Current release: Traigent SDK 0.12.0. Install with
+`pip install "traigent[recommended]"`, then run `traigent onboard`,
+`traigent auth device-login`, `traigent quickstart`,
+`traigent first-prompt --agent claude|cursor|codex`, `traigent mcp serve`, or
+`traigent recommend` as needed.
+
+License: Traigent SDK is dual-licensed under
+`AGPL-3.0-only OR LicenseRef-Traigent-Commercial`.
+
 ```python
 import litellm
 import traigent
@@ -82,11 +91,8 @@ Traigent is a **zero-code optimization platform** that automatically finds the b
 
 ## 🌐 Examples Navigator
 
-- Open: `examples/index.html` (repo copy)
-- Serve locally (avoids file:// fetch restrictions):
-  - `python -m http.server 8000`
-  - Visit `http://localhost:8000/examples/`
-- Run icon: Each code block has a play button that copies a ready-to-run mock-mode command.
+Use [Examples Guide](examples/README.md), [Start Here](examples/START_HERE.md),
+and [Quick Reference](examples/QUICK_REFERENCE.md) for runnable examples.
 
 ## 🧪 Example Guides
 
@@ -100,7 +106,7 @@ Traigent is a **zero-code optimization platform** that automatically finds the b
 
 1. **[Install Traigent](getting-started/installation.md)** - Get set up in minutes
 2. **[Follow the Getting Started Guide](getting-started/GETTING_STARTED.md)** - Your first optimization
-3. **Open the Examples** – `examples/index.html` and browse the gallery
+3. **Use the Example Guides** - Start with [Examples Guide](examples/README.md)
 4. **[Explore User Guides](user-guide/)** - Learn advanced features
 5. **[Check API Reference](api-reference/)** - Detailed technical documentation
 

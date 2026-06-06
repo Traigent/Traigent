@@ -9,15 +9,15 @@ cannot be safely fixed by code changes alone.
 - Aikido issue group: `27772214`
 - Type: `license`
 - Severity: `critical`
-- Affected package: `traigent@0.11.4`
+- Affected package: `traigent@0.12.0`
 - Affected file: `uv.lock`
-- Related license: `AGPL-3.0-only`
+- Related license: `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`
 - Disposition: intentional project license, requires Aikido issue ignore
 
 The finding is for the SDK root package's declared license, not for a
 third-party dependency license drift. The repository consistently declares
-`AGPL-3.0-only` in `pyproject.toml`, includes the AGPL license text in
-`LICENSE`, and documents separate commercial licensing in
+`AGPL-3.0-only OR LicenseRef-Traigent-Commercial` in `pyproject.toml`,
+includes the AGPL license text in `LICENSE`, and documents separate commercial licensing in
 `COMMERCIAL-LICENSING.md` and `CONTRIBUTOR-LICENSING.md`.
 
 Do not resolve this by excluding `uv.lock` from Aikido scanning. That would
@@ -27,5 +27,5 @@ Do not change the SDK license as a scanner remediation without explicit legal
 and business approval. If Aikido comments on a PR for this finding, reply:
 
 ```text
-@AikidoSec ignore: Intentional SDK project license. Traigent open-source releases are AGPL-3.0-only and separate commercial licenses are documented in COMMERCIAL-LICENSING.md and CONTRIBUTOR-LICENSING.md. This is the root package license, not a third-party dependency license drift.
+@AikidoSec ignore: Intentional SDK project license. Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigent-Commercial, with commercial licensing documented in COMMERCIAL-LICENSING.md and CONTRIBUTOR-LICENSING.md. This is the root package license, not a third-party dependency license drift.
 ```

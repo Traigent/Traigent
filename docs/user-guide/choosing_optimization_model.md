@@ -231,7 +231,7 @@ Use `execution_mode="hybrid"` when you want the supported portal-tracked path:
 ### From Local-Only to Portal-Tracked:
 
 1. Keep the optimized function and dataset unchanged.
-2. Authenticate with `traigent auth login` or set `TRAIGENT_API_KEY`.
+2. Authenticate with `traigent auth device-login`, run `traigent onboard` for guided setup, or set `TRAIGENT_API_KEY` in CI/non-interactive environments.
 3. Set `execution_mode="hybrid"`.
 4. Confirm the run appears in Traigent Portal.
 

@@ -7,17 +7,25 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 1) Install and run - no API keys needed:
 
 ```bash
-pip install "traigent[integrations]"
-python -m traigent.examples.quickstart
+pip install "traigent[recommended]"
+traigent quickstart
 ```
 
-Or from a source checkout:
+For guided setup after the quickstart:
+
+```bash
+traigent onboard
+traigent auth device-login
+traigent first-prompt --agent codex
+```
+
+From a source checkout for development:
 
 Pip:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"
+pip install "traigent[recommended]"
 python hello_world.py
 ```
 
@@ -26,7 +34,7 @@ Uv:
 ```bash
 uv venv --python 3.11
 source .venv/bin/activate
-uv pip install -e ".[recommended]"
+uv pip install "traigent[recommended]"
 python hello_world.py
 ```
 
@@ -101,6 +109,12 @@ def classify(text: str) -> str:
 ```bash
 traigent info                                   # Version/features
 traigent algorithms                             # Available strategies
+traigent quickstart                             # Packaged mock-mode demo
+traigent onboard                                # Guided project setup
+traigent auth device-login                      # Browser device login
+traigent first-prompt --agent codex             # Coding-agent prompt
+traigent recommend rag                          # Configuration recommendations
+traigent mcp serve                              # Local stdio MCP server
 traigent optimize examples/core/rag-optimization/run.py -a grid -n 5
 traigent validate examples/datasets/rag-optimization/evaluation_set.jsonl
 traigent plot my_run -p progress
@@ -144,4 +158,4 @@ To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MO
 
 ---
 
-Ready for more? Dive into the [examples](../../examples/) and the [API reference](../api-reference/complete-function-specification.md).
+Ready for more? Dive into the [examples](../examples/) and the [API reference](../api-reference/complete-function-specification.md).
