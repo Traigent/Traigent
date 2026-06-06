@@ -108,7 +108,6 @@ class TraigentDiagnostics:
         ("traigent", "Traigent SDK", None),
         ("langchain", "LangChain", "langchain"),
         ("langchain_openai", "LangChain OpenAI", "langchain-openai"),
-        ("langchain_chroma", "LangChain Chroma", "langchain-chroma"),
         ("openai", "OpenAI", "openai"),
         ("dotenv", "Python-dotenv", "python-dotenv"),
         ("numpy", "NumPy", "numpy"),
@@ -116,6 +115,7 @@ class TraigentDiagnostics:
     ]
 
     OPTIONAL_PACKAGES: list[tuple[str, str, str | None]] = [
+        ("langchain_chroma", "LangChain Chroma", "traigent[chroma]"),
         ("mlflow", "MLflow", "mlflow"),
         ("wandb", "Weights & Biases", "wandb"),
         ("streamlit", "Streamlit", "streamlit"),

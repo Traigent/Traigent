@@ -105,7 +105,7 @@ class ErrorHandler:
     IMPORT_FIXES = {
         "langchain": "pip install langchain",
         "langchain_openai": "pip install langchain-openai",
-        "langchain_chroma": "pip install langchain-chroma",
+        "langchain_chroma": "pip install 'traigent[chroma]'",
         "openai": "pip install openai",
         "dotenv": "pip install python-dotenv",
         "numpy": "pip install numpy",
