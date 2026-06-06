@@ -32,9 +32,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.trial_operations import TrialOperations
+from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.evaluators.local import LocalEvaluator
 from traigent.knobs.patterns import binary_cascade
 from traigent.knobs.runtime import StageRunner, execute_composite
-from traigent.knobs.telemetry import composite_measures, merge_composite_measures
+from traigent.knobs.telemetry import merge_composite_measures
 
 GATE = "router_margin_threshold"
 
@@ -215,3 +217,105 @@ async def test_composite_metrics_pass_measuresdict_on_the_submission_path() -> N
     assert not any(
         "Metrics validation warning" in msg for msg in warning_msgs
     ), f"composite metrics tripped MeasuresDict validation: {warning_msgs}"
+
+
+# ---------------------------------------------------------------------------
+# Upstream hop: a TUPLE-RETURNING decorated function drives the REAL evaluator,
+# and the composite_* keys reach the posted trial-result body.
+#
+# The existing tests above start from ``submit_trial_result_via_session`` with a
+# pre-merged metrics dict — they proved only the DOWNSTREAM half. The smoke that
+# motivated this packet showed the UPSTREAM half was broken: the decorated
+# function returned ``(output, metrics_dict)``, but tuple[1] was never extracted
+# into the evaluator's trial metrics, so the composite_* keys never reached the
+# wire (and the raw tuple poisoned the accuracy comparison). This test exercises
+# the real LocalEvaluator lane end-to-end.
+# ---------------------------------------------------------------------------
+
+
+async def _trial_metrics_from_tuple_returning_function() -> dict[str, float]:
+    """Run the REAL evaluator over a tuple-returning function (offline)."""
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"text": "q1"}, expected_output="STRONG"),
+            EvaluationExample(input_data={"text": "q2"}, expected_output="STRONG"),
+        ],
+        name="composite_upstream_hop",
+    )
+
+    async def answer(text: str) -> tuple[str, dict[str, float]]:
+        composite = binary_cascade(
+            "answerer", base_stage="cheap", expert_stage="strong", threshold=GATE
+        )
+        run = execute_composite(
+            composite.structure,
+            {"cheap": _stage(["A", "A", "B"]), "strong": _stage(["STRONG"])},
+            config={"variant": "strong"},
+            calibrated_values={GATE: 0.9},
+        )
+        metrics: dict[str, float] = {}
+        merge_composite_measures(metrics, run)
+        return str(run.output), metrics
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+    )
+    result = await evaluator.evaluate(answer, {}, dataset)
+    return result.metrics
+
+
+@pytest.mark.asyncio
+async def test_tuple_returning_function_metrics_reach_posted_body() -> None:
+    """The composite_* keys produced upstream reach the posted trial body."""
+    trial_metrics = await _trial_metrics_from_tuple_returning_function()
+
+    # Pre-condition: the REAL evaluator surfaced the composite keys AND derived
+    # accuracy from tuple[0] (== "STRONG" == expected) rather than the raw tuple.
+    assert trial_metrics["accuracy"] == 1.0
+    assert trial_metrics["composite_escalation_rate"] == 1.0
+    assert trial_metrics["composite_stage_selected"] == 1
+    assert trial_metrics["composite_gate_0_margin_pass_rate"] == 0.0
+
+    mock_client = Mock()
+    mock_client.backend_config = Mock()
+    mock_client.backend_config.backend_base_url = "https://api.example.com"
+    mock_client.backend_config.api_base_url = "https://api.example.com/api/v1"
+    mock_client.auth_manager = AsyncMock()
+    mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+    mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
+    mock_client._normalize_execution_mode = Mock(return_value="hybrid")
+    mock_client._sanitize_error_message = Mock(return_value="")
+
+    ops = TrialOperations(mock_client)
+    ops._handle_trial_success_response = AsyncMock(return_value=True)
+
+    mock_session, mock_session_ctx = _build_post_mock()
+
+    with (
+        patch(
+            "traigent.cloud.trial_operations.is_backend_offline",
+            return_value=False,
+        ),
+        patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+        patch("traigent.cloud.trial_operations.validate_configuration_run_submission"),
+        patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+    ):
+        mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+        mock_aiohttp.ClientTimeout = Mock()
+
+        result = await ops.submit_trial_result_via_session(
+            session_id="session_123",
+            trial_id="trial_001",
+            config={"variant": "strong"},
+            metrics=trial_metrics,
+            status="completed",
+            execution_mode="hybrid",
+        )
+
+    assert result is True
+
+    posted_metrics = mock_session.post.call_args.kwargs["json"]["metrics"]
+    assert posted_metrics["accuracy"] == 1.0
+    assert posted_metrics["composite_escalation_rate"] == 1.0
+    assert posted_metrics["composite_stage_selected"] == 1
+    assert posted_metrics["composite_gate_0_margin_pass_rate"] == 0.0

@@ -45,7 +45,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 from traigent.knobs.patterns import binary_cascade
 from traigent.knobs.runtime import StageRunner, execute_composite
-from traigent.knobs.telemetry import composite_measures, merge_composite_measures
+from traigent.knobs.telemetry import merge_composite_measures
 from traigent.tvl.models import PromotionPolicy
 from traigent.tvl.promotion_gate import ObjectiveSpec, PromotionGate
 
@@ -150,7 +150,7 @@ def main() -> None:
     )
 
     if decision.decision == "promote":
-        print(f"CERTIFIED WINNER: variant=strong promoted — {decision.reason}")
+        print(f"CALIBRATION-BACKED WINNER (client-attested): variant=strong promoted — {decision.reason}")
     elif decision.decision == "reject":
         print(f"NO PROMOTION: candidate rejected — {decision.reason}")
     else:
@@ -164,7 +164,13 @@ def main() -> None:
 # In a hybrid or cloud run, you do not call the promotion gate yourself — the
 # orchestrator does. Your decorated function executes the composite in-trial and
 # merges the composite telemetry into the metrics it returns; those numeric
-# metrics ride the existing measures channel to the backend:
+# metrics ride the existing measures channel to the backend.
+#
+# The evaluator unpacks a return that is EXACTLY a 2-tuple ``(output, metrics)``
+# whose ``metrics`` is a dict of str keys to numeric values: ``output`` is used
+# for accuracy/scoring and ``metrics`` mean-aggregates onto the trial (any other
+# return shape is left untouched). A user metric never overrides an
+# evaluator-computed key (e.g. ``accuracy`` stays the computed value):
 #
 #     import traigent
 #

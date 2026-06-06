@@ -20,6 +20,7 @@ from traigent.evaluators.metrics_tracker import (
     ExampleMetrics,
     MetricsCalculator,
     MetricsTracker,
+    enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
 from traigent.utils.exceptions import EvaluationError
@@ -966,6 +967,28 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             ExampleMetrics for this output
         """
+        # Per-example user metrics: prefer the carrier the boundary already
+        # attached to the ExampleResult (detailed mode). When the carrier is
+        # present the output was ALREADY unpacked upstream, so re-unpacking here
+        # would double-unpack a nested matching tuple — e.g. an output of
+        # ``("inner", {"x": 1.0})`` would be split again into ``"inner"`` and a
+        # spurious ``{"x": 1.0}``. We therefore unpack HERE only when the
+        # carrier is absent (the genuinely non-detailed lane, where ``outputs``
+        # still holds the raw tuple). Any non-matching shape is left untouched.
+        carrier = None
+        if (
+            example_results
+            and index < len(example_results)
+            and example_results[index] is not None
+            and getattr(example_results[index], "user_metrics", None) is not None
+        ):
+            carrier = example_results[index]
+
+        if carrier is not None:
+            user_metrics = carrier.user_metrics
+        else:
+            output, user_metrics = self._unpack_user_metrics(output)
+
         # Extract LLM metrics
         example_metric = self._extract_llm_metrics_for_output(
             output, index, config, dataset, all_captured_responses
@@ -989,6 +1012,12 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_value = self._calculate_example_accuracy(actual_value, expected_output)
         if accuracy_value is not None:
             example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
+
+        # Merge per-example user metrics into custom_metrics, never overriding
+        # an evaluator-computed key (e.g. accuracy stays the computed value).
+        self._merge_user_metrics(
+            example_metric.custom_metrics, user_metrics, context="local lane"
+        )
 
         # Transfer metrics from example_results if available
         if example_results and index < len(example_results):
@@ -1325,11 +1354,26 @@ class LocalEvaluator(BaseEvaluator):
             custom_aggregated = self._compute_aggregated_custom_metrics(example_results)
             aggregated_metrics.update(custom_aggregated)
 
-        # Add comprehensive metrics from tracker using helper
-        comprehensive_metrics = metrics_tracker.format_for_backend()
+        # Add comprehensive metrics from tracker using helper. Thread the
+        # evaluator's runtime-only computable names (registry + RAGAS) so a
+        # user tuple key cannot overwrite an evaluator-computed value during the
+        # tracker's user-metric aggregation pass.
+        comprehensive_metrics = metrics_tracker.format_for_backend(
+            extra_reserved=self._evaluator_computable_metric_names()
+        )
         self._merge_comprehensive_metrics(aggregated_metrics, comprehensive_metrics)
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
+
+        # Authoritative cap on the FINAL trial metrics: user keys (arriving via
+        # the per-example custom_metrics -> comprehensive_metrics merge above)
+        # must not push the union past the MeasuresDict ceiling. Only user keys
+        # are dropped; reserved evaluator keys are never sacrificed.
+        enforce_user_metric_ceiling(
+            aggregated_metrics,
+            context="local trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
 
         # Generate summary_stats for all modes except CLOUD (needed for insights)
         summary_stats = None

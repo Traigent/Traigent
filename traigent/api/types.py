@@ -530,6 +530,13 @@ class ExampleResult:
     success: bool
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Per-example numeric metrics unpacked from a decorated function that
+    #: returned ``(output, metrics_dict)``. Populated by the evaluator's strict
+    #: 2-tuple unpack rule (``BaseEvaluator._unpack_user_metrics``); ``None`` for
+    #: every other return shape. NOT persisted via ``to_dict`` — these merge
+    #: into the per-example custom metrics (and then mean-aggregate onto the
+    #: trial) through the normal metrics path, not the example record.
+    user_metrics: dict[str, float] | None = None
 
     @property
     def is_successful(self) -> bool:

@@ -2,7 +2,9 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability CONC-Quality-Observability FUNC-EVAL-METRICS REQ-EVAL-005 SYNC-OptimizationFlow
 
+import math
 import os
+import re
 import statistics
 import time
 import warnings
@@ -12,10 +14,31 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, cast
 
 from traigent._version import get_version
+
+# The backend ``MeasuresDict`` ceiling (≤ 50 total keys) is the single source of
+# truth for the per-trial metric cardinality cap. It lives in
+# ``traigent.knobs.telemetry`` (which has no evaluators dependency, so importing
+# it here is cycle-free) and is reused by ``merge_composite_measures`` for the
+# pre-merge path; this aggregation path mirrors the SAME semantics — user keys
+# are truncated, evaluator keys are never dropped.
+from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
 from traigent.utils.logging import get_logger
 
 # Initialize logger first
 logger = get_logger(__name__)
+
+#: Wire contract for user-supplied metric KEY names. This MUST stay byte-for-byte
+#: identical to ``traigent.cloud.dtos.MeasuresDict.KEY_PATTERN`` (dtos.py:250):
+#: a user key that the evaluator unpacks but the ``MeasuresDict`` wire contract
+#: later rejects is the exact Unicode-identifier bypass we are closing — the key
+#: would ride into ``result.metrics`` and then either be dropped at submission or
+#: smuggled through the backward-compat catch unvalidated. We deliberately do NOT
+#: import ``MeasuresDict`` here (the cloud layer must not be a dependency of the
+#: evaluators layer); the duplication is pinned by
+#: ``test_user_metric_pattern_matches_measuresdict_pattern`` so any drift fails a
+#: test rather than silently reopening the bypass. ``re.ASCII`` keeps ``\w`` to
+#: ``[A-Za-z0-9_]`` so Unicode identifiers (e.g. ``"π_metric"``) are rejected.
+USER_METRIC_KEY_PATTERN: re.Pattern[str] = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
 
 # Expose TOKENCOST availability and backward compatibility functions for tests
 try:
@@ -32,6 +55,244 @@ except Exception:
     calculate_completion_cost = None  # type: ignore[assignment]
 
 TOKENCOST_AVAILABLE = _TOKENCOST_AVAILABLE
+
+#: Evaluator/tracker-computed metric keys that user-supplied per-example metrics
+#: (e.g. the ``(output, metrics_dict)`` tuple channel) MUST NEVER overwrite,
+#: at ANY merge or aggregation site, regardless of merge ordering or
+#: ``setdefault`` timing. Derived from what actually lands in a trial's metrics:
+#:
+#: * the metric registry built-ins (``BaseEvaluator._metric_registry``):
+#:   ``accuracy``, ``success_rate``, ``error_rate``, ``avg_output_length``,
+#:   ``cost``, ``latency`` (plus the per-example ``success`` flag);
+#: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
+#:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
+#:   ``response_time_ms``, ``cost``, ``total_examples``, ``successful_examples``,
+#:   ``tokens_per_second``;
+#: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
+#:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
+#:   ``total_cost``, ``avg_response_time``, ``avg_response_time_ms``;
+#: * standard/LLM per-example keys and lifecycle counters: ``input_cost``,
+#:   ``output_cost``, ``total_cost``, ``examples_attempted``,
+#:   ``examples_consumed``, ``execution_time_ms``.
+RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
+    {
+        # Metric-registry built-ins + per-example success flag.
+        "accuracy",
+        "success",
+        "success_rate",
+        "error_rate",
+        "avg_output_length",
+        "cost",
+        "latency",
+        "score",
+        # format_for_backend / summary outputs.
+        "duration",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "response_time_ms",
+        "total_examples",
+        "successful_examples",
+        "tokens_per_second",
+        # LLM aggregation + per-example cost/token detail.
+        "prompt_tokens",
+        "completion_tokens",
+        "input_cost",
+        "output_cost",
+        "total_cost",
+        "avg_response_time",
+        "avg_response_time_ms",
+        # Lifecycle counters / timing.
+        "examples_attempted",
+        "examples_consumed",
+        "execution_time_ms",
+        # TRANSPORT-reserved: the submission lane passes the measures array and
+        # summary_stats object THROUGH the metrics dict and extracts them BY NAME
+        # in ``trial_operations._extract_measures_from_metrics``; the submission
+        # validator ``validators._validate_metrics_no_misplaced_fields`` HARD-
+        # rejects either name inside a metrics dict. A user tuple key with one of
+        # these names is wire-valid (identifier + numeric) and would otherwise
+        # ride into metrics and break submission — and the caps must never drop
+        # the system's own transport entries. Reserving them skips user keys with
+        # these names (WARNING) at merge.
+        "measures",
+        "summary_stats",
+    }
+)
+
+
+def is_reserved_metric_key(key: str) -> bool:
+    """Return ``True`` if ``key`` is an evaluator/tracker-computed metric.
+
+    User-supplied per-example metrics must never overwrite a reserved key; see
+    :data:`RESERVED_METRIC_KEYS`.
+    """
+    return key in RESERVED_METRIC_KEYS
+
+
+def aggregate_user_custom_metrics(
+    target: dict[str, Any],
+    example_metric_dicts: Sequence[dict[str, Any]],
+    *,
+    context: str,
+    extra_reserved: frozenset[str] = frozenset(),
+) -> None:
+    """Mean-aggregate non-reserved user keys across examples into ``target``.
+
+    Shared by both the ``SimpleScoringEvaluator`` trial-aggregation path and
+    ``MetricsTracker._aggregate_user_custom_metrics`` so the tuple-return
+    metrics channel surfaces user keys identically on every public evaluator.
+
+    Semantics (fail-closed):
+
+    * a key in :data:`RESERVED_METRIC_KEYS` OR in ``extra_reserved`` is skipped
+      (the evaluator's own computed value wins). ``extra_reserved`` carries the
+      runtime-only evaluator-computable names (registered custom metrics and
+      RAGAS metrics such as ``context_precision``) that the static frozenset
+      cannot enumerate, so a user tuple key with one of those names cannot
+      overwrite the evaluator's value;
+    * a key already present in ``target`` is left untouched (never clobbered);
+    * non-numeric / non-finite / ``bool`` values are skipped (the wire channel
+      carries finite numbers only);
+    * the resulting ``target`` is capped at :data:`TOTAL_MEASURES_CEILING`
+      TOTAL keys — only USER keys are truncated, deterministically in sorted
+      order, with the drop warning-logged; evaluator keys are never dropped,
+      mirroring ``merge_composite_measures``.
+
+    Logging split: reserved-key SKIPS here log at ``DEBUG``. This shared pass is
+    fed evaluator-INTERNAL dicts (e.g. the local lane's per-example
+    ``custom_metrics``, which carry injected ``input_cost`` / ``total_cost`` /
+    token keys), so a reserved-key collision here is dominated by the evaluator's
+    own keys, not a user mistake — warning on it would lie. The per-example
+    ``BaseEvaluator._merge_user_metrics`` (which sees the GENUINELY user-supplied
+    tuple dict) keeps the ``WARNING`` for the same condition.
+    """
+    values_by_key: dict[str, list[float]] = {}
+    for metric in example_metric_dicts:
+        if not metric:
+            continue
+        for key, value in metric.items():
+            if key in target:
+                continue
+            if is_reserved_metric_key(key) or key in extra_reserved:
+                logger.debug(
+                    "Skipping reserved metric %r (%s): evaluator-computed key, "
+                    "cannot be overwritten",
+                    key,
+                    context,
+                )
+                continue
+            if isinstance(value, bool) or value is None:
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(numeric):
+                continue
+            values_by_key.setdefault(key, []).append(numeric)
+
+    means = {
+        key: sum(values) / len(values)
+        for key, values in values_by_key.items()
+        if values
+    }
+    _merge_capped_user_means(target, means, context=context)
+
+
+def _merge_capped_user_means(
+    target: dict[str, Any],
+    user_means: dict[str, float],
+    *,
+    context: str,
+) -> None:
+    """Merge ``user_means`` into ``target`` under the total-key ceiling.
+
+    Only user keys are truncated (deterministic sorted order, warning-logged);
+    evaluator keys already in ``target`` are never dropped.
+    """
+    if not user_means:
+        return
+    budget = TOTAL_MEASURES_CEILING - len(target)
+    ordered_keys = sorted(user_means)
+    if budget <= 0:
+        logger.warning(
+            "%s: trial metrics already at the %d-key ceiling; ALL %d "
+            "user metric(s) dropped: %s",
+            context,
+            TOTAL_MEASURES_CEILING,
+            len(ordered_keys),
+            ordered_keys[:10],
+        )
+        return
+    if len(ordered_keys) > budget:
+        kept = ordered_keys[:budget]
+        dropped = ordered_keys[budget:]
+        logger.warning(
+            "%s: user metrics would exceed the %d-key ceiling; %d user key(s) "
+            "dropped deterministically: %s",
+            context,
+            TOTAL_MEASURES_CEILING,
+            len(dropped),
+            dropped[:10],
+        )
+        ordered_keys = kept
+    for key in ordered_keys:
+        target[key] = user_means[key]
+
+
+def enforce_user_metric_ceiling(
+    target: dict[str, Any],
+    *,
+    context: str,
+    extra_reserved: frozenset[str] = frozenset(),
+) -> None:
+    """Clamp ``target`` to :data:`TOTAL_MEASURES_CEILING` TOTAL keys in place.
+
+    The cap mirrors ``merge_composite_measures``: only NON-reserved (user) keys
+    are dropped — deterministically, in sorted order, warning-logged — so the
+    reserved evaluator-computed keys are never sacrificed to fit the ceiling.
+    ``extra_reserved`` extends the static :data:`RESERVED_METRIC_KEYS` with the
+    evaluator's runtime-only computable names (registry + RAGAS), so an
+    evaluator-computed key like ``context_precision`` is never mistaken for a
+    droppable user key. This is the authoritative cap for a lane whose user keys
+    arrive via an intermediate dict (e.g. the local lane's
+    ``comprehensive_metrics``), where capping the intermediate dict alone cannot
+    bound the final union.
+    """
+    if len(target) <= TOTAL_MEASURES_CEILING:
+        return
+    user_keys = sorted(
+        k for k in target if not is_reserved_metric_key(k) and k not in extra_reserved
+    )
+    overflow = len(target) - TOTAL_MEASURES_CEILING
+    if overflow <= 0:
+        return
+    # Drop the LAST `overflow` user keys (deterministic sorted order); reserved
+    # keys are never eligible for dropping.
+    droppable = user_keys[len(user_keys) - min(overflow, len(user_keys)) :]
+    for key in droppable:
+        del target[key]
+    if droppable:
+        logger.warning(
+            "%s: trial metrics exceeded the %d-key ceiling; %d user key(s) "
+            "dropped deterministically: %s",
+            context,
+            TOTAL_MEASURES_CEILING,
+            len(droppable),
+            droppable[:10],
+        )
+    if len(target) > TOTAL_MEASURES_CEILING:
+        # All remaining overflow is reserved keys (never dropped): the evaluator
+        # itself produced more than the ceiling. Surface loudly; do not silently
+        # exceed the contract by dropping computed keys.
+        logger.warning(
+            "%s: %d reserved evaluator key(s) leave the trial metrics above the "
+            "%d-key ceiling; reserved keys are never dropped",
+            context,
+            len(target) - TOTAL_MEASURES_CEILING,
+            TOTAL_MEASURES_CEILING,
+        )
 
 
 @dataclass
@@ -246,8 +507,16 @@ class MetricsTracker:
             "duration": missing_default,
         }
 
-    def format_for_backend(self) -> dict[str, Any]:
-        """Format aggregated metrics for backend submission."""
+    def format_for_backend(
+        self, extra_reserved: frozenset[str] = frozenset()
+    ) -> dict[str, Any]:
+        """Format aggregated metrics for backend submission.
+
+        ``extra_reserved`` carries the owning evaluator's runtime-only
+        computable metric names (registered custom metrics + RAGAS names) so
+        user-supplied tuple keys cannot overwrite an evaluator-computed value
+        during the user-metric aggregation pass below.
+        """
         try:
             aggregated = self.aggregate_metrics()
         except Exception as e:
@@ -321,7 +590,40 @@ class MetricsTracker:
                 aggregated, "tokens_per_second", "mean"
             )
 
+        # Mean-aggregate user-supplied per-example custom metrics (e.g. the
+        # composite_* telemetry keys from a (output, metrics_dict) return) the
+        # same way accuracy aggregates above. These are rates/means/counts, so
+        # mean across examples is the correct trial-level value. Standard keys
+        # already produced above are excluded so we never double-count or
+        # clobber the canonical aggregation.
+        self._aggregate_user_custom_metrics(formatted, extra_reserved)
+
         return formatted
+
+    def _aggregate_user_custom_metrics(
+        self, formatted: dict[str, Any], extra_reserved: frozenset[str] = frozenset()
+    ) -> None:
+        """Mean-aggregate non-reserved custom metrics into ``formatted``.
+
+        Delegates to the shared :func:`aggregate_user_custom_metrics` helper so
+        the tuple-return metrics channel behaves identically on every public
+        evaluator path: reserved evaluator-computed keys (the static
+        :data:`RESERVED_METRIC_KEYS` plus the evaluator's runtime-only
+        ``extra_reserved`` names) are skipped (never overwritten), already-present
+        keys are left untouched, non-finite values are dropped, and the total key
+        count is capped at :data:`TOTAL_MEASURES_CEILING` by truncating user keys
+        only. Reserved-key skips here log at ``DEBUG``: this pass is fed the
+        evaluator's own per-example ``custom_metrics`` (incl. injected cost/token
+        keys), so a collision is evaluator-internal, not a user error.
+        """
+        if not self.example_metrics:
+            return
+        aggregate_user_custom_metrics(
+            formatted,
+            [m.custom_metrics for m in self.example_metrics if m.success],
+            context="format_for_backend user metrics",
+            extra_reserved=extra_reserved,
+        )
 
     def _empty_backend_format(self) -> dict[str, Any]:
         """Return empty backend format structure when error occurs."""
@@ -1011,7 +1313,7 @@ def _calculate_cost_for_metrics(
             )
     except Exception as e:
         logger.error(
-            "Cost calculation failed for model %s: %s " "(tokens: in=%d, out=%d)",
+            "Cost calculation failed for model %s: %s (tokens: in=%d, out=%d)",
             model_name,
             e,
             metrics.tokens.input_tokens,
