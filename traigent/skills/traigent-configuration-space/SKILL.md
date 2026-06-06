@@ -1,7 +1,7 @@
 ---
 name: traigent-configuration-space
 description: "Define tuned variables and configuration spaces for Traigent optimization. Use when setting up parameter search spaces, choosing models/temperatures/prompts to optimize, using Range/IntRange/Choices/LogRange types, adding constraints between parameters, or using factory presets like Range.temperature()."
-license: Apache-2.0
+license: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
 metadata:
   author: Traigent
   version: "1.0"

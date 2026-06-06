@@ -1,7 +1,7 @@
 ---
 name: traigent-analyze-results
 description: "Analyze Traigent optimization results: best config, trial comparison, convergence, cost, and applying results to production. Use when reading results.best_config, comparing trials, checking stop_reason, calling apply_best_config(), accessing total_cost or total_tokens, or understanding why optimization stopped."
-license: Apache-2.0
+license: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
 metadata:
   author: Traigent
   version: "1.0"
@@ -30,6 +30,7 @@ import traigent
 @traigent.optimize(
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.0, 0.5, 1.0]},
     objectives=["accuracy"],
+    eval_dataset="eval_data.jsonl",
     max_trials=10,
 )
 def classify(text):
@@ -37,7 +38,7 @@ def classify(text):
     # ... LLM call using config ...
     return result
 
-results = classify.optimize(dataset="eval_data.jsonl")
+results = classify.optimize()
 
 # Top-level results
 print(results.best_config)      # {"model": "gpt-4o", "temperature": 0.0}
@@ -195,7 +196,7 @@ After optimization, apply the winning configuration so your function uses it in 
 
 ```python
 # Run optimization
-results = classify.optimize(dataset="eval_data.jsonl")
+results = classify.optimize()
 
 # Apply the best configuration
 classify.apply_best_config(results)
@@ -212,7 +213,7 @@ response = classify("What category is this email?")
 Verify results before applying:
 
 ```python
-results = classify.optimize(dataset="eval_data.jsonl")
+results = classify.optimize()
 
 if results.best_score is not None and results.best_score >= 0.85:
     classify.apply_best_config(results)
@@ -266,6 +267,7 @@ import traigent
         "max_tokens": [256, 512, 1024],
     },
     objectives=["accuracy"],
+    eval_dataset="summarization_eval.jsonl",
     max_trials=15,
 )
 def summarize(text):
@@ -274,7 +276,7 @@ def summarize(text):
     return summary
 
 # 1. Run optimization
-results = summarize.optimize(dataset="summarization_eval.jsonl")
+results = summarize.optimize()
 
 # 2. Quick summary
 print(f"Best config: {results.best_config}")

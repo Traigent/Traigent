@@ -109,7 +109,7 @@ Full Python traceback is shown:
 ```
 Traceback (most recent call last):
   File "my_script.py", line 15, in <module>
-    results = func.optimize(dataset="data.jsonl")
+    results = func.optimize()
   File "/path/to/traigent/core/optimized_function.py", line 234, in optimize
     self._validate_config_space(config_space)
   File "/path/to/traigent/core/optimized_function.py", line 178, in _validate_config_space
