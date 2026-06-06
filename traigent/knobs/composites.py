@@ -55,6 +55,7 @@ __all__ = [
     "LoopBody",
     "Placement",
     "Provenance",
+    "Scope",
     "SignalUse",
     "StageArm",
     "StatKind",
@@ -130,6 +131,40 @@ class StopKind(StrEnum):
     SIGNAL_ACCEPT = "signal_accept"
     EXTERNAL_ACCEPT = "external_accept"
     EXHAUSTED = "exhausted"
+
+
+# --------------------------------------------------------------------------- #
+# Scope (RFC 0001 §3.7 scope_spec — carried verbatim onto a composite, §3.2)  #
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True, slots=True)
+class Scope:
+    """RFC 0001 §3.7 ``scope_spec`` — ``⟨ node?, agent?, workflow? ⟩``.
+
+    Carried VERBATIM onto a composite with the SAME semantics as
+    ``PolicyDecl.scope`` (§3.2, §4 subsumption): each field is an optional
+    ``Ident`` recording node/agent/workflow ownership. v1 semantics are
+    informational (RFC 0001 metadata) — a composite still binds no value. The
+    closed shape (three optional identifiers, no content-typed field) keeps it
+    OUTSIDE the P8 surface, exactly as the policy form's scope.
+    """
+
+    node: str | None = None
+    agent: str | None = None
+    workflow: str | None = None
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("node", self.node),
+            ("agent", self.agent),
+            ("workflow", self.workflow),
+        ):
+            if value is not None and (not isinstance(value, str) or not value):
+                raise _reject(
+                    "invalid_arm_shape",
+                    f"Scope.{label} must be a non-empty identifier or None",
+                )
 
 
 # --------------------------------------------------------------------------- #
@@ -371,7 +406,7 @@ class StopDecl:
                 "unknown_stop_kind", f"stop kind outside the v1 registry: {self.kind!r}"
             )
         if self.kind is StopKind.SIGNAL_ACCEPT:
-            if self.threshold is None:
+            if not isinstance(self.threshold, str) or not self.threshold:
                 raise _reject(
                     "missing_stop_threshold", "signal_accept stop requires a threshold"
                 )
@@ -385,10 +420,10 @@ class StopDecl:
                     "signal_accept stop carries no predicate field",
                 )
         elif self.kind is StopKind.EXTERNAL_ACCEPT:
-            if self.predicate is None:
+            if not isinstance(self.predicate, str) or not self.predicate:
                 raise _reject(
                     "missing_stop_predicate",
-                    "external_accept stop requires a predicate",
+                    "external_accept stop requires a non-empty predicate identifier",
                 )
             if self.threshold is not None or self.signal is not None:
                 raise _reject(
@@ -553,7 +588,11 @@ class EnsembleBody:
             raise _reject(
                 "invalid_arm_shape", "cardinality must be a non-empty identifier"
             )
-        _check_duplicate_stages(self.arms)
+        # §3.2 item 6: duplicates within ONE composite — the judge arm is part
+        # of this composite's stage scope, so it is checked alongside arms.
+        judge = self.aggregate.judge
+        scope = self.arms if judge is None else (*self.arms, judge)
+        _check_duplicate_stages(scope)
 
 
 @dataclass(frozen=True, slots=True)
@@ -610,7 +649,9 @@ class CompositeNode:
     """One composite declaration: a member of ``N_X`` (§3.2 ``Composite``).
 
     ``kind`` discriminates ``body``; a kind/body mismatch rejects
-    (``unknown_composite_field``). ``provenance`` rides as expansion-output
+    (``unknown_composite_field``). ``scope`` is the RFC 0001 §3.7 ``scope_spec``
+    carried VERBATIM with PolicyDecl semantics (§3.2, §4 subsumption — optional,
+    frozen, OUTSIDE the P8 surface). ``provenance`` rides as expansion-output
     metadata. ``parameters`` is an opaque operational map OUTSIDE the P8
     surface, exactly as ``PolicyDecl.parameters`` (kept as an opaque mapping;
     never serialized through the typed wire).
@@ -619,6 +660,7 @@ class CompositeNode:
     name: str
     kind: CompositeKind
     body: Body
+    scope: Scope | None = None
     provenance: Provenance | None = None
     parameters: Mapping[str, object] | None = None
 
@@ -631,6 +673,11 @@ class CompositeNode:
             raise _reject(
                 "unknown_composite_kind",
                 f"kind outside the closed registry: {self.kind!r}",
+            )
+        if self.scope is not None and not isinstance(self.scope, Scope):
+            raise _reject(
+                "unknown_composite_field",
+                f"scope must be a Scope, got {type(self.scope).__name__}",
             )
         expected = {
             CompositeKind.CASCADE: CascadeBody,
@@ -658,11 +705,14 @@ class CompositeProgram:
     declared identifier names of the surrounding module's tuned/calibrated
     knobs (a namespace VIEW only — no bindings, no values). ``cvar_types``
     maps each CVAR name to its declared TVL type (for the int/float threshold
-    and int-cardinality checks). ``cvar_signals`` maps each CVAR to its
-    declared ``calibration.signal`` id (``None`` when absent) for the §3.2
-    item-11 binding lint, and ``cvar_depends_on`` to its declared TVAR parents
-    for the §3.5 ``missing_composite_parent`` lint. ``cvar_signal_inputs``
-    maps each CVAR to the input list covered under the ``signal_inputs``
+    and int-cardinality checks); ``tvar_types`` is the PARALLEL mapping for
+    TVARs (a TVAR-bound cardinality must also be int-typed — §3.2 item 7). A
+    name absent from its type map is treated as untyped/unknown and rejected by
+    the type checks. ``cvar_signals`` maps each CVAR to its declared
+    ``calibration.signal`` id (``None`` when absent) for the §3.2 item-11
+    binding lint, and ``cvar_depends_on`` to its declared TVAR parents for the
+    §3.5 ``missing_composite_parent`` lint. ``cvar_signal_inputs`` maps each
+    CVAR to the input list covered under the ``signal_inputs``
     freshness-context extension (``None`` when uncovered).
     """
 
@@ -670,6 +720,7 @@ class CompositeProgram:
     tvars: frozenset[str] = frozenset()
     cvars: frozenset[str] = frozenset()
     cvar_types: Mapping[str, str] = field(default_factory=dict)
+    tvar_types: Mapping[str, str] = field(default_factory=dict)
     cvar_signals: Mapping[str, str | None] = field(default_factory=dict)
     cvar_depends_on: Mapping[str, frozenset[str]] = field(default_factory=dict)
     cvar_signal_inputs: Mapping[str, tuple[str, ...] | None] = field(
@@ -749,9 +800,19 @@ def _check_threshold(program: CompositeProgram, threshold: str) -> None:
 
 
 def _check_cardinality(program: CompositeProgram, cardinality: str) -> None:
-    """Item 7: cardinality references a TVAR or CVAR of declared type ``int``."""
+    """Item 7: cardinality references a TVAR or CVAR of declared TVL type
+    ``int``. The int-type obligation applies to BOTH a tuned and a calibrated
+    cardinality — a non-int cardinality (e.g. a float TVAR) rejects
+    ``invalid_cardinality_type`` regardless of binding kind. Resolution-time
+    ``k < 1`` is the separate runtime rejection R9 (``invalid_cardinality_value``).
+    """
     if cardinality in program.tvars:
-        return  # tuned cardinality; resolution-time k<1 is R9 (runtime)
+        if program.tvar_types.get(cardinality) != "int":
+            raise _reject(
+                "invalid_cardinality_type",
+                f"cardinality TVAR {cardinality!r} is not int-typed",
+            )
+        return  # int-typed tuned cardinality; k<1 is R9 (runtime)
     if cardinality not in program.cvars:
         raise _reject(
             "missing_ref",
@@ -759,7 +820,8 @@ def _check_cardinality(program: CompositeProgram, cardinality: str) -> None:
         )
     if program.cvar_types.get(cardinality) != "int":
         raise _reject(
-            "invalid_cardinality_type", f"cardinality {cardinality!r} is not int-typed"
+            "invalid_cardinality_type",
+            f"cardinality CVAR {cardinality!r} is not int-typed",
         )
 
 
@@ -869,15 +931,18 @@ def validate_program(program: CompositeProgram) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def leaf_tvars(
+def _leaf_names_raw(
     arm: Arm, registry: Mapping[str, CompositeNode], _seen: frozenset[str] | None = None
 ) -> frozenset[str]:
-    """``leafT`` (§3.5): the tuned-TVAR leaf set an arm parameterizes.
+    """NAMESPACE-BLIND leaf walk over the §3.5 ``leafT`` structure.
 
-    ``leafT(stage(s, ps)) = ps``; ``leafT(composite(x))`` unions ``leafT`` over
-    all arms/body/judge of ``x`` PLUS its sampling-ensemble's tuned cardinality
-    (``{cardinality} ∩ N_T``), folding in recursively through nesting. The
-    codomain is TVAR-only (C6).
+    Collects every ``tuned_params`` entry plus every sampling-ensemble
+    ``cardinality`` name, recursively through nesting — WITHOUT consulting the
+    ``N_T`` partition. The cardinality term it folds in may therefore be a CVAR
+    or a TVAR; this raw set is INTERNAL only and must be intersected with
+    ``N_T`` before it is exposed (the public :func:`leaf_tvars` does so). Using
+    this set directly on the public surface would violate the TVAR-only / P5
+    boundary (§3.5, C6) by returning calibrated names as leaves.
     """
     seen = _seen or frozenset()
     if isinstance(arm, StageArm):
@@ -885,33 +950,48 @@ def leaf_tvars(
     # CompositeArm
     if arm.ref in seen:  # acyclic by validation; guard anyway
         return frozenset()
-    node = registry[arm.ref]
-    return _leaf_of_node(node, registry, seen | {arm.ref})
+    node = registry.get(arm.ref)
+    if node is None:  # unresolved ref (caught elsewhere as missing_composite_ref)
+        return frozenset()
+    return _leaf_names_of_node(node, registry, seen | {arm.ref})
 
 
-def _leaf_of_node(
+def _leaf_names_of_node(
     node: CompositeNode, registry: Mapping[str, CompositeNode], seen: frozenset[str]
 ) -> frozenset[str]:
     body = node.body
     leaves: frozenset[str] = frozenset()
     for member in _all_arms(body):
-        leaves |= leaf_tvars(member, registry, seen)
+        leaves |= _leaf_names_raw(member, registry, seen)
     if isinstance(body, EnsembleBody) and body.cardinality is not None:
-        # {cardinality} ∩ N_T — a Calibrated/absent cardinality contributes
-        # nothing to leafT (it is a Cal member instead, §3.6). The N_T test is
-        # against the registry's owning program, but leaf_tvars takes only the
-        # registry; cardinality TVAR-membership is resolved by the caller via
-        # leaf_tvars_in_program when the program is available. Here we include
-        # it optimistically and let required_parents (program-scoped) intersect.
+        # Raw fold: include the cardinality name WHATEVER its binding. A
+        # Calibrated/absent cardinality contributes nothing to the final
+        # ``leafT`` (it is a Cal member instead, §3.6), but that ∩ N_T cut is
+        # the PUBLIC layer's job — never this namespace-blind walk's.
         leaves |= {body.cardinality}
     return leaves
 
 
+def leaf_tvars(program: CompositeProgram, arm: Arm) -> frozenset[str]:
+    """``leafT`` (§3.5): the tuned-TVAR leaf set an arm parameterizes.
+
+    PUBLIC surface, TVAR-only (C6 / the P5 boundary). ``leafT(stage(s, ps)) =
+    ps``; ``leafT(composite(x))`` unions ``leafT`` over all arms/body/judge of
+    ``x`` PLUS its sampling-ensemble's tuned cardinality (``{cardinality} ∩
+    N_T``), folding in recursively through nesting.
+
+    The cardinality fold is intersected with ``N_T`` at EVERY layer (via the
+    final ``& program.tvars`` cut over the namespace-blind walk), so a composite
+    whose ensemble cardinality is bound Calibrated NEVER leaks a CVAR onto this
+    helper — that CVAR is a :func:`cal_fold` member instead (§3.6). Requiring
+    the ``program`` namespace is what makes this guarantee total.
+    """
+    return _leaf_names_raw(arm, program.composites) & program.tvars
+
+
 def _leaf_tvars_program(arm: Arm, program: CompositeProgram) -> frozenset[str]:
-    """``leafT`` intersected with ``N_T`` using the program's TVAR namespace —
-    keeps the cardinality term TVAR-only (C6)."""
-    raw = leaf_tvars(arm, program.composites)
-    return raw & program.tvars
+    """Internal alias kept for the §3.5 ``required_parents`` call sites."""
+    return leaf_tvars(program, arm)
 
 
 def required_parents(

@@ -89,6 +89,12 @@ def _prov_to_dict(prov):
     }
 
 
+def _scope_to_dict(scope):
+    if scope is None:
+        return None
+    return {"node": scope.node, "agent": scope.agent, "workflow": scope.workflow}
+
+
 def _body_to_dict(body):
     if isinstance(body, CascadeBody):
         return {
@@ -145,6 +151,7 @@ def _node_to_dict(node):
         "name": node.name,
         "kind": node.kind.value,
         "body": _body_to_dict(node.body),
+        "scope": _scope_to_dict(node.scope),
         "provenance": _prov_to_dict(node.provenance),
     }
 
@@ -211,12 +218,12 @@ def _sr():
 # expansion (the §3.7 golden tests), NOT secrets — detect-secrets flags them as
 # high-entropy hex, so each carries an allowlist pragma.
 GOLDEN = {
-    "binary_cascade": "353abb8c42b5fab1f32738ec4f0fca76215f4fc7122e6dd9363e11d1389cd055",  # pragma: allowlist secret
-    "n_cascade": "52c8ace634c47ad28768e67ddb4b05d7a054d7febd82f0c3c678b1b766e42849",  # pragma: allowlist secret
-    "self_consistency": "18f0c814758112bed8ad3a9817c864420aa5a0d6d4f2d474a5529ae18f7b513d",  # pragma: allowlist secret
-    "best_of_n": "a0e959620ca6c58099f2fa53762530f565446348ba3045edf23cdbf9b8b7fbae",  # pragma: allowlist secret
-    "self_debug": "c816be0383cdf46b81aa6ca4bdea27070503d062580cf46c7832685e0c94e979",  # pragma: allowlist secret
-    "self_refine": "00e7ef9438a34f6347b7d894d900a147e5cd0ff95e45ae1779bf60c754512fa4",  # pragma: allowlist secret
+    "binary_cascade": "72c2db9bcd480a272b6ca0bfcd66e1b55750c45379f150f606d0756ab7b7007f",  # pragma: allowlist secret
+    "n_cascade": "f338422ffb1a59fa76fda5cfa550635ee481987f75f51615932e2787d26357c8",  # pragma: allowlist secret
+    "self_consistency": "f9059062a08cf7db17b7252896b7845657ec1ab764ec22ec628faf9bbc2f9ef9",  # pragma: allowlist secret
+    "best_of_n": "4b04d9e8825236470c1cbe7aef0a9c77fbf5b13aaf32b3888db8a5412465003a",  # pragma: allowlist secret
+    "self_debug": "07aa2c8cc3bea171a5395d704f2e9b80886dd0d3ab4cefa69f4bdcdb341fbf10",  # pragma: allowlist secret
+    "self_refine": "7f4ee735559d93674e55550f5fe7a16c9ec4ecf36397609884937c56d634fc42",  # pragma: allowlist secret
 }
 
 
@@ -415,6 +422,46 @@ class TestFailClosedCoverage:
 # --------------------------------------------------------------------------- #
 # (d) Unroll (§3.8)                                                           #
 # --------------------------------------------------------------------------- #
+
+
+class TestNCascadeTunedParamsLength:
+    """F4a (§3.5): n_cascade does not silently backfill partial per-stage
+    tuned_params — a provided list must have exactly one tuple per stage."""
+
+    def test_partial_tuned_params_rejects(self):
+        with pytest.raises(ValueError, match="invalid_tuned_param"):
+            n_cascade(
+                "chain",
+                stages=("a", "b", "c"),
+                thresholds=("t1", "t2"),
+                tuned_params=(("m1",), ("m2",)),  # 2 tuples for 3 stages
+            )
+
+    def test_too_many_tuned_params_rejects(self):
+        with pytest.raises(ValueError, match="invalid_tuned_param"):
+            n_cascade(
+                "chain",
+                stages=("a", "b"),
+                thresholds=("t1",),
+                tuned_params=(("m1",), ("m2",), ("m3",)),  # 3 tuples for 2 stages
+            )
+
+    def test_exact_per_stage_tuned_params_accepted(self):
+        ck = n_cascade(
+            "chain",
+            stages=("a", "b", "c"),
+            thresholds=("t1", "t2"),
+            tuned_params=(("m1",), ("m2",), ()),
+        )
+        arms = ck.structure.body.arms
+        assert arms[0].tuned_params == ("m1",)
+        assert arms[1].tuned_params == ("m2",)
+        assert arms[2].tuned_params == ()
+
+    def test_omitting_tuned_params_leaves_all_empty(self):
+        # The documented all-empty policy-migration ratchet stays allowed.
+        ck = n_cascade("chain", stages=("a", "b"), thresholds=("t1",))
+        assert all(arm.tuned_params == () for arm in ck.structure.body.arms)
 
 
 class TestUnroll:

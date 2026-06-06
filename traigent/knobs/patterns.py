@@ -262,11 +262,25 @@ def n_cascade(
     """``Cascade(arms=[stage(a_1)..stage(a_m)], gates=[θ_1..θ_{m-1}], post)``.
 
     Ordered escalation. ``|thresholds|`` must equal ``|stages| - 1`` (the IR
-    enforces ``cascade_arity``). ``tuned_params``, when given, is one tuple per
-    stage.
+    enforces ``cascade_arity``).
+
+    ``tuned_params``, WHEN PROVIDED, declares the per-stage parentage and MUST
+    have EXACTLY one tuple per stage (``len(tuned_params) == len(stages)``) — a
+    short list is NOT silently backfilled with ``()``, because that would
+    under-declare an arm's parent coverage (§3.5). Omitting the argument
+    entirely keeps every stage's ``tuned_params`` empty (the documented
+    policy-migration ratchet, §4); a PARTIAL declaration rejects with
+    ``invalid_tuned_param``.
     """
     if tuned_params is None:
         tuned_params = tuple(() for _ in stages)
+    elif len(tuned_params) != len(stages):
+        raise ValueError(
+            "invalid_tuned_param: tuned_params must declare exactly one tuple "
+            f"per stage (got {len(tuned_params)} for {len(stages)} stage(s)); "
+            "omit tuned_params entirely to leave all stages undeclared, but "
+            "partial per-stage declarations are not silently backfilled"
+        )
     params = {
         "name": name,
         "stages": list(stages),
@@ -274,10 +288,7 @@ def n_cascade(
         "tuned_params": [list(tp) for tp in tuned_params],
     }
     prov = _provenance("n_cascade", params)
-    arms = tuple(
-        StageArm(stage, tuned_params[i] if i < len(tuned_params) else ())
-        for i, stage in enumerate(stages)
-    )
+    arms = tuple(StageArm(stage, tuned_params[i]) for i, stage in enumerate(stages))
     gates = tuple(
         GateDecl(kind=GateKind.MARGIN_BELOW, threshold=theta) for theta in thresholds
     )

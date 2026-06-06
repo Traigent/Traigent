@@ -24,6 +24,7 @@ from traigent.knobs.composites import (
     GateKind,
     LoopBody,
     Placement,
+    Scope,
     SignalUse,
     StageArm,
     StopDecl,
@@ -111,6 +112,59 @@ class TestNodeLocalRejections:
                 gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="theta"),),
             )
         assert _code(e) == "duplicate_stage"
+
+    def test_duplicate_stage_includes_ensemble_judge(self):
+        # F4b (§3.2 item 6): a judge stage that duplicates a committee arm is a
+        # duplicate WITHIN one composite — the judge is in the stage scope.
+        with pytest.raises(ValueError) as e:
+            EnsembleBody(
+                arms=(StageArm("a"), StageArm("b")),
+                aggregate=AggregateDecl(
+                    kind=AggregateKind.JUDGE_MAX, judge=StageArm("a")
+                ),
+            )
+        assert _code(e) == "duplicate_stage"
+
+    def test_sampling_ensemble_judge_duplicates_sole_arm(self):
+        # The single-arm (sampling) form, too: judge == the arm is a duplicate.
+        with pytest.raises(ValueError) as e:
+            EnsembleBody(
+                arms=(StageArm("a"),),
+                aggregate=AggregateDecl(
+                    kind=AggregateKind.JUDGE_MAX, judge=StageArm("a")
+                ),
+                cardinality="k",
+            )
+        assert _code(e) == "duplicate_stage"
+
+    def test_distinct_judge_stage_is_accepted(self):
+        # A judge with a DISTINCT name is well-formed (the happy path).
+        body = EnsembleBody(
+            arms=(StageArm("a"),),
+            aggregate=AggregateDecl(
+                kind=AggregateKind.JUDGE_MAX, judge=StageArm("judge")
+            ),
+            cardinality="k",
+        )
+        assert body.aggregate.judge == StageArm("judge")
+
+    def test_empty_external_accept_predicate_rejects(self):
+        # F5 (§3.11 missing_stop_predicate): an empty predicate identifier is a
+        # missing predicate, not a valid one (previously only None was caught).
+        with pytest.raises(ValueError) as e:
+            StopDecl(kind=StopKind.EXTERNAL_ACCEPT, predicate="")
+        assert _code(e) == "missing_stop_predicate"
+
+    def test_empty_signal_accept_threshold_rejects(self):
+        # F5 sweep: the same empty-string hole on the signal_accept threshold
+        # Ident — an empty threshold is a missing threshold.
+        with pytest.raises(ValueError) as e:
+            StopDecl(
+                kind=StopKind.SIGNAL_ACCEPT,
+                threshold="",
+                signal=SignalUse(signal="q"),
+            )
+        assert _code(e) == "missing_stop_threshold"
 
     def test_unknown_gate_kind(self):
         with pytest.raises(ValueError) as e:
@@ -237,6 +291,53 @@ class TestNodeLocalRejections:
         assert node.kind is CompositeKind.CASCADE
 
 
+class TestScopeCarryOver:
+    """F3 (§3.2 / §4): a composite carries the RFC 0001 scope_spec verbatim."""
+
+    def test_scope_optional_default_none(self):
+        node = _post_cascade()
+        assert node.scope is None
+
+    def test_scope_carried_verbatim(self):
+        # node/agent/workflow ownership fields, same shape as PolicyDecl.scope.
+        scope = Scope(node="n1", agent="agentA", workflow="wfX")
+        node = CompositeNode(
+            name="casc",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(StageArm("a"), StageArm("b")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="theta"),),
+            ),
+            scope=scope,
+        )
+        assert node.scope is scope
+        assert node.scope.node == "n1"
+        assert node.scope.agent == "agentA"
+        assert node.scope.workflow == "wfX"
+        # A program with a scoped composite still validates (scope is metadata).
+        validate_program(_program(node))
+
+    def test_scope_partial_fields(self):
+        # agent-only / workflow-only are expressible (RFC 0001 alternation).
+        assert Scope(agent="a").agent == "a"
+        assert Scope(workflow="w").node is None
+
+    def test_scope_empty_field_rejects(self):
+        with pytest.raises(ValueError) as e:
+            Scope(node="")
+        assert _code(e) == "invalid_arm_shape"
+
+    def test_non_scope_object_rejects(self):
+        with pytest.raises(ValueError) as e:
+            CompositeNode(
+                name="casc",
+                kind=CompositeKind.CASCADE,
+                body=CascadeBody(arms=(StageArm("a"),)),
+                scope="agentA",  # type: ignore[arg-type]
+            )
+        assert _code(e) == "unknown_composite_field"
+
+
 # --------------------------------------------------------------------------- #
 # Program-level (cross-composite) rejections                                  #
 # --------------------------------------------------------------------------- #
@@ -305,8 +406,8 @@ class TestProgramRejections:
             validate_program(_program(node, cvar_types={"theta": "string"}))
         assert _code(e) == "invalid_threshold_type"
 
-    def test_invalid_cardinality_type(self):
-        node = CompositeNode(
+    def _ensemble_cardinality(self) -> CompositeNode:
+        return CompositeNode(
             name="ens",
             kind=CompositeKind.ENSEMBLE,
             body=EnsembleBody(
@@ -315,10 +416,13 @@ class TestProgramRejections:
                 cardinality="k",
             ),
         )
+
+    def test_invalid_cardinality_type_cvar_float(self):
+        # §3.2 item 7: a CALIBRATED (CVAR) cardinality declared float, not int.
         with pytest.raises(ValueError) as e:
             validate_program(
                 _program(
-                    node,
+                    self._ensemble_cardinality(),
                     cvars=frozenset({"k"}),
                     cvar_types={"k": "float"},  # not int
                     cvar_signals={},
@@ -326,6 +430,38 @@ class TestProgramRejections:
                 )
             )
         assert _code(e) == "invalid_cardinality_type"
+
+    def test_invalid_cardinality_type_tvar_float(self):
+        # F2 (§3.2 item 7): a TUNED (TVAR) cardinality must ALSO be int-typed;
+        # a float TVAR cardinality rejects invalid_cardinality_type (previously
+        # any name in program.tvars was accepted unchecked).
+        with pytest.raises(ValueError) as e:
+            validate_program(
+                _program(
+                    self._ensemble_cardinality(),
+                    tvars=frozenset({"k"}),
+                    tvar_types={"k": "float"},  # not int
+                    cvars=frozenset(),
+                    cvar_types={},
+                    cvar_signals={},
+                    cvar_depends_on={},
+                )
+            )
+        assert _code(e) == "invalid_cardinality_type"
+
+    def test_int_typed_tvar_cardinality_passes(self):
+        # An int-typed TVAR cardinality is well-formed (the happy path).
+        validate_program(
+            _program(
+                self._ensemble_cardinality(),
+                tvars=frozenset({"k"}),
+                tvar_types={"k": "int"},
+                cvars=frozenset(),
+                cvar_types={},
+                cvar_signals={},
+                cvar_depends_on={},
+            )
+        )
 
     def test_missing_calibration_signal(self):
         node = _post_cascade()
@@ -449,11 +585,11 @@ class TestProgramRejections:
 
 class TestDerivedFunctions:
     def test_leaf_tvars_of_stage(self):
-        registry: dict[str, CompositeNode] = {}
-        assert leaf_tvars(StageArm("a", ("m", "t")), registry) == frozenset({"m", "t"})
+        prog = CompositeProgram(composites={}, tvars=frozenset({"m", "t"}))
+        assert leaf_tvars(prog, StageArm("a", ("m", "t"))) == frozenset({"m", "t"})
 
     def test_leaf_tvars_folds_nested_sampling_cardinality(self):
-        # §3.5: a sampling ensemble whose tuned cardinality is k folds k into
+        # §3.5: a sampling ensemble whose TUNED cardinality is k folds k into
         # leafT, recursively through nesting.
         inner = CompositeNode(
             name="ens",
@@ -464,9 +600,33 @@ class TestDerivedFunctions:
                 cardinality="k",
             ),
         )
-        registry = {"ens": inner}
-        leaves = leaf_tvars(CompositeArm("ens"), registry)
+        prog = CompositeProgram(composites={"ens": inner}, tvars=frozenset({"m", "k"}))
+        leaves = leaf_tvars(prog, CompositeArm("ens"))
         assert leaves == frozenset({"m", "k"})
+
+    def test_leaf_tvars_public_never_returns_a_calibrated_cardinality(self):
+        # F1 (§3.5 / C6 / P5 boundary): when a sampling ensemble's cardinality
+        # is bound CALIBRATED (a CVAR, not a TVAR), the PUBLIC leaf_tvars must
+        # NOT fold it in — it is a Cal member, never a TVAR leaf. The stage's
+        # own tuned param stays.
+        inner = CompositeNode(
+            name="ens",
+            kind=CompositeKind.ENSEMBLE,
+            body=EnsembleBody(
+                arms=(StageArm("a", ("m",)),),
+                aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE),
+                cardinality="kc",  # a CALIBRATED cardinality (in N_C, not N_T)
+            ),
+        )
+        prog = CompositeProgram(
+            composites={"ens": inner},
+            tvars=frozenset({"m"}),  # kc is NOT a TVAR
+            cvars=frozenset({"kc"}),
+        )
+        # The calibrated cardinality kc is intersected out of the leaf set ...
+        assert leaf_tvars(prog, CompositeArm("ens")) == frozenset({"m"})
+        # ... but it IS a Cal-fold member (still certificate-covered, §3.6).
+        assert "kc" in cal_fold(prog)
 
     def test_required_parents_post_cascade_prefix_union(self):
         node = CompositeNode(
