@@ -57,10 +57,13 @@ def optimize(
     # Legacy compatibility
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
-) -> OptimizedFunction
+) -> Callable[[Callable[..., Any]], Any]
 ```
 
 > **New in 0.8.0** – The decorator now uses keyword-only arguments with grouped option bundles. Legacy arguments are supported via the `legacy` parameter or directly in `**runtime_overrides`. Conflicting values between a bundle and a direct keyword raise `TypeError`.
+
+`optimize(...)` is a decorator factory. Applying the returned decorator to a
+function returns Traigent's optimized wrapper.
 
 **Core Parameters**
 
@@ -116,11 +119,11 @@ def my_agent(question: str) -> str:
 | `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, and `max_total_examples`. |
 | `mock` | `MockModeOptions \| dict \| None` | **Deprecated — all fields inert.** Retained on the schema for backwards compatibility (config round-trip). Mock mode is enabled by calling `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code, not via this object. The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility but emits `DeprecationWarning` when users set it directly. See issue #874. |
 
-**ExecutionOptions Fields** (open-source builds run in `edge_analytics` only; other modes are roadmap-compatible but not currently provisioned)
+**ExecutionOptions Fields**
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` runs locally. `"hybrid"` runs trials locally and submits sessions/trial metrics to the backend for portal tracking. `"cloud"` is reserved for future remote execution and fails closed with guidance to use `"hybrid"`. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. |
+| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` runs locally. `"hybrid"` runs trials locally and submits sessions/trial metrics to the backend for portal tracking. `"hybrid_api"` delegates trial execution to an external service implementing the Traigent Hybrid API contract. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. `"cloud"` is reserved for future remote execution and fails closed with guidance to use `"hybrid"`. |
 | `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
 | `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
@@ -250,7 +253,7 @@ async def optimize(
 | `max_total_examples` | Global sample budget across all trials. |
 | `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
 | `cost_limit` | Maximum USD spending for this run. |
-| `cost_approved` | Skip cost approval prompt. |
+| `cost_approved` | Skip cost approval prompt only when passed as real Python `True`; strings such as `"true"` are ignored. Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not approve. |
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
 | `budget_limit` / `budget_metric` / `budget_include_pruned` | Deprecated aliases for metric-limit controls. Use `cost_limit` for hard USD spend control. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
@@ -278,12 +281,14 @@ def get_best_config() -> dict[str, Any] | None
 ```
 
 #### `.current_config`
-**Get/set current configuration**
+**Get current configuration**
 
 ```python
 @property
 def current_config() -> dict[str, Any]
 ```
+
+`current_config` is read-only. Change the active override with `.set_config()`.
 
 #### `.set_config()`
 **Set current configuration**
@@ -505,7 +510,7 @@ def get_optimization_insights(
 class OptimizationResult:
     trials: list[TrialResult]
     best_config: dict[str, Any]
-    best_score: float
+    best_score: float | None
     optimization_id: str
     duration: float
     convergence_info: dict[str, Any]
@@ -518,11 +523,16 @@ class OptimizationResult:
     total_cost: float | None = None
     total_tokens: int | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
+    preset_selection: PresetSelection | None = None
+    stop_reason: StopReason | None = None
+    experiment_id: str | None = None
+    cloud_url: str | None = None
+    run_label: str | None = None
 ```
 
 **Properties:**
 - `total_trials`: Total number of trials executed
-- `successful_trials`: Number of trials that completed successfully
+- `successful_trials`: List of trials that completed successfully
 - `success_rate`: Ratio of successful trials to total trials
 
 ### TrialResult
@@ -538,6 +548,7 @@ class TrialResult:
     timestamp: datetime
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    error: TrialError | None = None
 ```
 
 **Properties:**
@@ -550,10 +561,12 @@ class TrialResult:
 
 ```python
 class TrialStatus(Enum):
+    NOT_STARTED = "not_started"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     PRUNED = "pruned"
 ```
 
@@ -561,6 +574,7 @@ class TrialStatus(Enum):
 
 ```python
 class OptimizationStatus(Enum):
+    NOT_STARTED = "not_started"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"

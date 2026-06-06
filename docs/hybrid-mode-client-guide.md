@@ -616,7 +616,7 @@ import traigent
 def my_agent(_query: str):
     return ""  # Execution is delegated to the external hybrid API
 
-result = my_agent.optimize()
+result = await my_agent.optimize()
 print(f"Best config: {result.best_config}")
 print(f"Best metrics: {result.best_metrics}")
 ```

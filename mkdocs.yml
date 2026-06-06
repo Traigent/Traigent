@@ -45,6 +45,7 @@ nav:
       - Portal Dev Laptop Agent: getting-started/portal-dev-laptop-agent.md
   - Concepts:
       - Guided Generation: concepts/guided-generation.md
+      - Composite-Knob IR: concepts/composite-knob-ir.md
       - Configuration Spaces: user-guide/configuration-spaces.md
       - Constraint Expressions: tvl/CONSTRAINT_EXPRESSIONS.md
       - Dataflow Detection: features/dataflow-detection.md

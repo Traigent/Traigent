@@ -607,7 +607,7 @@ constraints = [
 ### In Decorator
 
 ```python
-from traigent import optimize, Range, Choices
+from traigent import optimize, Range, Choices, get_config
 
 temperature = Range(0.0, 2.0)
 model = Choices(["gpt-4", "gpt-3.5-turbo"])
@@ -621,8 +621,9 @@ model = Choices(["gpt-4", "gpt-3.5-turbo"])
         model.equals("gpt-4") >> temperature.lte(0.7),
     ],
 )
-def my_llm_call(temperature: float, model: str):
-    ...
+def my_llm_call(prompt: str):
+    cfg = get_config()
+    return call_model(prompt, temperature=cfg["temperature"], model=cfg["model"])
 ```
 
 ---
@@ -814,5 +815,5 @@ print(msg)
 
 ## See Also
 
-- [TVL Tutorials](../../examples/tvl/tutorials/README.md) - TVL usage examples and tutorials
+- [Tuned Variables](../user-guide/tuned_variables.md) - Tuned variable usage examples and concepts
 - [Configuration Spaces](../user-guide/configuration-spaces.md) - Defining parameter ranges

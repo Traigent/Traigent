@@ -224,9 +224,9 @@ import traigent
     evaluation={"eval_dataset": "data.jsonl"},
     configuration_space={"model": ["gpt-4", "gpt-3.5-turbo"]}
 )
-def my_function(input_text: str, **config):
-    # Your function here
-    return result
+def my_function(input_text: str) -> str:
+    config = traigent.get_config()
+    return f"{config['model']}: {input_text}"
 
 # Optimization automatically uses authenticated backend
 results = asyncio.run(my_function.optimize())

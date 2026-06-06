@@ -24,7 +24,8 @@ During optimization runs, Traigent collects:
 - Algorithm used (grid, random, bayesian, optuna)
 - Number of trials executed
 - Total optimization duration
-- Execution mode (edge_analytics, cloud, etc.)
+- Execution mode (`edge_analytics`, `hybrid`, `hybrid_api`; `privacy` is a
+  legacy alias for `hybrid`, and `cloud` is reserved/fails closed)
 - Stop conditions triggered
 - Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set `TRAIGENT_TVAR_OBSERVATION=off` to disable them, or use `TRAIGENT_TVAR_OBSERVATION=hashed` (default) to hash free-form string values. Only `off` and `hashed` are supported; unsupported values fall back to `hashed`.
 

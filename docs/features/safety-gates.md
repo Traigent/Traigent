@@ -9,8 +9,21 @@ content.
 Real runs check model cost coverage before trials start. Unknown or unpriced
 models are detected from the configuration space or current/default config.
 
-By default, missing pricing emits a warning and the affected results report
-`$0`. To fail before any trial starts, enable strict cost accounting:
+With `TRAIGENT_STRICT_COST_ACCOUNTING=true`, unpriced models always raise
+`UnknownModelError` before any trial and no prompt is shown.
+
+To proceed after acknowledging that affected results will report `$0` cost while
+your provider may still bill you, use one explicit approval:
+
+- pass `cost_approved=True` as a real Python boolean; strings such as `"true"` are ignored,
+- set `TRAIGENT_COST_APPROVED=true`; `1`, `yes`, and `on` do not approve this gate,
+- or create the XDG cost approval token (`approved` or `approved:<limit>`).
+
+Approved runs still emit the unpriced-model warning. Mock LLM quickstart mode
+skips this model-pricing preflight, but it is a test/demo mode, not a production
+billing bypass.
+
+To fail before any trial starts, enable strict cost accounting:
 
 ```bash
 export TRAIGENT_STRICT_COST_ACCOUNTING=true
