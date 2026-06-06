@@ -58,7 +58,9 @@ __all__ = [
     "KChainStage",
     "best_of_n",
     "binary_cascade",
+    "fallback",
     "n_cascade",
+    "router",
     "self_consistency",
     "self_debug",
     "self_refine",
@@ -767,4 +769,152 @@ def moe(
         members=dict(members or {}),
         provenance=prov,
         telemetry_names=_TELEMETRY[CompositeKind.ENSEMBLE],
+    )
+
+
+def _telemetry_names_for(node: CompositeNode) -> tuple[str, ...]:
+    """Return the declared standard telemetry tuple for a concrete shape."""
+    if node.kind is CompositeKind.CASCADE:
+        body = node.body
+        if not isinstance(body, CascadeBody):  # pragma: no cover - IR guarded
+            raise ValueError(
+                "unknown_composite_field: cascade telemetry requires CascadeBody"
+            )
+        cascade_by_placement = {
+            Placement.POST: _TELEMETRY[CompositeKind.CASCADE],
+            Placement.PRE: (
+                "route_selected",
+                "dispatch_signal_margin",
+                "gate_signal_adequate",
+            ),
+        }
+        return cascade_by_placement[body.placement]
+    return _TELEMETRY[node.kind]
+
+
+def router(
+    name: str,
+    *,
+    arms: tuple[str, ...],
+    signals: tuple[str, ...],
+    thresholds: tuple[str, ...],
+    tuned_params: tuple[tuple[str, ...], ...] | None = None,
+    signal_inputs: tuple[tuple[str, ...], ...] | None = None,
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Cascade(arms=[stage(a_i)], gates=[signal_below σ_i θ_i], pre)``.
+
+    Dispatch evaluates gates left-to-right before any arm runs. The first
+    adequate signal selects its arm; an abstaining signal routes onward; a
+    malformed or raising signal is an absorbing runtime error. The terminal arm
+    is ungated.
+    """
+    if len(signals) != len(thresholds):
+        raise ValueError(
+            "cascade_arity: router requires exactly one signal per threshold "
+            f"(got {len(signals)} signal(s) for {len(thresholds)} threshold(s))"
+        )
+    if tuned_params is None:
+        tuned_params = tuple(() for _ in arms)
+    elif len(tuned_params) != len(arms):
+        raise ValueError(
+            "invalid_tuned_param: tuned_params must declare exactly one tuple "
+            f"per arm (got {len(tuned_params)} for {len(arms)} arm(s)); omit "
+            "tuned_params entirely to leave all arms undeclared"
+        )
+    if signal_inputs is None:
+        signal_inputs = tuple(() for _ in signals)
+    elif len(signal_inputs) != len(signals):
+        raise ValueError(
+            "invalid_signal_use: signal_inputs must declare exactly one tuple "
+            f"per signal (got {len(signal_inputs)} for {len(signals)} signal(s))"
+        )
+
+    params = {
+        "name": name,
+        "arms": list(arms),
+        "signals": list(signals),
+        "thresholds": list(thresholds),
+        "tuned_params": [list(tp) for tp in tuned_params],
+        "signal_inputs": [list(inputs) for inputs in signal_inputs],
+    }
+    prov = _provenance("router", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.CASCADE,
+        body=CascadeBody(
+            arms=tuple(StageArm(arm, tuned_params[i]) for i, arm in enumerate(arms)),
+            gates=tuple(
+                GateDecl(
+                    kind=GateKind.SIGNAL_BELOW,
+                    threshold=threshold,
+                    signal=SignalUse(signal=signals[i], inputs=signal_inputs[i]),
+                )
+                for i, threshold in enumerate(thresholds)
+            ),
+            placement=Placement.PRE,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_telemetry_names_for(structure),
+    )
+
+
+def fallback(
+    name: str,
+    *,
+    arms: tuple[str, ...],
+    thresholds: tuple[str, ...],
+    tuned_params: tuple[tuple[str, ...], ...] | None = None,
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """``Cascade(arms=[stage(a_i)], gates=[margin_below θ_i], post)``.
+
+    A leaf StageRunner cannot signal failure. Non-terminal arms that need to
+    fall back must be no_accept-capable (a nested composite with an accept
+    threshold) OR use real margin thresholds (theta > 0) for
+    disagreement-based escalation; with the theta=0.0 convention leaf arms
+    NEVER escalate. v1 fallback is no_accept-triggered, NOT error-triggered;
+    errors stay absorbing.
+    """
+    if tuned_params is None:
+        tuned_params = tuple(() for _ in arms)
+    elif len(tuned_params) != len(arms):
+        raise ValueError(
+            "invalid_tuned_param: tuned_params must declare exactly one tuple "
+            f"per arm (got {len(tuned_params)} for {len(arms)} arm(s)); omit "
+            "tuned_params entirely to leave all arms undeclared"
+        )
+
+    params = {
+        "name": name,
+        "arms": list(arms),
+        "thresholds": list(thresholds),
+        "tuned_params": [list(tp) for tp in tuned_params],
+    }
+    prov = _provenance("fallback", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.CASCADE,
+        body=CascadeBody(
+            arms=tuple(StageArm(arm, tuned_params[i]) for i, arm in enumerate(arms)),
+            gates=tuple(
+                GateDecl(kind=GateKind.MARGIN_BELOW, threshold=threshold)
+                for threshold in thresholds
+            ),
+            placement=Placement.POST,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_telemetry_names_for(structure),
     )
