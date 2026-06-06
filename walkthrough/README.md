@@ -99,6 +99,7 @@ These are not part of the core 8-step walkthrough or `test_all_examples.sh`, but
 they are useful companion material:
 
 - `walkthrough/mock/09_rag_multi_objective.py`: mock-only RAG tradeoff example
+- `walkthrough/real/advanced/04_multi_agent_bedrock.py`: AWS Bedrock multi-agent RAG with FAISS, LiteLLM, cross-region inference profiles, and per-agent workflow spans
 - `walkthrough/demo/optimize_and_observe.py`: shows how to combine `@optimize` and `@observe` on the same method, with mock/real modes and optimization scale presets
 - `walkthrough/demo/run_guided_optimize_and_observe_demo.sh`: guided FE demo that pauses between baseline observability, optimization, and post-best-config observability runs
 - `walkthrough/demo/rag_agent.py`: standalone pre-Traigent RAG baseline (requires `OPENAI_API_KEY`)

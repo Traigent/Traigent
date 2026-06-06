@@ -1,0 +1,457 @@
+#!/usr/bin/env python3
+# ruff: noqa: E402
+"""Advanced walkthrough: Bedrock multi-agent RAG through LiteLLM.
+
+Run from the repository root:
+
+    TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true TRAIGENT_COST_APPROVED=true \
+        .venv/bin/python walkthrough/real/advanced/04_multi_agent_bedrock.py
+
+For a real run, unset TRAIGENT_MOCK_LLM and configure local AWS Bedrock
+credentials with the standard AWS environment variables or profile.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import math
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+# Keep LiteLLM on its bundled model-cost map. Importing LiteLLM otherwise tries
+# to refresh the map before falling back to the local backup.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+SCRIPT_DIR = Path(__file__).parent
+WALKTHROUGH_ROOT = (SCRIPT_DIR / ".." / "..").resolve()
+DATASET_PATH = str((WALKTHROUGH_ROOT / "datasets" / "rag_questions.jsonl").resolve())
+RESULTS_FOLDER = WALKTHROUGH_ROOT / ".traigent_local"
+JOBLIB_FOLDER = RESULTS_FOLDER / "joblib"
+RESULTS_FOLDER.mkdir(parents=True, exist_ok=True)
+JOBLIB_FOLDER.mkdir(parents=True, exist_ok=True)
+
+os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(WALKTHROUGH_ROOT))
+os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", str(RESULTS_FOLDER))
+os.environ.setdefault("JOBLIB_TEMP_FOLDER", str(JOBLIB_FOLDER))
+
+if os.getenv("TRAIGENT_OFFLINE_MODE", "").lower() in {"1", "true", "yes"}:
+    os.environ.pop("TRAIGENT_BACKEND_URL", None)
+    os.environ.pop("TRAIGENT_API_KEY", None)
+
+sys.path.insert(0, str(WALKTHROUGH_ROOT))
+
+try:
+    import litellm
+    from langchain_community.vectorstores import FAISS
+    from langchain_core.embeddings import Embeddings
+except Exception as exc:
+    raise SystemExit(
+        "Missing advanced Bedrock walkthrough dependencies. Install with "
+        '"pip install -e ".[integrations]"" or install litellm, '
+        "langchain-core, langchain-community, and faiss-cpu."
+    ) from exc
+
+from utils.scoring import semantic_overlap_score
+
+import traigent
+from traigent.api.parameter_ranges import Choices
+from traigent.api.types import AgentDefinition
+from traigent.observability import add_agent_span
+from traigent.utils.cost_calculator import cost_from_tokens
+from traigent.utils.env_config import is_mock_llm
+
+# Source: tests/cost_coverage/test_model_price_coverage.py
+BEDROCK_GENERATOR_MODEL_IDS = [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+    "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "us.anthropic.claude-3-haiku-20240307-v1:0",
+    "us.amazon.nova-micro-v1:0",
+    "us.amazon.nova-lite-v1:0",
+    "us.meta.llama3-1-8b-instruct-v1:0",
+    "us.meta.llama3-1-70b-instruct-v1:0",
+]
+
+DEFAULT_EMBEDDING_MODEL = os.getenv(
+    "BEDROCK_EMBED_MODEL_ID",
+    "bedrock/amazon.titan-embed-text-v2:0",
+)
+
+KNOWLEDGE_BASE = [
+    (
+        "Question: What does Traigent do?\n"
+        "Answer: Traigent optimizes AI applications without code changes"
+    ),
+    (
+        "Question: What is seamless mode?\n"
+        "Answer: Seamless mode intercepts and overrides hardcoded LLM parameters"
+    ),
+    (
+        "Question: What is parameter mode?\n"
+        "Answer: Parameter mode provides explicit configuration control via function parameters"
+    ),
+    (
+        "Question: What execution modes does Traigent support?\n"
+        "Answer: Local, cloud, and hybrid execution modes"
+    ),
+    (
+        "Question: How does local mode work?\n"
+        "Answer: Local mode keeps all data on your machine for complete privacy"
+    ),
+    (
+        "Question: What is edge_analytics mode?\n"
+        "Answer: Edge analytics mode runs optimization locally while sending analytics"
+    ),
+    (
+        "Question: What optimization algorithms does Traigent support?\n"
+        "Answer: Grid search, random search, and Bayesian optimization"
+    ),
+    (
+        "Question: What is the @traigent.optimize decorator?\n"
+        "Answer: A decorator that enables automatic optimization of LLM functions"
+    ),
+    (
+        "Question: How do you define objectives in Traigent?\n"
+        "Answer: Using the objectives parameter with metrics like accuracy, cost, latency"
+    ),
+    (
+        "Question: What is a configuration space?\n"
+        "Answer: A dictionary defining the hyperparameters and their possible values to optimize"
+    ),
+    (
+        "Question: How does Traigent balance multiple objectives?\n"
+        "Answer: Through weighted objective definitions using ObjectiveSchema with maximize/minimize orientations"
+    ),
+    (
+        "Question: Explain hybrid mode with privacy\n"
+        "Answer: Hybrid mode runs LLM calls locally but uses cloud for optimization intelligence with privacy enabled"
+    ),
+    (
+        "Question: How does Traigent handle RAG optimization?\n"
+        "Answer: It can optimize both retrieval parameters like k and method, plus generation parameters like model and temperature"
+    ),
+    (
+        "Question: What is the difference between seamless and context injection?\n"
+        "Answer: Seamless mode auto-overrides LLM calls; context mode adds config to prompts"
+    ),
+    (
+        "Question: How do custom evaluators work?\n"
+        "Answer: Custom evaluators let you define your own scoring logic for specialized use cases"
+    ),
+    (
+        "Question: Can Traigent optimize cost and accuracy simultaneously?\n"
+        "Answer: Yes, through multi-objective optimization with configurable weights for each metric"
+    ),
+    (
+        "Question: What privacy features does Traigent offer?\n"
+        "Answer: Local storage, privacy_enabled flag, and edge_analytics mode for data control"
+    ),
+    (
+        "Question: How does Traigent integrate with LangChain?\n"
+        "Answer: Via adapters that intercept LangChain LLM calls and inject optimized configurations"
+    ),
+    (
+        "Question: What is the eval_dataset parameter?\n"
+        "Answer: A JSONL file or Dataset object containing input/output pairs for evaluation"
+    ),
+    (
+        "Question: How does Traigent determine the best configuration?\n"
+        "Answer: By running trials, evaluating against objectives, and selecting the config with best weighted score"
+    ),
+]
+
+
+class BedrockTitanLiteLLMEmbeddings(Embeddings):
+    """Tiny LangChain-compatible wrapper for Bedrock Titan via LiteLLM."""
+
+    def __init__(self, model: str, *, dimensions: int = 128) -> None:
+        self.model = model
+        self.dimensions = dimensions
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if is_mock_llm():
+            return [self._mock_embedding(text) for text in texts]
+
+        response = litellm.embedding(model=self.model, input=texts)
+        return [self._embedding_at(response, index) for index in range(len(texts))]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_documents([text])[0]
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        if is_mock_llm():
+            return [self._mock_embedding(text) for text in texts]
+
+        response = await litellm.aembedding(model=self.model, input=texts)
+        return [self._embedding_at(response, index) for index in range(len(texts))]
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return (await self.aembed_documents([text]))[0]
+
+    def _mock_embedding(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimensions
+        for token in _tokens(text):
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            index = int.from_bytes(digest[:4], "big") % self.dimensions
+            vector[index] += 1.0
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0.0:
+            return vector
+        return [value / norm for value in vector]
+
+    @staticmethod
+    def _embedding_at(response: Any, index: int) -> list[float]:
+        data = _get_field(response, "data") or []
+        item = data[index]
+        embedding = _get_field(item, "embedding")
+        if embedding is None:
+            raise ValueError(
+                "LiteLLM embedding response did not include data.embedding"
+            )
+        return [float(value) for value in embedding]
+
+
+def _tokens(text: str) -> list[str]:
+    return [
+        token.strip(".,:;!?()[]{}\"'").lower()
+        for token in text.split()
+        if token.strip(".,:;!?()[]{}\"'")
+    ]
+
+
+def _get_field(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _response_text(response: Any) -> str:
+    choices = _get_field(response, "choices") or []
+    first_choice = choices[0]
+    message = _get_field(first_choice, "message")
+    content = _get_field(message, "content")
+    return str(content or "")
+
+
+def _usage_counts(response: Any) -> tuple[int, int]:
+    usage = _get_field(response, "usage")
+    prompt_tokens = _get_field(usage, "prompt_tokens") or _get_field(
+        usage,
+        "input_tokens",
+    )
+    completion_tokens = _get_field(usage, "completion_tokens") or _get_field(
+        usage,
+        "output_tokens",
+    )
+    return int(prompt_tokens or 0), int(completion_tokens or 0)
+
+
+def _cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> float:
+    try:
+        input_cost, output_cost = cost_from_tokens(
+            input_tokens,
+            output_tokens,
+            model_id,
+            strict=False,
+        )
+        return float(input_cost + output_cost)
+    except Exception:
+        return 0.0
+
+
+def _answer_from_context(document: str) -> str:
+    marker = "Answer:"
+    if marker in document:
+        return document.split(marker, 1)[1].strip()
+    return document.strip()
+
+
+def _trial_measure_count(results: Any) -> int:
+    total = 0
+    for trial in results.trials:
+        measures = trial.metadata.get("measures")
+        if measures:
+            total += len(measures)
+            continue
+
+        for example_result in trial.metadata.get("example_results") or []:
+            metrics = _get_field(example_result, "metrics")
+            if metrics:
+                total += 1
+    return total
+
+
+def _trial_example_result_count(results: Any) -> int:
+    return sum(
+        len(trial.metadata.get("example_results") or []) for trial in results.trials
+    )
+
+
+embeddings = BedrockTitanLiteLLMEmbeddings(DEFAULT_EMBEDDING_MODEL)
+vector_store = FAISS.from_texts(KNOWLEDGE_BASE, embeddings)
+
+retriever_agent = AgentDefinition(
+    display_name="Bedrock Titan Retriever",
+    parameter_keys=["k"],
+    measure_ids=["retriever_latency_ms", "retrieved_docs"],
+    order=1,
+    agent_type="retriever",
+)
+generator_agent = AgentDefinition(
+    display_name="Bedrock Generator",
+    parameter_keys=["model", "temperature"],
+    measure_ids=[
+        "generator_latency_ms",
+        "generator_input_tokens",
+        "generator_output_tokens",
+        "generator_cost_usd",
+    ],
+    primary_model="model",
+    order=2,
+    agent_type="llm",
+)
+
+traigent.initialize(execution_mode="edge_analytics")
+
+
+@traigent.optimize(
+    k=Choices([2], name="k", agent="retriever"),
+    model=Choices(
+        BEDROCK_GENERATOR_MODEL_IDS,
+        name="model",
+        agent="generator",
+    ),
+    temperature=Choices([0.0], name="temperature", agent="generator"),
+    objectives=["accuracy", "cost"],
+    scoring_function=semantic_overlap_score,
+    eval_dataset=DATASET_PATH,
+    agents={
+        "retriever": retriever_agent,
+        "generator": generator_agent,
+    },
+    execution_mode="edge_analytics",
+)
+async def bedrock_multi_agent_rag(question: str) -> str:
+    """Answer a Traigent RAG question with retriever and generator spans."""
+    config = traigent.get_config()
+    k = int(config.get("k", 2))
+    model_id = str(config.get("model", BEDROCK_GENERATOR_MODEL_IDS[0]))
+    litellm_model = f"bedrock/{model_id}"
+    temperature = float(config.get("temperature", 0.0))
+
+    retrieve_start = time.perf_counter()
+    docs = vector_store.similarity_search(question, k=k)
+    retriever_latency_ms = (time.perf_counter() - retrieve_start) * 1000.0
+    context = "\n\n".join(doc.page_content for doc in docs)
+
+    add_agent_span(
+        "retriever",
+        span_type="agent",
+        input_tokens=len(_tokens(question)),
+        output_tokens=len(_tokens(context)),
+        latency_ms=retriever_latency_ms,
+        model=DEFAULT_EMBEDDING_MODEL,
+        metadata={
+            "k": k,
+            "retrieved_docs": len(docs),
+            "context_chars": len(context),
+        },
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Answer using only the supplied context. Return the answer "
+                "sentence only, with no preamble."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Context:\n{context}\n\nQuestion: {question}\nAnswer:",
+        },
+    ]
+
+    generator_start = time.perf_counter()
+    response = await litellm.acompletion(
+        model=litellm_model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=96,
+    )
+    generator_latency_ms = (time.perf_counter() - generator_start) * 1000.0
+    input_tokens, output_tokens = _usage_counts(response)
+    cost_usd = _cost_usd(model_id, input_tokens, output_tokens)
+
+    add_agent_span(
+        "generator",
+        span_type="agent",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+        latency_ms=generator_latency_ms,
+        model=litellm_model,
+        metadata={
+            "temperature_milli": int(temperature * 1000),
+            "retrieved_docs": len(docs),
+        },
+    )
+
+    if is_mock_llm() and docs:
+        return _answer_from_context(docs[0].page_content)
+
+    return _response_text(response)
+
+
+async def main() -> None:
+    total_trials = len(BEDROCK_GENERATOR_MODEL_IDS)
+    print("Traigent Advanced Walkthrough: Bedrock Multi-Agent RAG")
+    print("=" * 62)
+    print("Execution mode: edge_analytics")
+    print(f"Dataset: {DATASET_PATH}")
+    print(f"Embedding model: {DEFAULT_EMBEDDING_MODEL}")
+    print("Generator models:")
+    for model_id in BEDROCK_GENERATOR_MODEL_IDS:
+        print(f"  - bedrock/{model_id}")
+    print(f"Grid: {total_trials} trials x 20 examples")
+
+    results = await bedrock_multi_agent_rag.optimize(
+        algorithm="grid",
+        max_trials=total_trials,
+        show_progress=True,
+        random_seed=42,
+        timeout=600,
+    )
+
+    successful_trials = sum(1 for trial in results.trials if trial.is_successful)
+    example_result_count = _trial_example_result_count(results)
+    measure_count = _trial_measure_count(results)
+
+    print("\nRun Summary:")
+    print(f"  trials: {len(results.trials)}")
+    print(f"  successful_trials: {successful_trials}")
+    print(f"  example_results: {example_result_count}")
+    print(f"  measures: {measure_count}")
+
+    print("\nBest Configuration:")
+    print(f"  model: {results.best_config.get('model')}")
+    print(f"  k: {results.best_config.get('k')}")
+    print(f"  temperature: {results.best_config.get('temperature')}")
+
+    print("\nBest Metrics:")
+    print(f"  accuracy: {results.best_metrics.get('accuracy', 0.0):.2%}")
+    print(f"  cost: ${results.best_metrics.get('cost', 0.0):.6f}")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None
