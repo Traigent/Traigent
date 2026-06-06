@@ -1377,6 +1377,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -3737,19 +3905,24 @@
 <p>The fastest path to optimize an LLM workflow with <strong>zero code changes</strong>.</p>
 <h2 id="quick-start">🚀 Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>1) Install and run - no API keys needed:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[integrations]&quot;</span>
-python<span class="w"> </span>-m<span class="w"> </span>traigent.examples.quickstart
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
+traigent<span class="w"> </span>quickstart
 </code></pre></div>
-<p>Or from a source checkout:</p>
+<p>For guided setup after the quickstart:</p>
+<div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>onboard
+traigent<span class="w"> </span>auth<span class="w"> </span>device-login
+traigent<span class="w"> </span>first-prompt<span class="w"> </span>--agent<span class="w"> </span>codex
+</code></pre></div>
+<p>From a source checkout for development:</p>
 <p>Pip:</p>
 <div class="highlight"><pre><span></span><code>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[recommended]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
 python<span class="w"> </span>hello_world.py
 </code></pre></div>
 <p>Uv:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[recommended]&quot;</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
 python<span class="w"> </span>hello_world.py
 </code></pre></div>
 <p>The quickstart runs in mock mode by default - it simulates LLM calls so you can see the full optimization flow instantly.</p>
@@ -3835,6 +4008,12 @@ python<span class="w"> </span>hello_world.py
 <h2 id="cli-snippets">🛠️ CLI Snippets<a class="headerlink" href="#cli-snippets" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>info<span class="w">                                   </span><span class="c1"># Version/features</span>
 traigent<span class="w"> </span>algorithms<span class="w">                             </span><span class="c1"># Available strategies</span>
+traigent<span class="w"> </span>quickstart<span class="w">                             </span><span class="c1"># Packaged mock-mode demo</span>
+traigent<span class="w"> </span>onboard<span class="w">                                </span><span class="c1"># Guided project setup</span>
+traigent<span class="w"> </span>auth<span class="w"> </span>device-login<span class="w">                      </span><span class="c1"># Browser device login</span>
+traigent<span class="w"> </span>first-prompt<span class="w"> </span>--agent<span class="w"> </span>codex<span class="w">             </span><span class="c1"># Coding-agent prompt</span>
+traigent<span class="w"> </span>recommend<span class="w"> </span>rag<span class="w">                          </span><span class="c1"># Configuration recommendations</span>
+traigent<span class="w"> </span>mcp<span class="w"> </span>serve<span class="w">                              </span><span class="c1"># Local stdio MCP server</span>
 traigent<span class="w"> </span>optimize<span class="w"> </span>examples/core/rag-optimization/run.py<span class="w"> </span>-a<span class="w"> </span>grid<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span>
 traigent<span class="w"> </span>validate<span class="w"> </span>examples/datasets/rag-optimization/evaluation_set.jsonl
 traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w"> </span>-p<span class="w"> </span>progress
@@ -3864,7 +4043,7 @@ traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w
 <p>If you want website-visible results today, use <code>hybrid</code>; do not switch to <code>cloud</code>.</p>
 <p>To run fully local (no Traigent backend communication), set <code>TRAIGENT_OFFLINE_MODE=true</code>.</p>
 <hr />
-<p>Ready for more? Dive into the <a href="../../examples/">examples</a> and the <a href="../../api-reference/complete-function-specification/">API reference</a>.</p>
+<p>Ready for more? Dive into the <a href="../examples/">examples</a> and the <a href="../../api-reference/complete-function-specification/">API reference</a>.</p>
 
 
 

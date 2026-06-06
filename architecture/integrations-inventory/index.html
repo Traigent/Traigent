@@ -1237,6 +1237,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -3468,15 +3636,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#vector-stores-placeholder-for-future" class="md-nav__link">
+  <a href="#vector-stores" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Vector Stores (Placeholder for Future)
+        Vector Stores
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Vector Stores (Placeholder for Future)">
+    <nav class="md-nav" aria-label="Vector Stores">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3619,10 +3787,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#missing-implementations" class="md-nav__link">
+  <a href="#implemented-plugin-families" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Missing Implementations
+        Implemented Plugin Families
       
     </span>
   </a>
@@ -4432,15 +4600,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#vector-stores-placeholder-for-future" class="md-nav__link">
+  <a href="#vector-stores" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Vector Stores (Placeholder for Future)
+        Vector Stores
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Vector Stores (Placeholder for Future)">
+    <nav class="md-nav" aria-label="Vector Stores">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4583,10 +4751,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#missing-implementations" class="md-nav__link">
+  <a href="#implemented-plugin-families" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Missing Implementations
+        Implemented Plugin Families
       
     </span>
   </a>
@@ -4726,8 +4894,8 @@
 <h1 id="traigent-integrations-directory-comprehensive-inventory">Traigent Integrations Directory - Comprehensive Inventory<a class="headerlink" href="#traigent-integrations-directory-comprehensive-inventory" title="Permanent link">&para;</a></h1>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>The <code>traigent/integrations/</code> directory contains the framework integration system that enables zero-code optimization across multiple LLM providers and frameworks. This system uses a hybrid plugin + framework override architecture.</p>
-<p><strong>Total Files</strong>: 27 Python files (~8,241 lines)
-<strong>Total Integrations</strong>: 7+ major providers with 20+ framework variants</p>
+<p><strong>Total Files</strong>: 66 Python files, regenerated from the current <code>traigent/integrations/</code> tree.
+<strong>Total Integrations</strong>: Built-in coverage spans OpenAI, Anthropic, LangChain, Bedrock, Azure OpenAI, Cohere, Gemini, HuggingFace, LiteLLM, LlamaIndex, Mistral, PydanticAI, vector stores, and observability integrations.</p>
 <hr />
 <h2 id="core-architecture-files">Core Architecture Files<a class="headerlink" href="#core-architecture-files" title="Permanent link">&para;</a></h2>
 <h3 id="1-framework_overridepy-1423-lines-primary-override-engine">1. <strong>framework_override.py</strong> (1,423 lines) - PRIMARY OVERRIDE ENGINE<a class="headerlink" href="#1-framework_overridepy-1423-lines-primary-override-engine" title="Permanent link">&para;</a></h3>
@@ -5236,7 +5404,7 @@ log_override_details: bool = False
 <p><strong>Features</strong>:
 - Sync and streaming interfaces
 - boto3 optional import
-- Mock mode support (BEDROCK_MOCK=true)
+- Mock mode support through <code>TRAIGENT_MOCK_LLM=true</code> or the in-code quickstart helper. Provider-specific <code>*_MOCK</code> environment variables are ignored.
 - Anthropic Messages API format</p>
 <hr />
 <h2 id="langchain-sub-integrations">LangChain Sub-integrations<a class="headerlink" href="#langchain-sub-integrations" title="Permanent link">&para;</a></h2>
@@ -5281,10 +5449,11 @@ langchain_nvidia
 - discover_component(component_type, package_name) -&gt; List[type]
 </code></pre></div></p>
 <hr />
-<h2 id="vector-stores-placeholder-for-future">Vector Stores (Placeholder for Future)<a class="headerlink" href="#vector-stores-placeholder-for-future" title="Permanent link">&para;</a></h2>
+<h2 id="vector-stores">Vector Stores<a class="headerlink" href="#vector-stores" title="Permanent link">&para;</a></h2>
 <h3 id="20-vector_storesinitpy-5-lines">20. <strong>vector_stores/<strong>init</strong>.py</strong> (5 lines)<a class="headerlink" href="#20-vector_storesinitpy-5-lines" title="Permanent link">&para;</a></h3>
-<p><strong>Purpose</strong>: Future vector store integrations</p>
-<p><strong>Status</strong>: Framework in place, implementations pending</p>
+<p><strong>Purpose</strong>: Vector store integration package</p>
+<p><strong>Status</strong>: Implementations are present for ChromaDB, Pinecone, and Weaviate,
+with a shared base plugin.</p>
 <hr />
 <h2 id="main-package-exports">Main Package Exports<a class="headerlink" href="#main-package-exports" title="Permanent link">&para;</a></h2>
 <h3 id="21-initpy-212-lines">21. <strong><strong>init</strong>.py</strong> (212 lines)<a class="headerlink" href="#21-initpy-212-lines" title="Permanent link">&para;</a></h3>
@@ -5639,25 +5808,10 @@ OpenAI SDK (optional):
 </table>
 <hr />
 <h2 id="known-gaps-todos">Known Gaps &amp; TODOs<a class="headerlink" href="#known-gaps-todos" title="Permanent link">&para;</a></h2>
-<h3 id="missing-implementations">Missing Implementations<a class="headerlink" href="#missing-implementations" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong>Vector Store Integrations</strong> - Placeholder exists, no implementations</li>
-<li>
-<p>Pinecone, Weaviate, Milvus, etc.</p>
-</li>
-<li>
-<p><strong>Cohere Plugin</strong> - Referenced in framework_override.py but no dedicated plugin</p>
-</li>
-<li>Parameter mappings exist in hardcoded form</li>
-<li>
-<p>Needs dedicated CoherPlugin class</p>
-</li>
-<li>
-<p><strong>HuggingFace Plugin</strong> - Referenced but no dedicated plugin</p>
-</li>
-<li>Parameter mappings exist in hardcoded form</li>
-<li>Needs dedicated HuggingFacePlugin class</li>
-</ol>
+<h3 id="implemented-plugin-families">Implemented Plugin Families<a class="headerlink" href="#implemented-plugin-families" title="Permanent link">&para;</a></h3>
+<p>The current integrations tree includes dedicated plugins for Cohere and
+HuggingFace, plus vector-store plugins for ChromaDB, Pinecone, and Weaviate.
+Do not treat those families as missing when planning integration work.</p>
 <h3 id="partial-implementations">Partial Implementations<a class="headerlink" href="#partial-implementations" title="Permanent link">&para;</a></h3>
 <ol>
 <li><strong>Bedrock Async Support</strong> - Limited async/await integration</li>
@@ -5681,10 +5835,8 @@ OpenAI SDK (optional):
 <h2 id="enhancement-opportunities">Enhancement Opportunities<a class="headerlink" href="#enhancement-opportunities" title="Permanent link">&para;</a></h2>
 <h3 id="high-priority">High Priority<a class="headerlink" href="#high-priority" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Create <code>CoherPlugin</code> for Cohere SDK integration</li>
-<li>Create <code>HuggingFacePlugin</code> for HuggingFace integration</li>
-<li>Implement vector store integration framework</li>
-<li>Add streaming support documentation</li>
+<li>Keep provider-specific plugin docs synchronized with <code>traigent/integrations/llms/</code>.</li>
+<li>Add streaming support documentation.</li>
 </ol>
 <h3 id="medium-priority">Medium Priority<a class="headerlink" href="#medium-priority" title="Permanent link">&para;</a></h3>
 <ol>

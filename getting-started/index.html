@@ -645,6 +645,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#new-in-0120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New in 0.12.0
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1291,6 +1302,174 @@
     
   
     Strict Metrics Nulls
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
   
 
     
@@ -3581,6 +3760,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#new-in-0120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New in 0.12.0
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3617,6 +3807,14 @@
 <li><a href="minimal-integration/">Use minimum integration checklist</a> to validate readiness</li>
 <li><a href="../user-guide/">Explore user guides</a> for advanced features</li>
 </ol>
+<h2 id="new-in-0120">New in 0.12.0<a class="headerlink" href="#new-in-0120" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Onboarding CLI: <code>traigent onboard</code>, <code>traigent auth device-login</code>, <code>traigent quickstart</code>, and <code>traigent first-prompt --agent claude|cursor|codex</code>.</li>
+<li>Local agent tooling: <code>traigent mcp serve</code> exposes the stdio MCP server for coding agents.</li>
+<li>Configuration recommendations: <code>traigent recommend</code>, <code>recommend_configuration_space()</code>, and <code>list_recommendation_agent_types()</code>; see <a href="../user-guide/configuration-spaces/">configuration spaces</a>.</li>
+<li>Advisory strategy presets: <code>max_accuracy_then_cheapest_within_epsilon</code>, <code>quality_floor_min_cost</code>, and <code>pareto_frontier</code>; see <a href="../api-reference/decorator-reference/">decorator reference</a>.</li>
+<li>Workflow observability: <code>add_agent_span()</code> records user-defined agent spans; see <a href="../api-reference/telemetry/">telemetry</a>.</li>
+</ul>
 
 
 

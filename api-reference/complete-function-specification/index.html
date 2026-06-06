@@ -1237,6 +1237,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -2665,6 +2833,28 @@
     <span class="md-ellipsis">
       
         traigent.get_available_strategies()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommendation-catalog-and-strategy-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendation Catalog and Strategy Presets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-surfaces-in-0120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI surfaces in 0.12.0
       
     </span>
   </a>
@@ -4534,6 +4724,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#recommendation-catalog-and-strategy-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendation Catalog and Strategy Presets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-surfaces-in-0120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI surfaces in 0.12.0
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#traigentget_optimization_insights" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4814,7 +5026,7 @@
 
 
 <h1 id="traigent-sdk-api-reference">Traigent SDK API Reference<a class="headerlink" href="#traigent-sdk-api-reference" title="Permanent link">&para;</a></h1>
-<p>Authoritative reference for Traigent SDK <strong>v0.10.0 (Beta)</strong>.</p>
+<p>Authoritative reference for Traigent SDK <strong>0.12.0</strong>.</p>
 <h2 id="quick-navigation">Quick Navigation<a class="headerlink" href="#quick-navigation" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><a href="../decorator-reference/">Decorator Reference</a></strong> - Detailed <code>@traigent.optimize()</code> decorator documentation with all parameters and examples</li>
@@ -4831,7 +5043,8 @@
     <span class="n">objectives</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="n">ObjectiveSchema</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="n">ConfigSpace</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">default_config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">constraints</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Constraint</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">constraints</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Constraint</span> <span class="o">|</span> <span class="n">BoolExpr</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">safety_constraints</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SafetyConstraint</span> <span class="o">|</span> <span class="n">CompoundSafetyConstraint</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="c1"># TVL integration</span>
     <span class="n">tvl_spec</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">tvl_environment</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -4839,8 +5052,29 @@
     <span class="c1"># Grouped options (preferred)</span>
     <span class="n">evaluation</span><span class="p">:</span> <span class="n">EvaluationOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">injection</span><span class="p">:</span> <span class="n">InjectionOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">effectuation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">execution</span><span class="p">:</span> <span class="n">ExecutionOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">mock</span><span class="p">:</span> <span class="n">MockModeOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">strategy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">strategy_params</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="c1"># Multi-agent configuration</span>
+    <span class="n">agents</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AgentDefinition</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">agent_prefixes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">agent_measures</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">global_measures</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="c1"># Config persistence</span>
+    <span class="n">auto_load_best</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">load_from</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">config_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">best_config_source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;off&quot;</span><span class="p">,</span>
+    <span class="n">best_config_strict</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">best_config_cache_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">best_config_cache_ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">24</span> <span class="o">*</span> <span class="mi">60</span> <span class="o">*</span> <span class="mi">60</span><span class="p">,</span>
+    <span class="n">best_config_stale_ok_ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">enable_auto_load_dev_logs</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="c1"># Guided generation</span>
+    <span class="n">prompt_rewrite</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">grow_dataset</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="c1"># Legacy compatibility</span>
     <span class="n">legacy</span><span class="p">:</span> <span class="n">LegacyOptimizeArgs</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">runtime_overrides</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
@@ -4883,6 +5117,48 @@
 <td><code>list[Constraint \| Callable[..., Any]] \| None</code></td>
 <td><code>None</code></td>
 <td>Hard constraints evaluated before running a trial. Accepts SE-friendly <code>Constraint</code> objects and/or callables that take <code>(config, metrics=None)</code> and return <code>True/False</code>.</td>
+</tr>
+<tr>
+<td><code>safety_constraints</code></td>
+<td><code>list[SafetyConstraint \| CompoundSafetyConstraint] \| None</code></td>
+<td><code>None</code></td>
+<td>Safety metric gates evaluated as part of optimization.</td>
+</tr>
+<tr>
+<td><code>strategy</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>Optional strategy preset name. 0.12.0 presets are advisory selection rules over completed trials.</td>
+</tr>
+<tr>
+<td><code>strategy_params</code></td>
+<td><code>Mapping[str, Any] \| None</code></td>
+<td><code>None</code></td>
+<td>Parameters for the selected strategy preset.</td>
+</tr>
+<tr>
+<td><code>effectuation</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Enables effectuation tracking for tuned-variable observations.</td>
+</tr>
+<tr>
+<td><code>agents</code>, <code>agent_prefixes</code>, <code>agent_measures</code>, <code>global_measures</code></td>
+<td>See signature</td>
+<td><code>None</code></td>
+<td>Multi-agent measurement configuration.</td>
+</tr>
+<tr>
+<td>Config persistence fields</td>
+<td>See signature</td>
+<td>See signature</td>
+<td><code>auto_load_best</code>, <code>load_from</code>, <code>config_id</code>, <code>best_config_*</code>, and cache TTL controls for persisted best configurations.</td>
+</tr>
+<tr>
+<td>Guided-generation fields</td>
+<td><code>dict[str, Any] \| None</code></td>
+<td><code>None</code></td>
+<td><code>prompt_rewrite</code> and <code>grow_dataset</code> configure guided generation; run it with <code>.optimize_with_guidance(provider)</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -5019,6 +5295,90 @@ object with structured constraints.</p>
 <td><code>True</code></td>
 <td>Whether pruned trials count toward the sample budget.</td>
 </tr>
+<tr>
+<td><code>reps_per_trial</code></td>
+<td><code>int</code></td>
+<td><code>1</code></td>
+<td>Number of repetitions per configuration. OSS SDK accepts only <code>1</code>; other values raise <code>pydantic.ValidationError</code> and require Traigent Enterprise.</td>
+</tr>
+<tr>
+<td><code>reps_aggregation</code></td>
+<td><code>str</code></td>
+<td><code>"mean"</code></td>
+<td>Repetition aggregation method. OSS SDK accepts only <code>"mean"</code>; other values raise <code>pydantic.ValidationError</code> and require Traigent Enterprise.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_endpoint</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>External-agent Hybrid API base endpoint.</td>
+</tr>
+<tr>
+<td><code>tunable_id</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>Optional Hybrid API tunable identifier.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_transport</code></td>
+<td><code>Any \| None</code></td>
+<td><code>None</code></td>
+<td>Custom Hybrid API transport object.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_transport_type</code></td>
+<td><code>str</code></td>
+<td><code>"auto"</code></td>
+<td>Hybrid API transport type selector.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_batch_size</code></td>
+<td><code>int</code></td>
+<td><code>1</code></td>
+<td>Number of examples per Hybrid API execute request.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_batch_parallelism</code></td>
+<td><code>int</code></td>
+<td><code>1</code></td>
+<td>Concurrent Hybrid API batch execution limit.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_keep_alive</code></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+<td>Reuse Hybrid API HTTP connections.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_heartbeat_interval</code></td>
+<td><code>float</code></td>
+<td><code>30.0</code></td>
+<td>Heartbeat interval for Hybrid API transports.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_timeout</code></td>
+<td><code>float \| None</code></td>
+<td><code>None</code></td>
+<td>Hybrid API request timeout override.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_auth_header</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>Auth token/header value sent as both <code>Authorization</code> and <code>x-api-key</code>.</td>
+</tr>
+<tr>
+<td><code>hybrid_api_auto_discover_tvars</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Auto-discover Hybrid API tuned variables when supported.</td>
+</tr>
+<tr>
+<td><code>cloud_fallback_policy</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>Legacy/future cloud fallback policy. It does not enable <code>execution_mode="cloud"</code> in 0.12.0.</td>
+</tr>
 </tbody>
 </table>
 <p><strong>Legacy Compatibility</strong></p>
@@ -5112,6 +5472,9 @@ object with structured constraints.</p>
     <span class="n">tvl_spec</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">tvl_environment</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">tvl</span><span class="p">:</span> <span class="n">TVLOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">strategy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">strategy_params</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">progress_bar</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">algorithm_kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OptimizationResult</span>
 </code></pre></div>
@@ -5191,6 +5554,24 @@ object with structured constraints.</p>
 <td><code>TVLOptions \| dict \| None</code></td>
 <td><code>None</code></td>
 <td>Structured TVL options for runtime overrides.</td>
+</tr>
+<tr>
+<td><code>strategy</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>Runtime strategy preset override. Preset selections are advisory only.</td>
+</tr>
+<tr>
+<td><code>strategy_params</code></td>
+<td><code>Mapping[str, Any] \| None</code></td>
+<td><code>None</code></td>
+<td>Runtime parameters for the strategy preset.</td>
+</tr>
+<tr>
+<td><code>progress_bar</code></td>
+<td><code>bool \| None</code></td>
+<td><code>None</code></td>
+<td>Runtime progress-bar override.</td>
 </tr>
 <tr>
 <td><code>**algorithm_kwargs</code></td>
@@ -5365,6 +5746,54 @@ object with structured constraints.</p>
 <h3 id="traigentget_available_strategies"><code>traigent.get_available_strategies()</code><a class="headerlink" href="#traigentget_available_strategies" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_available_strategies</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
 </code></pre></div>
+<h3 id="recommendation-catalog-and-strategy-presets">Recommendation Catalog and Strategy Presets<a class="headerlink" href="#recommendation-catalog-and-strategy-presets" title="Permanent link">&para;</a></h3>
+<p>0.12.0 exposes local catalog helpers and advisory selection presets through
+<code>traigent.api</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">list_recommendation_agent_types</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">recommend_configuration_space</span><span class="p">(</span>
+    <span class="n">agent_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">min_impact</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">min_confidence</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+<p><code>recommend_configuration_space()</code> returns catalog metadata for supported
+agent/task types: knob names, suggested ranges, impact estimates, evidence
+notes, effectuation status, and apply guidance. It does not call a remote
+service.</p>
+<div class="highlight"><pre><span></span><code><span class="n">VALID_PRESET_NAMES</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;max_accuracy_then_cheapest_within_epsilon&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;quality_floor_min_cost&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pareto_frontier&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_strategy_preset</span><span class="p">(</span>
+    <span class="n">preset_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">params</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NormalizedStrategyPreset</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">select_strategy_preset</span><span class="p">(</span>
+    <span class="n">preset</span><span class="p">:</span> <span class="n">NormalizedStrategyPreset</span><span class="p">,</span>
+    <span class="n">trials</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">TrialResult</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PresetSelection</span>
+</code></pre></div>
+<p>Strategy presets are advisory selection rules over completed trials. They are
+task-local heuristics and do not provide a statistical certificate.</p>
+<h3 id="cli-surfaces-in-0120">CLI surfaces in 0.12.0<a class="headerlink" href="#cli-surfaces-in-0120" title="Permanent link">&para;</a></h3>
+<p>The local CLI includes these onboarding and recommendation entry points:</p>
+<ul>
+<li><code>traigent onboard</code></li>
+<li><code>traigent auth device-login</code></li>
+<li><code>traigent first-prompt --agent claude|cursor|codex</code></li>
+<li><code>traigent quickstart</code></li>
+<li><code>traigent mcp serve</code></li>
+<li><code>traigent recommend</code></li>
+</ul>
+<p>The local MCP server in this worktree exposes these tools: <code>auth_status</code>,
+<code>list_recommendation_agent_types</code>, <code>recommend_configuration_space</code>,
+<code>detect_tvars</code>, <code>scaffold_eval</code>, <code>validate_dataset</code>, <code>estimate_cost</code>,
+<code>run_optimization</code>, <code>get_results</code>, and <code>export_evidence</code>.</p>
 <h3 id="traigentget_optimization_insights"><code>traigent.get_optimization_insights()</code><a class="headerlink" href="#traigentget_optimization_insights" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_optimization_insights</span><span class="p">(</span>
     <span class="n">function_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -5549,7 +5978,7 @@ object with structured constraints.</p>
     <span class="k">return</span> <span class="n">process</span><span class="p">(</span><span class="n">input_text</span><span class="p">)</span>
 </code></pre></div>
 <hr />
-<p>This documentation reflects Traigent SDK v0.10.0.</p>
+<p>This documentation reflects Traigent SDK 0.12.0.</p>
 
 
 

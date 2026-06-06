@@ -11,7 +11,7 @@
         <link rel="canonical" href="https://docs.traigent.ai/hybrid-mode-api-contract/">
       
       
-        <link rel="prev" href="../features/strict_metrics_nulls/">
+        <link rel="prev" href="../features/observability-spans/">
       
       
         <link rel="next" href="../hybrid-mode-client-guide/">
@@ -1222,6 +1222,174 @@
     
   
     Strict Metrics Nulls
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
   
 
     
@@ -4659,7 +4827,9 @@ openapi-generator<span class="w"> </span>generate<span class="w"> </span>-i<span
 <p>All endpoints use the prefix <code>/traigent/v1/</code>.</p>
 <p>Example: <code>http://your-service:8080/traigent/v1/capabilities</code></p>
 <h2 id="authentication-optional">Authentication (Optional)<a class="headerlink" href="#authentication-optional" title="Permanent link">&para;</a></h2>
-<p>If your service requires authentication, accept an <code>Authorization</code> header (for example, bearer token).</p>
+<p>If your service requires authentication, accept the configured token in both
+<code>Authorization</code> and <code>x-api-key</code> headers. The SDK sets both headers from
+<code>hybrid_api_auth_header</code> for compatibility.</p>
 <p>Configure the Traigent SDK client with:
 - <code>hybrid_api_auth_header="Bearer &lt;token&gt;"</code></p>
 <p>For current contract compatibility, keep auth policy consistent across all endpoints. RBAC and stronger policy models can be layered later without changing endpoint shapes.</p>
@@ -5795,7 +5965,7 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <h2 id="related-documentation">Related Documentation<a class="headerlink" href="#related-documentation" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../hybrid-mode-client-guide/">Client Integration Guide</a> - Implementation patterns and examples</li>
-<li><a href="../traigent/wrapper/">TraigentService Wrapper</a> - Decorator-based SDK for building services</li>
+<li>TraigentService wrapper: see the inline wrapper example in the Client Integration Guide.</li>
 </ul>
 
 

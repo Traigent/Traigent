@@ -1237,6 +1237,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -3718,18 +3886,19 @@
 <p>Fast fixes for the most common issues. Start here, then dive deeper if needed.</p>
 <h2 id="one-minute-fixes">One-minute fixes<a class="headerlink" href="#one-minute-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Missing API keys: set <code>TRAIGENT_MOCK_LLM=true</code>.</li>
-<li>Import errors: run <code>pip install -e ".[examples]"</code> from repo root.</li>
+<li>Missing API keys: call <code>traigent.testing.enable_mock_mode_for_quickstart()</code> in local tutorial code.</li>
+<li>Import errors: run <code>pip install "traigent[recommended]"</code>.</li>
 <li>High cost or latency: lower <code>max_trials</code> and pick cheaper models.</li>
 <li>Slow runs: shrink the configuration space; enable caching; reduce concurrency.</li>
 <li>Empty/poor results: verify dataset paths and that objectives match your goal.</li>
 </ul>
 <h2 id="setup-and-keys">Setup and keys<a class="headerlink" href="#setup-and-keys" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># Install</span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[examples]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
 
-<span class="c1"># Mock mode (no keys)</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span>
+<span class="c1"># Mock mode in local tutorial code</span>
+<span class="c1"># from traigent.testing import enable_mock_mode_for_quickstart</span>
+<span class="c1"># enable_mock_mode_for_quickstart()</span>
 
 <span class="c1"># Real keys</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;sk-...&quot;</span><span class="w"> </span><span class="c1"># pragma: allowlist secret</span>
@@ -3756,7 +3925,7 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 </ul>
 <h2 id="integration-hiccups">Integration hiccups<a class="headerlink" href="#integration-hiccups" title="Permanent link">&para;</a></h2>
 <ul>
-<li>LangChain/OpenAI/Anthropic: install integrations via <code>pip install -e ".[integrations]"</code> (or include with <code>.[examples]</code>/<code>.[all]</code>).</li>
+<li>LangChain/OpenAI/Anthropic: install integrations via <code>pip install "traigent[integrations]"</code> (or include them with <code>traigent[recommended]</code>).</li>
 <li>Network: increase <code>request_timeout</code>, set proxies if required.</li>
 </ul>
 <h2 id="prevention-checklist">Prevention checklist<a class="headerlink" href="#prevention-checklist" title="Permanent link">&para;</a></h2>

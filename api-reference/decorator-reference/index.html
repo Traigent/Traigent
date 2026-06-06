@@ -1237,6 +1237,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -4251,6 +4419,7 @@
     <span class="n">configuration_space</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="n">ConfigSpace</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">default_config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">constraints</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Constraint</span> <span class="o">|</span> <span class="n">BoolExpr</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">safety_constraints</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SafetyConstraint</span> <span class="o">|</span> <span class="n">CompoundSafetyConstraint</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 
     <span class="c1"># TVL integration</span>
     <span class="n">tvl_spec</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -4260,8 +4429,32 @@
     <span class="c1"># Grouped option bundles (preferred)</span>
     <span class="n">evaluation</span><span class="p">:</span> <span class="n">EvaluationOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">injection</span><span class="p">:</span> <span class="n">InjectionOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">effectuation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">execution</span><span class="p">:</span> <span class="n">ExecutionOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">mock</span><span class="p">:</span> <span class="n">MockModeOptions</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">strategy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">strategy_params</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+
+    <span class="c1"># Multi-agent configuration</span>
+    <span class="n">agents</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AgentDefinition</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">agent_prefixes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">agent_measures</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">global_measures</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+
+    <span class="c1"># Config persistence</span>
+    <span class="n">auto_load_best</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">load_from</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">config_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">best_config_source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;off&quot;</span><span class="p">,</span>
+    <span class="n">best_config_strict</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">best_config_cache_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">best_config_cache_ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">24</span> <span class="o">*</span> <span class="mi">60</span> <span class="o">*</span> <span class="mi">60</span><span class="p">,</span>
+    <span class="n">best_config_stale_ok_ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">enable_auto_load_dev_logs</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+
+    <span class="c1"># Guided generation</span>
+    <span class="n">prompt_rewrite</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">grow_dataset</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 
     <span class="c1"># Legacy compatibility</span>
     <span class="n">legacy</span><span class="p">:</span> <span class="n">LegacyOptimizeArgs</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -4612,7 +4805,8 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p>Complete Example: See <a href="../../walkthrough/real/06_custom_evaluator.py">06_custom_evaluator.py</a> for a full LLM-as-Judge implementation.</p>
+<p>Complete example: see the repository's custom evaluator walkthrough for a full
+LLM-as-Judge implementation.</p>
 <h4 id="injection"><code>injection</code><a class="headerlink" href="#injection" title="Permanent link">&para;</a></h4>
 <ul>
 <li><strong>Type</strong>: <code>InjectionOptions | dict[str, Any] | None</code></li>
@@ -4654,6 +4848,8 @@
         <span class="n">privacy_enabled</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="n">max_total_examples</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
         <span class="n">samples_include_pruned</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">reps_per_trial</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">reps_aggregation</span><span class="o">=</span><span class="s2">&quot;mean&quot;</span><span class="p">,</span>
     <span class="p">),</span>
     <span class="o">...</span>
 <span class="p">)</span>
@@ -4667,6 +4863,10 @@
 <li><code>privacy_enabled</code>: Redact sensitive data</li>
 <li><code>max_total_examples</code>: Global sample budget</li>
 <li><code>samples_include_pruned</code>: Count pruned trials in budget</li>
+<li><code>reps_per_trial</code>: Repetitions per configuration. OSS SDK accepts only <code>1</code>; non-default values raise <code>pydantic.ValidationError</code> and require Traigent Enterprise.</li>
+<li><code>reps_aggregation</code>: Repetition aggregation method. OSS SDK accepts only <code>"mean"</code>; non-default values raise <code>pydantic.ValidationError</code> and require Traigent Enterprise.</li>
+<li><code>hybrid_api_endpoint</code>, <code>tunable_id</code>, <code>hybrid_api_transport</code>, <code>hybrid_api_transport_type</code>, <code>hybrid_api_batch_size</code>, <code>hybrid_api_batch_parallelism</code>, <code>hybrid_api_keep_alive</code>, <code>hybrid_api_heartbeat_interval</code>, <code>hybrid_api_timeout</code>, <code>hybrid_api_auth_header</code>, <code>hybrid_api_auto_discover_tvars</code>: Hybrid API execution controls.</li>
+<li><code>cloud_fallback_policy</code>: Legacy/future cloud fallback behavior. It does not enable <code>execution_mode="cloud"</code> in 0.12.0.</li>
 </ul>
 <h4 id="mock"><code>mock</code><a class="headerlink" href="#mock" title="Permanent link">&para;</a></h4>
 <ul>
@@ -4817,7 +5017,7 @@ for compatibility. Use <code>cost_limit</code> for hard USD spend control.</p>
 <li><a href="../../guides/execution-modes/">Execution Modes Guide</a> - Execution mode details</li>
 <li><a href="../thread-pool-examples/">Thread Pool Examples</a> - Context propagation with threads</li>
 <li><a href="../telemetry/">Telemetry Documentation</a> - Data collection and privacy</li>
-<li><a href="../../walkthrough/real/06_custom_evaluator.py">Custom Evaluator Example</a> - LLM-as-Judge implementation</li>
+<li>Custom evaluator walkthrough in the repository examples - LLM-as-Judge implementation</li>
 </ul>
 
 

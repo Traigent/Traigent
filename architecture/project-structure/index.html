@@ -1237,6 +1237,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -3168,17 +3336,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#walkthrough" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /walkthrough/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#tools" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3754,17 +3911,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#walkthrough" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /walkthrough/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#tools" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3866,7 +4012,6 @@
 ├── traigent/                  # Core SDK source code
 ├── tests/                     # Test suite
 ├── examples/                  # Usage examples and demo runners
-├── walkthrough/               # Interactive tutorials with datasets
 ├── docs/                      # Documentation (this folder)
 ├── tools/                     # Architecture analysis and dev utilities
 ├── scripts/                   # Utility and automation scripts
@@ -3890,8 +4035,8 @@ have been moved to the <a href="https://github.com/Traigent/TraigentDemo">Traige
 - <code>core/</code> orchestration and optimized function
 - <code>optimizers/</code> algorithms (grid/random/optuna/interactive)
 - <code>evaluators/</code> dataset and evaluation
-- <code>integrations/</code> framework adapters (LangChain/OpenAI/Anthropic)
-- <code>cloud/</code> cloud client models (experimental)
+- <code>integrations/</code> framework adapters (OpenAI, Anthropic, LangChain, Bedrock, Azure, Gemini, Cohere, HuggingFace, LiteLLM, LlamaIndex, Mistral, PydanticAI, vector stores, and observability)
+- <code>cloud/</code> hybrid/backend auth and sync clients; remote cloud execution remains reserved for future service-backed runs
 - <code>storage/</code>, <code>utils/</code>, <code>visualization/</code>, <code>tvl/</code>, etc.</p>
 <h3 id="tests"><code>/tests/</code><a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
 <p>Unit, integration, e2e, security, and performance suites.</p>
@@ -3906,8 +4051,6 @@ have been moved to the <a href="https://github.com/Traigent/TraigentDemo">Traige
 - <code>feature_matrices/</code>, <code>traceability/</code>, <code>internal/</code>, <code>reviews/</code></p>
 <h3 id="examples"><code>/examples/</code><a class="headerlink" href="#examples" title="Permanent link">&para;</a></h3>
 <p>Usage examples, datasets, and the browser gallery assets (<code>examples/gallery/</code>).</p>
-<h3 id="walkthrough"><code>/walkthrough/</code><a class="headerlink" href="#walkthrough" title="Permanent link">&para;</a></h3>
-<p>Interactive step-by-step tutorials with datasets.</p>
 <h3 id="tools"><code>/tools/</code><a class="headerlink" href="#tools" title="Permanent link">&para;</a></h3>
 <p>Architecture analysis (<code>tools/architecture/</code>) and environment utilities.
 CI workflow dependency via <code>.github/workflows/architecture-analysis.yml</code>.</p>
@@ -3916,7 +4059,8 @@ CI workflow dependency via <code>.github/workflows/architecture-analysis.yml</co
 <h3 id="plugins"><code>/plugins/</code><a class="headerlink" href="#plugins" title="Permanent link">&para;</a></h3>
 <p>Optional plugin packages: analytics, tracing, OPAL, tuned-variables, UI.</p>
 <h3 id="requirements"><code>/requirements/</code><a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h3>
-<p>Dependency sets by feature. See <code>requirements/README.md</code> for install guidance.</p>
+<p>Legacy dependency mirrors and supporting guides. <code>pyproject.toml</code> extras are
+the canonical install surface for current package builds.</p>
 <h2 id="file-organization-principles">File Organization Principles<a class="headerlink" href="#file-organization-principles" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Clean Root</strong>: Only essential project directories at root level</li>

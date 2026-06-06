@@ -1239,6 +1239,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -1778,6 +1946,17 @@
     <span class="md-ellipsis">
       
         Learning Path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#new-in-0120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New in 0.12.0
       
     </span>
   </a>
@@ -3597,6 +3776,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#new-in-0120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New in 0.12.0
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3636,6 +3826,14 @@
 <p><strong>Tuned Variables</strong>: Use <a href="tuned_variables/">Tuned Variables</a> to auto-detect parameters and discover callables</p>
 <p><strong>Advanced Users</strong>: Explore <a href="agent_optimization/">Agent Optimization</a>, <a href="interactive_optimization/">Interactive Optimization</a>, and <a href="optuna_integration/">Optuna Integration</a></p>
 <p><strong>Evaluation</strong>: Use <a href="evaluation_guide/">Evaluation Guide</a> to measure success</p>
+<h2 id="new-in-0120">New in 0.12.0<a class="headerlink" href="#new-in-0120" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Onboarding: <code>traigent onboard</code>, browser <code>traigent auth device-login</code>, <code>traigent quickstart</code>, and <code>traigent first-prompt --agent claude|cursor|codex</code>.</li>
+<li>Local MCP: <code>traigent mcp serve</code> provides the stdio MCP server for coding agents.</li>
+<li>Recommendation catalog: <code>traigent recommend</code>, <code>recommend_configuration_space()</code>, and <code>list_recommendation_agent_types()</code>; see <a href="tuned_variables/">Tuned Variables</a>.</li>
+<li>Advisory strategy presets: <code>max_accuracy_then_cheapest_within_epsilon</code>, <code>quality_floor_min_cost</code>, and <code>pareto_frontier</code>; see <a href="choosing_optimization_model/">Choosing Models</a>.</li>
+<li>Observability: <code>add_agent_span()</code> adds user-defined agent workflow spans; see <a href="../api-reference/telemetry/">telemetry</a>.</li>
+</ul>
 
 
 

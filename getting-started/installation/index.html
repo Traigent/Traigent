@@ -1383,6 +1383,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -3749,23 +3917,20 @@
 <p>Release-ready, minimal install steps for the SDK and examples.</p>
 <h2 id="recommended-installs">Recommended Installs<a class="headerlink" href="#recommended-installs" title="Permanent link">&para;</a></h2>
 <h3 id="fast-path-pip">Fast path (pip)<a class="headerlink" href="#fast-path-pip" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/Traigent/Traigent.git
-<span class="nb">cd</span><span class="w"> </span>Traigent
-python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[recommended]&quot;</span><span class="w">           </span><span class="c1"># Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai</span>
+<div class="highlight"><pre><span></span><code>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span><span class="w">       </span><span class="c1"># Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai</span>
 </code></pre></div>
 <h3 id="fast-path-uv">Fast path (uv)<a class="headerlink" href="#fast-path-uv" title="Permanent link">&para;</a></h3>
 <p>Use this path if your environment already uses <code>uv</code>. It installs the same
-source checkout and extras; <code>pip</code> remains fully supported. Replace <code>3.11</code> with
+published package and extras; <code>pip</code> remains fully supported. Replace <code>3.11</code> with
 any supported Python 3.11-3.13 interpreter available in your environment.</p>
-<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/Traigent/Traigent.git
-<span class="nb">cd</span><span class="w"> </span>Traigent
-uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[recommended]&quot;</span><span class="w">        </span><span class="c1"># Same recommended bundle as the pip path</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span><span class="w">    </span><span class="c1"># Same recommended bundle as the pip path</span>
 </code></pre></div>
 <h3 id="pypi-vs-source-installs">PyPI vs source installs<a class="headerlink" href="#pypi-vs-source-installs" title="Permanent link">&para;</a></h3>
-<p><code>0.10.0</code> release validation uses the source install from this repository. Use a published package only if your team separately validates that artifact for your environment.</p>
+<p>For Traigent SDK 0.12.0, prefer the published PyPI package: <code>pip install "traigent[recommended]"</code>. Use a source checkout only for development or when validating unreleased changes.</p>
+<p>License: Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigent-Commercial.</p>
 <h2 id="extras-from-pyprojecttoml">Extras (from <code>pyproject.toml</code>)<a class="headerlink" href="#extras-from-pyprojecttoml" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3779,7 +3944,7 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 <tr>
 <td><strong><code>recommended</code></strong></td>
 <td><strong>All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)</strong></td>
-<td><strong><code>pip install -e ".[recommended]"</code></strong></td>
+<td><strong><code>pip install "traigent[recommended]"</code></strong></td>
 </tr>
 <tr>
 <td><code>integrations</code></td>
@@ -3845,18 +4010,16 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 </table>
 <h2 id="common-scenarios">Common Scenarios<a class="headerlink" href="#common-scenarios" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Run examples from a pip-managed source checkout (no API keys):</strong></li>
+<li><strong>Run the packaged quickstart with pip (no API keys):</strong></li>
 </ul>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[recommended]&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span>
-python<span class="w"> </span>hello_world.py
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
+traigent<span class="w"> </span>quickstart
 </code></pre></div>
 <ul>
-<li><strong>Run examples from a uv-managed source checkout (no API keys):</strong></li>
+<li><strong>Run the packaged quickstart with uv (no API keys):</strong></li>
 </ul>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[recommended]&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span>
-python<span class="w"> </span>hello_world.py
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
+traigent<span class="w"> </span>quickstart
 </code></pre></div>
 <ul>
 <li><strong>Develop/contribute:</strong></li>
@@ -3881,9 +4044,9 @@ python<span class="w"> </span>hello_world.py
 </code></pre></div>
 <h2 id="troubleshooting-quick-fixes">Troubleshooting (quick fixes)<a class="headerlink" href="#troubleshooting-quick-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>ModuleNotFoundError: langchain</code></strong> — install recommended extras: <code>pip install -e ".[recommended]"</code>.</li>
-<li><strong>Missing API keys</strong> — copy <code>.env.example</code> to <code>.env</code> and set <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code> (skip if using <code>TRAIGENT_MOCK_LLM=true</code>). On Ubuntu desktop, you can also store keys in GNOME Keyring and export them with <code>secret-tool lookup ...</code> before running examples (see <code>docs/guides/secrets_management.md</code>).</li>
-<li><strong>Virtualenv confusion</strong> — recreate: <code>deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install -e ".[recommended]"</code>.</li>
+<li><strong><code>ModuleNotFoundError: langchain</code></strong> — install recommended extras: <code>pip install "traigent[recommended]"</code>.</li>
+<li><strong>Missing API keys</strong> — copy <code>.env.example</code> to <code>.env</code> and set <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code>, or call <code>traigent.testing.enable_mock_mode_for_quickstart()</code> in local tutorial code. On Ubuntu desktop, you can also store keys in GNOME Keyring and export them with <code>secret-tool lookup ...</code> before running examples (see <code>docs/guides/secrets_management.md</code>).</li>
+<li><strong>Virtualenv confusion</strong> — recreate: <code>deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install "traigent[recommended]"</code>.</li>
 </ul>
 <hr />
 <p>Need help? Open an issue on GitHub or ping the team in the repository discussions.</p>

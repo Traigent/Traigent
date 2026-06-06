@@ -1139,10 +1139,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#view-the-skill" class="md-nav__link">
+  <a href="#view-the-skills" class="md-nav__link">
     <span class="md-ellipsis">
       
-        View the Skill
+        View the Skills
       
     </span>
   </a>
@@ -1313,6 +1313,174 @@
     
   
     Strict Metrics Nulls
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
   
 
     
@@ -3615,10 +3783,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#view-the-skill" class="md-nav__link">
+  <a href="#view-the-skills" class="md-nav__link">
     <span class="md-ellipsis">
       
-        View the Skill
+        View the Skills
       
     </span>
   </a>
@@ -3646,21 +3814,18 @@
 
 
 <h1 id="ai-agent-skill">AI Agent Skill<a class="headerlink" href="#ai-agent-skill" title="Permanent link">&para;</a></h1>
-<p>Traigent ships a built-in <a href="https://agentskills.io/">Agent Skill</a> — a set of instructions that teach your AI coding agent how to set up and run Traigent optimizations.</p>
+<p>Traigent publishes <a href="https://agentskills.io/">Agent Skills</a> — sets of instructions that teach your AI coding agent how to set up and run Traigent optimizations.</p>
 <p>When you ask your agent to "optimize this function with Traigent," the skill guides it through a <strong>dry-run-first workflow</strong>: validate everything at zero cost in mock mode, then switch to real execution only when you say so.</p>
 <h2 id="compatible-agents">Compatible Agents<a class="headerlink" href="#compatible-agents" title="Permanent link">&para;</a></h2>
 <p>Works with Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Gemini CLI, Windsurf, and <a href="https://agentskills.io/">30+ more</a>.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<p><strong>Option A — npx (all 8 skills):</strong>
-<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>skills<span class="w"> </span>add<span class="w"> </span>Traigent/agents-skills
+<p>The canonical SDK skill source is <a href="https://github.com/Traigent/traigent-skills"><code>Traigent/traigent-skills</code></a>. SDK checkouts do not vendor <code>.agents/</code> or <code>.claude/skills/</code> copies; install from the remote repo so your local agent cache can be updated independently.</p>
+<p><strong>Install all SDK skills:</strong>
+<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>skills<span class="w"> </span>add<span class="w"> </span>Traigent/traigent-skills<span class="w"> </span>--skill<span class="w"> </span><span class="s1">&#39;*&#39;</span>
 </code></pre></div></p>
-<blockquote>
-<p><strong>Note:</strong> The older <code>Traigent/agent-skills</code> repo (without the trailing <code>s</code>)
-is deprecated and pinned to 7 skills missing the dry-run-first orchestrator.
-Use <code>Traigent/agents-skills</code> instead.</p>
-</blockquote>
-<p><strong>Option B — already included:</strong></p>
-<p>If you cloned the Traigent repo, the skill is already at <a href="../.agents/skills/traigent/SKILL.md"><code>.agents/skills/traigent/SKILL.md</code></a>. Agents that support the <code>.agents/</code> convention will discover it automatically.</p>
+<p><strong>Install only the Python entry points:</strong>
+<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>skills<span class="w"> </span>add<span class="w"> </span>Traigent/traigent-skills<span class="w"> </span>--skill<span class="w"> </span>traigent<span class="w"> </span>--skill<span class="w"> </span>traigent-quickstart
+</code></pre></div></p>
 <h2 id="what-the-skill-does">What the Skill Does<a class="headerlink" href="#what-the-skill-does" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Sets up the <code>@traigent.optimize()</code> decorator</li>
@@ -3669,8 +3834,8 @@ Use <code>Traigent/agents-skills</code> instead.</p>
 <li>Reports results and estimates real costs</li>
 <li>Waits for your go-ahead before spending real tokens</li>
 </ol>
-<h2 id="view-the-skill">View the Skill<a class="headerlink" href="#view-the-skill" title="Permanent link">&para;</a></h2>
-<p><a href="../.agents/skills/traigent/SKILL.md">Read the full skill instructions →</a></p>
+<h2 id="view-the-skills">View the Skills<a class="headerlink" href="#view-the-skills" title="Permanent link">&para;</a></h2>
+<p><a href="https://github.com/Traigent/traigent-skills/tree/main/skills/traigent">Read the canonical skill instructions →</a></p>
 
 
 

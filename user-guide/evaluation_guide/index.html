@@ -1239,6 +1239,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -4392,8 +4560,9 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 </code></pre></div>
 <h3 id="method-4-mock-mode-developmentdemo">Method 4: Mock Mode (Development/Demo)<a class="headerlink" href="#method-4-mock-mode-developmentdemo" title="Permanent link">&para;</a></h3>
 <p>For testing without real API calls:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span>
-python<span class="w"> </span>your_script.py
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">enable_mock_mode_for_quickstart</span>
+
+<span class="n">enable_mock_mode_for_quickstart</span><span class="p">()</span>
 </code></pre></div>
 <p>Mock mode provides:
 - Realistic accuracy values (60-95%)
@@ -4540,7 +4709,9 @@ python<span class="w"> </span>your_script.py
 </li>
 <li>
 <p><strong>Use Mock Mode for Testing</strong>
-   <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span>
+   <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">enable_mock_mode_for_quickstart</span>
+
+<span class="n">enable_mock_mode_for_quickstart</span><span class="p">()</span>
 </code></pre></div></p>
 </li>
 </ol>
@@ -4667,7 +4838,7 @@ default scorer would mark these paraphrases as wrong.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../examples/API_PATTERNS/">Custom Evaluator Patterns</a></li>
-<li><a href="../../examples/datasets/">Dataset Creation Tools</a></li>
+<li>Dataset creation tools are available in the repository examples.</li>
 <li><a href="../../#troubleshooting">Troubleshooting Guide</a></li>
 </ul>
 

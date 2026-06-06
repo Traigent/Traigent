@@ -1237,6 +1237,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -3696,7 +3864,7 @@
 <p>Everything you need to run and adapt examples quickly.</p>
 <h2 id="common-commands">Common commands<a class="headerlink" href="#common-commands" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># Install from repo root (includes example deps)</span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[examples]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
 
 <span class="c1"># Auto-mocks when ANTHROPIC_API_KEY is unset</span>
 python<span class="w"> </span>examples/core/simple-prompt/run.py
@@ -3723,7 +3891,7 @@ python<span class="w"> </span>examples/core/multi-objective-tradeoff/run_openai_
 <li><code>edge_analytics</code> (default and supported) - local execution with analytics.</li>
 <li><code>hybrid</code> (supported) - local trial execution with backend/portal session and metric tracking.</li>
 <li><code>cloud</code> (reserved) - future remote execution; currently fails closed with guidance to use <code>hybrid</code>.</li>
-<li>Mock: <code>TRAIGENT_MOCK_LLM=true</code> works in OSS/local mode.</li>
+<li>Mock: call <code>traigent.testing.enable_mock_mode_for_quickstart()</code> in local tutorial code.</li>
 </ul>
 <h2 id="quick-knobs">Quick knobs<a class="headerlink" href="#quick-knobs" title="Permanent link">&para;</a></h2>
 <ul>
@@ -3741,8 +3909,8 @@ python<span class="w"> </span>examples/core/multi-objective-tradeoff/run_openai_
 </code></pre></div>
 <h2 id="troubleshooting-highlights">Troubleshooting highlights<a class="headerlink" href="#troubleshooting-highlights" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>ModuleNotFoundError: traigent</code> -&gt; <code>pip install -e ".[examples]"</code> from repo root.</li>
-<li><code>API key not found</code> -&gt; <code>TRAIGENT_MOCK_LLM=true</code> or export keys.</li>
+<li><code>ModuleNotFoundError: traigent</code> -&gt; <code>pip install "traigent[recommended]"</code>.</li>
+<li><code>API key not found</code> -&gt; call <code>traigent.testing.enable_mock_mode_for_quickstart()</code> in local tutorial code or export keys.</li>
 <li>Slow runs -&gt; lower <code>max_trials</code> or narrow the configuration space.</li>
 <li>Empty results -&gt; verify dataset paths in <code>eval_dataset</code>.</li>
 </ul>

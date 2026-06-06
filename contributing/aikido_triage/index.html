@@ -1237,6 +1237,174 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/recommendations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Recommendations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strategy-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
@@ -3588,21 +3756,21 @@ cannot be safely fixed by code changes alone.</p>
 <li>Aikido issue group: <code>27772214</code></li>
 <li>Type: <code>license</code></li>
 <li>Severity: <code>critical</code></li>
-<li>Affected package: <code>traigent@0.11.4</code></li>
+<li>Affected package: <code>traigent@0.12.0</code></li>
 <li>Affected file: <code>uv.lock</code></li>
-<li>Related license: <code>AGPL-3.0-only</code></li>
+<li>Related license: <code>AGPL-3.0-only OR LicenseRef-Traigent-Commercial</code></li>
 <li>Disposition: intentional project license, requires Aikido issue ignore</li>
 </ul>
 <p>The finding is for the SDK root package's declared license, not for a
 third-party dependency license drift. The repository consistently declares
-<code>AGPL-3.0-only</code> in <code>pyproject.toml</code>, includes the AGPL license text in
-<code>LICENSE</code>, and documents separate commercial licensing in
+<code>AGPL-3.0-only OR LicenseRef-Traigent-Commercial</code> in <code>pyproject.toml</code>,
+includes the AGPL license text in <code>LICENSE</code>, and documents separate commercial licensing in
 <code>COMMERCIAL-LICENSING.md</code> and <code>CONTRIBUTOR-LICENSING.md</code>.</p>
 <p>Do not resolve this by excluding <code>uv.lock</code> from Aikido scanning. That would
 also suppress dependency, malware, and future license findings from the lockfile.</p>
 <p>Do not change the SDK license as a scanner remediation without explicit legal
 and business approval. If Aikido comments on a PR for this finding, reply:</p>
-<div class="highlight"><pre><span></span><code>@AikidoSec ignore: Intentional SDK project license. Traigent open-source releases are AGPL-3.0-only and separate commercial licenses are documented in COMMERCIAL-LICENSING.md and CONTRIBUTOR-LICENSING.md. This is the root package license, not a third-party dependency license drift.
+<div class="highlight"><pre><span></span><code>@AikidoSec ignore: Intentional SDK project license. Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigent-Commercial, with commercial licensing documented in COMMERCIAL-LICENSING.md and CONTRIBUTOR-LICENSING.md. This is the root package license, not a third-party dependency license drift.
 </code></pre></div>
 
 
