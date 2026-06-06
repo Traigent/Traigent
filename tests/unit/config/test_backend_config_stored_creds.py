@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -119,6 +120,19 @@ class TestBackendConfigStoredBackendUrl:
             result = BackendConfig.get_backend_url()
 
         assert result == BackendConfig.DEFAULT_PROD_URL
+
+    def test_invalid_configured_urls_do_not_log_raw_values(self, caplog):
+        """Invalid configured URLs may contain credentials and must not be logged raw."""
+
+        raw_url = "http://?api_key=tg_secret_backend_url"
+
+        with caplog.at_level(logging.WARNING, logger="traigent.config.backend_config"):
+            assert BackendConfig.normalize_backend_origin(raw_url) is None
+            assert BackendConfig.split_api_url(raw_url) == (None, None)
+
+        logged_text = "\n".join(caplog.messages)
+        assert raw_url not in logged_text
+        assert "tg_secret_backend_url" not in logged_text
 
 
 class TestBackendConfigDefaultBehavior:
