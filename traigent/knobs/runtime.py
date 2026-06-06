@@ -816,14 +816,22 @@ def _execute_cascade(
 
 
 class _SignalRaised(Exception):
-    """A pre-gate signal RAISED — the §3.2 absorbing-error case (NOT inadequate).
+    """A pre-gate signal produced an ABSORBING ERROR — fails the item (§3.2.1).
 
-    §3.2 is explicit and DELIBERATELY asymmetric with the loop ``signal_accept``
-    stop: an absent/abstaining/non-numeric signal VALUE is *inadequate* (route
-    onward — fail-toward-the-stronger-arm), but a signal that *raises* fails the
-    item's evaluation (never silently routes), feeding the fail-closed law under
-    strict modes. This wrapper carries the original exception's detail so the
-    dispatch driver can map it to a fail-closed ``error`` result.
+    Carries the three malformed-signal cases that fail the item's evaluation
+    (never silently routing), feeding the fail-closed law under strict modes:
+
+    1. the signal *raised* an exception;
+    2. the signal returned a ``bool`` or non-numeric value (a malformed score is
+       a defect, not an abstention);
+    3. the signal returned a non-finite ``float`` (NaN/±inf — it cannot enter the
+       §3.2.1 finite ``σ ≥ θ`` comparison).
+
+    All three are at PARITY with the loop ``signal_accept`` stop (runtime.py
+    ~1587-1593), which likewise raises on bool/non-numeric/non-finite. The ONLY
+    abstention §3.2 permits is a signal returning ``None`` (absent VALUE →
+    inadequate → route onward), which is NOT carried here. This wrapper holds the
+    detail so the dispatch driver can map it to a fail-closed ``error`` result.
     """
 
     def __init__(self, detail: str) -> None:
@@ -844,19 +852,31 @@ def _dispatch_adequate(
     - ``adequate`` is ``σ(x) ≥ θ`` — selecting arm ``i``;
     - ``sigma`` / ``theta`` are the resolved finite values when the gate was
       evaluated numerically (for the §3.10 ``dispatch_signal_margin``);
-      ``sigma`` is ``None`` when the signal abstained (absent/None/non-numeric/
-      non-finite — INADEQUATE per §3.2, route onward), in which case ``theta``
-      is still returned for symmetry but the margin is not emitted.
+      ``sigma`` is ``None`` only when the signal ABSTAINED — i.e. it returned
+      ``None`` (the signal id maps to an absent VALUE). An abstention is
+      INADEQUATE per §3.2 (route onward, "absent/abstaining signal value is
+      INADEQUATE"); ``theta`` is still returned for symmetry but no margin is
+      emitted.
 
     The signal is invoked with the dispatch input ``config`` (the item/config
     payload the stages receive) as a SINGLE positional argument — the SAME
     one-argument convention the ``signal_accept`` loop stop uses, with the
     dispatch payload instead of the threaded loop state. ``SignalUse.inputs``
     for a pre-gate is an opaque calibration/freshness declaration (§3.2 item 11
-    ``signal_inputs``), NOT a runtime input filter, so it never narrows what the
-    signal observes (mirrors the loop's documented note).
+    ``signal_inputs`` / §3.5 ctx_ext binding), NOT a runtime input filter, so it
+    never narrows what the signal observes (mirrors the loop's documented note).
 
-    A missing/non-finite threshold raises (a calibration defect → ``error`` at
+    VALUE rules (parity with the loop ``signal_accept`` stop, §3.2.1 finite
+    comparison law — "comparisons are over finite numbers ... never a silent
+    comparison"):
+
+    - ``None`` → ABSTENTION → inadequate, route onward (§3.2 explicit license);
+    - ``bool`` or any non-numeric (str/dict/...) → RAISE (a malformed score is a
+      defect, not an abstention) — absorbing ``error`` at the caller;
+    - a non-finite ``float`` (NaN/±inf) → RAISE — a non-finite σ cannot enter the
+      finite ``σ ≥ θ`` comparison; it is a malformed score, never a silent route.
+
+    A missing/non-finite THRESHOLD raises (a calibration defect → ``error`` at
     the caller, exactly as POST does). A signal that RAISES is the §3.2
     absorbing-error case (re-raised as :class:`_SignalRaised`).
     """
@@ -876,15 +896,22 @@ def _dispatch_adequate(
     except Exception as exc:  # noqa: BLE001 - a RAISING signal is absorbing (§3.2)
         raise _SignalRaised(f"{type(exc).__name__}: {exc}") from exc
 
-    # An absent/abstaining/non-numeric value is INADEQUATE (§3.2): route onward,
-    # NEVER an error. bool is not a number (parity with the §3.10 measure rule).
-    if raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
+    # None ABSTAINS (§3.2: absent/abstaining value is INADEQUATE → route onward).
+    if raw is None:
         return False, None, theta
+    # A bool/non-numeric value is a MALFORMED SCORE, not an abstention: fail
+    # closed (parity with the loop signal_accept rule, runtime.py ~1587). bool is
+    # not a number (parity with the §3.10 measure rule).
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise _SignalRaised(
+            f"signal {signal_id!r} must return a finite number or None, got {raw!r}"
+        )
     sigma = float(raw)
     if not math.isfinite(sigma):
-        # A non-finite σ cannot satisfy ``σ ≥ θ``; treat as abstaining (§3.2
-        # fail-toward-the-stronger-arm), NOT an error.
-        return False, None, theta
+        # A non-finite σ cannot enter the §3.2.1 finite ``σ ≥ θ`` comparison;
+        # it is a malformed score → absorbing error (parity with the loop,
+        # runtime.py ~1592), NOT a silent fail-toward-the-stronger-arm route.
+        raise _SignalRaised(f"signal {signal_id!r} returned non-finite {sigma!r}")
     return sigma >= theta, sigma, theta
 
 
@@ -974,9 +1001,13 @@ def _execute_pre_cascade(
     evaluated); all gates inadequate → the terminal fallback arm ``m``. Exactly
     ONE arm executes. Semantics:
 
-    - an absent/abstaining/non-numeric/non-finite signal VALUE is INADEQUATE —
-      routing continues to the next gate / terminal arm (§3.2
-      fail-toward-the-stronger-arm), NEVER an error;
+    - a signal returning ``None`` ABSTAINS (absent VALUE) → INADEQUATE: routing
+      continues to the next gate / terminal arm (§3.2 explicit license:
+      "absent/abstaining signal value is INADEQUATE"), NEVER an error;
+    - a signal returning ``bool``/non-numeric/non-finite is a MALFORMED SCORE →
+      absorbing ``error`` (a malformed score is a defect, not an abstention) —
+      parity with the loop ``signal_accept`` stop and the §3.2.1 finite-
+      comparison law; no arm executes;
     - a signal that RAISES is the §3.2 absorbing ``error`` — no arm executes;
     - a reached gate's missing/non-finite THRESHOLD is a calibration defect →
       ``error`` (fail closed, exactly as POST);
@@ -995,7 +1026,8 @@ def _execute_pre_cascade(
                 gate, config, calibrated_values, signals
             )
         except _SignalRaised as raised:
-            # §3.2: a signal that RAISES fails the item (absorbing error).
+            # §3.2.1: a signal that RAISES, or returns a malformed score
+            # (bool/non-numeric/non-finite), fails the item (absorbing error).
             return _error(f"composite-runtime: {raised.detail}")
         except Exception as exc:  # noqa: BLE001 - missing/non-finite θ -> error
             return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
