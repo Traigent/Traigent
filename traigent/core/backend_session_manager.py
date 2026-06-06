@@ -707,10 +707,22 @@ class BackendSessionManager:
             # incumbent's trial_id becomes the backend id the report needs.
             trial_result.trial_id = backend_trial_id
 
+            # P8 content-freedom (live-E2E finding): the resolved trial
+            # config carries injected CALIBRATED values; the wire submission
+            # carries ONLY the tuned search-space projection — a fitted
+            # calibrated value never rides to the backend (and the backend's
+            # create-time key-subset validation would reject it anyway,
+            # silently voiding the trial record).
+            tuned_keys = set(getattr(self._optimizer, "config_space", {}) or {})
+            wire_config = {
+                k: v
+                for k, v in (trial_result.config or {}).items()
+                if not tuned_keys or k in tuned_keys
+            }
             submitted_result = self._backend_client._submit_trial_result_via_session(
                 session_id=session_id,
                 trial_id=backend_trial_id,
-                config=trial_result.config,
+                config=wire_config,
                 metrics=metrics_payload,
                 status=status,
                 error_message=trial_result.error_message,

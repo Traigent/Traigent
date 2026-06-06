@@ -272,6 +272,36 @@ class TestBackendSessionManagerTrialSubmission:
         )
 
     @pytest.mark.asyncio
+    async def test_submission_carries_only_the_tuned_projection(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """P8 content-freedom on the submission path (live-E2E finding): the
+        resolved trial config carries injected CALIBRATED values; the wire
+        submission must carry ONLY the tuned search-space keys — a calibrated
+        value (e.g. a fitted threshold) must never ride to the backend, and
+        the backend's create-time key-subset validation would reject it
+        anyway (silently voiding the trial record)."""
+        backend_session_manager._optimizer.config_space = {"variant": ["a", "b"]}
+        mock_trial_result.config = {"variant": "a", "threshold": 0.7}
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_3"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=True
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        kwargs = mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        assert kwargs["config"] == {"variant": "a"}
+        assert "threshold" not in kwargs["config"]  # P8 canary
+        # the LOCAL trial result keeps its full resolved view
+        assert mock_trial_result.config == {"variant": "a", "threshold": 0.7}
+
+    @pytest.mark.asyncio
     async def test_slot_allocated_but_submit_failed_is_never_attestable(
         self, backend_session_manager, mock_trial_result, mock_backend_client
     ):
