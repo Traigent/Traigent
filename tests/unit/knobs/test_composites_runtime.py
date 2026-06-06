@@ -1199,6 +1199,68 @@ class TestGatedNestedCompositeArm:
         assert result.result_kind is ResultKind.ERROR
 
 
+class TestDriverSampleCardinalityParity:
+    """Codex round-2 blocker: the manual driver must keep the engine's
+
+    ``StageSpec.samples >= 1`` validation. A ``samples=0`` stage arm behind the
+    new gated-nested driver path must fail CLOSED (§3.2.1 error), never return
+    ``OUTPUT None``.
+    """
+
+    def _outer(self):
+        return CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(CompositeArm("inner"), StageArm("b")),
+                gates=(GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),),
+                placement=Placement.POST,
+            ),
+        )
+
+    def test_zero_sample_terminal_stage_arm_fails_closed(self):
+        # RED PROBE (pre-fix: OUTPUT None): split inner escalates to a
+        # samples=0 terminal arm -> must be an ERROR, not a silent None output.
+        inner = _mv_ensemble("inner", stage_name="i")
+        empty = StageRunner(run=lambda _i: [], key_fn=lambda x: x, samples=0)
+        outer = self._outer()
+        result = execute_composite(
+            outer,
+            {"i": _stage(["x", "y", "z"]), "b": empty},
+            config={"k": 3},
+            calibrated_values={"t": 0.9},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "samples" in (result.error or "")
+
+    def test_zero_sample_gated_stage_arm_fails_closed(self):
+        # Twin at the GATED position: stage arm 'g' (samples=0) feeds a gate.
+        inner = _mv_ensemble("inner", stage_name="i")
+        outer = CompositeNode(
+            name="outer",
+            kind=CompositeKind.CASCADE,
+            body=CascadeBody(
+                arms=(StageArm("g"), CompositeArm("inner"), StageArm("b")),
+                gates=(
+                    GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),
+                    GateDecl(kind=GateKind.MARGIN_BELOW, threshold="t"),
+                ),
+                placement=Placement.POST,
+            ),
+        )
+        empty = StageRunner(run=lambda _i: [], key_fn=lambda x: x, samples=0)
+        result = execute_composite(
+            outer,
+            {"g": empty, "i": _stage(["A", "A", "A"]), "b": _stage(["B"])},
+            config={"k": 3},
+            calibrated_values={"t": 0.5},
+            registry={"outer": outer, "inner": inner},
+        )
+        assert result.result_kind is ResultKind.ERROR
+        assert "samples" in (result.error or "")
+
+
 # --------------------------------------------------------------------------- #
 # F2: single-arm SAMPLING ensemble over a CompositeArm body                   #
 # --------------------------------------------------------------------------- #

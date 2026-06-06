@@ -561,6 +561,15 @@ def _evaluate_stage_arm(
     error the engine raises ("feeds a gate but has no key_fn").
     """
     runner = _coerce_stage_runner(stages[arm.name])
+    if runner.samples < 1:
+        # Parity with the engine path: ``StageSpec.samples must be >= 1``
+        # (cascade.py). Without this, a samples=0 stage self-consistently
+        # produces zero outputs and the driver would emit a silent
+        # ``OUTPUT None`` — fail closed instead.
+        raise ValueError(
+            f"stage {arm.name!r} declared samples={runner.samples}; "
+            "StageSpec.samples must be >= 1"
+        )
     samples = list(runner.run(config))
     if len(samples) != runner.samples:
         raise ValueError(
