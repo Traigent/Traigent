@@ -25,7 +25,11 @@ from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
 )
-from traigent.evaluators.metrics_tracker import extract_llm_metrics
+from traigent.evaluators.metrics_tracker import (
+    aggregate_user_custom_metrics,
+    extract_llm_metrics,
+    is_reserved_metric_key,
+)
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -1054,18 +1058,21 @@ class BaseEvaluator(ABC):
 
         Strict, conservative unpack rule (back-compat is absolute): the return
         is unpacked ONLY when ``raw`` is EXACTLY a length-2 ``tuple`` whose
-        second element is a ``Mapping`` with all-``str`` keys and all-numeric
-        (``int``/``float``, excluding ``bool``) values. In that case element
-        ``[0]`` becomes the output used for ALL downstream purposes (accuracy
-        comparison, ``actual_output`` storage, scoring functions) and element
-        ``[1]`` becomes the per-example user metrics dict.
+        second element is a ``Mapping`` with all-identifier keys (every key is a
+        ``str`` satisfying ``str.isidentifier()``, matching the MeasuresDict wire
+        contract) and all-numeric (``int``/``float``, excluding ``bool``)
+        values. In that case element ``[0]`` becomes the output used for ALL
+        downstream purposes (accuracy comparison, ``actual_output`` storage,
+        scoring functions) and element ``[1]`` becomes the per-example user
+        metrics dict.
 
         EVERY other shape is left untouched and returned as raw output with no
         user metrics — longer/shorter tuples, a non-tuple, a ``[1]`` that is not
-        a Mapping (e.g. a list), a Mapping with any non-``str`` key, or a Mapping
-        with any non-numeric / ``bool`` value. This makes the rule idempotent: an
-        already-unpacked output (whose ``[0]`` is not itself such a 2-tuple) is a
-        no-op, so calling this at more than one boundary is safe.
+        a Mapping (e.g. a list), a Mapping with any non-``str`` / non-identifier
+        key (e.g. ``"bad-key"``), or a Mapping with any non-numeric / ``bool``
+        value. This makes the rule idempotent: an already-unpacked output (whose
+        ``[0]`` is not itself such a 2-tuple) is a no-op, so calling this at more
+        than one boundary is safe.
 
         The numeric values are coerced to ``float`` so they aggregate by mean and
         satisfy the ``MeasuresDict`` numeric contract downstream.
@@ -1083,7 +1090,7 @@ class BaseEvaluator(ABC):
         if not isinstance(candidate, Mapping):
             return raw, None
         for key, value in candidate.items():
-            if not isinstance(key, str):
+            if not isinstance(key, str) or not key.isidentifier():
                 return raw, None
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 return raw, None
@@ -1099,14 +1106,29 @@ class BaseEvaluator(ABC):
     ) -> None:
         """Merge per-example user metrics into ``target`` without overriding.
 
-        User keys are first-class but NEVER override an evaluator-computed key:
-        a user key already present in ``target`` is skipped (the evaluator's own
-        value wins) and a debug line records the skip. This protects computed
-        keys such as ``accuracy`` from being shadowed by a user-supplied metric.
+        User keys are first-class but NEVER override an evaluator-computed key.
+        Two guards, applied regardless of merge ordering or ``setdefault``
+        timing (so a reserved key is protected even when the evaluator writes it
+        AFTER this merge):
+
+        * a key in :data:`RESERVED_METRIC_KEYS` is skipped and warning-logged —
+          the user asked for a key they cannot have (e.g. ``success_rate``,
+          ``latency``, ``examples_attempted``);
+        * a key already present in ``target`` is skipped (the evaluator's own
+          value wins).
         """
         if not user_metrics:
             return
         for key, value in user_metrics.items():
+            if is_reserved_metric_key(key):
+                logger.warning(
+                    "Skipping user metric %r (%s): %r is a reserved "
+                    "evaluator-computed key and cannot be overwritten",
+                    key,
+                    context,
+                    key,
+                )
+                continue
             if key in target:
                 logger.debug(
                     "Skipping user metric %r (%s): evaluator already set it to %r",
@@ -2893,6 +2915,25 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
         # Aggregate RAGAS metrics if applicable
         self._aggregate_ragas_metrics(example_results, aggregated_metrics)
+
+        # Surface tuple-supplied user metrics on the trial result. The custom-,
+        # LLM-, and RAGAS-aggregations above only cover keys the evaluator knows
+        # about (``self.metrics`` / token / cost), so user keys reach
+        # ``example_results[*].metrics`` but never ``result.metrics`` without
+        # this. Uses the SAME shared helper as the local/tracker path: reserved
+        # evaluator keys are skipped (warning-logged), already-present keys are
+        # never clobbered, and the total is capped at the MeasuresDict ceiling
+        # by truncating user keys only.
+        successful_example_metrics = [
+            metric
+            for metric, ex_result in zip(all_metrics, example_results, strict=False)
+            if metric and ex_result is not None and ex_result.is_successful
+        ]
+        aggregate_user_custom_metrics(
+            aggregated_metrics,
+            successful_example_metrics,
+            context="simple-scoring trial aggregation",
+        )
 
         aggregated_metrics.setdefault("examples_attempted", len(example_results))
 

@@ -20,6 +20,7 @@ from traigent.evaluators.metrics_tracker import (
     ExampleMetrics,
     MetricsCalculator,
     MetricsTracker,
+    enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
 from traigent.utils.exceptions import EvaluationError
@@ -966,25 +967,27 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             ExampleMetrics for this output
         """
-        # Strict 2-tuple unpack: a (output, numeric-metrics) return becomes
-        # output[0] for ALL downstream purposes (LLM/meta extraction, accuracy,
-        # scoring). This is idempotent: in detailed mode the boundary already
-        # unpacked actual_output, so this is a no-op there; in non-detailed mode
-        # the raw tuple still rides ``outputs`` and is unpacked here. Any other
-        # shape is left untouched (back-compat).
-        output, unpacked_user_metrics = self._unpack_user_metrics(output)
-
         # Per-example user metrics: prefer the carrier the boundary already
-        # attached to the ExampleResult (detailed mode); fall back to the
-        # value unpacked here (non-detailed mode).
-        user_metrics = unpacked_user_metrics
+        # attached to the ExampleResult (detailed mode). When the carrier is
+        # present the output was ALREADY unpacked upstream, so re-unpacking here
+        # would double-unpack a nested matching tuple — e.g. an output of
+        # ``("inner", {"x": 1.0})`` would be split again into ``"inner"`` and a
+        # spurious ``{"x": 1.0}``. We therefore unpack HERE only when the
+        # carrier is absent (the genuinely non-detailed lane, where ``outputs``
+        # still holds the raw tuple). Any non-matching shape is left untouched.
+        carrier = None
         if (
             example_results
             and index < len(example_results)
             and example_results[index] is not None
             and getattr(example_results[index], "user_metrics", None) is not None
         ):
-            user_metrics = example_results[index].user_metrics
+            carrier = example_results[index]
+
+        if carrier is not None:
+            user_metrics = carrier.user_metrics
+        else:
+            output, user_metrics = self._unpack_user_metrics(output)
 
         # Extract LLM metrics
         example_metric = self._extract_llm_metrics_for_output(
@@ -1356,6 +1359,14 @@ class LocalEvaluator(BaseEvaluator):
         self._merge_comprehensive_metrics(aggregated_metrics, comprehensive_metrics)
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
+
+        # Authoritative cap on the FINAL trial metrics: user keys (arriving via
+        # the per-example custom_metrics -> comprehensive_metrics merge above)
+        # must not push the union past the MeasuresDict ceiling. Only user keys
+        # are dropped; reserved evaluator keys are never sacrificed.
+        enforce_user_metric_ceiling(
+            aggregated_metrics, context="local trial aggregation"
+        )
 
         # Generate summary_stats for all modes except CLOUD (needed for insights)
         summary_stats = None

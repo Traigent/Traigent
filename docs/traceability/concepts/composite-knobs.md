@@ -214,13 +214,21 @@ def answer(text: str) -> tuple[str, dict[str, float]]:
 ```
 
 The evaluator unpacks a return that is EXACTLY a length-2 tuple
-`(output, metrics)` whose `metrics` is a `Mapping` with all-string keys and
-all-numeric (non-`bool`) values: `output` (element `[0]`) is used for accuracy,
-`actual_output`, and scoring, while `metrics` (element `[1]`) mean-aggregates
-across examples onto the trial — every other return shape is left untouched, so
-existing string/dict returns are unaffected. A user metric never overrides an
-evaluator-computed key (e.g. a user-supplied `accuracy` is skipped and the
-computed accuracy is kept).
+`(output, metrics)` whose `metrics` is a `Mapping` with all-identifier keys
+(every key is a string satisfying `str.isidentifier()`, matching the
+`MeasuresDict` wire contract — a key like `"bad-key"` makes the shape NOT match,
+so the raw tuple rides through untouched) and all-numeric (non-`bool`) values:
+`output` (element `[0]`) is used for accuracy, `actual_output`, and scoring,
+while `metrics` (element `[1]`) mean-aggregates across examples onto the trial —
+every other return shape is left untouched, so existing string/dict returns are
+unaffected. A user metric never overrides a reserved evaluator-computed key
+(`accuracy`, `success_rate`, `error_rate`, `avg_output_length`, `latency`,
+`cost`, `examples_attempted`, the token/cost aggregates, …): such keys are
+skipped (warning-logged) at every merge and aggregation site, regardless of
+ordering. The aggregated trial metrics are capped at the same
+`TOTAL_MEASURES_CEILING` (50) total keys as `merge_composite_measures` — only
+user keys are truncated (deterministically, warning-logged); evaluator keys are
+never dropped.
 
 On submission, the SDK splits off the reserved `measures` / `summary_stats`
 keys and validates the remaining numeric metrics (your `accuracy` plus the

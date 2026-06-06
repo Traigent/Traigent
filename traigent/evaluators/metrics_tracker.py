@@ -13,6 +13,14 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, cast
 
 from traigent._version import get_version
+
+# The backend ``MeasuresDict`` ceiling (≤ 50 total keys) is the single source of
+# truth for the per-trial metric cardinality cap. It lives in
+# ``traigent.knobs.telemetry`` (which has no evaluators dependency, so importing
+# it here is cycle-free) and is reused by ``merge_composite_measures`` for the
+# pre-merge path; this aggregation path mirrors the SAME semantics — user keys
+# are truncated, evaluator keys are never dropped.
+from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
 from traigent.utils.logging import get_logger
 
 # Initialize logger first
@@ -33,6 +41,211 @@ except Exception:
     calculate_completion_cost = None  # type: ignore[assignment]
 
 TOKENCOST_AVAILABLE = _TOKENCOST_AVAILABLE
+
+#: Evaluator/tracker-computed metric keys that user-supplied per-example metrics
+#: (e.g. the ``(output, metrics_dict)`` tuple channel) MUST NEVER overwrite,
+#: at ANY merge or aggregation site, regardless of merge ordering or
+#: ``setdefault`` timing. Derived from what actually lands in a trial's metrics:
+#:
+#: * the metric registry built-ins (``BaseEvaluator._metric_registry``):
+#:   ``accuracy``, ``success_rate``, ``error_rate``, ``avg_output_length``,
+#:   ``cost``, ``latency`` (plus the per-example ``success`` flag);
+#: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
+#:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
+#:   ``response_time_ms``, ``cost``, ``total_examples``, ``successful_examples``,
+#:   ``tokens_per_second``;
+#: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
+#:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
+#:   ``total_cost``, ``avg_response_time``, ``avg_response_time_ms``;
+#: * standard/LLM per-example keys and lifecycle counters: ``input_cost``,
+#:   ``output_cost``, ``total_cost``, ``examples_attempted``,
+#:   ``examples_consumed``, ``execution_time_ms``.
+RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
+    {
+        # Metric-registry built-ins + per-example success flag.
+        "accuracy",
+        "success",
+        "success_rate",
+        "error_rate",
+        "avg_output_length",
+        "cost",
+        "latency",
+        "score",
+        # format_for_backend / summary outputs.
+        "duration",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "response_time_ms",
+        "total_examples",
+        "successful_examples",
+        "tokens_per_second",
+        # LLM aggregation + per-example cost/token detail.
+        "prompt_tokens",
+        "completion_tokens",
+        "input_cost",
+        "output_cost",
+        "total_cost",
+        "avg_response_time",
+        "avg_response_time_ms",
+        # Lifecycle counters / timing.
+        "examples_attempted",
+        "examples_consumed",
+        "execution_time_ms",
+    }
+)
+
+
+def is_reserved_metric_key(key: str) -> bool:
+    """Return ``True`` if ``key`` is an evaluator/tracker-computed metric.
+
+    User-supplied per-example metrics must never overwrite a reserved key; see
+    :data:`RESERVED_METRIC_KEYS`.
+    """
+    return key in RESERVED_METRIC_KEYS
+
+
+def aggregate_user_custom_metrics(
+    target: dict[str, Any],
+    example_metric_dicts: Sequence[dict[str, Any]],
+    *,
+    context: str,
+) -> None:
+    """Mean-aggregate non-reserved user keys across examples into ``target``.
+
+    Shared by both the ``SimpleScoringEvaluator`` trial-aggregation path and
+    ``MetricsTracker._aggregate_user_custom_metrics`` so the tuple-return
+    metrics channel surfaces user keys identically on every public evaluator.
+
+    Semantics (fail-closed):
+
+    * a key in :data:`RESERVED_METRIC_KEYS` is skipped (the evaluator's own
+      computed value wins) and the skip is warning-logged — the user asked for
+      a key they cannot have;
+    * a key already present in ``target`` is left untouched (never clobbered);
+    * non-numeric / non-finite / ``bool`` values are skipped (the wire channel
+      carries finite numbers only);
+    * the resulting ``target`` is capped at :data:`TOTAL_MEASURES_CEILING`
+      TOTAL keys — only USER keys are truncated, deterministically in sorted
+      order, with the drop warning-logged; evaluator keys are never dropped,
+      mirroring ``merge_composite_measures``.
+    """
+    values_by_key: dict[str, list[float]] = {}
+    for metric in example_metric_dicts:
+        if not metric:
+            continue
+        for key, value in metric.items():
+            if key in target:
+                continue
+            if is_reserved_metric_key(key):
+                logger.warning(
+                    "Skipping user metric %r (%s): %r is a reserved "
+                    "evaluator-computed key and cannot be overwritten",
+                    key,
+                    context,
+                    key,
+                )
+                continue
+            if isinstance(value, bool) or value is None:
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(numeric):
+                continue
+            values_by_key.setdefault(key, []).append(numeric)
+
+    means = {
+        key: sum(values) / len(values)
+        for key, values in values_by_key.items()
+        if values
+    }
+    _merge_capped_user_means(target, means, context=context)
+
+
+def _merge_capped_user_means(
+    target: dict[str, Any],
+    user_means: dict[str, float],
+    *,
+    context: str,
+) -> None:
+    """Merge ``user_means`` into ``target`` under the total-key ceiling.
+
+    Only user keys are truncated (deterministic sorted order, warning-logged);
+    evaluator keys already in ``target`` are never dropped.
+    """
+    if not user_means:
+        return
+    budget = TOTAL_MEASURES_CEILING - len(target)
+    ordered_keys = sorted(user_means)
+    if budget <= 0:
+        logger.warning(
+            "%s: trial metrics already at the %d-key ceiling; ALL %d "
+            "user metric(s) dropped: %s",
+            context,
+            TOTAL_MEASURES_CEILING,
+            len(ordered_keys),
+            ordered_keys[:10],
+        )
+        return
+    if len(ordered_keys) > budget:
+        kept = ordered_keys[:budget]
+        dropped = ordered_keys[budget:]
+        logger.warning(
+            "%s: user metrics would exceed the %d-key ceiling; %d user key(s) "
+            "dropped deterministically: %s",
+            context,
+            TOTAL_MEASURES_CEILING,
+            len(dropped),
+            dropped[:10],
+        )
+        ordered_keys = kept
+    for key in ordered_keys:
+        target[key] = user_means[key]
+
+
+def enforce_user_metric_ceiling(target: dict[str, Any], *, context: str) -> None:
+    """Clamp ``target`` to :data:`TOTAL_MEASURES_CEILING` TOTAL keys in place.
+
+    The cap mirrors ``merge_composite_measures``: only NON-reserved (user) keys
+    are dropped — deterministically, in sorted order, warning-logged — so the
+    reserved evaluator-computed keys are never sacrificed to fit the ceiling.
+    This is the authoritative cap for a lane whose user keys arrive via an
+    intermediate dict (e.g. the local lane's ``comprehensive_metrics``), where
+    capping the intermediate dict alone cannot bound the final union.
+    """
+    if len(target) <= TOTAL_MEASURES_CEILING:
+        return
+    user_keys = sorted(k for k in target if not is_reserved_metric_key(k))
+    overflow = len(target) - TOTAL_MEASURES_CEILING
+    if overflow <= 0:
+        return
+    # Drop the LAST `overflow` user keys (deterministic sorted order); reserved
+    # keys are never eligible for dropping.
+    droppable = user_keys[len(user_keys) - min(overflow, len(user_keys)) :]
+    for key in droppable:
+        del target[key]
+    if droppable:
+        logger.warning(
+            "%s: trial metrics exceeded the %d-key ceiling; %d user key(s) "
+            "dropped deterministically: %s",
+            context,
+            TOTAL_MEASURES_CEILING,
+            len(droppable),
+            droppable[:10],
+        )
+    if len(target) > TOTAL_MEASURES_CEILING:
+        # All remaining overflow is reserved keys (never dropped): the evaluator
+        # itself produced more than the ceiling. Surface loudly; do not silently
+        # exceed the contract by dropping computed keys.
+        logger.warning(
+            "%s: %d reserved evaluator key(s) leave the trial metrics above the "
+            "%d-key ceiling; reserved keys are never dropped",
+            context,
+            len(target) - TOTAL_MEASURES_CEILING,
+            TOTAL_MEASURES_CEILING,
+        )
 
 
 @dataclass
@@ -332,64 +545,23 @@ class MetricsTracker:
 
         return formatted
 
-    #: Keys ``format_for_backend`` already produces via dedicated, non-mean
-    #: aggregation (accuracy/score by mean elsewhere; tokens/cost as the
-    #: tracker's own statistics). User custom keys outside this set are
-    #: mean-aggregated as-is.
-    _RESERVED_BACKEND_METRIC_KEYS = frozenset(
-        {
-            "score",
-            "accuracy",
-            "success",
-            "duration",
-            "input_tokens",
-            "output_tokens",
-            "total_tokens",
-            "response_time_ms",
-            "cost",
-            "input_cost",
-            "output_cost",
-            "total_cost",
-            "tokens_per_second",
-            "total_examples",
-            "successful_examples",
-        }
-    )
-
     def _aggregate_user_custom_metrics(self, formatted: dict[str, Any]) -> None:
         """Mean-aggregate non-reserved custom metrics into ``formatted``.
 
-        Mirrors the accuracy mean-aggregation in ``format_for_backend``: for
-        every custom-metric key that is NOT a reserved/standard key, average
-        its finite numeric values across the successful examples and write the
-        mean into ``formatted``. Non-numeric or non-finite values are skipped
-        (the wire channel carries finite numbers only). Reserved keys already
-        present in ``formatted`` are never overwritten.
+        Delegates to the shared :func:`aggregate_user_custom_metrics` helper so
+        the tuple-return metrics channel behaves identically on every public
+        evaluator path: reserved evaluator-computed keys are skipped (never
+        overwritten), already-present keys are left untouched, non-finite values
+        are dropped, and the total key count is capped at
+        :data:`TOTAL_MEASURES_CEILING` by truncating user keys only.
         """
         if not self.example_metrics:
             return
-
-        values_by_key: dict[str, list[float]] = {}
-        for metric in self.example_metrics:
-            if not metric.success:
-                continue
-            for key, value in metric.custom_metrics.items():
-                if key in self._RESERVED_BACKEND_METRIC_KEYS:
-                    continue
-                if isinstance(value, bool) or value is None:
-                    continue
-                try:
-                    numeric = float(value)
-                except (TypeError, ValueError):
-                    continue
-                if not math.isfinite(numeric):
-                    continue
-                values_by_key.setdefault(key, []).append(numeric)
-
-        for key, values in values_by_key.items():
-            if not values or key in formatted:
-                continue
-            formatted[key] = sum(values) / len(values)
+        aggregate_user_custom_metrics(
+            formatted,
+            [m.custom_metrics for m in self.example_metrics if m.success],
+            context="format_for_backend user metrics",
+        )
 
     def _empty_backend_format(self) -> dict[str, Any]:
         """Return empty backend format structure when error occurs."""
@@ -1079,7 +1251,7 @@ def _calculate_cost_for_metrics(
             )
     except Exception as e:
         logger.error(
-            "Cost calculation failed for model %s: %s " "(tokens: in=%d, out=%d)",
+            "Cost calculation failed for model %s: %s (tokens: in=%d, out=%d)",
             model_name,
             e,
             metrics.tokens.input_tokens,
