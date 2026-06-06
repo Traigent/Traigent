@@ -6105,7 +6105,6 @@ all = [
     { name = "hypothesis" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
-    { name = "langchain-chroma" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-google-genai" },
@@ -6149,6 +6148,9 @@ analytics = [
 bayesian = [
     { name = "scikit-learn" },
     { name = "scipy" },
+]
+chroma = [
+    { name = "langchain-chroma" },
 ]
 cloud = [
     { name = "boto3" },
@@ -6206,7 +6208,6 @@ enterprise = [
     { name = "hypothesis" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
-    { name = "langchain-chroma" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-google-genai" },
@@ -6256,7 +6257,6 @@ integrations = [
     { name = "groq" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
-    { name = "langchain-chroma" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-google-genai" },
@@ -6296,7 +6296,6 @@ recommended = [
     { name = "httpx", extra = ["http2"] },
     { name = "langchain" },
     { name = "langchain-anthropic" },
-    { name = "langchain-chroma" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-google-genai" },
@@ -6377,7 +6376,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.0.0" },
     { name = "langchain", marker = "extra == 'integrations'", specifier = ">=0.0.200" },
     { name = "langchain-anthropic", marker = "extra == 'integrations'", specifier = ">=0.2.0" },
-    { name = "langchain-chroma", marker = "extra == 'integrations'", specifier = ">=0.2.5" },
+    { name = "langchain-chroma", marker = "extra == 'chroma'", specifier = ">=0.2.5" },
     { name = "langchain-community", marker = "extra == 'integrations'", specifier = ">=0.3.27" },
     { name = "langchain-core", marker = "extra == 'integrations'", specifier = ">=1.2.28" },
     { name = "langchain-google-genai", marker = "extra == 'integrations'", specifier = ">=2.1.4" },
@@ -6445,7 +6444,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'security'", specifier = ">=0.18.0" },
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
 ]
-provides-extras = ["analytics", "bayesian", "integrations", "dspy", "pydanticai", "security", "visualization", "hybrid", "mcp", "internal-schema", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
+provides-extras = ["analytics", "bayesian", "integrations", "chroma", "dspy", "pydanticai", "security", "visualization", "hybrid", "mcp", "internal-schema", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
 
 [[package]]
 name = "traigent-schema"
