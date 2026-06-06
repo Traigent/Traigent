@@ -73,7 +73,6 @@ integrations = [
     "langchain-community>=0.3.27",
     "langchain-anthropic>=0.2.0",
     "langchain-openai>=1.1.14",  # GHSA-r7w7-9xr2-qq2r (SSRF) fix
-    "langchain-chroma>=0.2.5",
     "langchain-text-splitters>=0.3.8",  # Document chunking for RAG
     "langchain-google-genai>=2.1.4",  # Google Gemini support via LangChain
     "openai>=2.0.0",
@@ -88,6 +87,13 @@ integrations = [
     "boto3>=1.28.0",
     "botocore>=1.31.0",
     "faiss-cpu>=1.7.0; sys_platform != 'win32'",  # RAG vector search (not available on Windows)
+]
+
+# Chroma is explicit opt-in while chromadb has no patched release for
+# GHSA-f4j7-r4q5-qw2c / CVE-2026-45829. Do not add this to broad bundles until
+# the advisory publishes a first_patched_version and the lock resolves to it.
+chroma = [
+    "langchain-chroma>=0.2.5",
 ]
 
 # DSPy prompt optimization integration
@@ -209,16 +215,19 @@ cloud = [
 
 # Recommended bundle for end users — everything needed to run optimizations
 # out of the box without dev/test/docs overhead
+# Excludes chroma until chromadb has a patched release for CVE-2026-45829.
 recommended = [
     "traigent[integrations,analytics,bayesian,visualization,hybrid,pydanticai]",
 ]
 
 # All optional features combined (playground/examples moved to TraigentDemo)
+# Excludes chroma until chromadb has a patched release for CVE-2026-45829.
 all = [
     "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
 ]
 
 # Enterprise bundle with all features (playground/examples moved to TraigentDemo)
+# Excludes chroma until chromadb has a patched release for CVE-2026-45829.
 enterprise = [
     "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
 ]

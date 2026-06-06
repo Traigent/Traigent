@@ -1,0 +1,6 @@
+# Traigent SDK Chroma integration dependencies
+# Opt-in only while chromadb has no patched release for CVE-2026-45829.
+
+-r requirements.txt
+
+langchain-chroma>=0.2.5
