@@ -55,6 +55,22 @@ jobs:
           TRAIGENT_MOCK_LLM: "true"
           TRAIGENT_OFFLINE_MODE: "true"
 
+      - name: Run MCP coverage append
+        run: |
+          pip install -e ".[mcp]"
+          pytest tests/unit/mcp/test_local_server.py \
+            --cov=traigent \
+            --cov-append \
+            --cov-report=xml \
+            --cov-report=term \
+            -q \
+            --timeout=30 \
+            || true
+        timeout-minutes: 5
+        env:
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602  # v6
         env:
