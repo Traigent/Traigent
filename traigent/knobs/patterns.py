@@ -63,6 +63,7 @@ __all__ = [
     "self_debug",
     "self_refine",
     "react_tool_loop",
+    "verification_gate",
 ]
 
 #: §3.10 standard telemetry measure names, per constructor kind. Content-free:
@@ -564,6 +565,101 @@ def react_tool_loop(
             ),
             state_keys=state_keys,
             max_iters=max_tool_calls,
+        ),
+        provenance=prov,
+    )
+    return CompositeKnob(
+        name=name,
+        structure=structure,
+        members=dict(members or {}),
+        provenance=prov,
+        telemetry_names=_TELEMETRY[CompositeKind.LOOP],
+    )
+
+
+def verification_gate(
+    name: str,
+    *,
+    stage: str,
+    verifier_signal: str,
+    verifier_pass_threshold: str,
+    verification_style: str,
+    verification_question_count: str,
+    verifier_model: str,
+    independent_context: str,
+    revision_policy: str,
+    max_iters: int = 2,
+    state_keys: tuple[str, ...] = (
+        "draft",
+        "verification_questions",
+        "verification_answers",
+        "verifier_pass_score",
+        "contradiction_score",
+        "revision",
+        "independent_context",
+    ),
+    signal_inputs: tuple[str, ...] = (
+        "draft",
+        "verification_answers",
+        "independent_context",
+    ),
+    contradiction_score_max: str | None = None,
+    members: dict[str, Knob[Any]] | None = None,
+) -> CompositeKnob:
+    """CoVe-style verifier loop: ``signal_accept(verifier_signal, θ)``.
+
+    This is a loop-family catalog macro over the sealed IR: the stage produces
+    threaded verification state, then the verifier signal accepts when
+    ``verifier_signal(state) >= verifier_pass_threshold``. Exhaustion yields
+    the runtime's ordinary ``no_accept`` result.
+
+    Not expressible in v1: a simultaneous ``contradiction_score_max`` stop, dual
+    verifier-pass plus improvement/contradiction thresholds on one loop
+    decision, or a tuned structural repair bound such as ``max_repair_rounds``;
+    ``max_iters`` is the literal IR bound.
+    """
+    if contradiction_score_max is not None:
+        raise ValueError(
+            "unsupported_compound_stop: verification_gate cannot express "
+            "contradiction_score_max until the loop IR supports compound stop "
+            "decisions"
+        )
+
+    stage_tuned_params = (
+        verification_style,
+        verification_question_count,
+        verifier_model,
+        independent_context,
+        revision_policy,
+    )
+    params = {
+        "name": name,
+        "stage": stage,
+        "verifier_signal": verifier_signal,
+        "verifier_pass_threshold": verifier_pass_threshold,
+        "verification_style": verification_style,
+        "verification_question_count": verification_question_count,
+        "verifier_model": verifier_model,
+        "independent_context": independent_context,
+        "revision_policy": revision_policy,
+        "max_iters": max_iters,
+        "state_keys": list(state_keys),
+        "signal_inputs": list(signal_inputs),
+        "contradiction_score_max": contradiction_score_max,
+    }
+    prov = _provenance("verification_gate", params)
+    structure = CompositeNode(
+        name=name,
+        kind=CompositeKind.LOOP,
+        body=LoopBody(
+            body=StageArm(stage, stage_tuned_params),
+            stop=StopDecl(
+                kind=StopKind.SIGNAL_ACCEPT,
+                threshold=verifier_pass_threshold,
+                signal=SignalUse(signal=verifier_signal, inputs=signal_inputs),
+            ),
+            state_keys=state_keys,
+            max_iters=max_iters,
         ),
         provenance=prov,
     )
