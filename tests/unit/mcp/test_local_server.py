@@ -82,8 +82,8 @@ async def test_tool_listing_matches_v1_set() -> None:
         result = await session.list_tools()
 
     assert [tool.name for tool in result.tools] == list(V1_TOOL_NAMES)
-    assert "scaffold_eval" not in {tool.name for tool in result.tools}
-    assert "export_evidence" not in {tool.name for tool in result.tools}
+    assert "scaffold_eval" in {tool.name for tool in result.tools}
+    assert "export_evidence" in {tool.name for tool in result.tools}
     assert "significant_variables" not in {tool.name for tool in result.tools}
     assert "generate_examples" not in {tool.name for tool in result.tools}
 
@@ -151,6 +151,40 @@ async def test_detect_validate_and_estimate_happy_paths(
     assert any("max_trials * dataset" in item for item in estimate["assumptions"])
 
 
+async def test_scaffold_eval_creates_draft_dataset_and_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    async with mcp_session() as session:
+        scaffolded = await call_tool(
+            session,
+            "scaffold_eval",
+            {
+                "agent_type": "rag",
+                "output_path": "evals/eval.draft.jsonl",
+                "example_count": 2,
+            },
+        )
+
+    assert scaffolded["ok"] is True
+    assert scaffolded["approval_status"] == "draft"
+    assert scaffolded["evidence_status"] == "draft_evidence"
+    assert scaffolded["validation"]["ok"] is True
+
+    dataset_path = Path(scaffolded["dataset_path"])
+    manifest_path = Path(scaffolded["manifest_path"])
+    assert dataset_path.exists()
+    assert manifest_path.exists()
+    assert len(dataset_path.read_text(encoding="utf-8").splitlines()) == 2
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "traigent.eval_provenance.v1"
+    assert manifest["approval_status"] == "draft"
+    assert manifest["provenance"] == "draft_scaffold"
+
+
 async def test_run_optimization_refusal_matrix_and_mock_happy_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -203,6 +237,137 @@ async def test_run_optimization_refusal_matrix_and_mock_happy_path(
 
     assert shown["ok"] is True
     assert shown["result"]["best_config"] is not None
+
+
+async def test_run_optimization_real_refuses_unapproved_draft_eval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    agent_file = tmp_path / "agent.py"
+    write_fixture_agent(agent_file)
+
+    async with mcp_session() as session:
+        scaffolded = await call_tool(
+            session,
+            "scaffold_eval",
+            {"output_path": "eval.draft.jsonl"},
+        )
+        result = await call_tool(
+            session,
+            "run_optimization",
+            {
+                "script_path": "agent.py",
+                "mode": "real",
+                "confirm": True,
+                "cost_limit": 5.0,
+            },
+        )
+
+    assert scaffolded["ok"] is True
+    assert result["ok"] is False
+    assert result["refused"] is True
+    assert result["code"] == "draft_eval_unapproved"
+    assert result["unapproved_evals"][0]["approval_status"] == "draft"
+    assert "results" not in result
+
+
+async def test_run_optimization_real_allows_user_approved_eval_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    agent_file = tmp_path / "agent.py"
+    write_fixture_agent(agent_file)
+
+    async with mcp_session() as session:
+        scaffolded = await call_tool(
+            session,
+            "scaffold_eval",
+            {"output_path": "eval.draft.jsonl"},
+        )
+
+        manifest_path = Path(scaffolded["manifest_path"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["approval_status"] = "user_approved"
+        manifest["approved_by"] = "pytest"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        def fake_run(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], str, str]:
+            return (
+                [
+                    {
+                        "function_name": "answer",
+                        "result_name": "answer_fake_real",
+                        "algorithm": "random",
+                        "best_config": {"temperature": 0.0},
+                        "best_score": 1.0,
+                        "best_metrics": {"accuracy": 1.0},
+                        "total_trials": 1,
+                        "successful_trials": 1,
+                        "stop_reason": None,
+                        "duration": 0.1,
+                    }
+                ],
+                "",
+                "",
+            )
+
+        monkeypatch.setattr("traigent.utils.env_config.is_mock_llm", lambda: False)
+        monkeypatch.setattr("traigent.mcp.tools._run_loaded_optimizations", fake_run)
+
+        result = await call_tool(
+            session,
+            "run_optimization",
+            {
+                "script_path": "agent.py",
+                "mode": "real",
+                "confirm": True,
+                "cost_limit": 5.0,
+                "max_trials": 1,
+            },
+        )
+
+    assert result["ok"] is True
+    assert result["mode"] == "real"
+    assert result["results"][0]["result_name"] == "answer_fake_real"
+
+
+async def test_export_evidence_labels_unapproved_scaffold_as_draft(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    agent_file = tmp_path / "agent.py"
+    write_fixture_agent(agent_file)
+
+    async with mcp_session() as session:
+        scaffolded = await call_tool(session, "scaffold_eval")
+        mock_run = await call_tool(
+            session,
+            "run_optimization",
+            {"script_path": "agent.py", "max_trials": 2, "algorithm": "random"},
+        )
+        exported = await call_tool(
+            session,
+            "export_evidence",
+            {"result_name": mock_run["results"][0]["result_name"]},
+        )
+
+    assert scaffolded["ok"] is True
+    assert mock_run["ok"] is True
+    assert exported["ok"] is True
+    assert exported["evidence_status"] == "draft_evidence"
+    assert exported["dataset_approval"]["approval_status"] == "draft"
+
+    json_path = Path(exported["json_path"])
+    markdown_path = Path(exported["markdown_path"])
+    assert json_path.exists()
+    assert markdown_path.exists()
+    bundle = json.loads(json_path.read_text(encoding="utf-8"))
+    assert bundle["schema_version"] == "traigent.evidence_bundle.v1"
+    assert bundle["evidence_status"] == "draft_evidence"
+    assert bundle["dataset_approval"]["unapproved_manifests"]
 
 
 async def test_auth_status_masks_api_key(
