@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Composite telemetry rides the measures channel.** `composite_measures(run)`
+  (`traigent.knobs.telemetry`, re-exported from `traigent.knobs`) flattens a composite
+  run's RFC 0002 §3.10 content-free telemetry — `escalation_rate`, `stage_selected`, and
+  the per-gate `gate_margin_pass_rate` map — into flat, identifier-safe, numeric-only keys
+  (e.g. `composite_escalation_rate`, `composite_stage_selected`,
+  `composite_gate_0_margin_pass_rate`). Merge it into the metrics your decorated function
+  returns and the `composite_*` keys ride the existing per-trial measures wire channel as
+  ordinary numeric metrics — no new wire surface. Keys are capped with headroom below the
+  backend `MeasuresDict` 50-key ceiling (truncated deterministically with a logged warning,
+  never raised mid-trial), and the output is content-free by construction (the adapter reads
+  `run.measures` only, never `run.output`). New docs page
+  `docs/concepts/composite-knobs.md` covers the pattern catalog, executing a composite,
+  certified selection with a `binary_cascade`, and telemetry-to-measures; runnable offline
+  example at `examples/advanced/composite-knobs/composite_telemetry.py`.
+
 ### Changed
 - **Unpriced models now block instead of warn-and-continue.** When a real run includes
   models with no known pricing, the SDK now requires explicit confirmation: interactive

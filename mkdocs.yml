@@ -47,6 +47,7 @@ nav:
   - Concepts:
       - Guided Generation: concepts/guided-generation.md
       - Composite-Knob IR: concepts/composite-knob-ir.md
+      - Composite Knobs (Execution & Telemetry): concepts/composite-knobs.md
       - Configuration Spaces: user-guide/configuration-spaces.md
       - Constraint Expressions: tvl/CONSTRAINT_EXPRESSIONS.md
       - Dataflow Detection: features/dataflow-detection.md
