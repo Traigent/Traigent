@@ -141,6 +141,7 @@ from langchain_core.runnables import RunnablePassthrough
         ],
     },
     objectives=["accuracy"],
+    eval_dataset="rag_eval.jsonl",
     max_trials=12,
 )
 def rag_answer(question):
@@ -169,7 +170,7 @@ def rag_answer(question):
     )
     return chain.invoke(question)
 
-results = rag_answer.optimize(dataset="rag_eval.jsonl")
+results = rag_answer.optimize()
 ```
 
 ## Programmatic Framework Override API

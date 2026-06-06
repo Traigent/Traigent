@@ -9,10 +9,10 @@ Complete reference of environment variables recognized by the Traigent SDK.
 | `TRAIGENT_MOCK_LLM`               | `false`         | When `true`, mocks all LLM API calls. No provider API keys needed. Use for development and testing. |
 | `TRAIGENT_OFFLINE_MODE`            | `false`         | When `true`, skips all backend communication. Use for local-only development.                       |
 | `TRAIGENT_RUN_COST_LIMIT`         | `2.0`           | Maximum cost budget (in USD) per optimization run. Optimization stops when this limit is reached.    |
-| `TRAIGENT_COST_APPROVED`          | `false`         | When `true`, skips the interactive cost confirmation prompt before starting optimization.            |
+| `TRAIGENT_COST_APPROVED`          | `false`         | Exact value `true` pre-approves both the cost-limit prompt and unpriced-model preflight. `1`, `yes`, and `on` do not approve. |
 | `TRAIGENT_SKIP_PROVIDER_VALIDATION`| `false`        | When `true`, skips API key validation at decoration time. Useful in CI environments.                |
 | `TRAIGENT_VALIDATION_TIMEOUT`     | `5.0`           | Timeout in seconds for provider API key validation checks.                                          |
-| `TRAIGENT_STRICT_COST_ACCOUNTING` | `false`         | When `true`, enables strict cost tracking. Cost overruns raise errors instead of warnings.          |
+| `TRAIGENT_STRICT_COST_ACCOUNTING` | `false`         | Exact value `true` fails fast before trial 1 on unpriced models and when runtime cost extraction is missing or unknown. |
 | `TRAIGENT_LOG_LEVEL`              | `INFO`          | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                    |
 | `TRAIGENT_DEBUG`                  | (unset)         | When set to `1`, shows full tracebacks for `ConfigurationError` instead of user-friendly messages.  |
 | `TRAIGENT_STRICT_VALIDATION`      | `true`          | When `true`, DTO schema validation raises exceptions. When `false`, logs warnings only.             |
@@ -54,6 +54,11 @@ export TRAIGENT_SKIP_PROVIDER_VALIDATION=true
 pytest tests/
 ```
 
+`TRAIGENT_COST_APPROVED=true` must be the exact value `true`. It acknowledges
+cost-sensitive execution for both cost-limit confirmation and unpriced-model
+coverage warnings; it does not supply pricing. Runtime `cost_approved=True` must
+be a real boolean, because string values are ignored and logged as warnings.
+
 ### Production with Cost Controls
 
 ```bash
@@ -64,6 +69,13 @@ export TRAIGENT_COST_APPROVED=true
 export TRAIGENT_LOG_LEVEL=WARNING
 python optimize_production.py
 ```
+
+Unpriced models block before trial 1 unless cost-sensitive execution is
+pre-approved: an interactive terminal prompts `y/N`, and non-interactive runs
+fail closed. Mock LLM mode skips the optimized-function pricing preflight, but
+it does not disable cost permits or accounting globally. Budget overruns are
+controlled by `TRAIGENT_RUN_COST_LIMIT` / `CostLimitExceeded`, not strict cost
+accounting.
 
 ### Portal-Tracked Hybrid Runs
 

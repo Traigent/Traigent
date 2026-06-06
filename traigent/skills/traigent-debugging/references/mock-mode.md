@@ -165,6 +165,7 @@ import traigent
         "temperature": [0.0, 0.5, 1.0],
     },
     objectives=["accuracy"],
+    eval_dataset="data.jsonl",
     max_trials=3,
 )
 def my_func(text):
@@ -172,7 +173,7 @@ def my_func(text):
     return f"Response using {config['model']}"
 
 # Quick validation run
-results = my_func.optimize(dataset="data.jsonl")
+results = my_func.optimize()
 
 print(f"Ran {len(results.trials)} trials")
 print(f"Stop reason: {results.stop_reason}")

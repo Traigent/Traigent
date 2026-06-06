@@ -1,7 +1,7 @@
 ---
 name: traigent-integrations
 description: "Integrate Traigent with LangChain, LiteLLM, DSPy, and other AI frameworks. Use when importing langchain/litellm/dspy alongside traigent, setting up multi-provider model testing, using auto_override_frameworks, or asking about framework-specific adapter patterns."
-license: Apache-2.0
+license: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
 metadata:
   author: Traigent
   version: "1.0"
@@ -50,6 +50,7 @@ from langchain_core.prompts import ChatPromptTemplate
         "temperature": [0.0, 0.3, 0.7, 1.0],
     },
     objectives=["accuracy"],
+    eval_dataset="questions.jsonl",
     max_trials=10,
 )
 def answer_question(question):
@@ -68,7 +69,7 @@ def answer_question(question):
     response = chain.invoke({"question": question})
     return response.content
 
-results = answer_question.optimize(dataset="questions.jsonl")
+results = answer_question.optimize()
 ```
 
 ### Auto Override Frameworks
@@ -132,6 +133,7 @@ import litellm
         "max_tokens": [256, 512, 1024],
     },
     objectives=["accuracy"],
+    eval_dataset="classification_eval.jsonl",
     max_trials=15,
 )
 def classify_text(text):
@@ -145,7 +147,7 @@ def classify_text(text):
     )
     return response.choices[0].message.content
 
-results = classify_text.optimize(dataset="classification_eval.jsonl")
+results = classify_text.optimize()
 
 # Check cost across providers
 for trial in results.successful_trials:
@@ -221,7 +223,7 @@ Log Traigent optimization results to MLflow for experiment tracking:
 ```python
 import mlflow
 
-results = func.optimize(dataset="data.jsonl")
+results = func.optimize()
 
 with mlflow.start_run():
     mlflow.log_param("algorithm", results.algorithm)
@@ -242,7 +244,7 @@ with mlflow.start_run():
 ```python
 import wandb
 
-results = func.optimize(dataset="data.jsonl")
+results = func.optimize()
 
 wandb.init(project="traigent-optimization")
 for trial in results.trials:
