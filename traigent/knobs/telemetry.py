@@ -199,14 +199,27 @@ def merge_composite_measures(
     """
     flattened = composite_measures(run, prefix=prefix)
 
-    collisions = sorted(set(metrics) & set(flattened))
+    # The namespace is reserved WHOLESALE (codex confirm round): ANY user key
+    # under '{prefix}_' is rejected, not merely the keys this run flattens —
+    # otherwise composite_user would merge beside composite_escalation_rate.
+    reserved_prefix = f"{prefix}_"
+    collisions = sorted(k for k in metrics if str(k).startswith(reserved_prefix))
     if collisions:
         raise ValueError(
-            f"metrics dict already carries reserved {prefix}_* key(s) "
-            f"{collisions[:5]} — the composite telemetry namespace is "
-            "reserved; rename the user metric(s) or choose another prefix"
+            f"metrics dict carries key(s) in the reserved '{reserved_prefix}*' "
+            f"namespace {collisions[:5]} — rename the user metric(s) or choose "
+            "another prefix"
         )
 
+    if len(metrics) > TOTAL_MEASURES_CEILING:
+        # User keys are never dropped, so an already-over-ceiling dict cannot
+        # be made submission-valid here — fail LOUD instead of returning a
+        # contract-violating dict (codex confirm round).
+        raise ValueError(
+            f"metrics dict already has {len(metrics)} keys — beyond the "
+            f"{TOTAL_MEASURES_CEILING}-key MeasuresDict ceiling; reduce your "
+            "own metrics before merging composite telemetry"
+        )
     budget = TOTAL_MEASURES_CEILING - len(metrics)
     if budget <= 0:
         logger.warning(

@@ -310,3 +310,25 @@ class TestCodexRoundBlockers:
         assert merged["accuracy"] == 0.9
         assert merged["composite_escalation_rate"] == 1.0
         assert merged["composite_stage_selected"] == 1
+
+
+class TestCodexConfirmResiduals:
+    def test_any_prefixed_user_key_is_rejected(self):
+        """The composite_* namespace is reserved WHOLESALE — not merely the
+        keys this run happens to flatten."""
+        from traigent.knobs.telemetry import merge_composite_measures
+
+        run = _run_with_measures({"escalation_rate": 1.0})
+        with pytest.raises(ValueError, match="reserved"):
+            merge_composite_measures({"composite_user": 9.0}, run)
+
+    def test_user_dict_already_over_ceiling_raises(self):
+        """A user dict ALREADY beyond the 50-key ceiling cannot be made valid
+        by truncating composite keys (user keys are never dropped) — fail
+        LOUD instead of returning a contract-violating dict."""
+        from traigent.knobs.telemetry import merge_composite_measures
+
+        run = _run_with_measures({"escalation_rate": 1.0})
+        over = {f"user_metric_{i}": float(i) for i in range(51)}
+        with pytest.raises(ValueError, match="ceiling|50"):
+            merge_composite_measures(over, run)
