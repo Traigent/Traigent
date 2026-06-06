@@ -8,7 +8,7 @@ merges the composite telemetry into an ordinary metrics dict.
 
 Run it::
 
-    python examples/advanced/composite-knobs/react_tool_loop_example.py
+    uv run python examples/advanced/composite-knobs/react_tool_loop_example.py
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ stages, and merges the emitted composite telemetry into ordinary metrics.
 
 Run it::
 
-    python examples/advanced/composite-knobs/router_example.py
+    uv run python examples/advanced/composite-knobs/router_example.py
 """
 
 from __future__ import annotations

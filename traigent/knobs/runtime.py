@@ -34,8 +34,10 @@ The result codomain is the §3.2.1 algebra (closed, total, disjoint), named once
 Telemetry (:attr:`CompositeRunResult.measures`) is the §3.10 content-free dict,
 per kind:
 
-- cascade: ``escalation_rate``, ``stage_selected``, per-gate (INDEX-keyed)
+- post-cascade: ``escalation_rate``, ``stage_selected``, per-gate (INDEX-keyed)
   ``gate_margin_pass_rate``;
+- pre-cascade dispatch/router: ``route_selected``, ``gate_signal_adequate``,
+  and, on gated selection, ``dispatch_signal_margin``;
 - ensemble: ``vote_agreement``, ``vote_margin``, ``candidates_evaluated``,
   ``candidates_excluded``;
 - loop: ``iterations_used``, ``stop_reason`` (enum over StopDecl kinds).

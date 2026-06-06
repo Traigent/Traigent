@@ -544,6 +544,13 @@ def react_tool_loop(
     algebra has no cost stop/gate or mid-loop budget hook, so this factory does
     not enforce cost stopping. Add a future cost-stop proposal before making
     that claim.
+
+    CALIBRATION RECIPE:
+    - CVAR ``tool_confidence_min`` binds ``calibration.signal`` to this
+      factory's ``signal`` arg.
+    - Target ``P(accepted state meets task target | sigma >= theta) >= p``
+      over held-out ReAct trajectories.
+    - ``depends_on`` must cover the body stage TVARs.
     """
     params = {
         "name": name,
@@ -620,6 +627,13 @@ def verification_gate(
     verifier-pass plus improvement/contradiction thresholds on one loop
     decision, or a tuned structural repair bound such as ``max_repair_rounds``;
     ``max_iters`` is the literal IR bound.
+
+    CALIBRATION RECIPE:
+    - CVAR ``verifier_pass_threshold`` binds ``calibration.signal`` to
+      ``verifier_signal``.
+    - Target ``P(accepted output satisfies verification target |
+      verifier_pass_score >= theta) >= p`` over held-out generate-verify
+      trajectories.
     """
     if contradiction_score_max is not None:
         raise ValueError(
@@ -693,18 +707,27 @@ def moe(
     either majority vote or ``judge_max``. Sampling-form cardinality is
     deliberately absent; use ``self_consistency``/``best_of_n`` for repeated
     draws from one generator.
+
+    CALIBRATION RECIPE:
+    - CVAR ``accept_threshold`` (vote form only) binds
+      ``calibration.signal='vote_margin'``.
+    - Target ``P(majority output correct | vote_margin >= theta) >= p`` with
+      all experts run once per item.
+    - ``depends_on`` covers all expert ``tuned_params``.
     """
     if (
         not isinstance(experts, tuple)
         or len(experts) < 2
         or any(not isinstance(expert, str) or not expert for expert in experts)
     ):
-        raise ValueError("moe experts must be at least two non-empty stage names")
+        raise ValueError(
+            "committee_arity: moe requires at least two non-empty expert stage names"
+        )
     if len(set(experts)) != len(experts):
-        raise ValueError("moe experts must be distinct")
+        raise ValueError("duplicate_stage: moe experts must be distinct")
 
     if aggregate not in {"vote", "judge"}:
-        raise ValueError("moe aggregate must be 'vote' or 'judge'")
+        raise ValueError("invalid_aggregate: moe aggregate must be 'vote' or 'judge'")
     if expert_tuned_params is None:
         expert_tuned_params = tuple(() for _ in experts)
     elif len(expert_tuned_params) != len(experts):
@@ -717,9 +740,14 @@ def moe(
 
     if aggregate == "vote":
         if judge_stage is not None:
-            raise ValueError("aggregate='vote' forbids judge_stage")
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='vote' forbids judge_stage"
+            )
         if judge_tuned_params:
-            raise ValueError("aggregate='vote' forbids judge_tuned_params")
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='vote' forbids "
+                "judge_tuned_params"
+            )
         aggregate_decl = AggregateDecl(
             kind=AggregateKind.MAJORITY_VOTE,
             accept=(
@@ -730,11 +758,18 @@ def moe(
         )
     else:
         if not isinstance(judge_stage, str) or not judge_stage:
-            raise ValueError("aggregate='judge' requires judge_stage")
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='judge' requires judge_stage"
+            )
         if judge_stage in experts:
-            raise ValueError("aggregate='judge' judge_stage must be distinct")
+            raise ValueError(
+                "duplicate_stage: aggregate='judge' judge_stage must be distinct"
+            )
         if accept_threshold is not None:
-            raise ValueError("aggregate='judge' does not support accept_threshold")
+            raise ValueError(
+                "aggregate_argument_mismatch: aggregate='judge' does not support "
+                "accept_threshold"
+            )
         aggregate_decl = AggregateDecl(
             kind=AggregateKind.JUDGE_MAX,
             judge=StageArm(judge_stage, judge_tuned_params),
@@ -808,6 +843,13 @@ def router(
     adequate signal selects its arm; an abstaining signal routes onward; a
     malformed or raising signal is an absorbing runtime error. The terminal arm
     is ungated.
+
+    CALIBRATION RECIPE:
+    - Each ``thresholds[i]`` CVAR is route-conditional:
+      ``calibration.signal=signals[i]``.
+    - Target ``P(arm_i adequate | sigma_i(x) >= theta_i) >= p`` on a
+      calibration split, verified on a held-out route-validation split.
+    - ``signal_inputs[i]`` must be freshness-covered.
     """
     if len(signals) != len(thresholds):
         raise ValueError(
@@ -881,6 +923,13 @@ def fallback(
     disagreement-based escalation; with the theta=0.0 convention leaf arms
     NEVER escalate. v1 fallback is no_accept-triggered, NOT error-triggered;
     errors stay absorbing.
+
+    CALIBRATION RECIPE:
+    - Each ``thresholds[i]`` CVAR is a margin-floor CVAR with
+      ``calibration.signal='vote_margin'``.
+    - The ``theta=0.0`` convention makes the margin gate inert so ONLY
+      ``no_accept`` escalates.
+    - Any ``theta > 0`` turns it into an ordinary margin cascade.
     """
     if tuned_params is None:
         tuned_params = tuple(() for _ in arms)

@@ -17,7 +17,7 @@ talks to NO backend. It demonstrates, end to end:
 
 Run it::
 
-    python examples/advanced/composite-knobs/composite_telemetry.py
+    uv run python examples/advanced/composite-knobs/composite_telemetry.py
 
 Environment (all optional; offline by default):
 

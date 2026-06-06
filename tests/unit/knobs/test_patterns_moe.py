@@ -11,9 +11,11 @@ from traigent.knobs.composites import (
     AggregateKind,
     CascadeBody,
     CompositeArm,
+    CompositeProgram,
     EnsembleBody,
     LoopBody,
     StageArm,
+    validate_program,
 )
 from traigent.knobs.patterns import CompositeKnob, moe
 from traigent.knobs.runtime import ResultKind, StageRunner, execute_composite
@@ -127,12 +129,23 @@ def _stage(outputs: list[str]) -> StageRunner:
     )
 
 
+MOE_ACCEPT_THRESHOLD = "patch_moe.vote_margin_min"
+MOE_EXPERT_TVARS = frozenset(
+    {
+        "repo_context_strategy",
+        "edit_granularity",
+        "test_selection_strategy",
+        "patch_review_mode",
+    }
+)
+
+
 def _moe_vote() -> CompositeKnob:
     return moe(
         "patch_moe",
         experts=("fast_patch", "semantic_patch", "test_driven_patch"),
         aggregate="vote",
-        accept_threshold="patch_moe.vote_margin_min",
+        accept_threshold=MOE_ACCEPT_THRESHOLD,
         expert_tuned_params=(
             ("repo_context_strategy", "edit_granularity"),
             ("repo_context_strategy",),
@@ -149,6 +162,29 @@ def _moe_judge() -> CompositeKnob:
         judge_stage="rubric_judge",
         expert_tuned_params=(("style",), ("tests",)),
         judge_tuned_params=("judge_rubric", "judge_model"),
+    )
+
+
+def _moe_vote_program(
+    *,
+    cvar_signals: dict[str, str | None] | None = None,
+    cvar_depends_on: dict[str, frozenset[str]] | None = None,
+) -> CompositeProgram:
+    return CompositeProgram(
+        composites={"patch_moe": _moe_vote().structure},
+        tvars=MOE_EXPERT_TVARS,
+        cvars=frozenset({MOE_ACCEPT_THRESHOLD}),
+        cvar_types={MOE_ACCEPT_THRESHOLD: "float"},
+        cvar_signals=(
+            {MOE_ACCEPT_THRESHOLD: "vote_margin"}
+            if cvar_signals is None
+            else cvar_signals
+        ),
+        cvar_depends_on=(
+            {MOE_ACCEPT_THRESHOLD: MOE_EXPERT_TVARS}
+            if cvar_depends_on is None
+            else cvar_depends_on
+        ),
     )
 
 
@@ -206,6 +242,34 @@ def test_moe_judge_expands_to_judge_max_with_judge_tuned_params() -> None:
     assert body.aggregate.judge.name == "rubric_judge"
     assert body.aggregate.judge.tuned_params == ("judge_rubric", "judge_model")
     assert body.aggregate.accept is None
+
+
+class TestMoeAcceptThresholdAdmission:
+    def test_missing_calibration_signal_binding_rejects(self) -> None:
+        program = _moe_vote_program(
+            cvar_signals={MOE_ACCEPT_THRESHOLD: None},
+        )
+
+        with pytest.raises(ValueError, match="missing_calibration_signal"):
+            validate_program(program)
+
+    def test_signal_mismatch_rejects(self) -> None:
+        program = _moe_vote_program(
+            cvar_signals={MOE_ACCEPT_THRESHOLD: "other_signal"},
+        )
+
+        with pytest.raises(ValueError, match="signal_mismatch"):
+            validate_program(program)
+
+    def test_missing_parent_coverage_rejects(self) -> None:
+        program = _moe_vote_program(
+            cvar_depends_on={
+                MOE_ACCEPT_THRESHOLD: MOE_EXPERT_TVARS - {"patch_review_mode"}
+            },
+        )
+
+        with pytest.raises(ValueError, match="missing_composite_parent"):
+            validate_program(program)
 
 
 def test_p8_canary_raw_params_do_not_enter_provenance() -> None:
@@ -275,21 +339,33 @@ def test_judge_runtime_uses_judge_tuned_params_declaration() -> None:
 @pytest.mark.parametrize(
     "kwargs,match",
     [
-        ({"experts": ("only",)}, "at least two"),
-        ({"experts": ("a", "")}, "non-empty"),
-        ({"experts": ("a", "a")}, "distinct"),
-        ({"experts": ("a", "b"), "aggregate": "rank"}, "aggregate"),
+        ({"experts": ("only",)}, r"^committee_arity"),
+        ({"experts": ("a", "")}, r"^committee_arity"),
+        ({"experts": ("a", "a")}, r"^duplicate_stage"),
+        ({"experts": ("a", "b"), "aggregate": "rank"}, r"^invalid_aggregate"),
         (
             {"experts": ("a", "b"), "expert_tuned_params": (("x",),)},
-            "exactly one tuple per expert",
+            r"^invalid_tuned_param",
         ),
         (
             {"experts": ("a", "b"), "aggregate": "judge"},
-            "requires judge_stage",
+            r"^aggregate_argument_mismatch",
         ),
         (
             {"experts": ("a", "b"), "aggregate": "vote", "judge_stage": "j"},
-            "forbids judge_stage",
+            r"^aggregate_argument_mismatch",
+        ),
+        (
+            {
+                "experts": ("a", "b"),
+                "aggregate": "vote",
+                "judge_tuned_params": ("judge_rubric",),
+            },
+            r"^aggregate_argument_mismatch",
+        ),
+        (
+            {"experts": ("a", "b"), "aggregate": "judge", "judge_stage": "a"},
+            r"^duplicate_stage",
         ),
         (
             {
@@ -298,7 +374,7 @@ def test_judge_runtime_uses_judge_tuned_params_declaration() -> None:
                 "judge_stage": "j",
                 "accept_threshold": "theta",
             },
-            "accept_threshold",
+            r"^aggregate_argument_mismatch",
         ),
     ],
 )

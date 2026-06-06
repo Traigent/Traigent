@@ -7,7 +7,7 @@ reproducible.
 
 Run it::
 
-    python examples/advanced/composite-knobs/moe_example.py
+    uv run python examples/advanced/composite-knobs/moe_example.py
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ backend. It demonstrates:
 
 Run it::
 
-    python examples/advanced/composite-knobs/verification_gate_example.py
+    uv run python examples/advanced/composite-knobs/verification_gate_example.py
 """
 
 from __future__ import annotations
