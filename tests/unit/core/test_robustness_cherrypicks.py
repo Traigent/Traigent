@@ -37,6 +37,8 @@ from traigent.core.objectives import create_default_objectives
 def mock_backend_client() -> MagicMock:
     client = MagicMock()
     client.register_trial_start = AsyncMock(return_value=True)
+    # The backend mints a configuration_run id per call to next-trial.
+    client.request_trial_slot = AsyncMock(return_value="be_trial_slot_1")
     client._submit_trial_result_via_session = AsyncMock(return_value=True)
     client.get_session_mapping = Mock(
         return_value=MagicMock(experiment_run_id="run_test_123")
@@ -100,11 +102,11 @@ def _trial_result(trial_id: str = "trial-1") -> TrialResult:
 
 
 class TestStartedTrialsIdempotency:
-    """Second submit_trial call for the same (session, trial) pair must not
-    re-register the trial start with the backend."""
+    """Second submit_trial call for the same trial must reuse the backend slot
+    it already minted rather than burning a fresh next-trial slot."""
 
     @pytest.mark.asyncio
-    async def test_register_trial_start_runs_once_across_retries(
+    async def test_trial_slot_acquired_once_across_retries(
         self, manager: BackendSessionManager, mock_backend_client: MagicMock
     ) -> None:
         session_id = "sess-1"
@@ -114,16 +116,22 @@ class TestStartedTrialsIdempotency:
             manager, "_should_suppress_backend_warnings", return_value=False
         ):
             await manager.submit_trial(tr, session_id)
+            # First submit rebinds tr.trial_id to the backend slot; the retry
+            # for the SAME (now-backend) id must NOT request a new slot.
             await manager.submit_trial(tr, session_id)
 
-        assert mock_backend_client.register_trial_start.await_count == 1
-        assert (session_id, tr.trial_id) in manager._started_trials
+        assert mock_backend_client.request_trial_slot.await_count == 1
+        assert tr.trial_id == "be_trial_slot_1"
+        assert (session_id, "be_trial_slot_1") in manager._started_trials
+        assert manager.is_trial_backend_acknowledged(session_id, "be_trial_slot_1")
 
     @pytest.mark.asyncio
-    async def test_failed_registration_not_marked_as_started(
+    async def test_declined_slot_not_marked_as_acknowledged(
         self, manager: BackendSessionManager, mock_backend_client: MagicMock
     ) -> None:
-        mock_backend_client.register_trial_start = AsyncMock(return_value=False)
+        # Backend declines to mint a slot — fail closed: no submission, no ack,
+        # and the client trial id is left untouched.
+        mock_backend_client.request_trial_slot = AsyncMock(return_value=None)
 
         session_id = "sess-2"
         tr = _trial_result("trial-2")
@@ -134,8 +142,10 @@ class TestStartedTrialsIdempotency:
             await manager.submit_trial(tr, session_id)
             await manager.submit_trial(tr, session_id)
 
-        assert mock_backend_client.register_trial_start.await_count == 2
-        assert (session_id, tr.trial_id) not in manager._started_trials
+        assert mock_backend_client.request_trial_slot.await_count == 2
+        assert tr.trial_id == "trial-2"
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert not manager.is_trial_backend_acknowledged(session_id, "trial-2")
 
 
 class TestSessionMappingRecovery:

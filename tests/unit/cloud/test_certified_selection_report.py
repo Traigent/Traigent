@@ -104,14 +104,39 @@ class TestBuildCertifiedSelection:
         assert "0.5" not in blob
 
 
+class _AckManagerStub:
+    """Stand-in for BackendSessionManager's acknowledgment ledger."""
+
+    def __init__(self, acknowledged: set[tuple[str, str]]):
+        self._acked = acknowledged
+
+    def is_trial_backend_acknowledged(self, session_id, trial_id):
+        return (session_id, trial_id) in self._acked
+
+
 class _OrchestratorStub:
     """Minimal host for the real _build_certified_selection_report method."""
 
-    def __init__(self, *, strict, incumbent, resolver, promotions=1):
+    def __init__(
+        self,
+        *,
+        strict,
+        incumbent,
+        resolver,
+        promotions=1,
+        session_manager=None,
+        session_id=None,
+    ):
         self._strict = strict
         self._best_trial_cached = incumbent
         self.knob_resolver = resolver
         self._certified_promotions = promotions
+        # Default: no backend manager (local-only host) ⇒ ack guard is a
+        # no-op so the OTHER report conditions can be tested in isolation.
+        if session_manager is not None:
+            self.backend_session_manager = session_manager
+        if session_id is not None:
+            self._active_session_id = session_id
 
     def _is_strict_evidence_mode(self):
         return self._strict
@@ -215,6 +240,46 @@ class TestOrchestratorReportConditions:
             strict=True,
             incumbent=types.SimpleNamespace(trial_id="trial_7"),
             resolver=None,
+        )
+        assert _bind_report_method(stub)() is None
+
+    def test_report_built_when_incumbent_backend_acknowledged(self):
+        """With a backend session manager present, a report is built ONLY when
+        the incumbent's trial id was minted+acknowledged by the backend."""
+        stub = _OrchestratorStub(
+            strict=True,
+            incumbent=types.SimpleNamespace(trial_id="be_trial_7"),
+            resolver=_resolver(governed=True, with_certificate=True),
+            session_manager=_AckManagerStub({("sess-1", "be_trial_7")}),
+            session_id="sess-1",
+        )
+        report = _bind_report_method(stub)()
+        assert report is not None
+        assert report["trial_id"] == "be_trial_7"
+
+    def test_no_report_when_incumbent_not_backend_acknowledged(self):
+        """Fail closed (risk-register unbindable case): if the incumbent's
+        trial id was NEVER acknowledged by the backend, the winner cannot be
+        bound to a server record — send NO report, even though every other
+        certified-selection condition holds."""
+        stub = _OrchestratorStub(
+            strict=True,
+            incumbent=types.SimpleNamespace(trial_id="client_hash_unbound"),
+            resolver=_resolver(governed=True, with_certificate=True),
+            session_manager=_AckManagerStub(set()),  # nothing acknowledged
+            session_id="sess-1",
+        )
+        assert _bind_report_method(stub)() is None
+
+    def test_no_report_when_session_id_missing_under_backend_manager(self):
+        """A backend manager with no active session id cannot have acknowledged
+        any trial ⇒ withhold (fail closed)."""
+        stub = _OrchestratorStub(
+            strict=True,
+            incumbent=types.SimpleNamespace(trial_id="be_trial_7"),
+            resolver=_resolver(governed=True, with_certificate=True),
+            session_manager=_AckManagerStub({("sess-1", "be_trial_7")}),
+            session_id=None,
         )
         assert _bind_report_method(stub)() is None
 
