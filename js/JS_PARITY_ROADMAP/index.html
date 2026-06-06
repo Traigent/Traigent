@@ -1,0 +1,2452 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../MIGRATION_FROM_PYTHON/">
+      
+      
+        <link rel="next" href="../NATIVE_JS_PARITY_MATRIX/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>JS Parity Roadmap - Traigent JS SDK</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#js-parity-roadmap" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Traigent JS SDK" class="md-header__button md-logo" aria-label="Traigent JS SDK" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Traigent JS SDK
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              JS Parity Roadmap
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Traigent/traigent-js" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Traigent/traigent-js
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting-started/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../api-reference/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CLIENT_CODE_GUIDE/" class="md-tabs__link">
+          
+  
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../MIGRATION_FROM_PYTHON/" class="md-tabs__link">
+          
+  
+  
+  Migration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Parity & Status
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../SONAR_TRIAGE/" class="md-tabs__link">
+          
+  
+  
+  Internal
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Traigent JS SDK" class="md-nav__button md-logo" aria-label="Traigent JS SDK" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Traigent JS SDK
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Traigent/traigent-js" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Traigent/traigent-js
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/minimal-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Minimal Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/optimize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    optimize()
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/hybrid-session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/tvl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TVL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CLIENT_CODE_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Client Code Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../REAL_MODE_SEQUENCE_FLOW/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Real Mode Sequence Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Migration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MIGRATION_FROM_PYTHON/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parity & Status
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Parity & Status
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JS Parity Roadmap
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JS Parity Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status-label-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status Label Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prioritization-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prioritization Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p0-highest-product-gap-but-not-for-this-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0: Highest Product Gap, But Not For This Branch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P0: Highest Product Gap, But Not For This Branch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-guided-hybrid-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend-guided hybrid execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloudsessioncontrol-plane-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud/session/control-plane parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p1-highest-value-native-gaps-in-this-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1: Highest-Value Native Gaps In This Branch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P1: Highest-Value Native Gaps In This Branch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tvl-promotion-and-statistical-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TVL promotion and statistical semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-framework-override-ergonomics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto framework override ergonomics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broader-tvl-authoringruntime-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broader TVL authoring/runtime parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p2-valuable-but-secondary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2: Valuable, But Secondary
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P2: Valuable, But Secondary">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example concurrency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broader-optimizer-family-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broader optimizer family parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#richer-trial-taxonomy-and-pruning-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Richer trial taxonomy and pruning semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#global-config-access-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global config access parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p3-real-python-capabilities-but-not-yet-justified-to-copy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3: Real Python Capabilities, But Not Yet Justified To Copy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P3: Real Python Capabilities, But Not Yet Justified To Copy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#platform-enterprise-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Platform / enterprise families
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assisted-generation-and-discovery-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assisted generation and discovery families
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-wrapper-adapter-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server / wrapper / adapter families
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-execution-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Execution Order
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommended Execution Order">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#native-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hybridsession-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hybrid/session surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals-for-this-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals For This Branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#020-release-parity-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.0 Release Parity Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-contract-decisions-and-release-gating" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred Contract Decisions And Release Gating
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../NATIVE_JS_PARITY_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native JS Parity Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HYBRID_JS_PARITY_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid JS Parity Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CROSS_SDK_VALIDATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross-SDK Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PYTHON_SDK_MODULE_CATALOG_AND_GAP_ANALYSIS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python SDK Module Catalog and Gap Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SCHEMA_ALIGNMENT_AUDIT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema Alignment Audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Internal
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SONAR_TRIAGE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sonar Triage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../BRANCH_PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branch Protection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PARITY_CLIENT_SMOKE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parity Client Smoke
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../TYPED_SESSION_SMOKE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Typed Session Smoke
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../INTERNAL_RELEASE_NOTES_NATIVE_JS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal Release Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status-label-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status Label Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prioritization-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prioritization Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p0-highest-product-gap-but-not-for-this-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0: Highest Product Gap, But Not For This Branch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P0: Highest Product Gap, But Not For This Branch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-guided-hybrid-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend-guided hybrid execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloudsessioncontrol-plane-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud/session/control-plane parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p1-highest-value-native-gaps-in-this-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1: Highest-Value Native Gaps In This Branch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P1: Highest-Value Native Gaps In This Branch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tvl-promotion-and-statistical-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TVL promotion and statistical semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-framework-override-ergonomics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto framework override ergonomics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broader-tvl-authoringruntime-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broader TVL authoring/runtime parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p2-valuable-but-secondary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2: Valuable, But Secondary
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P2: Valuable, But Secondary">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example concurrency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broader-optimizer-family-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broader optimizer family parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#richer-trial-taxonomy-and-pruning-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Richer trial taxonomy and pruning semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#global-config-access-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global config access parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p3-real-python-capabilities-but-not-yet-justified-to-copy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3: Real Python Capabilities, But Not Yet Justified To Copy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P3: Real Python Capabilities, But Not Yet Justified To Copy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#platform-enterprise-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Platform / enterprise families
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assisted-generation-and-discovery-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assisted generation and discovery families
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-wrapper-adapter-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server / wrapper / adapter families
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-execution-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Execution Order
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommended Execution Order">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#native-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hybridsession-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hybrid/session surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals-for-this-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals For This Branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#020-release-parity-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.0 Release Parity Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-contract-decisions-and-release-gating" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred Contract Decisions And Release Gating
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="js-parity-roadmap">JS Parity Roadmap<a class="headerlink" href="#js-parity-roadmap" title="Permanent link">&para;</a></h1>
+<p>This roadmap turns the current Python-vs-JS gap analysis into an execution
+order.</p>
+<p>Use this together with:</p>
+<ul>
+<li><a href="../NATIVE_JS_PARITY_MATRIX/">NATIVE_JS_PARITY_MATRIX.md</a></li>
+<li><a href="../PYTHON_SDK_MODULE_CATALOG_AND_GAP_ANALYSIS/">PYTHON_SDK_MODULE_CATALOG_AND_GAP_ANALYSIS.md</a></li>
+<li>Hybrid JS parity status is summarized in <code>docs/HYBRID_JS_PARITY_MATRIX.md</code>.</li>
+</ul>
+<p>Important branch note:</p>
+<ul>
+<li>this checkout supports native JS optimization plus call-level backend-guided
+  hybrid Optuna through typed sessions</li>
+<li>spec-level <code>execution.mode = "hybrid"</code> is still rejected</li>
+<li>Python's separate server-side remote cloud-execution model is not a JS SDK
+  parity target unless the product direction changes</li>
+</ul>
+<h2 id="status-label-rules">Status Label Rules<a class="headerlink" href="#status-label-rules" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>matched</code>: implemented and covered by passing tests or a verified public example</li>
+<li><code>partial</code>: implemented with bounded semantics and covered, but still behind Python</li>
+<li><code>gap</code>: the backend/API contract is reachable today and the JS side could implement it now</li>
+<li><code>deferred-backend</code>: blocked on missing or insufficiently specified backend/protocol support</li>
+<li><code>out-of-scope</code>: not a current JS SDK target</li>
+</ul>
+<p>The 0.2.0 public root parity gate uses the schema-owned manifest at
+<code>../TraigentSchema/parity/python-js-sdk.json</code>. That manifest has a more precise
+per-symbol vocabulary:</p>
+<ul>
+<li><code>matched</code></li>
+<li><code>additive-js-alias</code></li>
+<li><code>deferred-schema</code></li>
+<li><code>deferred-backlog</code></li>
+<li><code>out-of-scope-permanent</code></li>
+</ul>
+<p>It pins Python <code>origin/develop</code> at
+<code>f9f1adcb19ea8c3874bb1b7ef21f6d11b1b95a18</code> and intentionally does not pin a JS
+HEAD SHA.</p>
+<p>For 0.2.0, JS may ship before Python 0.12.0. If that happens, the release must
+describe the manifest as forward-compatible with the next Python public surface,
+not as parity with published Python 0.11.4.</p>
+<h2 id="prioritization-rules">Prioritization Rules<a class="headerlink" href="#prioritization-rules" title="Permanent link">&para;</a></h2>
+<p>Gaps are ranked by:</p>
+<ol>
+<li>user-visible parity impact</li>
+<li>whether the gap belongs in this branch</li>
+<li>whether the divergence is justified</li>
+<li>implementation leverage across multiple Python module families</li>
+</ol>
+<h2 id="p0-highest-product-gap-but-not-for-this-branch">P0: Highest Product Gap, But Not For This Branch<a class="headerlink" href="#p0-highest-product-gap-but-not-for-this-branch" title="Permanent link">&para;</a></h2>
+<p>These are the largest remaining Python-vs-JS gaps overall, but they should be
+implemented through reachable backend/session contracts, not by reviving the
+old Python-orchestrated JS bridge.</p>
+<h3 id="backend-guided-hybrid-execution">Backend-guided hybrid execution<a class="headerlink" href="#backend-guided-hybrid-execution" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Python status:</li>
+<li>full cloud/hybrid/session stack</li>
+<li>includes a separate remote cloud-execution model</li>
+<li>JS status:</li>
+<li>call-level backend-guided hybrid Optuna exists through
+    <code>.optimize({ algorithm: "optuna", ... })</code></li>
+<li>typed session lifecycle helpers are exported</li>
+<li>high-level plain-agent local evaluation plus backend-guided config suggestion
+    is implemented</li>
+<li>seamless framework interception is supported for OpenAI / LangChain / Vercel
+    AI targets</li>
+<li>spec-level <code>execution.mode = "hybrid"</code> is intentionally rejected here</li>
+<li>Why it matters:</li>
+<li>this is the main JS parity path for backend-owned Optuna-like functionality</li>
+<li>JS parity targets backend-guided local execution over typed <code>/sessions</code>, not Python's server-side remote execution model</li>
+</ul>
+<h3 id="cloudsessioncontrol-plane-parity">Cloud/session/control-plane parity<a class="headerlink" href="#cloudsessioncontrol-plane-parity" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Python status:</li>
+<li>remote clients</li>
+<li>session lifecycle</li>
+<li>subset selection</li>
+<li>billing/privacy/auth DTOs</li>
+<li>JS status:</li>
+<li>low-level typed session helpers for create / next-trial / submit-result are
+    exported</li>
+<li>list / health / status / finalize / delete helpers normalize DTOs</li>
+<li>executable end-to-end session-control examples exist</li>
+<li>still missing parts of Python's wider cloud/control-plane breadth that are
+    either backend-dependent or intentionally out of scope for JS</li>
+<li>Why it matters:</li>
+<li>additional typed <code>/sessions</code> parity should be limited to reachable backend
+    routes with known contracts</li>
+<li>Python's remote cloud-execution family is not a JS target unless the product direction changes</li>
+</ul>
+<h2 id="p1-highest-value-native-gaps-in-this-branch">P1: Highest-Value Native Gaps In This Branch<a class="headerlink" href="#p1-highest-value-native-gaps-in-this-branch" title="Permanent link">&para;</a></h2>
+<p>These are the most important justified parity gaps that still belong in this
+native-first checkout.</p>
+<h3 id="tvl-promotion-and-statistical-semantics">TVL promotion and statistical semantics<a class="headerlink" href="#tvl-promotion-and-statistical-semantics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Current JS status:</li>
+<li>focused TVL loader</li>
+<li>artifact-specific <code>nativeCompatibility</code> reporting on loaded TVL artifacts,
+    including <code>usedFeatures</code> and <code>warnings</code></li>
+<li>banded objectives</li>
+<li>safe-expression constraint compilation</li>
+<li><code>minEffect</code>, <code>tieBreakers</code></li>
+<li>sample-based paired promotion</li>
+<li>TOST-style band promotion</li>
+<li>behavioral <code>chanceConstraints</code></li>
+<li>Remaining gap:</li>
+<li>no full promotion-gate lifecycle semantics beyond best-trial selection and
+    post-trial rejection</li>
+<li>no full TVL CLI/models/runtime parity beyond the supported native subset</li>
+<li>Priority reason:</li>
+<li>this is the biggest native-local parity gap still left</li>
+<li>it affects spec compatibility, promotion semantics, and cross-SDK behavior</li>
+</ul>
+<h3 id="auto-framework-override-ergonomics">Auto framework override ergonomics<a class="headerlink" href="#auto-framework-override-ergonomics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Current JS status:</li>
+<li>explicit wrappers exist for OpenAI, LangChain, and Vercel AI</li>
+<li>seamless mode defaults <code>autoOverrideFrameworks</code> to all active wrapped targets</li>
+<li><code>frameworkTargets</code> can narrow active targets and <code>autoOverrideFrameworks: false</code>
+    disables framework interception entirely for a seamless function</li>
+<li><code>autoWrapFrameworkTarget(...)</code>, <code>autoWrapFrameworkTargets(...)</code>, and
+    bounded explicit-object discovery via <code>discoverFrameworkTargets(...)</code> /
+    <code>prepareFrameworkTargets(...)</code> now reduce setup friction for supported
+    framework objects without scanning arbitrary module/global state</li>
+<li><code>seamlessResolution()</code> surfaces the resolved seamless path for an optimized
+    function, while <code>describeFrameworkAutoOverride(...)</code> and
+    <code>prepareFrameworkTargets(...).autoOverrideStatus</code> expose active framework
+    target diagnostics</li>
+<li>Remaining gap:</li>
+<li>JS still does not auto-discover and wrap framework clients implicitly inside arbitrary user code</li>
+<li>Guardrails:</li>
+<li>any future implicit discovery must be opt-in</li>
+<li>it must not patch globals</li>
+<li>activation must be visible in logs/diagnostics</li>
+<li>behavior must be deterministic across import order</li>
+<li>Priority reason:</li>
+<li>high user impact</li>
+<li>closes a real adoption gap without requiring cloud work</li>
+</ul>
+<h3 id="broader-tvl-authoringruntime-parity">Broader TVL authoring/runtime parity<a class="headerlink" href="#broader-tvl-authoringruntime-parity" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Current JS status:</li>
+<li>native subset is implemented and tested</li>
+<li>native CLI inspection now exists via <code>traigent inspect tvl ...</code></li>
+<li>Remaining gap:</li>
+<li>full TVL language/runtime parity</li>
+<li>tighter alignment with Python authoring expectations</li>
+<li>Priority reason:</li>
+<li>important if cross-SDK spec portability is a product requirement</li>
+</ul>
+<h2 id="p2-valuable-but-secondary">P2: Valuable, But Secondary<a class="headerlink" href="#p2-valuable-but-secondary" title="Permanent link">&para;</a></h2>
+<p>These are useful parity improvements, but they are lower priority than P1.</p>
+<h3 id="example-concurrency">Example concurrency<a class="headerlink" href="#example-concurrency" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Python status:</li>
+<li>supports broader evaluation parallelism</li>
+<li>JS status:</li>
+<li>opt-in per-example concurrency is available through
+    <code>execution.exampleConcurrency</code></li>
+<li>Why it is secondary:</li>
+<li>the bounded local path now exists, but broader Python evaluation
+    parallelism still exceeds this checkout</li>
+</ul>
+<h3 id="broader-optimizer-family-parity">Broader optimizer family parity<a class="headerlink" href="#broader-optimizer-family-parity" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Python status:</li>
+<li>richer optimizer set, including Optuna-family modes</li>
+<li>JS status:</li>
+<li>native grid/random/Bayesian only</li>
+<li>Why it is secondary:</li>
+<li>if the long-term strategy is backend-guided hybrid for advanced optimizers,
+    native-local JS does not need to mirror the full Python optimizer family</li>
+</ul>
+<h3 id="richer-trial-taxonomy-and-pruning-semantics">Richer trial taxonomy and pruning semantics<a class="headerlink" href="#richer-trial-taxonomy-and-pruning-semantics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Python status:</li>
+<li>more detailed failed/pruned/rejected distinctions</li>
+<li>JS status:</li>
+<li>simpler native trial outcome model</li>
+<li>Why it is secondary:</li>
+<li>useful for introspection, but not the main user-facing parity blocker</li>
+</ul>
+<h3 id="global-config-access-parity">Global config access parity<a class="headerlink" href="#global-config-access-parity" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Python status:</li>
+<li>global-style <code>get_config()</code> semantics</li>
+<li>JS status:</li>
+<li>intentional wrapper-local / context-local model instead</li>
+<li>Why it is secondary:</li>
+<li>parity exists as a mental-model difference, but the JS divergence is partly
+    intentional and arguably better aligned with JS runtime behavior</li>
+</ul>
+<h2 id="p3-real-python-capabilities-but-not-yet-justified-to-copy">P3: Real Python Capabilities, But Not Yet Justified To Copy<a class="headerlink" href="#p3-real-python-capabilities-but-not-yet-justified-to-copy" title="Permanent link">&para;</a></h2>
+<p>These appear in the Python audit, but they should not drive near-term JS SDK
+work in this repo.</p>
+<h3 id="platform-enterprise-families">Platform / enterprise families<a class="headerlink" href="#platform-enterprise-families" title="Permanent link">&para;</a></h3>
+<ul>
+<li>security</li>
+<li>auth</li>
+<li>tenancy</li>
+<li>session hardening</li>
+<li>analytics/meta-learning</li>
+</ul>
+<p>These are platform-side concerns, not core local-SDK parity targets.</p>
+<h3 id="assisted-generation-and-discovery-families">Assisted generation and discovery families<a class="headerlink" href="#assisted-generation-and-discovery-families" title="Permanent link">&para;</a></h3>
+<ul>
+<li>bounded tuned-variable discovery is now available in the native checkout
+  through:</li>
+<li><code>discoverTunedVariables(...)</code></li>
+<li><code>discoverTunedVariablesFromSource(...)</code></li>
+<li><code>discoverTunedVariablesFromFile(...)</code></li>
+<li><code>traigent detect tuned-variables ...</code></li>
+<li>but broader tuned-variable dataflow/range generation and the larger config
+  generation pipelines remain separate product layers from the local native JS
+  optimizer/runtime</li>
+<li>benchmark/objective recommendation remains out of scope in this checkout</li>
+<li>the AST parser infrastructure already exists in <code>src/seamless/</code>; the missing
+  tuned-variable work is dataflow/range inference, not new parser plumbing</li>
+</ul>
+<h3 id="server-wrapper-adapter-families">Server / wrapper / adapter families<a class="headerlink" href="#server-wrapper-adapter-families" title="Permanent link">&para;</a></h3>
+<ul>
+<li>wrapper service/server</li>
+<li>hooks</li>
+<li>execution adapters</li>
+<li>bridge/server infrastructure</li>
+</ul>
+<p>These should be treated as separate surfaces, not copied blindly into the
+native-first JS SDK package.</p>
+<h2 id="recommended-execution-order">Recommended Execution Order<a class="headerlink" href="#recommended-execution-order" title="Permanent link">&para;</a></h2>
+<h3 id="native-branch">Native branch<a class="headerlink" href="#native-branch" title="Permanent link">&para;</a></h3>
+<ol>
+<li>finish TVL promotion/statistical parity</li>
+<li>improve auto framework override ergonomics</li>
+<li>decide whether full TVL parity is a product requirement or keep a documented
+   supported subset</li>
+<li>tighten and benchmark the bounded <code>execution.exampleConcurrency</code> path if
+   runtime throughput becomes a priority</li>
+</ol>
+<h3 id="hybridsession-surface">Hybrid/session surface<a class="headerlink" href="#hybridsession-surface" title="Permanent link">&para;</a></h3>
+<ol>
+<li>extend backend-guided hybrid execution parity where reachable backend routes
+   exist</li>
+<li>extend the current typed session helper surface only for reachable backend routes with known contracts</li>
+<li>align reachable remote DTO/session contracts with Python</li>
+<li>only then revisit broader control-plane or advanced optimizer breadth through the backend path</li>
+</ol>
+<h2 id="non-goals-for-this-branch">Non-Goals For This Branch<a class="headerlink" href="#non-goals-for-this-branch" title="Permanent link">&para;</a></h2>
+<ul>
+<li>implementing cloud/session clients directly in this checkout</li>
+<li>implementing Python-style remote cloud-executed optimization or server-side agent reconstruction in JS</li>
+<li>copying platform/security/analytics modules into the JS SDK package</li>
+<li>forcing Python-style global config semantics into JS if the current wrapper-
+  local/context-local design remains clearer</li>
+</ul>
+<h2 id="020-release-parity-decisions">0.2.0 Release Parity Decisions<a class="headerlink" href="#020-release-parity-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>JS 0.2.0 is forward-bound to Python develop unless Python 0.12.0 ships first.</li>
+<li>JS 0.2.0 may ship before Python 0.12.0, but release notes must call out that
+  users on Python 0.11.4 will not see the same root symbols yet.</li>
+<li><code>BenchmarkClient</code> / <code>BenchmarkClientConfig</code> are root-exported schema-deferred stubs.</li>
+<li><code>Dataset</code> and <code>EvaluationExample</code> are root and evaluation-subpath runtime exports.</li>
+<li><code>EnterpriseAdminClient</code> remains a throwing migration stub pending <code>Traigent/traigent-js#30</code>.</li>
+<li>observability default-client helpers and <code>observe</code> move to 0.3.0.</li>
+<li>the old Python-side public client ignore list should be replaced by the schema-owned manifest instead of duplicated.</li>
+<li>manifest refresh happens on Python release candidates/release branches, Python
+  <code>traigent.__all__</code> changes, JS minor parity releases, and quarterly drift
+  checks when release cadence is slow.</li>
+</ul>
+<h2 id="deferred-contract-decisions-and-release-gating">Deferred Contract Decisions And Release Gating<a class="headerlink" href="#deferred-contract-decisions-and-release-gating" title="Permanent link">&para;</a></h2>
+<p>The contract-policy detail for the three deferred surfaces lives in
+<a href="../MIGRATION_FROM_PYTHON/#deferred-client-policy">MIGRATION_FROM_PYTHON.md</a>.
+The summary for roadmap planning is:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Issue</th>
+<th>Current JS state</th>
+<th>Earliest target</th>
+<th>Gate to flip from <code>deferred-*</code> to <code>matched</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>EnterpriseAdminClient</code></td>
+<td><code>Traigent/traigent-js#30</code></td>
+<td>throwing stub; REST-only migration path</td>
+<td>not in 0.2.x</td>
+<td>TraigentSchema-owned tenant/membership/SSO contract + Python <code>__all__</code> export + cross-SDK oracle</td>
+</tr>
+<tr>
+<td><code>BenchmarkClient</code></td>
+<td><code>Traigent/traigent-js#31</code></td>
+<td>throwing schema-deferred stub</td>
+<td>not in 0.2.x</td>
+<td>naming decision recorded + TraigentSchema-owned dataset-generation endpoint + parity-manifest reclass</td>
+</tr>
+<tr>
+<td><code>get_default_observability_client</code> / <code>set_default_observability_client</code> / <code>observe</code></td>
+<td><code>Traigent/traigent-js#38</code></td>
+<td>not implemented, not exported</td>
+<td>0.3.0 at earliest</td>
+<td>agreed default-client scope (per-process vs context-local) + <code>observe</code> semantics + tests</td>
+</tr>
+</tbody>
+</table>
+<p>No JS minor release should ship any of these surfaces as <code>matched</code> without
+the parity-manifest reclassification landing in the same PR family. Adding a
+throwing stub for the observability helpers in 0.2.x is also out of scope,
+because it would commit the SDK to a runtime shape before the semantics are
+agreed.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy", "header.autohide"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
