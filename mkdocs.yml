@@ -1,0 +1,128 @@
+site_name: Traigent
+site_url: https://docs.traigent.ai
+repo_url: https://github.com/Traigent/Traigent
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - search.suggest
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: README.md
+  - Getting Started:
+      - Overview: getting-started/README.md
+      - Quickstart: getting-started/GETTING_STARTED.md
+      - Installation: getting-started/installation.md
+      - Minimal Integration: getting-started/minimal-integration.md
+      - Testing: getting-started/testing.md
+      - Portal Dev Laptop Agent: getting-started/portal-dev-laptop-agent.md
+  - Concepts:
+      - Guided Generation: concepts/guided-generation.md
+      - Configuration Spaces: user-guide/configuration-spaces.md
+      - Constraint Expressions: tvl/CONSTRAINT_EXPRESSIONS.md
+      - Dataflow Detection: features/dataflow-detection.md
+      - Traceability Schema: traceability/schema.md
+      - Traceability Taxonomy: traceability/taxonomy_reference.md
+  - Features:
+      - Overview: features/README.md
+      - Agent Skill: agent-skill.md
+      - Authentication: features/authentication.md
+      - Constraint DSL: features/constraint-dsl.md
+      - Framework Override: features/framework_override_enhanced_features.md
+      - Prompt Management: features/prompt_management.md
+      - Seamless Injection: features/seamless_injection.md
+      - Strict Metrics Nulls: features/strict_metrics_nulls.md
+      - Hybrid Mode API Contract: hybrid-mode-api-contract.md
+      - Hybrid Mode Client Guide: hybrid-mode-client-guide.md
+      - Walkthrough: walkthrough.md
+  - Guides:
+      - Developer Guides:
+          - Execution Modes: guides/execution-modes.md
+          - Evaluation: guides/evaluation.md
+          - JS Bridge: guides/js-bridge.md
+          - LLM Plugin Migration: guides/llm_plugin_migration_guide.md
+          - Parallel Configuration: guides/parallel-configuration.md
+          - Secrets Management: guides/secrets_management.md
+          - VS Code Restart Guide: guides/VSCODE_RESTART_GUIDE.md
+      - User Guide:
+          - Overview: user-guide/README.md
+          - Agent Optimization: user-guide/agent_optimization.md
+          - Choosing an Optimization Model: user-guide/choosing_optimization_model.md
+          - Evaluation Guide: user-guide/evaluation_guide.md
+          - Injection Modes: user-guide/injection_modes.md
+          - Interactive Optimization: user-guide/interactive_optimization.md
+          - Optuna Integration: user-guide/optuna_integration.md
+          - Tuned Variables: user-guide/tuned_variables.md
+      - Operations:
+          - Azure OpenAI: operations/azure_openai.md
+          - Amazon Bedrock: operations/bedrock.md
+          - Google Gemini: operations/google_gemini.md
+      - Testing:
+          - Creative Stress Testing: testing/CREATIVE_STRESS_TESTING.md
+          - Release Readiness Testing: testing/RELEASE_READINESS_TESTING.md
+  - API Reference:
+      - Complete Function Specification: api-reference/complete-function-specification.md
+      - Decorator Reference: api-reference/decorator-reference.md
+      - Enterprise Beta API: api-reference/enterprise-beta-api.md
+      - Interactive Optimizer: api-reference/interactive_optimizer.md
+      - Telemetry: api-reference/telemetry.md
+      - Thread Pool Examples: api-reference/thread-pool-examples.md
+  - Examples:
+      - Examples Overview: examples/README.md
+      - Start Here: examples/START_HERE.md
+      - API Patterns: examples/API_PATTERNS.md
+      - Learning Roadmap: examples/LEARNING_ROADMAP.md
+      - Quick Reference: examples/QUICK_REFERENCE.md
+      - Troubleshooting: examples/TROUBLESHOOTING.md
+      - Demos:
+          - Overview: demos/README.md
+          - Demo Video Guide: demos/DEMO_VIDEO_GUIDE.md
+  - Security & Trust:
+      - Trust Model: security/trust_model.md
+      - Security Policy: contributing/SECURITY.md
+      - Authentication: features/authentication.md
+      - Cost Architecture Validation: architecture/cost-architecture-validation.md
+      - Aikido Triage: contributing/aikido_triage.md
+  - Architecture:
+      - Overview: architecture/ARCHITECTURE.md
+      - Project Structure: architecture/project-structure.md
+      - Plugin Architecture: architecture/plugin_architecture.md
+      - Integrations Inventory: architecture/integrations-inventory.md
+      - Stop Conditions: architecture/stop_conditions.md
+      - Execution Mode Follow-Up: architecture/execution_mode_follow_up.md
+      - Cost Architecture Validation: architecture/cost-architecture-validation.md
+  - Contributing:
+      - Overview: contributing/README.md
+      - Contributing Guide: contributing/CONTRIBUTING.md
+      - Adding New Integrations: contributing/ADDING_NEW_INTEGRATIONS.md
+      - Code Review Instructions: contributing/code_review_instructions.md
+      - Test Quality Guide: contributing/test-quality-guide.md
+      - Code of Conduct: contributing/CODE_OF_CONDUCT.md
+      - Example Template: contributing/EXAMPLE_TEMPLATE.md
