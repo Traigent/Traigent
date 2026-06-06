@@ -10,10 +10,11 @@ requirements/
 ├── requirements-analytics.txt    # Analytics and intelligence features
 ├── requirements-bayesian.txt     # Bayesian optimization (includes Optuna)
 ├── requirements-integrations.txt # Framework integrations (LangChain, OpenAI, etc.)
+├── requirements-chroma.txt       # Chroma integration, explicit opt-in
 ├── requirements-security.txt     # Enterprise security features
 ├── requirements-test.txt         # Testing dependencies
 ├── requirements-dev.txt          # Development tools + all features
-└── requirements-all.txt          # All optional features combined
+└── requirements-all.txt          # Safe broad optional features combined
 ```
 
 ## Installation Methods
@@ -33,9 +34,15 @@ pip install -r requirements/requirements-dev.txt
 ```bash
 pip install -e ".[test,dev,integrations,analytics,bayesian,security]"
 
-# Install everything
+# Install broad safe optional features
 pip install -e ".[all]"
+
+# Opt into Chroma explicitly
+pip install -e ".[chroma]"
 ```
+
+Chroma is not included in `integrations`, `recommended`, `all`, `enterprise`, or the broad
+requirements bundles while `chromadb` has no patched release for CVE-2026-45829.
 
 ## Recent Changes (2024-10-14)
 

@@ -1,5 +1,6 @@
 # Traigent SDK Development Dependencies
 # Required for development and testing
+# Excludes Chroma until chromadb has a patched release for CVE-2026-45829.
 
 -r requirements.txt
 -r requirements-analytics.txt
