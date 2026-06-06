@@ -272,6 +272,59 @@ class TestBackendSessionManagerTrialSubmission:
         )
 
     @pytest.mark.asyncio
+    async def test_slot_allocated_but_submit_failed_is_never_attestable(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Codex lane-fix round (non-blocking, pinned): a slot CAN be
+        allocated and the trial id rebound before the result submission
+        fails — that half-bound state is intentional (the id is real, the
+        backend holds a pending trial) but it must NEVER become an
+        attestation path: no acknowledgment without a truthy submission."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_1"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=False
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        # rebound (documented half-bound state — the backend DID mint it)
+        assert mock_trial_result.trial_id == "trial_backend_minted_1"
+        # but NEVER acknowledged — the certified report withholds.
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "trial_backend_minted_1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_slot_allocated_but_submit_raised_is_never_attestable(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Same pin for the raising path: a transport error after slot
+        allocation must not acknowledge."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_2"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            side_effect=ConnectionError("boom")
+        )
+
+        try:
+            await backend_session_manager.submit_trial(
+                trial_result=mock_trial_result,
+                session_id="test-session-id",
+            )
+        except ConnectionError:
+            pass  # propagation policy is the manager's existing behavior
+
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "trial_backend_minted_2"
+        )
+
+    @pytest.mark.asyncio
     async def test_submit_trial_without_backend(
         self, traigent_config, objective_schema, mock_optimizer, mock_trial_result
     ):
