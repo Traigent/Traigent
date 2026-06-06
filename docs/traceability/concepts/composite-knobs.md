@@ -126,7 +126,7 @@ decision = gate.evaluate(
 `decision.decision` is one of `promote`, `reject`, or `no_decision`. A
 `no_decision` is the honest outcome when the evidence does not establish
 dominance under the policy — it is not a failure and is never reported as a
-winner. The offline example prints a CERTIFIED WINNER or an honest "no winner
+winner. The offline example prints a CALIBRATION-BACKED WINNER (client-attested) or an honest "no winner
 yet" depending on the samples it collects.
 
 In a hybrid or cloud run you do not call the promotion gate yourself; the
