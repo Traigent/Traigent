@@ -168,13 +168,18 @@ def _eval_result_with_metrics(metrics: dict[str, float]) -> Mock:
 
 
 def test_final_cap_keeps_evaluator_computed_name_drops_user_key() -> None:
-    """H3 (captain repro): 49 composite_metric_* user keys + ``f1`` at the
-    ceiling. With ``extra_reserved={"f1"}`` the cap must KEEP ``f1`` (the primary
-    objective) and drop a composite user key instead.
+    """H3 (captain repro): 49 composite_metric_* user keys + ``f1`` arrive at the
+    ceiling from the lane, then assembly writes ``examples_attempted`` and
+    ``total_cost`` AFTER the lane caps ran — pushing the final union to 52. The
+    cap must fire, KEEP ``f1`` (the primary objective, via ``extra_reserved``)
+    and drop composite user keys instead.
 
-    Pre-fix: ``build_success_result`` passes no ``extra_reserved``, so ``f1`` is
-    seen as a droppable user key and (being last in sorted order after the
-    composites) the cap removes it — the objective vanishes.
+    Pre-fix: ``build_success_result`` passed no ``extra_reserved``, so ``f1`` was
+    seen as a droppable user key and (sorting after the composites) the cap
+    removed it — the objective vanished from ``TrialResult.metrics``. The
+    non-``None`` ``examples_attempted``/``total_cost`` are essential: with both
+    ``None`` the union is exactly 50 and the cap returns early without testing
+    anything (codex round-4 MINOR).
     """
     metrics = {f"composite_metric_{i:03d}": 1.0 for i in range(49)}
     metrics["f1"] = 0.93
@@ -185,17 +190,46 @@ def test_final_cap_keeps_evaluator_computed_name_drops_user_key() -> None:
         evaluation_config={"model": "gpt-4"},
         eval_result=eval_result,
         duration=1.0,
-        examples_attempted=None,
-        total_cost=None,
+        examples_attempted=2,
+        total_cost=0.01,
         optuna_trial_id=None,
         extra_reserved=frozenset({"f1"}),
     )
 
-    assert "f1" in result.metrics
+    # The cap actually fired: 52-key union clamped back to the ceiling.
+    assert len(result.metrics) == 50
+    # The evaluator-computed objective survived...
     assert result.metrics["f1"] == pytest.approx(0.93)
-    # Exactly one composite user key was dropped to make room.
+    # ...as did the reserved assembly keys written after the lane caps...
+    assert "examples_attempted" in result.metrics
+    assert "total_cost" in result.metrics
+    # ...and exactly TWO composite user keys were dropped to make room.
     composite_kept = [k for k in result.metrics if k.startswith("composite_metric_")]
-    assert len(composite_kept) == 49 - (len(metrics) - 50)
+    assert len(composite_kept) == 47
+
+
+def test_final_cap_without_extra_reserved_would_drop_objective() -> None:
+    """H3 counterfactual guard: the same 52-key union WITHOUT ``extra_reserved``
+    drops ``f1`` — proving the threaded set is what protects the objective (if a
+    refactor silently stops threading it, the positive test above could go
+    vacuous; this pins the mechanism).
+    """
+    metrics = {f"composite_metric_{i:03d}": 1.0 for i in range(49)}
+    metrics["f1"] = 0.93
+    eval_result = _eval_result_with_metrics(metrics)
+
+    result = build_success_result(
+        trial_id="trial_h3_cf",
+        evaluation_config={"model": "gpt-4"},
+        eval_result=eval_result,
+        duration=1.0,
+        examples_attempted=2,
+        total_cost=0.01,
+        optuna_trial_id=None,
+    )
+
+    assert len(result.metrics) == 50
+    assert "f1" not in result.metrics
 
 
 # ---------------------------------------------------------------------------
