@@ -5,6 +5,7 @@ import pytest
 from traigent.config.types import (
     ExecutionMode,
     TraigentConfig,
+    accepted_execution_mode_values,
     resolve_execution_mode,
     validate_execution_mode,
 )
@@ -213,10 +214,30 @@ class TestValidateExecutionMode:
         """Privacy remains a legacy alias for hybrid."""
         assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
 
+    def test_local_alias_validates_as_edge_analytics(self) -> None:
+        """Local is accepted as a public alias for edge_analytics."""
+        assert resolve_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
+        assert validate_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
+        assert TraigentConfig(execution_mode="local").execution_mode == "edge_analytics"
+
     def test_removed_standard_mode_raises_configuration_error(self) -> None:
         """The removed standard mode is rejected everywhere."""
-        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+        with pytest.raises(ConfigurationError, match="No such mode 'standard'") as exc:
             validate_execution_mode("standard")
+        assert list(accepted_execution_mode_values()) == [
+            "edge_analytics",
+            "hybrid",
+            "hybrid_api",
+            "local",
+            "privacy",
+        ]
+        for mode in accepted_execution_mode_values():
+            assert validate_execution_mode(mode) in {
+                ExecutionMode.EDGE_ANALYTICS,
+                ExecutionMode.HYBRID,
+                ExecutionMode.HYBRID_API,
+            }
+        assert str(list(accepted_execution_mode_values())) in str(exc.value)
 
     def test_reserved_cloud_mode_raises_configuration_error(self) -> None:
         """Cloud remote execution is reserved and fails closed."""

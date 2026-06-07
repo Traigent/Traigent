@@ -5,7 +5,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
-from traigent.utils.exceptions import ValidationError
+from traigent.utils.exceptions import ConfigurationError, ValidationError
 
 # ==============================================================================
 # Property-based tests for temperature validation
@@ -106,6 +106,7 @@ def test_presence_penalty_rejects_invalid_range(penalty):
     st.sampled_from(
         [
             "edge_analytics",
+            "local",
             "privacy",
             "hybrid",
             "hybrid_api",
@@ -123,6 +124,8 @@ def test_execution_mode_accepts_valid_values(mode):
     if isinstance(mode, str) and mode == "privacy":
         assert config.execution_mode == "hybrid"
         assert config.privacy_enabled is True
+    elif isinstance(mode, str) and mode == "local":
+        assert config.execution_mode == "edge_analytics"
     elif isinstance(mode, ExecutionMode) and mode == ExecutionMode.PRIVACY:
         assert config.execution_mode == "hybrid"
         assert config.privacy_enabled is True
@@ -147,6 +150,7 @@ def test_execution_mode_rejects_removed_or_reserved_values(mode):
         lambda x: x.strip().lower()
         not in [
             "edge_analytics",
+            "local",
             "privacy",
             "hybrid",
             "standard",
@@ -158,7 +162,7 @@ def test_execution_mode_rejects_removed_or_reserved_values(mode):
 )
 def test_execution_mode_rejects_invalid_values(mode):
     """Property: Invalid execution mode strings should be rejected."""
-    with pytest.raises((ValueError, ValidationError)):
+    with pytest.raises((ValueError, ValidationError, ConfigurationError)):
         TraigentConfig(execution_mode=mode)
 
 
