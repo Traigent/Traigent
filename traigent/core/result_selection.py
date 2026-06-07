@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from traigent.api.types import TrialResult
 from traigent.utils.objectives import classify_objective, is_minimization_objective
@@ -22,6 +23,8 @@ TieBreaker = Literal["min_abs_deviation", "custom"]
 ComparabilityMode = Literal["legacy", "warn", "strict"]
 NO_RANKING_ELIGIBLE_TRIALS = "NO_RANKING_ELIGIBLE_TRIALS"
 NO_CERTIFIED_SELECTION = "NO_CERTIFIED_SELECTION"
+PRIMARY_SCORE_TIE_REL_TOL = 1e-9
+PRIMARY_SCORE_TIE_ABS_TOL = 1e-12
 
 
 @dataclass(slots=True)
@@ -32,6 +35,7 @@ class SelectionResult:
     best_score: float | None
     session_summary: dict[str, Any] | None
     reason_code: str | None = None
+    best_trial_id: str | None = None
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -50,6 +54,28 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _primary_scores_tied(score: float, best_score: float) -> bool:
+    return math.isclose(
+        score,
+        best_score,
+        rel_tol=PRIMARY_SCORE_TIE_REL_TOL,
+        abs_tol=PRIMARY_SCORE_TIE_ABS_TOL,
+    )
+
+
+def _declared_secondary_objectives(
+    primary_objective: str,
+    objective_order: Iterable[str] | None,
+) -> list[str]:
+    if objective_order is None:
+        return []
+
+    ordered = [str(objective) for objective in objective_order]
+    if primary_objective in ordered:
+        ordered = ordered[ordered.index(primary_objective) + 1 :]
+    return [objective for objective in ordered if objective != primary_objective]
 
 
 def _extract_trial_comparability(trial: TrialResult) -> dict[str, Any] | None:
@@ -245,6 +271,7 @@ def apply_tie_breaker(
     primary_objective: str,
     *,
     band_target: float | None = None,
+    objective_order: Iterable[str] | None = None,
 ) -> TrialResult:
     """Apply tie-breaker rules to select among equally-scored trials.
 
@@ -273,7 +300,12 @@ def apply_tie_breaker(
     tie_breaker = tie_breakers.get(primary_objective, "min_abs_deviation")
 
     if tie_breaker == "min_abs_deviation":
-        return _apply_min_abs_deviation(tied_trials, primary_objective, band_target)
+        return _apply_min_abs_deviation(
+            tied_trials,
+            primary_objective,
+            band_target,
+            objective_order,
+        )
 
     # For "custom" or unknown, return the first trial
     return tied_trials[0]
@@ -286,7 +318,11 @@ def _secondary_metric_total(
     """Sum secondary metrics, subtracting minimization objectives."""
     total = 0.0
     for name, value in metrics.items():
-        if not isinstance(value, (int, float)) or name == exclude_objective:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or name == exclude_objective
+        ):
             continue
         if is_minimization_objective(name):
             total -= float(value)
@@ -295,10 +331,40 @@ def _secondary_metric_total(
     return total
 
 
+def _secondary_metric_key(
+    metrics: dict[str, Any],
+    exclude_objective: str,
+    objective_order: Iterable[str] | None = None,
+) -> tuple[float, ...]:
+    """Return a secondary-objective ordering key.
+
+    Declared objectives break ties lexicographically in the run's objective order
+    after the primary. If the caller has no declared secondary objectives, retain
+    the legacy aggregate secondary score.
+    """
+    declared_secondaries = _declared_secondary_objectives(
+        exclude_objective, objective_order
+    )
+    if not declared_secondaries:
+        return (_secondary_metric_total(metrics, exclude_objective),)
+
+    ordered_scores: list[float] = []
+    for objective in declared_secondaries:
+        value = metrics.get(objective)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            ordered_scores.append(float("-inf"))
+            continue
+        ordered_scores.append(
+            _secondary_metric_total({objective: value}, exclude_objective)
+        )
+    return tuple(ordered_scores)
+
+
 def _apply_min_abs_deviation(
     trials: list[TrialResult],
     objective: str,
     band_target: float | None,
+    objective_order: Iterable[str] | None = None,
 ) -> TrialResult:
     """Select trial with minimum absolute deviation from target or best stability."""
     if band_target is not None:
@@ -309,8 +375,11 @@ def _apply_min_abs_deviation(
 
         return min(trials, key=deviation)
 
-    def secondary_score(t: TrialResult) -> tuple[float, str]:
-        return (_secondary_metric_total(t.metrics or {}, objective), t.trial_id or "")
+    def secondary_score(t: TrialResult) -> tuple[Any, ...]:
+        return (
+            *_secondary_metric_key(t.metrics or {}, objective, objective_order),
+            t.trial_id or "",
+        )
 
     return max(trials, key=secondary_score)
 
@@ -321,15 +390,16 @@ def _select_best_single_trial(
     tie_breakers: dict[str, TieBreaker],
     band_target: float | None,
     ranking_summary: dict[str, Any],
+    objective_order: Iterable[str] | None,
 ) -> SelectionResult:
     """Select best trial without aggregation, applying tie-breakers."""
     minimization = is_minimization_objective(primary_objective)
     chooser = min if minimization else max
 
     scored_trials = [
-        (t, t.get_metric(primary_objective))
+        (t, cast(float, _coerce_float(t.get_metric(primary_objective))))
         for t in successful_trials
-        if t.get_metric(primary_objective) is not None
+        if _coerce_float(t.get_metric(primary_objective)) is not None
     ]
     if not scored_trials:
         return SelectionResult(
@@ -342,16 +412,28 @@ def _select_best_single_trial(
             reason_code=NO_RANKING_ELIGIBLE_TRIALS,
         )
 
-    best_score = chooser(score for _, score in scored_trials if score is not None)
+    best_score = chooser(score for _, score in scored_trials)
 
-    # Find all trials with the best score (potential ties)
-    tied_trials = [trial for trial, score in scored_trials if score == best_score]
+    # Find all trials within the conservative primary-score tie tolerance.
+    tied_trials = [
+        trial
+        for trial, score in scored_trials
+        if _primary_scores_tied(score, best_score)
+    ]
 
-    # Apply tie-breaker if there are ties
-    if len(tied_trials) > 1 and tie_breakers:
+    # Apply tie-breaker if there are ties.
+    if len(tied_trials) > 1:
         best_trial = apply_tie_breaker(
-            tied_trials, tie_breakers, primary_objective, band_target=band_target
+            tied_trials,
+            tie_breakers,
+            primary_objective,
+            band_target=band_target,
+            objective_order=objective_order,
         )
+        if not tie_breakers and not _declared_secondary_objectives(
+            primary_objective, objective_order
+        ):
+            best_trial = tied_trials[0]
     else:
         best_trial = tied_trials[0] if tied_trials else successful_trials[0]
 
@@ -359,6 +441,7 @@ def _select_best_single_trial(
         best_config=best_trial.config or {},
         best_score=best_trial.get_metric(primary_objective),
         session_summary={"ranking": ranking_summary},
+        best_trial_id=best_trial.trial_id,
     )
 
 
@@ -385,8 +468,9 @@ def _aggregate_trials(
 
         entry = aggregated.setdefault(
             config_hash,
-            {"config": trial.config, "metrics_sum": {}, "count": 0},
+            {"config": trial.config, "metrics_sum": {}, "count": 0, "trial_ids": []},
         )
+        entry["trial_ids"].append(trial.trial_id)
 
         for metric_name, metric_value in (trial.metrics or {}).items():
             if metric_name == "examples_attempted":
@@ -414,6 +498,7 @@ def _apply_aggregated_tie_breaker(
     tie_breakers: dict[str, TieBreaker],
     primary_objective: str,
     band_target: float | None,
+    objective_order: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Apply tie-breaker rules to aggregated entries with equal primary scores.
 
@@ -445,8 +530,10 @@ def _apply_aggregated_tie_breaker(
 
         return min(tied_entries, key=deviation)
 
-    def agg_secondary_score(entry: dict[str, Any]) -> float:
-        return _secondary_metric_total(_compute_mean_metrics(entry), primary_objective)
+    def agg_secondary_score(entry: dict[str, Any]) -> tuple[float, ...]:
+        return _secondary_metric_key(
+            _compute_mean_metrics(entry), primary_objective, objective_order
+        )
 
     return max(tied_entries, key=agg_secondary_score)
 
@@ -457,6 +544,7 @@ def _select_best_aggregated(
     tie_breakers: dict[str, TieBreaker],
     band_target: float | None,
     ranking_summary: dict[str, Any],
+    objective_order: Iterable[str] | None,
 ) -> SelectionResult:
     """Select best configuration from aggregated results with tie-breaking."""
     if not aggregated:
@@ -493,18 +581,30 @@ def _select_best_aggregated(
         )
     best_score_val = min(all_scores) if minimization else max(all_scores)
 
-    # Find all entries with the best score (ties)
+    # Find all entries within the conservative primary-score tie tolerance.
     tied_entries = [
         entry
         for entry in aggregated.values()
-        if _compute_mean_metrics(entry).get(primary_objective) == best_score_val
+        if _primary_scores_tied(
+            score_value := score(entry),
+            best_score_val,
+        )
+        and score_value not in (float("inf"), float("-inf"))
     ]
 
     # Apply tie-breaking for aggregated entries
-    if len(tied_entries) > 1 and tie_breakers:
+    if len(tied_entries) > 1:
         best_entry = _apply_aggregated_tie_breaker(
-            tied_entries, tie_breakers, primary_objective, band_target
+            tied_entries,
+            tie_breakers,
+            primary_objective,
+            band_target,
+            objective_order,
         )
+        if not tie_breakers and not _declared_secondary_objectives(
+            primary_objective, objective_order
+        ):
+            best_entry = tied_entries[0]
     else:
         best_entry = tied_entries[0]
 
@@ -533,6 +633,7 @@ def _select_best_aggregated(
         best_config=best_entry["config"] or {},
         best_score=best_metrics.get(primary_objective),
         session_summary=session_summary,
+        best_trial_id=(best_entry.get("trial_ids") or [None])[0],
     )
 
 
@@ -564,6 +665,7 @@ def select_best_configuration(
     aggregate_configs: bool,
     tie_breakers: dict[str, TieBreaker] | None = None,
     band_target: float | None = None,
+    objective_order: Iterable[str] | None = None,
     comparability_mode: ComparabilityMode = "warn",
     require_certified: bool = False,
     certified_config: dict[str, Any] | None = None,
@@ -589,6 +691,7 @@ def select_best_configuration(
         tie_breakers: Optional dict mapping objectives to tie-breaker strategies.
             From TVL 0.9 promotion_policy.tie_breakers.
         band_target: Optional target value for banded objectives.
+        objective_order: Declared objectives in preference order.
 
     Returns:
         SelectionResult with best configuration and score.
@@ -703,6 +806,7 @@ def select_best_configuration(
             tie_breakers,
             band_target,
             ranking_summary,
+            objective_order,
         )
 
     aggregated = _aggregate_trials(eligible_trials, set(config_space_keys))
@@ -712,4 +816,5 @@ def select_best_configuration(
         tie_breakers,
         band_target,
         ranking_summary,
+        objective_order,
     )

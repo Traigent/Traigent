@@ -53,6 +53,15 @@ def _coerce_non_negative_int(value: Any) -> int:
         return 0
 
 
+def _coerce_optional_non_negative_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def _infer_total_examples(eval_result: Any) -> tuple[int, Any, bool]:
     """Infer total example count and whether detailed example results are present."""
     total_examples = _coerce_non_negative_int(getattr(eval_result, "total_examples", 0))
@@ -261,6 +270,13 @@ def _build_success_trial_metadata(
     if examples_attempted is not None:
         trial_metadata["examples_attempted"] = int(examples_attempted)
 
+    attempted = trial_metadata.get("examples_attempted")
+    successful = trial_metadata.get("successful_examples")
+    if successful is not None and attempted is not None:
+        trial_metadata["example_success_summary"] = (
+            f"{successful}/{attempted} examples succeeded"
+        )
+
     if total_cost is not None:
         try:
             trial_metadata["total_example_cost"] = float(total_cost)
@@ -268,6 +284,27 @@ def _build_success_trial_metadata(
             pass
 
     return trial_metadata
+
+
+def _all_attempted_examples_failed(
+    eval_result: Any,
+    examples_attempted: int | None,
+) -> bool:
+    successful_examples = _coerce_optional_non_negative_int(
+        getattr(eval_result, "successful_examples", None)
+    )
+    if successful_examples != 0:
+        return False
+
+    total_examples = _coerce_optional_non_negative_int(
+        getattr(eval_result, "total_examples", None)
+    )
+    attempted = (
+        _coerce_optional_non_negative_int(examples_attempted)
+        if examples_attempted is not None
+        else total_examples
+    )
+    return attempted is not None and attempted > 0
 
 
 def _set_metric_if_convertible(
@@ -362,9 +399,18 @@ def build_success_result(
         trial_id=trial_id,
         config=copy.deepcopy(evaluation_config),
         metrics=getattr(eval_result, "metrics", {}) or {},
-        status=TrialStatus.COMPLETED,
+        status=(
+            TrialStatus.FAILED
+            if _all_attempted_examples_failed(eval_result, examples_attempted)
+            else TrialStatus.COMPLETED
+        ),
         duration=duration,
         timestamp=datetime.now(UTC),
+        error_message=(
+            "No examples succeeded"
+            if _all_attempted_examples_failed(eval_result, examples_attempted)
+            else None
+        ),
         metadata=trial_metadata,
     )
 

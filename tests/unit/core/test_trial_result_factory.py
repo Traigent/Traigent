@@ -143,7 +143,7 @@ class TestBuildSuccessResult:
         assert metadata["successful_examples"] == 2
 
     def test_zero_successful_examples_preserved(self, eval_config, eval_result):
-        """Zero successes must be explicit so ranking can suppress fake winners."""
+        """Zero successes must be explicit and mark the trial non-successful."""
         eval_result.successful_examples = 0
 
         result = build_success_result(
@@ -157,6 +157,9 @@ class TestBuildSuccessResult:
         )
 
         assert result.metadata["successful_examples"] == 0
+        assert result.metadata["example_success_summary"] == "0/10 examples succeeded"
+        assert result.status == TrialStatus.FAILED
+        assert result.error_message == "No examples succeeded"
 
     def test_example_results_included(self, eval_config, eval_result):
         """Test example_results are included in metadata."""

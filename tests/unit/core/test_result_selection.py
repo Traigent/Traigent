@@ -395,10 +395,16 @@ class TestSelectBestConfigurationWithTieBreakers:
         assert result.best_config["model"] in ["A", "B", "C"]
 
     def test_no_tie_breaker_returns_first_tied(self) -> None:
-        """Without tie-breakers, first tied trial is returned."""
+        """Single-objective ties keep the historic first-wins behavior."""
         trials = [
-            FakeTrial(metrics={"accuracy": 0.9}, config={"model": "A"}),
-            FakeTrial(metrics={"accuracy": 0.9}, config={"model": "B"}),
+            FakeTrial(
+                metrics={"accuracy": 0.9, "cost": 0.2},
+                config={"model": "A"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.9, "cost": 0.1},
+                config={"model": "B"},
+            ),
         ]
 
         result = select_best_configuration(
@@ -407,10 +413,109 @@ class TestSelectBestConfigurationWithTieBreakers:
             config_space_keys={"model"},
             aggregate_configs=False,
             tie_breakers=None,  # No tie-breaker
+            objective_order=["accuracy"],
         )
 
-        # Should return first in list
         assert result.best_config["model"] == "A"
+
+    @pytest.mark.parametrize("aggregate_configs", [False, True])
+    def test_default_multi_objective_tie_breaks_equal_accuracy_on_lowest_cost(
+        self, aggregate_configs: bool
+    ) -> None:
+        """Regression #1184: equal primary accuracy picks the cheapest trial."""
+        costs = [0.00020, 0.00001, 0.00002, 0.00011]
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 1.0, "cost": cost},
+                config={"model": f"m{i}", "cost": cost},
+            )
+            for i, cost in enumerate(costs, start=1)
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model", "cost"},
+            aggregate_configs=aggregate_configs,
+            tie_breakers=None,
+            objective_order=["accuracy", "cost"],
+        )
+
+        assert result.best_config["cost"] == pytest.approx(0.00001)
+        assert result.best_trial_id == trials[1].trial_id
+
+    def test_default_tie_break_follows_declared_objective_order(self) -> None:
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 1.0, "cost": 0.00001, "latency": 1000.0},
+                config={"model": "low-cost-high-latency"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 1.0, "cost": 0.00002, "latency": 1.0},
+                config={"model": "higher-cost-low-latency"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 1.0, "cost": 0.00001, "latency": 10.0},
+                config={"model": "low-cost-low-latency"},
+            ),
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            tie_breakers=None,
+            objective_order=["accuracy", "cost", "latency"],
+        )
+
+        assert result.best_config["model"] == "low-cost-low-latency"
+
+    def test_primary_near_ties_use_secondary_objective(self) -> None:
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 1.0, "cost": 0.00020},
+                config={"model": "slightly-higher-accuracy"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.9999999999995, "cost": 0.00001},
+                config={"model": "near-tied-cheaper"},
+            ),
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            tie_breakers=None,
+            objective_order=["accuracy", "cost"],
+        )
+
+        assert result.best_config["model"] == "near-tied-cheaper"
+
+    def test_explicit_custom_tie_breaker_takes_precedence_over_default(self) -> None:
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 1.0, "cost": 0.00020},
+                config={"model": "first"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 1.0, "cost": 0.00001},
+                config={"model": "cheaper"},
+            ),
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            tie_breakers={"accuracy": "custom"},
+            objective_order=["accuracy", "cost"],
+        )
+
+        assert result.best_config["model"] == "first"
 
     def test_tie_breaker_only_applied_to_ties(self) -> None:
         """Tie-breaker should only affect trials with equal best scores."""

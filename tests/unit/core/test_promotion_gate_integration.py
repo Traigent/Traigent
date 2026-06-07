@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import BaseEvaluator
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.models import PromotionPolicy
-from traigent.tvl.promotion_gate import (
-    ObjectiveSpec,
-    PromotionGate,
-)
+from traigent.tvl.promotion_gate import ObjectiveSpec, PromotionGate
 
 
 class _MockOptimizer(BaseOptimizer):
@@ -178,6 +173,36 @@ class TestPromotionGateIntegration:
             timestamp=datetime.now(UTC),
         )
         assert orchestrator._simple_is_better(trial3) is False
+
+    def test_simple_is_better_tie_breaks_on_declared_secondary_objective(self) -> None:
+        """Equal primary scores promote the lower-cost multi-objective trial."""
+        optimizer = _MockOptimizer()
+        optimizer.objectives = ["accuracy", "cost"]
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=_MockEvaluator(),
+            max_trials=3,
+        )
+        incumbent = TrialResult(
+            trial_id="trial_1",
+            config={"x": 1},
+            metrics={"accuracy": 1.0, "cost": 0.00020},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+        )
+        candidate = TrialResult(
+            trial_id="trial_2",
+            config={"x": 2},
+            metrics={"accuracy": 1.0, "cost": 0.00001},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+        )
+
+        orchestrator._best_trial_cached = incumbent
+
+        assert orchestrator._simple_is_better(candidate) is True
 
     def test_evaluate_promotion_without_gate(self) -> None:
         """Test promotion evaluation falls back to simple comparison without gate."""

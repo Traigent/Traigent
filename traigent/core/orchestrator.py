@@ -77,7 +77,12 @@ from traigent.core.parallel_execution_manager import (
     PermittedTrialResult,
 )
 from traigent.core.progress_manager import ProgressManager
-from traigent.core.result_selection import TieBreaker, select_best_configuration
+from traigent.core.result_selection import (
+    TieBreaker,
+    _primary_scores_tied,
+    _secondary_metric_key,
+    select_best_configuration,
+)
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
@@ -775,7 +780,8 @@ class OptimizationOrchestrator:
         if self._best_trial_cached is not None:
             return self._best_trial_cached
 
-        if not self._trials:
+        rankable_trials = [trial for trial in self._trials if trial.is_successful]
+        if not rankable_trials:
             return None
 
         # Find trial with best primary objective (assuming first objective is primary)
@@ -784,19 +790,19 @@ class OptimizationOrchestrator:
             minimization = is_minimization_objective(primary_objective)
             if minimization:
                 best_trial = min(
-                    self._trials,
+                    rankable_trials,
                     key=lambda t: t.metrics.get(primary_objective, float("inf")),
                 )
             else:
                 best_trial = max(
-                    self._trials,
+                    rankable_trials,
                     key=lambda t: t.metrics.get(primary_objective, float("-inf")),
                 )
             self._best_trial_cached = best_trial
             return best_trial
 
         # If no objectives defined, return last trial
-        return self._trials[-1] if self._trials else None
+        return rankable_trials[-1] if rankable_trials else None
 
     def _get_config_hash(self, config: dict[str, Any] | None) -> str:
         """Generate a hash for a configuration to track metrics across trials."""
@@ -1141,9 +1147,32 @@ class OptimizationOrchestrator:
         minimization = is_minimization_objective(primary_objective)
         new_score_value = cast(float, new_score)
         current_score_value = cast(float, current_score)
+        if _primary_scores_tied(new_score_value, current_score_value):
+            return self._secondary_tie_breaks_incumbent(trial_result, primary_objective)
         if minimization:
             return new_score_value < current_score_value
         return new_score_value > current_score_value
+
+    def _secondary_tie_breaks_incumbent(
+        self,
+        trial_result: TrialResult,
+        primary_objective: str,
+    ) -> bool:
+        """Return whether secondary declared objectives promote the candidate."""
+        if len(self.optimizer.objectives) <= 1 or self._best_trial_cached is None:
+            return False
+
+        candidate_key = _secondary_metric_key(
+            trial_result.metrics or {},
+            primary_objective,
+            self.optimizer.objectives,
+        )
+        incumbent_key = _secondary_metric_key(
+            self._best_trial_cached.metrics or {},
+            primary_objective,
+            self.optimizer.objectives,
+        )
+        return candidate_key > incumbent_key
 
     def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
         if not self.optimizer.objectives:
@@ -2962,6 +2991,7 @@ class OptimizationOrchestrator:
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
             tie_breakers=self._tie_breakers or None,
             band_target=self._band_target,
+            objective_order=self.optimizer.objectives,
             comparability_mode=self.traigent_config.get_comparability_mode(),
             require_certified=strict_mode,
             certified_config=certified_config,
@@ -3027,6 +3057,14 @@ class OptimizationOrchestrator:
         now = datetime.now(UTC)
         run_label = generate_run_label(func_name, self._optimization_id, now)
 
+        result_metadata = self._build_result_metadata(
+            session_summary,
+            safeguards_telemetry,
+            strategy_preset_metadata,
+        )
+        if selection.best_trial_id:
+            result_metadata["best_trial_id"] = selection.best_trial_id
+
         # Create optimization result
         optimization_result = OptimizationResult(
             trials=self._trials.copy(),
@@ -3042,11 +3080,7 @@ class OptimizationOrchestrator:
             total_cost=total_cost if total_cost > 0 else None,
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
-            metadata=self._build_result_metadata(
-                session_summary,
-                safeguards_telemetry,
-                strategy_preset_metadata,
-            ),
+            metadata=result_metadata,
             preset_selection=preset_selection,
             stop_reason=self._stop_reason,
             run_label=run_label,

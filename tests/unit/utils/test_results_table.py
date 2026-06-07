@@ -15,7 +15,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
-from traigent.utils.results_table import _trials_all_failed, print_results_table
+from traigent.utils.results_table import (
+    _find_best_per_objective,
+    _trials_all_failed,
+    print_results_table,
+)
 
 
 def _trial(
@@ -23,9 +27,10 @@ def _trial(
     metrics: dict[str, float],
     metadata: dict[str, Any] | None = None,
     status: TrialStatus = TrialStatus.COMPLETED,
+    trial_id: str = "t",
 ) -> TrialResult:
     return TrialResult(
-        trial_id="t",
+        trial_id=trial_id,
         config=config,
         metrics=metrics,
         status=status,
@@ -102,7 +107,7 @@ class TestTrialsAllFailed:
         ]
         assert _trials_all_failed(trials) is True
 
-    def test_positive_quality_metric_overrides_zero_success_metadata(self) -> None:
+    def test_explicit_zero_success_overrides_positive_quality_metric(self) -> None:
         trials = [
             _trial(
                 {"model": "m1"},
@@ -115,7 +120,7 @@ class TestTrialsAllFailed:
                 metadata={"successful_examples": 0},
             ),
         ]
-        assert _trials_all_failed(trials) is False
+        assert _trials_all_failed(trials) is True
 
     def test_non_numeric_metric_value_is_skipped(self) -> None:
         # Defensive: shouldn't crash on a stray non-numeric metric, and missing
@@ -129,8 +134,13 @@ class TestPrintResultsTableBanner:
     def _build_results(trials: list[TrialResult]) -> MagicMock:
         results = MagicMock()
         results.trials = trials
+        results.metadata = {}
+        results.best_trial_id = None
+        results.best_config = trials[0].config if trials else {}
+        results.best_score = None
         results.calculate_weighted_scores.return_value = {
             "best_weighted_config": trials[0].config if trials else {},
+            "weighted_scores": [],
         }
         return results
 
@@ -197,7 +207,7 @@ class TestPrintResultsTableBanner:
         assert "All trials failed" not in out
         assert "Overall Best" in out
 
-    def test_positive_quality_metric_emits_legend_even_with_zero_success_metadata(
+    def test_explicit_zero_success_emits_failed_banner_even_with_positive_metric(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         trials = [
@@ -219,5 +229,117 @@ class TestPrintResultsTableBanner:
         )
 
         out = capsys.readouterr().out
-        assert "All trials failed" not in out
-        assert "Overall Best" in out
+        assert "All trials failed" in out
+        assert "Overall Best" not in out
+
+
+class TestBestPerObjective:
+    def test_returns_all_tied_best_indices(self) -> None:
+        trials = [
+            _trial(
+                {"model": "m1"},
+                {"accuracy": 1.0},
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+            ),
+            _trial(
+                {"model": "m2"},
+                {"accuracy": 1.0 + 5e-13},
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+            ),
+            _trial(
+                {"model": "m3"},
+                {"accuracy": 0.5},
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+            ),
+        ]
+
+        best = _find_best_per_objective(trials, [("accuracy", "maximize")])
+
+        assert best["accuracy"] == {0, 1}
+
+    def test_excludes_zero_success_trial_from_best_cost(self) -> None:
+        trials = [
+            _trial(
+                {"model": "failed-free"},
+                {"cost": 0.0},
+                metadata={"successful_examples": 0, "examples_attempted": 20},
+            ),
+            _trial(
+                {"model": "working"},
+                {"cost": 0.00001},
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+            ),
+        ]
+
+        best = _find_best_per_objective(trials, [("cost", "minimize")])
+
+        assert best["cost"] == {1}
+
+
+class TestOverallBestIdentity:
+    @staticmethod
+    def _build_results(trials: list[TrialResult], best_trial_id: str) -> MagicMock:
+        results = MagicMock()
+        results.trials = trials
+        results.metadata = {"best_trial_id": best_trial_id}
+        results.best_config = trials[0].config
+        results.best_score = 1.0
+        results.calculate_weighted_scores.return_value = {"weighted_scores": []}
+        return results
+
+    def test_star_matches_best_trial_id_not_duplicate_config_equality(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        duplicate_config = {"model": "same"}
+        trials = [
+            _trial(
+                duplicate_config,
+                {"accuracy": 1.0, "cost": 0.00020},
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+                trial_id="t1",
+            ),
+            _trial(
+                duplicate_config,
+                {"accuracy": 1.0, "cost": 0.00001},
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+                trial_id="t2",
+            ),
+        ]
+
+        print_results_table(
+            self._build_results(trials, "t2"),
+            config_space={"model": ["same"]},
+            objectives=["accuracy", "cost"],
+        )
+
+        out = capsys.readouterr().out
+        assert out.count("★") == 2  # one row marker plus the legend marker
+
+    def test_table_surfaces_per_trial_example_success_counts(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        trials = [
+            _trial(
+                {"model": "legacy"},
+                {"accuracy": 0.0},
+                metadata={"successful_examples": 0, "examples_attempted": 20},
+                trial_id="t1",
+            ),
+            _trial(
+                {"model": "working"},
+                {"accuracy": 1.0},
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+                trial_id="t2",
+            ),
+        ]
+
+        print_results_table(
+            self._build_results(trials, "t2"),
+            config_space={"model": ["legacy", "working"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "examples" in out
+        assert "0/20" in out
+        assert "20/20" in out
