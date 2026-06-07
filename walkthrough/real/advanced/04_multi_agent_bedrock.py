@@ -65,17 +65,68 @@ from traigent.observability import add_agent_span
 from traigent.utils.cost_calculator import cost_from_tokens
 from traigent.utils.env_config import is_mock_llm
 
-# Source: tests/cost_coverage/test_model_price_coverage.py
-BEDROCK_GENERATOR_MODEL_IDS = [
+# Curated generator candidates.
+#
+# NOTE on Legacy/EOL models (issue #1180): Bedrock reports an inference profile
+# as ACTIVE in list-inference-profiles even when invoking it returns
+# ResourceNotFoundException at the account level — so a pricing/list-based check
+# (e.g. tests/cost_coverage/test_model_price_coverage.py) green-lights models
+# that fail every call. The only reliable signal is to *invoke* the model.
+#
+# This list was refreshed to models that were invoke-verified reachable in
+# us-east-1 on 2026-06-07. The three Claude 3 / 3.5 profiles previously shipped
+# here (claude-3-5-haiku, claude-3-5-sonnet-v2, claude-3-haiku) returned
+# ResourceNotFoundException on every converse call and were removed.
+_CANDIDATE_BEDROCK_MODEL_IDS = [
     "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-    "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "us.anthropic.claude-3-haiku-20240307-v1:0",
     "us.amazon.nova-micro-v1:0",
     "us.amazon.nova-lite-v1:0",
     "us.meta.llama3-1-8b-instruct-v1:0",
     "us.meta.llama3-1-70b-instruct-v1:0",
 ]
+
+
+def _reachable_bedrock_models(candidates: list[str]) -> list[str]:
+    """Invoke-or-skip preflight: keep only models that actually answer a call.
+
+    Legacy/EOL gating is invisible to list-inference-profiles (issue #1180), so
+    the durable guard is a real 1-token invoke. Unreachable models are dropped
+    from the grid with a clear notice instead of silently scoring 0/N and
+    inflating the run's "success rate". Skipped via TRAIGENT_BEDROCK_SKIP_PREFLIGHT=1
+    (and entirely in mock mode). If *every* candidate fails the probe — e.g. no
+    AWS credentials at all — the full candidate list is returned unchanged so the
+    walkthrough still runs and surfaces the underlying error rather than an empty grid.
+    """
+    if is_mock_llm() or os.getenv("TRAIGENT_BEDROCK_SKIP_PREFLIGHT", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return list(candidates)
+
+    reachable: list[str] = []
+    for model_id in candidates:
+        try:
+            litellm.completion(
+                model=f"bedrock/{model_id}",
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
+            )
+            reachable.append(model_id)
+        except Exception as exc:  # noqa: BLE001 - any invoke failure means skip
+            err = type(exc).__name__
+            print(f"  ⊘ skipping bedrock/{model_id}: not reachable ({err})")
+
+    if not reachable:
+        print(
+            "  ⚠ no candidate Bedrock model was reachable; "
+            "running the full list so the underlying error surfaces."
+        )
+        return list(candidates)
+    return reachable
+
+
+BEDROCK_GENERATOR_MODEL_IDS = _reachable_bedrock_models(_CANDIDATE_BEDROCK_MODEL_IDS)
 
 DEFAULT_EMBEDDING_MODEL = os.getenv(
     "BEDROCK_EMBED_MODEL_ID",
