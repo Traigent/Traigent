@@ -19,6 +19,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from traigent.utils.logging import configure_litellm_logging
+
 logger = logging.getLogger(__name__)
 
 # Privacy default: force litellm to use its bundled pricing map instead of
@@ -35,6 +37,7 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 try:
     import litellm
 
+    configure_litellm_logging(litellm_module=litellm)
     LITELLM_AVAILABLE = True
 except (ImportError, KeyError):
     litellm = None  # type: ignore[assignment]

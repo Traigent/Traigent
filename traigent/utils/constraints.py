@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from traigent.core.constants import DEFAULT_MODEL
-from traigent.utils.logging import get_logger
+from traigent.utils.logging import configure_litellm_logging, get_logger
 
 logger = get_logger(__name__)
 
@@ -484,6 +484,7 @@ def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
     try:
         import litellm
 
+        configure_litellm_logging(litellm_module=litellm)
         input_cost, output_cost = litellm.cost_per_token(
             model=model, prompt_tokens=1000, completion_tokens=1000
         )
