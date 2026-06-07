@@ -22,22 +22,151 @@ from traigent.config.types import TraigentConfig
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
-from traigent.config.backend_config import SIGNUP_URL, get_no_credentials_hint
+from traigent.config.backend_config import get_no_credentials_hint
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
 from traigent.core.session_types import (
+    SessionCreationFailureClassification,
+    SessionCreationFailureDetail,
     SessionCreationFailureReason,
     SessionCreationResult,
 )
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.env_config import is_backend_offline
+from traigent.utils.env_config import is_backend_offline, is_untracked_fallback_allowed
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_WARNING_RULE = "=" * 72
+
+
+def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in value for needle in needles)
+
+
+def _classify_session_creation_failure(
+    reason: SessionCreationFailureReason,
+    detail: SessionCreationFailureDetail | None,
+) -> SessionCreationFailureClassification:
+    if reason == SessionCreationFailureReason.SESSION_FAILED:
+        if detail and detail.status_code and 400 <= detail.status_code < 500:
+            return SessionCreationFailureClassification.UNKNOWN
+        return SessionCreationFailureClassification.BACKEND_UNREACHABLE
+
+    if reason == SessionCreationFailureReason.NO_API_KEY:
+        return SessionCreationFailureClassification.KEY_NOT_FOUND
+
+    if detail and detail.missing_permissions:
+        return SessionCreationFailureClassification.MISSING_PERMISSION
+
+    text = " ".join(
+        part
+        for part in (
+            detail.error_code if detail else None,
+            detail.message if detail else None,
+            detail.raw_body if detail else None,
+        )
+        if part
+    ).lower()
+
+    if _contains_any(text, ("key_not_found", "api_key_not_found", "key not found")):
+        return SessionCreationFailureClassification.KEY_NOT_FOUND
+    if _contains_any(
+        text,
+        (
+            "invalid",
+            "revoked",
+            "expired",
+            "rejected",
+            "unauthorized",
+            "authentication",
+        ),
+    ):
+        return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
+    if detail and detail.status_code == 401:
+        return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
+
+    return SessionCreationFailureClassification.UNKNOWN
+
+
+def _format_raw_reason(result: SessionCreationResult) -> str | None:
+    detail = result.failure_response
+    raw_reason = result.failure_detail
+    if detail and detail.raw_body:
+        raw_reason = detail.raw_body
+    if not raw_reason:
+        return None
+    return raw_reason.replace("\n", "\\n")[:500]
+
+
+def _format_untracked_warning_block(
+    result: SessionCreationResult,
+    classification: SessionCreationFailureClassification,
+    *,
+    aborting: bool,
+) -> str:
+    detail = result.failure_response
+    lines = [
+        _WARNING_RULE,
+        "TRAIGENT BACKEND TRACKING UNAVAILABLE",
+        "This run will NOT be tracked in the portal.",
+        f"Classification: {classification.value}",
+    ]
+
+    if detail and detail.status_code is not None:
+        lines.append(f"HTTP status: {detail.status_code}")
+    if detail and detail.error_code:
+        lines.append(f"Backend error_code: {detail.error_code}")
+    if detail and detail.message:
+        lines.append(f"Backend message: {detail.message}")
+    if detail and detail.missing_permissions:
+        permissions = ", ".join(f"`{p}`" for p in detail.missing_permissions)
+        lines.append(f"Missing permissions: {permissions}")
+
+    raw_reason = _format_raw_reason(result)
+    if raw_reason:
+        lines.append(f"Raw reason: {raw_reason}")
+
+    if classification == SessionCreationFailureClassification.MISSING_PERMISSION:
+        lines.append(
+            "Remedy: grant the missing permission(s) to the API key, or if the "
+            "key should already have them, verify the backend deployment and "
+            "permission middleware that returned this structured response."
+        )
+    elif classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY:
+        lines.append(
+            "Remedy: re-authenticate with `traigent auth login` or provide a "
+            "valid, non-revoked API key."
+        )
+    elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
+        lines.append(
+            "Remedy: configure a valid Traigent API key or run `traigent auth login`."
+        )
+    elif classification == SessionCreationFailureClassification.BACKEND_UNREACHABLE:
+        lines.append(
+            "Remedy: check TRAIGENT_BACKEND_URL/network connectivity or retry later."
+        )
+    else:
+        lines.append(
+            "Remedy: inspect the raw backend response above; retry with "
+            "TRAIGENT_LOG_LEVEL=DEBUG for more diagnostics."
+        )
+
+    if aborting:
+        lines.append(
+            "Aborting before trials or LLM calls. To knowingly proceed local-only, "
+            "set TRAIGENT_ALLOW_UNTRACKED=1."
+        )
+    else:
+        lines.append("Continuing local-only; results will be saved on this machine.")
+
+    lines.append(_WARNING_RULE)
+    return "\n".join(lines)
 
 
 class BackendSessionManager:
@@ -131,23 +260,32 @@ class BackendSessionManager:
             if not was_enabled:
                 return str(result.session_id)
 
+            classification = _classify_session_creation_failure(
+                reason, result.failure_response
+            )
             if reason == SessionCreationFailureReason.AUTH:
-                logger.warning(
-                    "Backend authentication failed — results will be saved locally only. "
-                    "Run 'traigent auth login' or get a new key at %s",
-                    SIGNUP_URL,
+                allow_untracked = is_untracked_fallback_allowed()
+                warning = _format_untracked_warning_block(
+                    result,
+                    classification,
+                    aborting=not allow_untracked,
                 )
+                if not allow_untracked:
+                    raise ConfigurationError(warning)
+                logger.warning("%s", warning)
             elif reason == SessionCreationFailureReason.NO_API_KEY:
                 logger.warning(
                     "No API key found — results saved locally only. %s",
                     get_no_credentials_hint(),
                 )
             else:
-                detail = result.failure_detail or "unknown"
                 logger.warning(
-                    "Backend tracking unavailable — results will be saved locally only. "
-                    "reason=%s",
-                    detail[:200],
+                    "%s",
+                    _format_untracked_warning_block(
+                        result,
+                        classification,
+                        aborting=False,
+                    ),
                 )
         else:
             logger.info("Created backend session: %s", result.session_id)

@@ -1115,10 +1115,144 @@ class TestHandleSessionCreationResult:
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warning_records) == 1
 
-    def test_auth_failure_warning(
+    def test_auth_failure_aborts_by_default_with_structured_reason(
+        self, traigent_config, objective_schema, mock_optimizer
+    ):
+        """403 session creation failures abort before trial spend by default."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.utils.exceptions import ConfigurationError
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (403)",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"Missing required permissions: experiment.write",'
+                '"details":{"missing_permissions":["experiment.write"]}}',
+            ),
+        )
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            manager.handle_session_creation_result(result)
+
+        assert not manager.backend_tracking_enabled
+        message = str(exc_info.value)
+        assert "missing-permission" in message
+        assert "INSUFFICIENT_PERMISSIONS" in message
+        assert "experiment.write" in message
+        assert "Aborting before trials or LLM calls" in message
+        assert "TRAIGENT_ALLOW_UNTRACKED=1" in message
+
+    def test_create_session_auth_abort_before_trial_submission(
+        self,
+        backend_session_manager,
+        mock_backend_client,
+        mock_dataset,
+    ):
+        """Session-create auth failures stop before any trial backend write."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.utils.exceptions import ConfigurationError
+
+        mock_backend_client.create_session.return_value = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (403)",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                403,
+                '{"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"Missing required permissions: experiment.write",'
+                '"details":{"missing_permissions":["experiment.write"]}}',
+            ),
+        )
+
+        def func(x):
+            return x
+
+        descriptor = resolve_function_descriptor(func)
+
+        with pytest.raises(ConfigurationError):
+            backend_session_manager.create_session(
+                func=func,
+                dataset=mock_dataset,
+                function_descriptor=descriptor,
+                max_trials=10,
+                start_time=1234567890.0,
+            )
+
+        mock_backend_client.submit_result.assert_not_called()
+        mock_backend_client.request_trial_slot.assert_not_called()
+        assert not backend_session_manager.backend_tracking_enabled
+
+    def test_auth_failure_allows_local_only_with_explicit_opt_in(
+        self, traigent_config, objective_schema, mock_optimizer, caplog, monkeypatch
+    ):
+        """TRAIGENT_ALLOW_UNTRACKED=1 preserves local-only fallback for auth errors."""
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        monkeypatch.setenv("TRAIGENT_ALLOW_UNTRACKED", "1")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (403)",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"Missing required permissions: experiment.write",'
+                '"details":{"missing_permissions":["experiment.write"]}}',
+            ),
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert not manager.backend_tracking_enabled
+        assert any("missing-permission" in msg for msg in caplog.messages)
+        assert any("experiment.write" in msg for msg in caplog.messages)
+        assert any("Continuing local-only" in msg for msg in caplog.messages)
+
+    def test_connection_failure_warns_and_continues_local(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
-        """handle_session_creation_result must emit WARNING for AUTH failure."""
+        """Transient backend unreachability remains warn-and-continue."""
         import logging
 
         from traigent.cloud.session_types import (
@@ -1138,17 +1272,61 @@ class TestHandleSessionCreationResult:
 
         result = SessionCreationResult.fallback(
             session_id="local_test",
-            reason=SessionCreationFailureReason.AUTH,
-            detail="Authentication failed (401)",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Backend unavailable (connection failed)",
         )
 
         with caplog.at_level(
             logging.WARNING, logger="traigent.core.backend_session_manager"
         ):
-            manager.handle_session_creation_result(result)
+            session_id = manager.handle_session_creation_result(result)
 
+        assert session_id == "local_test"
         assert not manager.backend_tracking_enabled
-        assert any("authentication failed" in msg.lower() for msg in caplog.messages)
+        assert any("backend-unreachable" in msg for msg in caplog.messages)
+        assert any("Continuing local-only" in msg for msg in caplog.messages)
+
+    def test_unknown_4xx_warning_includes_raw_reason(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Unknown 4xx responses are classified without dropping the raw body."""
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert any("Classification: unknown" in msg for msg in caplog.messages)
+        assert any(
+            "Bad request from session endpoint" in msg for msg in caplog.messages
+        )
 
     def test_idempotent_warns_only_once(
         self, traigent_config, objective_schema, mock_optimizer, caplog
@@ -1173,7 +1351,8 @@ class TestHandleSessionCreationResult:
 
         result = SessionCreationResult.fallback(
             session_id="local_test",
-            reason=SessionCreationFailureReason.AUTH,
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Backend unavailable",
         )
 
         with caplog.at_level(
