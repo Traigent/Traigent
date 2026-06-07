@@ -741,6 +741,42 @@ class TestOptimizationOrchestrator:
         assert ranking["non_successful_count"] == 1
         assert ranking["eligible_count"] == 1
 
+    def test_create_optimization_result_success_rate_excludes_all_errored_trials(
+        self, orchestrator
+    ):
+        """Regression #1183: 3 all-errored completed trials yield 5/8."""
+        trials = [
+            TrialResult(
+                trial_id=f"ok_{i}",
+                config={"param1": i},
+                metrics={"accuracy": 1.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+            )
+            for i in range(5)
+        ]
+        trials.extend(
+            TrialResult(
+                trial_id=f"errored_{i}",
+                config={"param1": i + 5},
+                metrics={"accuracy": 0.0, "cost": 0.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+                metadata={"successful_examples": 0, "examples_attempted": 20},
+            )
+            for i in range(3)
+        )
+        orchestrator._trials = trials
+        orchestrator._status = OptimizationStatus.COMPLETED
+
+        result = orchestrator._create_optimization_result()
+
+        assert result.convergence_info["successful_trials"] == 5
+        assert result.convergence_info["success_rate"] == pytest.approx(5 / 8)
+
     def test_create_optimization_result_with_empty_objectives(self, orchestrator):
         """RED before the fix: objectives-free runs (a supported BaseOptimizer
         mode — weighted scoring disabled) hit an unguarded objectives[0] at

@@ -329,8 +329,21 @@ class TrialResult:
 
     @property
     def is_successful(self) -> bool:
-        """Check if trial completed successfully."""
-        return self.status == TrialStatus.COMPLETED
+        """Check if trial completed and produced at least one successful example."""
+        if self.status != TrialStatus.COMPLETED:
+            return False
+        metadata = self.metadata or {}
+        successful_examples = metadata.get("successful_examples")
+        if isinstance(successful_examples, bool):
+            return True
+        if isinstance(successful_examples, (int, float)):
+            return successful_examples > 0
+        if successful_examples is not None:
+            try:
+                return float(successful_examples) > 0
+            except (TypeError, ValueError):
+                return True
+        return True
 
     def get_metric(self, name: str, default: float | None = None) -> float | None:
         """Get a specific metric value."""
@@ -1454,8 +1467,15 @@ class OptimizationResult:
                 else None
             )
             metadata = trial.metadata or {}
+            if "successful_examples" in metadata:
+                row["successful_examples"] = metadata.get("successful_examples")
             if "examples_attempted" in metadata:
                 row["examples_attempted"] = metadata.get("examples_attempted")
+            if "successful_examples" in metadata and "examples_attempted" in metadata:
+                row["example_success_summary"] = (
+                    f"{metadata.get('successful_examples')}/"
+                    f"{metadata.get('examples_attempted')} examples succeeded"
+                )
             if "total_example_cost" in metadata:
                 row["total_cost"] = metadata.get("total_example_cost")
             elif "total_cost" not in row:

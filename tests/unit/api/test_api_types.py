@@ -176,6 +176,17 @@ class TestTrialResult:
         )
         assert not pruned_result.is_successful
 
+        zero_success_result = TrialResult(
+            trial_id="z1",
+            config={},
+            metrics={"accuracy": 0.0},
+            status=TrialStatus.COMPLETED,
+            duration=0.5,
+            timestamp=datetime.now(),
+            metadata={"successful_examples": 0, "examples_attempted": 20},
+        )
+        assert not zero_success_result.is_successful
+
     def test_get_metric(self):
         """Test get_metric method."""
         result = TrialResult(
@@ -399,6 +410,76 @@ class TestOptimizationResult:
         )
 
         assert result.success_rate == 2 / 3  # 2 successful out of 3
+
+    def test_success_rate_excludes_completed_zero_success_trials(self):
+        """Regression #1183: completed 0/20 trials are not successes."""
+        trials = [
+            TrialResult(
+                trial_id="all_errored",
+                config={"model": "legacy"},
+                metrics={"accuracy": 0.0, "cost": 0.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.5,
+                timestamp=datetime.now(),
+                metadata={"successful_examples": 0, "examples_attempted": 20},
+            )
+        ]
+        result = OptimizationResult(
+            trials=trials,
+            best_config={},
+            best_score=None,
+            optimization_id="opt_zero_success",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+        )
+
+        assert result.success_rate == 0.0
+        assert result.successful_trials == []
+
+    def test_success_rate_reports_five_of_eight_when_three_all_errored(self):
+        trials = [
+            TrialResult(
+                trial_id=f"ok_{i}",
+                config={"model": f"ok-{i}"},
+                metrics={"accuracy": 1.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(),
+                metadata={"successful_examples": 20, "examples_attempted": 20},
+            )
+            for i in range(5)
+        ]
+        trials.extend(
+            TrialResult(
+                trial_id=f"errored_{i}",
+                config={"model": f"legacy-{i}"},
+                metrics={"accuracy": 0.0, "cost": 0.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(),
+                metadata={"successful_examples": 0, "examples_attempted": 20},
+            )
+            for i in range(3)
+        )
+
+        result = OptimizationResult(
+            trials=trials,
+            best_config={"model": "ok-0"},
+            best_score=1.0,
+            optimization_id="opt_mixed_success",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+        )
+
+        assert result.success_rate == pytest.approx(5 / 8)
 
     def test_success_rate_empty_trials(self):
         """Test success_rate with no trials."""
