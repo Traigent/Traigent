@@ -133,86 +133,76 @@ DEFAULT_EMBEDDING_MODEL = os.getenv(
     "bedrock/amazon.titan-embed-text-v2:0",
 )
 
+# Knowledge base for a *non-ceiling* RAG eval (issue #1182).
+#
+# The previous KB/dataset asked questions whose verbatim answer was a single
+# retrieved sentence, so every model copied the context and scored ~100% —
+# optimization had no signal to differentiate configs. This KB instead states
+# the *rules* (e.g. "grid trials = product of candidate counts", which modes are
+# on-device) and the dataset asks questions that require **applying** those rules
+# (counting, multi-factor multiplication, multi-step reasoning). That spreads
+# model accuracy (strong models ~0.96, mid ~0.82, small ~0.68 — measured live on
+# Bedrock 2026-06-07), so the multi-objective accuracy/cost optimizer has real
+# signal. Anchors (single-fact lookups) keep the floor non-zero.
 KNOWLEDGE_BASE = [
     (
-        "Question: What does Traigent do?\n"
-        "Answer: Traigent optimizes AI applications without code changes"
+        "Traigent optimizes AI applications without code changes by wrapping a "
+        "function with the @traigent.optimize decorator."
     ),
     (
-        "Question: What is seamless mode?\n"
-        "Answer: Seamless mode intercepts and overrides hardcoded LLM parameters"
+        "Traigent supports four execution modes: local, cloud, hybrid, and "
+        "edge_analytics. Local keeps all data on the user's own machine and sends "
+        "nothing externally. Cloud runs everything on Traigent servers. Hybrid runs "
+        "the LLM calls locally but uses the cloud for optimization intelligence. "
+        "Edge_analytics runs optimization locally and sends only anonymized analytics."
     ),
     (
-        "Question: What is parameter mode?\n"
-        "Answer: Parameter mode provides explicit configuration control via function parameters"
+        "Traigent provides three optimization algorithms: grid search, random "
+        "search, and Bayesian optimization. Grid search evaluates every combination "
+        "in the configuration space. Random search samples a fixed number of random "
+        "combinations. Bayesian optimization uses results from previous trials to "
+        "choose the next combination and is the most sample-efficient of the three."
     ),
     (
-        "Question: What execution modes does Traigent support?\n"
-        "Answer: Local, cloud, and hybrid execution modes"
+        "A configuration space is a dictionary mapping each tunable parameter to its "
+        "candidate values, expressed with Choices. For grid search, the number of "
+        "trials equals the product of the number of candidate values across every "
+        "parameter."
     ),
     (
-        "Question: How does local mode work?\n"
-        "Answer: Local mode keeps all data on your machine for complete privacy"
+        "Multi-objective optimization uses ObjectiveSchema. Each objective has a "
+        "weight and the weights must sum to 1.0. Accuracy is maximized, while cost "
+        "and latency are minimized."
     ),
     (
-        "Question: What is edge_analytics mode?\n"
-        "Answer: Edge analytics mode runs optimization locally while sending analytics"
+        "Seamless mode intercepts and overrides hardcoded LLM parameters "
+        "automatically and requires no prompt changes. Context-injection mode "
+        "instead modifies the prompt by adding the configuration to it."
     ),
     (
-        "Question: What optimization algorithms does Traigent support?\n"
-        "Answer: Grid search, random search, and Bayesian optimization"
+        "Traigent integrates with LangChain through adapters that intercept "
+        "LangChain LLM calls and inject the optimized configuration."
     ),
     (
-        "Question: What is the @traigent.optimize decorator?\n"
-        "Answer: A decorator that enables automatic optimization of LLM functions"
+        "The eval_dataset parameter accepts a JSONL file of input and output pairs "
+        "that is used to score each candidate configuration."
     ),
     (
-        "Question: How do you define objectives in Traigent?\n"
-        "Answer: Using the objectives parameter with metrics like accuracy, cost, latency"
+        "Privacy: local mode and edge_analytics keep raw data on-device; the "
+        "privacy_enabled flag prevents prompts and outputs from being transmitted "
+        "when using hybrid mode."
     ),
     (
-        "Question: What is a configuration space?\n"
-        "Answer: A dictionary defining the hyperparameters and their possible values to optimize"
+        "Traigent's dashboard visualizes the Pareto frontier of accuracy versus cost "
+        "so users can compare configurations after a run completes."
     ),
     (
-        "Question: How does Traigent balance multiple objectives?\n"
-        "Answer: Through weighted objective definitions using ObjectiveSchema with maximize/minimize orientations"
+        "Traigent can resume an interrupted optimization run from its last completed "
+        "trial."
     ),
     (
-        "Question: Explain hybrid mode with privacy\n"
-        "Answer: Hybrid mode runs LLM calls locally but uses cloud for optimization intelligence with privacy enabled"
-    ),
-    (
-        "Question: How does Traigent handle RAG optimization?\n"
-        "Answer: It can optimize both retrieval parameters like k and method, plus generation parameters like model and temperature"
-    ),
-    (
-        "Question: What is the difference between seamless and context injection?\n"
-        "Answer: Seamless mode auto-overrides LLM calls; context mode adds config to prompts"
-    ),
-    (
-        "Question: How do custom evaluators work?\n"
-        "Answer: Custom evaluators let you define your own scoring logic for specialized use cases"
-    ),
-    (
-        "Question: Can Traigent optimize cost and accuracy simultaneously?\n"
-        "Answer: Yes, through multi-objective optimization with configurable weights for each metric"
-    ),
-    (
-        "Question: What privacy features does Traigent offer?\n"
-        "Answer: Local storage, privacy_enabled flag, and edge_analytics mode for data control"
-    ),
-    (
-        "Question: How does Traigent integrate with LangChain?\n"
-        "Answer: Via adapters that intercept LangChain LLM calls and inject optimized configurations"
-    ),
-    (
-        "Question: What is the eval_dataset parameter?\n"
-        "Answer: A JSONL file or Dataset object containing input/output pairs for evaluation"
-    ),
-    (
-        "Question: How does Traigent determine the best configuration?\n"
-        "Answer: By running trials, evaluating against objectives, and selecting the config with best weighted score"
+        "A measure in Traigent is a named numeric metric recorded for a "
+        "configuration run."
     ),
 ]
 
@@ -470,7 +460,8 @@ async def main() -> None:
     print("Generator models:")
     for model_id in BEDROCK_GENERATOR_MODEL_IDS:
         print(f"  - bedrock/{model_id}")
-    print(f"Grid: {total_trials} trials x 20 examples")
+    example_count = sum(1 for _ in open(DATASET_PATH, encoding="utf-8") if _.strip())
+    print(f"Grid: {total_trials} trials x {example_count} examples")
 
     results = await bedrock_multi_agent_rag.optimize(
         algorithm="grid",

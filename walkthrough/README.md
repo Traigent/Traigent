@@ -118,7 +118,9 @@ they are useful companion material:
 
 ## Datasets
 
-Each dataset contains **20 examples** with varying difficulty levels to ensure different model configurations show measurable differences.
+Datasets carry **varying difficulty levels** so different model configurations show
+measurable accuracy differences (most contain 20 examples; `rag_questions.jsonl` has 13
+tuned for spread — see issue #1182).
 
 ### simple_questions.jsonl (and simple_questions_10.jsonl)
 
@@ -143,10 +145,16 @@ Sentiment analysis with ambiguous cases:
 
 ### rag_questions.jsonl
 
-Traigent documentation Q&A for RAG testing:
+Traigent documentation Q&A for RAG testing, designed to be **non-ceiling** — the
+knowledge base states *rules* and the questions require *applying* them, so model
+accuracy actually spreads (issue #1182). 13 examples:
 
-- **Simple (10)**: Direct questions with factual answers from docs
-- **Complex (10)**: Questions requiring synthesis of multiple document sections
+- **Anchors (3)**: Single-fact lookups every model answers (e.g. which mode is hybrid).
+- **Rule-application (10)**: Counting and grid-search trial-count arithmetic
+  (`trials = product of candidate counts`) plus multi-step reasoning — strong models
+  (claude-haiku-4-5, llama-70b) score ~100%, mid models (Nova) ~85%, small models
+  (llama-8b) ~70% (measured live on Bedrock). This gives the multi-objective
+  accuracy/cost optimizer real signal to differentiate configurations.
 
 **Evaluation**: Semantic similarity - checks if key concepts from expected answer appear in response
 

@@ -1,20 +1,13 @@
-{"input": {"question": "What does Traigent do?"}, "output": "Traigent optimizes AI applications without code changes"}
-{"input": {"question": "What is seamless mode?"}, "output": "Seamless mode intercepts and overrides hardcoded LLM parameters"}
-{"input": {"question": "What is parameter mode?"}, "output": "Parameter mode provides explicit configuration control via function parameters"}
-{"input": {"question": "What execution modes does Traigent support?"}, "output": "Local, cloud, and hybrid execution modes"}
-{"input": {"question": "How does local mode work?"}, "output": "Local mode keeps all data on your machine for complete privacy"}
-{"input": {"question": "What is edge_analytics mode?"}, "output": "Edge analytics mode runs optimization locally while sending analytics"}
-{"input": {"question": "What optimization algorithms does Traigent support?"}, "output": "Grid search, random search, and Bayesian optimization"}
-{"input": {"question": "What is the @traigent.optimize decorator?"}, "output": "A decorator that enables automatic optimization of LLM functions"}
-{"input": {"question": "How do you define objectives in Traigent?"}, "output": "Using the objectives parameter with metrics like accuracy, cost, latency"}
-{"input": {"question": "What is a configuration space?"}, "output": "A dictionary defining the hyperparameters and their possible values to optimize"}
-{"input": {"question": "How does Traigent balance multiple objectives?"}, "output": "Through weighted objective definitions using ObjectiveSchema with maximize/minimize orientations"}
-{"input": {"question": "Explain hybrid mode with privacy"}, "output": "Hybrid mode runs LLM calls locally but uses cloud for optimization intelligence with privacy enabled"}
-{"input": {"question": "How does Traigent handle RAG optimization?"}, "output": "It can optimize both retrieval parameters like k and method, plus generation parameters like model and temperature"}
-{"input": {"question": "What is the difference between seamless and context injection?"}, "output": "Seamless mode auto-overrides LLM calls; context mode adds config to prompts"}
-{"input": {"question": "How do custom evaluators work?"}, "output": "Custom evaluators let you define your own scoring logic for specialized use cases"}
-{"input": {"question": "Can Traigent optimize cost and accuracy simultaneously?"}, "output": "Yes, through multi-objective optimization with configurable weights for each metric"}
-{"input": {"question": "What privacy features does Traigent offer?"}, "output": "Local storage, privacy_enabled flag, and edge_analytics mode for data control"}
-{"input": {"question": "How does Traigent integrate with LangChain?"}, "output": "Via adapters that intercept LangChain LLM calls and inject optimized configurations"}
-{"input": {"question": "What is the eval_dataset parameter?"}, "output": "A JSONL file or Dataset object containing input/output pairs for evaluation"}
-{"input": {"question": "How does Traigent determine the best configuration?"}, "output": "By running trials, evaluating against objectives, and selecting the config with best weighted score"}
+{"input": {"question": "Which single execution mode runs the LLM calls locally but uses the cloud for optimization? Answer with one word."}, "output": "hybrid"}
+{"input": {"question": "Which optimization algorithm evaluates every combination in the configuration space? Answer with two words."}, "output": "grid search"}
+{"input": {"question": "Which optimization algorithm is the most sample-efficient? Answer with one word."}, "output": "Bayesian"}
+{"input": {"question": "How many of Traigent's execution modes keep raw data on the user's device? Number only."}, "output": "2"}
+{"input": {"question": "How many of Traigent's optimization algorithms do NOT use results from previous trials? Number only."}, "output": "2"}
+{"input": {"question": "With grid search over 5 models and 2 temperatures, how many trials run? Number only."}, "output": "10"}
+{"input": {"question": "With grid search over 3 models, 2 values of k, and 2 temperatures, how many trials run? Number only."}, "output": "12"}
+{"input": {"question": "With grid search over 4 models, 3 temperatures, and 2 values of k, how many trials run? Number only."}, "output": "24"}
+{"input": {"question": "With grid search over 5 models, 3 values of k, and 3 temperatures, how many trials run? Number only."}, "output": "45"}
+{"input": {"question": "With grid search over 3 algorithms, 4 models, 2 values of k, and 3 temperatures, how many trials run? Number only."}, "output": "72"}
+{"input": {"question": "With grid search over 5 models, 4 temperatures, 3 values of k, and 2 retrieval methods, how many trials run? Number only."}, "output": "120"}
+{"input": {"question": "Grid search over 7 models and 3 temperatures is planned, but 2 of those configurations are already cached and skipped. How many new trials run? Number only."}, "output": "19"}
+{"input": {"question": "Grid search over 6 models and 6 temperatures is planned; the 2 highest temperatures are dropped for every model. How many trials run? Number only."}, "output": "24"}
