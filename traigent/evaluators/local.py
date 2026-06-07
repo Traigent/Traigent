@@ -36,6 +36,23 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 _METADATA_PATCHES_ATTEMPTED = False
 
+_OUTPUT_METRIC_PARAM_NAMES = {
+    "actual",
+    "actual_output",
+    "output",
+    "prediction",
+    "predicted",
+    "result",
+}
+_EXPECTED_METRIC_PARAM_NAMES = {
+    "expected",
+    "expected_output",
+    "ground_truth",
+    "reference",
+    "target",
+}
+_LLM_METRIC_PARAM_NAMES = {"llm_metrics", "metrics"}
+
 
 @dataclass
 class PromptInfo:
@@ -579,6 +596,50 @@ class LocalEvaluator(BaseEvaluator):
                 float(value) if value is not None else 0.0
             )
 
+    def _build_metric_keyword_arguments(
+        self,
+        parameters: list[inspect.Parameter],
+        output: Any,
+        example_obj: Any,
+        config: dict[str, Any],
+        llm_payload: dict[str, Any],
+        example_index: int,
+    ) -> dict[str, Any]:
+        keyword_values: dict[str, Any] = {
+            "example": example_obj,
+            "input_data": example_obj.input_data,
+            "metadata": example_obj.metadata or {},
+            "config": config,
+            "example_index": example_index,
+        }
+        for name in _OUTPUT_METRIC_PARAM_NAMES:
+            keyword_values[name] = output
+        for name in _EXPECTED_METRIC_PARAM_NAMES:
+            keyword_values[name] = example_obj.expected_output
+        for name in _LLM_METRIC_PARAM_NAMES:
+            keyword_values[name] = llm_payload
+
+        kwargs: dict[str, Any] = {}
+        accepts_arbitrary_kwargs = False
+        for parameter in parameters:
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                accepts_arbitrary_kwargs = True
+                continue
+            if parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                continue
+            if parameter.name in keyword_values:
+                kwargs[parameter.name] = keyword_values[parameter.name]
+
+        if accepts_arbitrary_kwargs:
+            kwargs.setdefault("output", output)
+            kwargs.setdefault("expected", example_obj.expected_output)
+            kwargs.setdefault("llm_metrics", llm_payload)
+
+        return kwargs
+
     def _invoke_metric_function(
         self,
         metric_func: Callable[..., Any],
@@ -604,27 +665,44 @@ class LocalEvaluator(BaseEvaluator):
             Metric value or 0.0 on failure
         """
         try:
-            params = inspect.signature(metric_func).parameters.keys()
-            kwargs: dict[str, Any] = {}
+            signature = inspect.signature(metric_func)
+            parameters = list(signature.parameters.values())
+            positional_args = (output, example_obj.expected_output, llm_payload)
+            call_candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
-            if "output" in params or "actual" in params:
-                kwargs["output"] = output
-            if "expected" in params:
-                kwargs["expected"] = example_obj.expected_output
-            if "example" in params:
-                kwargs["example"] = example_obj
-            if "input_data" in params:
-                kwargs["input_data"] = example_obj.input_data
-            if "metadata" in params:
-                kwargs["metadata"] = example_obj.metadata or {}
-            if "config" in params:
-                kwargs["config"] = config
-            if "llm_metrics" in params:
-                kwargs["llm_metrics"] = llm_payload
-            if "example_index" in params:
-                kwargs["example_index"] = example_index
+            if any(
+                parameter.kind is inspect.Parameter.VAR_POSITIONAL
+                for parameter in parameters
+            ):
+                call_candidates.append((positional_args, {}))
 
-            return cast(float, metric_func(**kwargs))
+            kwargs = self._build_metric_keyword_arguments(
+                parameters, output, example_obj, config, llm_payload, example_index
+            )
+            if kwargs:
+                call_candidates.append(((), kwargs))
+
+            call_candidates.extend(
+                [
+                    (positional_args, {}),
+                    (positional_args[:2], {}),
+                    (positional_args[:1], {}),
+                    ((), {}),
+                ]
+            )
+
+            bind_error: TypeError | None = None
+            for args, candidate_kwargs in call_candidates:
+                try:
+                    signature.bind(*args, **candidate_kwargs)
+                except TypeError as exc:
+                    bind_error = exc
+                    continue
+                return cast(float, metric_func(*args, **candidate_kwargs))
+
+            if bind_error is not None:
+                raise bind_error
+            return cast(float, metric_func(output, example_obj.expected_output))
         except Exception as exc:
             example_id = (
                 example_obj.metadata.get("example_id", f"example_{example_index}")
