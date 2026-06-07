@@ -6,6 +6,7 @@ Common utilities for API key validation, logging setup, and environment configur
 from __future__ import annotations
 
 import logging
+import math
 import os
 from functools import reduce
 from pathlib import Path
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
     from typing import Any
 
     from traigent.core.result import OptimizationResult
+
+BEST_METRIC_REL_TOL = 1e-9
+BEST_METRIC_ABS_TOL = 1e-12
 
 
 # Estimated times for real examples (in seconds) - from test_all_examples.sh
@@ -235,21 +239,81 @@ def print_optimization_config(
         print(f"    - {param}: [{values_str}]")
 
 
-def _find_best_trial(trials: list, metric_names: list[str]) -> Any:
-    """Find the best trial by weighted score or accuracy."""
-    best_trial = trials[0]
-    for trial in trials:
-        score = getattr(trial, "weighted_score", None)
-        if score is not None:
-            best_score = getattr(best_trial, "weighted_score", float("-inf"))
-            if best_score < score:
-                best_trial = trial
-        elif metric_names and "accuracy" in metric_names:
-            trial_acc = getattr(trial, "metrics", {}).get("accuracy", 0)
-            best_acc = getattr(best_trial, "metrics", {}).get("accuracy", 0)
-            if trial_acc > best_acc:
-                best_trial = trial
-    return best_trial
+def _coerce_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _example_success_counts(trial: Any) -> tuple[int, int] | None:
+    metadata = getattr(trial, "metadata", {}) or {}
+    successful = _coerce_int(metadata.get("successful_examples"))
+    attempted = _coerce_int(metadata.get("examples_attempted"))
+    if attempted is None:
+        evaluation_result = metadata.get("evaluation_result")
+        attempted = _coerce_int(getattr(evaluation_result, "total_examples", None))
+    if successful is None or attempted is None:
+        return None
+    return successful, attempted
+
+
+def _trial_is_best_candidate(trial: Any) -> bool:
+    if not getattr(trial, "is_successful", False):
+        return False
+    counts = _example_success_counts(trial)
+    if counts is None:
+        return True
+    successful, _attempted = counts
+    return successful > 0
+
+
+def _find_best_trial(
+    trials: list,
+    metric_names: list[str],
+    weighted_scores: list[tuple[Any, float]] | None = None,
+    metric_info: list[tuple[str, str]] | None = None,
+) -> Any:
+    """Find the best trial by weighted scores or the primary displayed metric."""
+    if weighted_scores:
+        return max(weighted_scores, key=lambda item: item[1])[0]
+
+    eligible_trials = [trial for trial in trials if _trial_is_best_candidate(trial)]
+    if not eligible_trials:
+        return None
+
+    orientation_by_metric = dict(metric_info or [])
+    primary_metric = (
+        "accuracy"
+        if "accuracy" in metric_names
+        else (metric_names[0] if metric_names else None)
+    )
+    if primary_metric is None:
+        return eligible_trials[0]
+
+    is_minimize = orientation_by_metric.get(primary_metric) == "minimize"
+    chooser = min if is_minimize else max
+    missing = float("inf") if is_minimize else float("-inf")
+
+    def primary_score(trial: Any) -> float:
+        value = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
+        return missing if value is None else value
+
+    return chooser(
+        eligible_trials,
+        key=primary_score,
+    )
 
 
 def _format_config_value(val: Any) -> str:
@@ -294,27 +358,125 @@ def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
 
 
 def _find_best_per_objective(
-    trials: list, metric_info: list[tuple[str, str]]
-) -> dict[str, int]:
+    trials: list,
+    metric_info: list[tuple[str, str]],
+    metric_overrides: dict[str, list[float]] | None = None,
+) -> dict[str, set[int]]:
     """Find the best trial index for each objective metric.
 
-    Returns dict mapping metric name to trial index (0-based).
+    Returns dict mapping metric name to tied-best trial indices (0-based).
     """
-    best_indices = {}
+    best_indices: dict[str, set[int]] = {}
     for metric_name, orientation in metric_info:
-        best_idx = 0
-        best_val = getattr(trials[0], "metrics", {}).get(metric_name, 0)
-        # For minimize objectives, we want the smallest value
-        # For maximize objectives, we want the largest value
+        best_set: set[int] = set()
+        best_val: float | None = None
         is_minimize = orientation == "minimize"
-        for i, trial in enumerate(trials[1:], 1):
-            val = getattr(trial, "metrics", {}).get(metric_name, 0)
+        for i, trial in enumerate(trials):
+            if not _trial_is_best_candidate(trial):
+                continue
+            raw_val = (
+                metric_overrides[metric_name][i]
+                if metric_overrides and metric_name in metric_overrides
+                else getattr(trial, "metrics", {}).get(metric_name)
+            )
+            val = _coerce_float(raw_val)
+            if val is None:
+                continue
+            if best_val is None:
+                best_val = val
+                best_set = {i}
+                continue
+            if math.isclose(
+                val,
+                best_val,
+                rel_tol=BEST_METRIC_REL_TOL,
+                abs_tol=BEST_METRIC_ABS_TOL,
+            ):
+                best_set.add(i)
+                continue
             is_better = val < best_val if is_minimize else val > best_val
             if is_better:
                 best_val = val
-                best_idx = i
-        best_indices[metric_name] = best_idx
+                best_set = {i}
+        best_indices[metric_name] = best_set
     return best_indices
+
+
+def _trial_identity_index(trials: list, target_trial: Any) -> int | None:
+    if target_trial is None:
+        return None
+    for index, trial in enumerate(trials):
+        if trial is target_trial:
+            return index
+    target_id = getattr(target_trial, "trial_id", None)
+    if target_id is None:
+        return None
+    for index, trial in enumerate(trials):
+        if getattr(trial, "trial_id", None) == target_id:
+            return index
+    return None
+
+
+def _find_trial_index_by_id(trials: list, trial_id: Any) -> int | None:
+    if trial_id is None:
+        return None
+    for index, trial in enumerate(trials):
+        if getattr(trial, "trial_id", None) == trial_id:
+            return index
+    return None
+
+
+def _find_best_trial_index(
+    results: OptimizationResult,
+    trials: list,
+    metric_info: list[tuple[str, str]],
+    objectives: Any,
+) -> int | None:
+    metric_names = [name for name, _orientation in metric_info]
+    metadata = getattr(results, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    best_trial_id = metadata.get("best_trial_id") or getattr(
+        results, "best_trial_id", None
+    )
+    best_index = _find_trial_index_by_id(trials, best_trial_id)
+    if best_index is not None:
+        return best_index
+
+    try:
+        weighted_result = results.calculate_weighted_scores(objective_schema=objectives)
+        weighted_scores = weighted_result.get("weighted_scores") or []
+        best_trial = _find_best_trial(
+            trials, metric_names, weighted_scores, metric_info
+        )
+        best_index = _trial_identity_index(trials, best_trial)
+        if best_index is not None:
+            return best_index
+    except Exception:
+        pass
+
+    best_trial = _find_best_trial(trials, metric_names, metric_info=metric_info)
+    best_index = _trial_identity_index(trials, best_trial)
+    if best_index is not None:
+        return best_index
+
+    best_config = getattr(results, "best_config", None)
+    best_score = _coerce_float(getattr(results, "best_score", None))
+    primary_metric = metric_names[0] if metric_names else None
+    for index, trial in enumerate(trials):
+        if getattr(trial, "config", {}) != best_config:
+            continue
+        if best_score is None or primary_metric is None:
+            return index
+        trial_score = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
+        if trial_score is not None and math.isclose(
+            trial_score,
+            best_score,
+            rel_tol=BEST_METRIC_REL_TOL,
+            abs_tol=BEST_METRIC_ABS_TOL,
+        ):
+            return index
+    return None
 
 
 # ANSI color codes
@@ -369,10 +531,12 @@ def _build_table_row(
     param_names: list[str],
     metric_names: list[str],
     col_widths: dict[str, int],
-    best_per_objective: dict[str, int],
+    best_per_objective: dict[str, set[int]],
     is_overall_best: bool,
     mock_metrics: dict[str, float] | None = None,
     trailing_params: list[str] | None = None,
+    example_counts: tuple[int, int] | None = None,
+    show_examples: bool = False,
 ) -> list[str]:
     """Build a single table row string."""
     C = _Colors
@@ -396,11 +560,19 @@ def _build_table_row(
         else:
             val = metrics.get(metric, 0)
         formatted = _format_metric_value(metric, val)
-        if best_per_objective.get(metric) == idx:
+        if idx in best_per_objective.get(metric, set()):
             cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
         else:
             cell = f"{formatted:^{col_widths[metric]}}"
         row_parts.append(cell)
+
+    if show_examples:
+        formatted_counts = (
+            f"{example_counts[0]}/{example_counts[1]}"
+            if example_counts is not None
+            else "?"
+        )
+        row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
 
     # Trailing config values (shown after metrics)
     if trailing_params:
@@ -477,61 +649,18 @@ def print_results_table(
     if is_mock and "latency" in metric_names:
         mock_latencies = [_get_mock_latency_for_trial(t, task_type) for t in trials]
 
-    # Find best trials (using mock values if in mock mode)
-    if mock_costs or mock_latencies:
-        # Create modified metric_info for best calculation with mock values
-        best_per_objective = {}
-        for metric_name, orientation in metric_info:
-            if metric_name == "cost" and mock_costs:
-                # Use mock costs for finding best cost
-                is_minimize = orientation == "minimize"
-                best_idx = 0
-                best_val = mock_costs[0]
-                for i, cost in enumerate(mock_costs[1:], 1):
-                    is_better = cost < best_val if is_minimize else cost > best_val
-                    if is_better:
-                        best_val = cost
-                        best_idx = i
-                best_per_objective[metric_name] = best_idx
-            elif metric_name == "latency" and mock_latencies:
-                # Use mock latencies for finding best latency
-                is_minimize = orientation == "minimize"
-                best_idx = 0
-                best_val = mock_latencies[0]
-                for i, latency in enumerate(mock_latencies[1:], 1):
-                    is_better = (
-                        latency < best_val if is_minimize else latency > best_val
-                    )
-                    if is_better:
-                        best_val = latency
-                        best_idx = i
-                best_per_objective[metric_name] = best_idx
-            else:
-                # Use actual metrics for other objectives
-                best_idx = 0
-                best_val = getattr(trials[0], "metrics", {}).get(metric_name, 0)
-                is_minimize = orientation == "minimize"
-                for i, trial in enumerate(trials[1:], 1):
-                    val = getattr(trial, "metrics", {}).get(metric_name, 0)
-                    is_better = val < best_val if is_minimize else val > best_val
-                    if is_better:
-                        best_val = val
-                        best_idx = i
-                best_per_objective[metric_name] = best_idx
-    else:
-        best_per_objective = _find_best_per_objective(trials, metric_info)
+    metric_overrides: dict[str, list[float]] = {}
+    if mock_costs:
+        metric_overrides["cost"] = mock_costs
+    if mock_latencies:
+        metric_overrides["latency"] = mock_latencies
+    best_per_objective = _find_best_per_objective(
+        trials, metric_info, metric_overrides or None
+    )
 
-    # Use proper weighted scoring from OptimizationResult
-    # Note: In mock mode, trial.metrics may have cost=0 and similar latency for all
-    # trials, so weighted scoring may favor accuracy. The displayed costs/latencies
-    # are estimates for visualization only.
-    try:
-        weighted_result = results.calculate_weighted_scores(objective_schema=objectives)
-        best_config = weighted_result.get("best_weighted_config", {})
-    except Exception:
-        # Fallback to simple accuracy-based selection
-        best_trial = _find_best_trial(trials, metric_names)
-        best_config = getattr(best_trial, "config", {})
+    best_trial_index = _find_best_trial_index(results, trials, metric_info, objectives)
+    example_counts = [_example_success_counts(trial) for trial in trials]
+    show_examples = any(count is not None for count in example_counts)
 
     # Calculate column widths (use mock costs for width calculation if in mock mode)
     col_widths: dict[str, int] = {"#": 4}
@@ -541,7 +670,7 @@ def print_results_table(
             for t in trials
         )
         col_widths[param] = max(len(param), max_len) + 1
-    for idx, metric in enumerate(metric_names):
+    for metric in metric_names:
         if metric == "cost" and mock_costs:
             max_len = max(len(_format_metric_value(metric, c)) for c in mock_costs)
         elif metric == "latency" and mock_latencies:
@@ -558,6 +687,12 @@ def print_results_table(
                 for t in trials
             )
         col_widths[metric] = max(len(metric), max_len) + 1
+    if show_examples:
+        max_len = max(
+            len(f"{count[0]}/{count[1]}") if count is not None else 1
+            for count in example_counts
+        )
+        col_widths["examples"] = max(len("examples"), max_len) + 1
     # Calculate column widths for trailing params (shown after metrics)
     for param in trailing_params:
         max_len = max(
@@ -567,7 +702,9 @@ def print_results_table(
         col_widths[param] = max(len(param), max_len) + 1
 
     # Add trailing params after metrics
-    all_cols = ["#"] + param_names + metric_names + trailing_params
+    all_cols = ["#"] + param_names + metric_names + (
+        ["examples"] if show_examples else []
+    ) + trailing_params
     total_width = sum(col_widths[c] for c in all_cols) + len(all_cols) * 3 - 1
 
     # Box drawing characters
@@ -593,6 +730,8 @@ def print_results_table(
     header_parts.extend(
         f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names
     )
+    if show_examples:
+        header_parts.append(f"{C.YELLOW}{'examples':^{col_widths['examples']}}{C.RESET}")
     # Trailing params after metrics (cyan like other config params)
     header_parts.extend(
         f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in trailing_params
@@ -604,8 +743,7 @@ def print_results_table(
 
     # Data rows
     for i, trial in enumerate(trials):
-        config = getattr(trial, "config", {})
-        is_overall_best = config == best_config
+        is_overall_best = i == best_trial_index
 
         # Build mock_metrics override for this trial
         mock_metrics = {}
@@ -624,6 +762,8 @@ def print_results_table(
             is_overall_best,
             mock_metrics if mock_metrics else None,
             trailing_params,
+            example_counts[i],
+            show_examples,
         )
         print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 
