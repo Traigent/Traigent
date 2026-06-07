@@ -14,7 +14,7 @@ import time
 from typing import Any
 
 from traigent.utils.langchain_interceptor import capture_langchain_response
-from traigent.utils.logging import get_logger
+from traigent.utils.logging import configure_litellm_logging, get_logger
 
 logger = get_logger(__name__)
 
@@ -37,6 +37,8 @@ def patch_litellm_for_metadata_capture() -> bool:
     except ImportError:
         logger.debug("LiteLLM not available, skipping interceptor")
         return False
+
+    configure_litellm_logging(litellm_module=litellm)
 
     # Patch litellm.completion (sync)
     if not getattr(litellm, "_traigent_patched_completion", False):

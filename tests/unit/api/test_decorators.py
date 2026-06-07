@@ -116,6 +116,32 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.hybrid_api_transport is transport
 
+    def test_decorator_execution_mode_registry_matches_runtime(self):
+        """Decorator validation accepts the same modes advertised by runtime."""
+        from traigent.config.types import accepted_execution_mode_values
+
+        @optimize(configuration_space={"x": [1, 2]}, execution_mode="local")
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "edge_analytics"
+
+        with pytest.raises(ConfigurationError) as exc_info:
+
+            @optimize(configuration_space={"x": [1, 2]}, execution_mode="standard")
+            def removed_mode_function(x: int) -> int:
+                return x
+
+        assert str(list(accepted_execution_mode_values())) in str(exc_info.value)
+        for mode in accepted_execution_mode_values():
+
+            @optimize(configuration_space={"x": [1, 2]}, execution_mode=mode)
+            def accepted_mode_function(x: int) -> int:
+                return x
+
+            assert isinstance(accepted_mode_function, OptimizedFunction)
+
     def test_decorator_max_trials_reaches_optimized_function(self):
         """Regression: max_trials from decorator must reach OptimizedFunction.
 

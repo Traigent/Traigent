@@ -405,8 +405,18 @@ class TestHandleSessionError:
         """Test 403 error raises AuthenticationError."""
         from traigent.cloud.auth import AuthenticationError
 
-        with pytest.raises(AuthenticationError, match="Authentication failed"):
-            self.ops._handle_session_error(403, "Forbidden")
+        with pytest.raises(AuthenticationError, match="Authentication failed") as exc:
+            self.ops._handle_session_error(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"Missing required permissions: experiment.write",'
+                '"details":{"missing_permissions":["experiment.write"]}}',
+            )
+
+        detail = getattr(exc.value, "session_creation_failure")
+        assert detail.error_code == "INSUFFICIENT_PERMISSIONS"
+        assert detail.message == "Missing required permissions: experiment.write"
+        assert detail.missing_permissions == ("experiment.write",)
 
     def test_500_error_raises_cloud_service_error(self):
         """Test 500 error raises CloudServiceError."""
@@ -430,8 +440,12 @@ class TestHandleSessionError:
 
     def test_other_error_raises_cloud_service_error(self):
         """Test other errors raise CloudServiceError."""
-        with pytest.raises(CloudServiceError, match="Session creation failed"):
+        with pytest.raises(CloudServiceError, match="Session creation failed") as exc:
             self.ops._handle_session_error(400, "Bad Request")
+
+        detail = getattr(exc.value, "session_creation_failure")
+        assert detail.status_code == 400
+        assert detail.raw_body == "Bad Request"
 
 
 class TestHandleClientError:

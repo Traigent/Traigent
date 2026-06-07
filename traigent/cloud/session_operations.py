@@ -24,6 +24,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
 )
 from traigent.cloud.session_types import (
+    SessionCreationFailureDetail,
     SessionCreationFailureReason,
     SessionCreationResult,
 )
@@ -54,6 +55,15 @@ def _get_session_executor() -> concurrent.futures.ThreadPoolExecutor:
     if _SESSION_EXECUTOR is None:
         _SESSION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     return _SESSION_EXECUTOR
+
+
+def _get_session_creation_failure_detail(
+    exc: Exception,
+) -> SessionCreationFailureDetail | None:
+    detail = getattr(exc, "session_creation_failure", None)
+    if isinstance(detail, SessionCreationFailureDetail):
+        return detail
+    return None
 
 
 class SessionOperations:
@@ -445,13 +455,19 @@ class SessionOperations:
                 if _must_fail_loud(e):
                     raise
                 logger.debug("Backend auth failed for '%s': %s", function_name, e)
+                failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
                 )
                 return SessionCreationResult.fallback(
                     session_id=fallback_id,
                     reason=SessionCreationFailureReason.AUTH,
-                    detail=str(e)[:200],
+                    detail=(
+                        failure_response.one_line_summary()
+                        if failure_response
+                        else str(e)[:200]
+                    ),
+                    failure_response=failure_response,
                 )
 
             except (TimeoutError, CloudServiceError, OSError) as e:
@@ -459,14 +475,20 @@ class SessionOperations:
                 if _must_fail_loud(e):
                     raise
                 logger.debug("Backend unavailable for '%s': %s", function_name, e)
+                failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
                 )
-                detail = str(e).split("\n", 1)[0][:200]
+                detail = (
+                    failure_response.one_line_summary()
+                    if failure_response
+                    else str(e).split("\n", 1)[0][:200]
+                )
                 return SessionCreationResult.fallback(
                     session_id=fallback_id,
                     reason=SessionCreationFailureReason.SESSION_FAILED,
                     detail=detail,
+                    failure_response=failure_response,
                 )
 
         # Run async method in sync context
@@ -500,13 +522,19 @@ class SessionOperations:
                 function_name,
                 exc,
             )
+            failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
                 function_name, search_space, optimization_goal, metadata
             )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
                 reason=SessionCreationFailureReason.AUTH,
-                detail=str(exc)[:200],
+                detail=(
+                    failure_response.one_line_summary()
+                    if failure_response
+                    else str(exc)[:200]
+                ),
+                failure_response=failure_response,
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
@@ -517,14 +545,20 @@ class SessionOperations:
                 function_name,
                 exc,
             )
+            failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
                 function_name, search_space, optimization_goal, metadata
             )
-            detail = str(exc).split("\n", 1)[0][:200]
+            detail = (
+                failure_response.one_line_summary()
+                if failure_response
+                else str(exc).split("\n", 1)[0][:200]
+            )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
                 reason=SessionCreationFailureReason.SESSION_FAILED,
                 detail=detail,
+                failure_response=failure_response,
             )
 
         except Exception as exc:

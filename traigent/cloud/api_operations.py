@@ -29,6 +29,10 @@ from traigent.cloud.models import (
     TrialResultSubmission,
 )
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import (
+    SessionCreationFailureDetail,
+    SessionCreationHTTPError,
+)
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
@@ -486,16 +490,28 @@ class ApiOperations:
         All logging is DEBUG — user-facing warnings are emitted by
         ``BackendSessionManager.handle_session_creation_result()``.
         """
+        detail = SessionCreationFailureDetail.from_http_response(status_code, error_msg)
+        structured_cause = SessionCreationHTTPError(detail)
         if status_code in (401, 403):
             logger.debug("Backend auth failed: %s", status_code)
-            raise AuthenticationError(f"Authentication failed ({status_code})")
+            auth_exc = AuthenticationError(
+                f"Authentication failed ({status_code}): {detail.one_line_summary()}"
+            )
+            cast(Any, auth_exc).session_creation_failure = detail
+            raise auth_exc from structured_cause
 
         if status_code in (500, 502, 503, 504):
             logger.debug("Backend HTTP error: %s", status_code)
-            raise CloudServiceError(f"Backend HTTP {status_code}")
+            service_exc = CloudServiceError(f"Backend HTTP {status_code}")
+            cast(Any, service_exc).session_creation_failure = detail
+            raise service_exc from structured_cause
 
         logger.debug("Backend session error: %s - %s", status_code, error_msg[:200])
-        raise CloudServiceError(f"Session creation failed: HTTP {status_code}")
+        service_exc = CloudServiceError(
+            f"Session creation failed: HTTP {status_code}: {detail.one_line_summary()}"
+        )
+        cast(Any, service_exc).session_creation_failure = detail
+        raise service_exc from structured_cause
 
     def _handle_connector_error(self, error: aiohttp.ClientConnectorError) -> None:
         """Handle aiohttp connector errors — DEBUG only."""

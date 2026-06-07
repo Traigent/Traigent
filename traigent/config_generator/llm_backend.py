@@ -12,6 +12,8 @@ import logging
 import threading
 from typing import Protocol, runtime_checkable
 
+from traigent.utils.logging import configure_litellm_logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,6 +103,7 @@ class LiteLLMBackend:
                 )
                 raise BudgetExhausted("litellm not installed") from exc
 
+            configure_litellm_logging(litellm_module=litellm)
             response = litellm.completion(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
