@@ -1,7 +1,16 @@
 import pytest
 
+import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
+
+
+def _disable_backend_tracking(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setattr(
+        "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+        staticmethod(lambda _config: None),
+    )
 
 
 @pytest.mark.asyncio
@@ -136,3 +145,91 @@ async def test_local_evaluator_paraphrases_pass_with_user_supplied_semantic_scor
     assert result.metrics is not None
     # With a user-supplied semantic-style scorer, paraphrases pass.
     assert result.metrics.get("accuracy") == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_optimize_scoring_function_called_with_prediction_expected_plain_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_backend_tracking(monkeypatch)
+    calls: list[tuple[str, str]] = []
+
+    def scorer(prediction: str, expected: str) -> float:
+        calls.append((prediction, expected))
+        return 0.75 if prediction == expected else 0.0
+
+    @traigent.optimize(
+        eval_dataset=Dataset([EvaluationExample({"text": "q"}, "YES")], name="g4"),
+        objectives=["accuracy"],
+        configuration_space={"style": ["a", "b"]},
+        scoring_function=scorer,
+    )
+    def agent(text: str) -> str:
+        return "YES"
+
+    result = await agent.optimize(algorithm="grid", max_trials=2)
+
+    assert calls == [("YES", "YES"), ("YES", "YES")]
+    assert result.best_score == pytest.approx(0.75)
+    assert len(result.trials) == 2
+    assert all(
+        trial.metrics["accuracy"] == pytest.approx(0.75)
+        for trial in result.trials
+    )
+
+
+@pytest.mark.asyncio
+async def test_optimize_scoring_function_uses_unpacked_tuple_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_backend_tracking(monkeypatch)
+    calls: list[tuple[str, str]] = []
+
+    def scorer(prediction: str, expected: str) -> float:
+        calls.append((prediction, expected))
+        return 0.4 if prediction == expected else 0.0
+
+    @traigent.optimize(
+        eval_dataset=Dataset([EvaluationExample({"text": "q"}, "YES")], name="g4"),
+        objectives=["accuracy"],
+        configuration_space={"style": ["a"]},
+        scoring_function=scorer,
+    )
+    def agent(text: str) -> tuple[str, dict[str, float]]:
+        return "YES", {"user_metric": 1.0}
+
+    result = await agent.optimize(algorithm="grid", max_trials=1)
+
+    assert calls == [("YES", "YES")]
+    assert result.best_score == pytest.approx(0.4)
+    assert result.trials[0].metrics["accuracy"] == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_optimize_three_argument_metric_function_receives_metrics_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_backend_tracking(monkeypatch)
+    calls: list[tuple[str, str, float]] = []
+
+    def scorer(prediction: str, expected: str, metrics: dict[str, float]) -> float:
+        calls.append((prediction, expected, metrics["total_tokens"]))
+        return 0.6 if prediction == expected and "total_tokens" in metrics else 0.0
+
+    @traigent.optimize(
+        eval_dataset=Dataset([EvaluationExample({"text": "q"}, "YES")], name="g4"),
+        objectives=["accuracy"],
+        configuration_space={"style": ["a"]},
+        metric_functions={"accuracy": scorer},
+    )
+    def agent(text: str) -> str:
+        return "YES"
+
+    result = await agent.optimize(algorithm="grid", max_trials=1)
+
+    assert len(calls) == 1
+    prediction, expected, total_tokens = calls[0]
+    assert (prediction, expected) == ("YES", "YES")
+    assert total_tokens == pytest.approx(2.0)
+    assert result.best_score == pytest.approx(0.6)
+    assert result.trials[0].metrics["accuracy"] == pytest.approx(0.6)
