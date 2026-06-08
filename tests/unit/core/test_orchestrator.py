@@ -1827,6 +1827,44 @@ class TestOptimizationOrchestrator:
             dataset_name="dataset",  # default value from orchestrator
         )
 
+    @pytest.mark.asyncio
+    async def test_backend_trial_rebind_updates_collected_workflow_spans(
+        self, orchestrator
+    ):
+        """Collected spans must use the backend trial id after submission rebinds it."""
+        span = MagicMock()
+        span.configuration_run_id = "client-trial-1"
+        orchestrator._workflow_trace_manager._collected_spans = [span]
+
+        async def submit_trial_rebinding_id(**kwargs):
+            kwargs["trial_result"].trial_id = "backend-trial-1"
+            return True
+
+        orchestrator.backend_session_manager.submit_trial = AsyncMock(
+            side_effect=submit_trial_rebinding_id
+        )
+
+        trial_result = TrialResult(
+            trial_id="client-trial-1",
+            config={"temperature": 0.5},
+            metrics={"accuracy": 0.5},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=None,
+        )
+
+        await orchestrator._handle_trial_result(
+            trial_result=trial_result,
+            optimizer_config=trial_result.config,
+            current_trial_index=0,
+            session_id="session-123",
+            optuna_trial_id=None,
+            log_on_success=False,
+        )
+
+        assert trial_result.trial_id == "backend-trial-1"
+        assert span.configuration_run_id == "backend-trial-1"
+
 
 class TestStopReasonInResult:
     """Tests for stop_reason field in OptimizationResult."""
