@@ -1420,11 +1420,26 @@ class OptimizationOrchestrator:
             self._register_examples_attempted(trial_result)
 
         if self.backend_client and session_id:
+            pre_submit_trial_id = (
+                str(trial_result.trial_id)
+                if getattr(trial_result, "trial_id", None) is not None
+                else None
+            )
             await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
                 session_id=session_id,
                 dataset_name=getattr(self, "_dataset_name", "dataset"),
             )
+            post_submit_trial_id = (
+                str(trial_result.trial_id)
+                if getattr(trial_result, "trial_id", None) is not None
+                else None
+            )
+            if post_submit_trial_id != pre_submit_trial_id:
+                self._workflow_trace_manager.rebind_configuration_run_id(
+                    pre_submit_trial_id,
+                    post_submit_trial_id,
+                )
 
         if hasattr(self.optimizer, "tell"):
             try:
