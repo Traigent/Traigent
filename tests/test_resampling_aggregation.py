@@ -113,7 +113,7 @@ class DummyBackend:
         return {"session_id": session_id, "finalized": True}
 
 
-async def _run_orchestrator(sequence, exec_mode="standard"):
+async def _run_orchestrator(sequence, exec_mode="hybrid"):
     opt = DummyOptimizer(sequence)
     ev = DummyEvaluator(metrics=["accuracy"], timeout=1.0)
     oc = OptimizationOrchestrator(
@@ -142,7 +142,7 @@ def test_orchestrator_end_aggregation_and_backend_submission():
         {"acc": 0.6, "p": 2},
     ]
 
-    result, backend = asyncio.run(_run_orchestrator(sequence, exec_mode="standard"))
+    result, backend = asyncio.run(_run_orchestrator(sequence, exec_mode="hybrid"))
 
     assert result.best_config["p"] == 1
     assert abs(result.best_score - 0.7) < 1e-9
