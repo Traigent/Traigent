@@ -22,10 +22,16 @@ The `custom_evaluator` gives you full control over trial execution and measureme
 ### Signature
 
 ```python
+from collections.abc import Callable
+from typing import Any
+
+from traigent.evaluators.base import EvaluationExample
+from traigent.api.types import ExampleResult
+
 def custom_evaluator(
-    func: Callable,
+    func: Callable[..., Any],
     config: dict[str, Any],
-    example: dict[str, Any],
+    example: EvaluationExample,
 ) -> ExampleResult:
     ...
 ```
@@ -34,31 +40,52 @@ def custom_evaluator(
 
 - `func` - The original decorated function (not wrapped).
 - `config` - The configuration being tested in this trial (e.g., `{"model": "gpt-4", "temperature": 0.5}`).
-- `example` - A single row from the eval dataset as a dictionary.
+- `example` - An `EvaluationExample` object. Use `example.input_data` for the row input, `example.expected_output` for the expected answer, and `example.metadata` for extra top-level JSONL keys such as IDs or routing hints.
 
 ### Return Value
 
 Must return an `ExampleResult` (or compatible dict) containing at minimum:
-- `score` (float) - The primary score for this example.
-- `prediction` (str) - The model output.
+- `example_id` (str) - Stable example identifier, often from `example.metadata`.
+- `input_data` (dict) - Usually `example.input_data`.
+- `expected_output` - Usually `example.expected_output`.
+- `actual_output` - The function output.
+- `metrics` (dict[str, float]) - Numeric scores keyed by objective name, for example `{"accuracy": 1.0}`.
+- `execution_time` (float) - Seconds spent evaluating this example.
+- `success` (bool) - Whether the example evaluated successfully.
 
 ### Example
 
 ```python
-from traigent.evaluators.base import ExampleResult
+from collections.abc import Callable
+from typing import Any
 
-def my_evaluator(func, config, example):
+from traigent.evaluators.base import EvaluationExample
+from traigent.api.types import ExampleResult
+
+def my_evaluator(
+    func: Callable[..., str],
+    config: dict[str, Any],
+    example: EvaluationExample,
+) -> ExampleResult:
     import time
-    start = time.time()
-    prediction = func(example["question"])
-    latency = time.time() - start
 
-    score = 1.0 if example["expected"] in prediction else 0.0
+    start = time.time()
+    question = str(example.input_data["question"])
+    prediction = func(question)
+    execution_time = time.time() - start
+
+    expected = "" if example.expected_output is None else str(example.expected_output)
+    accuracy = 1.0 if expected.lower() in prediction.lower() else 0.0
 
     return ExampleResult(
-        score=score,
-        prediction=prediction,
-        measures={"latency_ms": latency * 1000},
+        example_id=str(example.metadata.get("id", question)),
+        input_data=example.input_data,
+        expected_output=example.expected_output,
+        actual_output=prediction,
+        metrics={"accuracy": accuracy, "latency_ms": execution_time * 1000},
+        execution_time=execution_time,
+        success=True,
+        metadata={"model": config.get("model")},
     )
 
 @traigent.optimize(
@@ -167,11 +194,11 @@ def summarize(text: str) -> str:
 
 ## Dataset Format
 
-The `eval_dataset` JSONL file should have one JSON object per line. At minimum, include input fields that match your function parameters and an `expected` field:
+The `eval_dataset` JSONL file should have one JSON object per line. At minimum, include `input` (or `input_data`) for the function arguments and an expected-output field such as `expected_output` or `expected`. Extra top-level keys are preserved in `example.metadata`:
 
 ```json
-{"question": "What is Python?", "expected": "A programming language"}
-{"question": "What is 2+2?", "expected": "4"}
+{"input": {"question": "What is Python?"}, "expected_output": "A programming language", "id": "qa-1"}
+{"input": {"question": "What is 2+2?"}, "expected_output": "4", "id": "qa-2"}
 ```
 
 Multiple datasets can be provided as a list:
