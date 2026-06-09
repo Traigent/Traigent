@@ -1175,16 +1175,18 @@ class TestHandleSessionCreationResult:
         )
         from traigent.utils.exceptions import ConfigurationError
 
-        mock_backend_client.create_session.return_value = SessionCreationResult.fallback(
-            session_id="local_test",
-            reason=SessionCreationFailureReason.AUTH,
-            detail="Authentication failed (403)",
-            failure_response=SessionCreationFailureDetail.from_http_response(
-                403,
-                '{"error_code":"INSUFFICIENT_PERMISSIONS",'
-                '"message":"Missing required permissions: experiment.write",'
-                '"details":{"missing_permissions":["experiment.write"]}}',
-            ),
+        mock_backend_client.create_session.return_value = (
+            SessionCreationResult.fallback(
+                session_id="local_test",
+                reason=SessionCreationFailureReason.AUTH,
+                detail="Authentication failed (403)",
+                failure_response=SessionCreationFailureDetail.from_http_response(
+                    403,
+                    '{"error_code":"INSUFFICIENT_PERMISSIONS",'
+                    '"message":"Missing required permissions: experiment.write",'
+                    '"details":{"missing_permissions":["experiment.write"]}}',
+                ),
+            )
         )
 
         def func(x):

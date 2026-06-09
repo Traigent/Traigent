@@ -172,7 +172,9 @@ class TestEnhancedCredentialStore:
 
         with caplog.at_level(logging.WARNING, logger="traigent.security.credentials"):
             for _ in range(2):
-                with pytest.raises(AuthenticationError, match="master secret is required"):
+                with pytest.raises(
+                    AuthenticationError, match="master secret is required"
+                ):
                     EnhancedCredentialStore(
                         storage_path=storage_path,
                         use_env_vars=False,
