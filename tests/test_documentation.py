@@ -306,7 +306,7 @@ class TestDocumentationConsistency(unittest.TestCase):
         self.assertIn(privacy_example, entries)
 
         script = script_path.read_text()
-        self.assertIn(f"\"{privacy_example}\"", script)
+        self.assertIn(f'"{privacy_example}"', script)
         self.assertIn("SDK Publication Manifest (39 examples)", script)
         self.assertIn("--- Walkthrough (8) ---", script)
 
