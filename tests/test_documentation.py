@@ -331,6 +331,55 @@ class TestDocumentationConsistency(unittest.TestCase):
 
         self.assertTrue(hasattr(optimized_function, "optimize"))
 
+    def test_decorator_skill_custom_evaluator_example_matches_public_api(self):
+        """Execute the bundled skill's custom_evaluator snippet against public DTOs."""
+        from traigent.api.types import ExampleResult
+        from traigent.evaluators.base import EvaluationExample
+
+        reference_path = (
+            self.project_root
+            / "traigent"
+            / "skills"
+            / "traigent-decorator-setup"
+            / "references"
+            / "evaluation-options.md"
+        )
+        content = reference_path.read_text()
+
+        self.assertNotIn("score=score", content)
+        self.assertNotIn("prediction=prediction", content)
+        self.assertNotIn('example["', content)
+        self.assertIn("example.input_data", content)
+        self.assertIn("example.expected_output", content)
+        self.assertIn('metrics={"accuracy": accuracy', content)
+
+        python_blocks = re.findall(r"```python\n(.*?)\n```", content, re.DOTALL)
+        snippet = next(block for block in python_blocks if "def my_evaluator" in block)
+        evaluator_only = snippet.split("\n@traigent.optimize", 1)[0]
+
+        namespace = {}
+        exec(compile(evaluator_only, str(reference_path), "exec"), namespace)
+
+        example = EvaluationExample(
+            input_data={"question": "What is 2+2?"},
+            expected_output="4",
+            metadata={"id": "qa-2", "db_path": "text2sql.sqlite"},
+        )
+
+        result = namespace["my_evaluator"](
+            lambda question: f"The answer to {question} is 4.",
+            {"model": "mock-model"},
+            example,
+        )
+
+        self.assertIsInstance(result, ExampleResult)
+        self.assertEqual("qa-2", result.example_id)
+        self.assertEqual(example.input_data, result.input_data)
+        self.assertEqual("4", result.expected_output)
+        self.assertEqual(1.0, result.metrics["accuracy"])
+        self.assertIn("latency_ms", result.metrics)
+        self.assertTrue(result.success)
+
     def test_public_docs_root_traigent_imports_exist(self):
         """Validate root traigent imports advertised in public docs/examples."""
         import traigent
