@@ -37,7 +37,7 @@ traigent.initialize(
 DATASETS = Path(__file__).parent.parent / "datasets"
 RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
 SIMULATED_BEST = {"model": "gpt-3.5-turbo", "temperature": 0.1}
-MOCK_MODE_CONFIG = {"base_accuracy": 0.9, "variance": 0.0, "random_seed": 42}
+MOCK_MODE_CONFIG = {"base_accuracy": 0.9, "variance": 0.0}
 OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],

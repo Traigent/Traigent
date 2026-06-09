@@ -74,6 +74,29 @@ class TestBackendConfigStoredApiKey:
 
         assert result is None
 
+    def test_missing_api_key_logs_debug_not_warning(self, caplog):
+        """Local/mock missing credentials should not emit happy-path warnings."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_api_key_only",
+                return_value=None,
+            ),
+            patch("traigent.utils.env_config.is_backend_offline", return_value=False),
+            caplog.at_level(logging.DEBUG, logger="traigent.config.backend_config"),
+        ):
+            result = BackendConfig.get_api_key()
+
+        assert result is None
+        missing_key_records = [
+            record for record in caplog.records if "No API key found" in record.message
+        ]
+        assert len(missing_key_records) == 1
+        assert missing_key_records[0].levelno == logging.DEBUG
+        assert not any(
+            record.levelno >= logging.WARNING for record in missing_key_records
+        )
+
 
 class TestBackendConfigStoredBackendUrl:
     """BackendConfig.get_backend_url() should read stored backend_url when env missing."""

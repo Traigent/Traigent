@@ -1,6 +1,7 @@
 """Tests for Traigent Cloud Service authentication."""
 
 import asyncio
+import logging
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -169,6 +170,27 @@ class TestAuthManager:
         assert result.success is True
         assert manager._authenticated is True
         assert manager._api_key is not None
+
+    @pytest.mark.asyncio
+    async def test_api_key_validate_start_logs_info_not_warning(self, caplog):
+        """Validation-start is a normal lifecycle event; failures still warn."""
+        manager = AuthManager(api_key="tg_" + "x" * 61)
+
+        with (
+            caplog.at_level(logging.INFO, logger="traigent.cloud.auth"),
+            _mock_backend_validate(),
+        ):
+            result = await manager.authenticate()
+
+        assert result.success is True
+        start_records = [
+            record
+            for record in caplog.records
+            if record.message == "auth.api_key.validate_start"
+        ]
+        assert len(start_records) == 1
+        assert start_records[0].levelno == logging.INFO
+        assert not any(record.levelno >= logging.WARNING for record in start_records)
 
     @pytest.mark.asyncio
     async def test_authenticate_without_key(self):

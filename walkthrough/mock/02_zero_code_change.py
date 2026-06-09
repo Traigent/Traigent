@@ -39,7 +39,6 @@ SIMULATED_BEST = {"model": "gpt-4o", "temperature": 0.1, "accuracy": 0.9}
 MOCK_MODE_CONFIG = {
     "base_accuracy": SIMULATED_BEST["accuracy"],
     "variance": 0.0,
-    "random_seed": 42,
 }
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {

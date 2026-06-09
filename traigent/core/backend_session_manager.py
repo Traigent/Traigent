@@ -274,7 +274,7 @@ class BackendSessionManager:
                     raise ConfigurationError(warning)
                 logger.warning("%s", warning)
             elif reason == SessionCreationFailureReason.NO_API_KEY:
-                logger.warning(
+                logger.info(
                     "No API key found — results saved locally only. %s",
                     get_no_credentials_hint(),
                 )

@@ -73,7 +73,6 @@ CONFIG_SPACE = {
 MOCK_MODE_CONFIG = {
     "base_accuracy": 0.85,
     "variance": 0.0,
-    "random_seed": 42,
 }
 
 

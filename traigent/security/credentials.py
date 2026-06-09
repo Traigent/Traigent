@@ -43,6 +43,7 @@ _MASTER_SECRET_ENV = f"TRAIGENT_MASTER_{_SECRET_ENV_SUFFIX}"
 _ALLOW_LEGACY_MASTER_SECRET_ENV = (
     f"TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_{_SECRET_ENV_SUFFIX}"
 )
+_IGNORED_LEGACY_MASTER_SECRET_WARNING_PATHS: set[Path] = set()
 _WEAK_CREDENTIAL_PATTERNS = (
     "password123",
     "12345",
@@ -70,6 +71,26 @@ _SECRET_FIELD_NAMES = {
 
 def _truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _log_ignored_legacy_master_secret(
+    master_key_path: Path, *, secure_store_exists: bool
+) -> None:
+    """Log ignored legacy master-secret state without noisy local-run repeats."""
+    message = (
+        "Ignoring legacy local master secret file at %s. Set the "
+        "documented master-key environment variable or explicitly "
+        "enable legacy local vault migration."
+    )
+    if not secure_store_exists:
+        logger.info(message, master_key_path)
+        return
+
+    if master_key_path in _IGNORED_LEGACY_MASTER_SECRET_WARNING_PATHS:
+        return
+
+    _IGNORED_LEGACY_MASTER_SECRET_WARNING_PATHS.add(master_key_path)
+    logger.warning(message, master_key_path)
 
 
 def _normalized_field_name(field: str) -> str:
@@ -359,11 +380,9 @@ class EnhancedCredentialStore:
                 master_key_value = self._load_master_password_from_file(master_key_path)
                 master_key_source = "legacy_file"
             elif master_key_path.exists():
-                logger.warning(
-                    "Ignoring legacy local master secret file at %s. Set the "
-                    "documented master-key environment variable or explicitly "
-                    "enable legacy local vault migration.",
+                _log_ignored_legacy_master_secret(
                     master_key_path,
+                    secure_store_exists=self.storage_path.exists(),
                 )
 
         if master_key_value is None:
@@ -1062,7 +1081,7 @@ def get_secure_credential_store() -> EnhancedCredentialStore:
         security_level = SecurityLevel.HIGH
     else:
         security_level = SecurityLevel.STANDARD
-        logger.warning(f"Credential store in {environment} mode - reduced security")
+        logger.info(f"Credential store in {environment} mode - reduced security")
 
     # Check for HSM availability
     enable_hsm = os.getenv("TRAIGENT_ENABLE_HSM", "false").lower() == "true"

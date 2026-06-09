@@ -38,7 +38,6 @@ SIMULATED_BEST = {
 MOCK_MODE_CONFIG = {
     "base_accuracy": SIMULATED_BEST["accuracy"],
     "variance": 0.0,
-    "random_seed": 42,
 }
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
