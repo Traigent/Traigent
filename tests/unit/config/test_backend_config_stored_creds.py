@@ -584,8 +584,8 @@ class TestCentralizedCredentialHints:
         """BackendConfig.DEFAULT_PROD_URL must equal module-level DEFAULT_CLOUD_URL."""
         assert BackendConfig.DEFAULT_PROD_URL == DEFAULT_CLOUD_URL
 
-    def test_get_api_key_warning_includes_signup_url(self, caplog):
-        """get_api_key() warning must contain the signup URL."""
+    def test_get_api_key_debug_hint_includes_signup_url(self, caplog):
+        """get_api_key() debug hint must contain the signup URL."""
         import logging
 
         with (
@@ -595,10 +595,11 @@ class TestCentralizedCredentialHints:
                 return_value=None,
             ),
             patch("traigent.utils.env_config.is_backend_offline", return_value=False),
-            caplog.at_level(logging.WARNING, logger="traigent.config.backend_config"),
+            caplog.at_level(logging.DEBUG, logger="traigent.config.backend_config"),
         ):
             BackendConfig.get_api_key()
 
         assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
+            SIGNUP_URL in record.message and record.levelno == logging.DEBUG
+            for record in caplog.records
+        ), f"Expected {SIGNUP_URL!r} in debug messages: {caplog.messages}"
