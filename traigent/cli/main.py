@@ -631,6 +631,178 @@ def _truncate_text(value: str, limit: int) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
+def _list_bedrock_foundation_models(region: str | None) -> list[str]:
+    """List Bedrock foundation model IDs without invoking any model."""
+    try:
+        import boto3
+    except ImportError as exc:
+        raise click.ClickException(
+            "Bedrock model preflight requires the optional boto3 dependency. "
+            "Install Traigent with the AWS extra or run with --provider anthropic "
+            "for Anthropic API model-name validation."
+        ) from exc
+
+    client_kwargs = {"region_name": region} if region else {}
+    try:
+        client = boto3.client("bedrock", **client_kwargs)
+        response = client.list_foundation_models()
+    except Exception as exc:
+        region_hint = f" in region '{region}'" if region else ""
+        raise click.ClickException(
+            f"Unable to list Bedrock foundation models{region_hint}: {exc}"
+        ) from exc
+
+    summaries = response.get("modelSummaries", [])
+    model_ids = {
+        str(summary["modelId"])
+        for summary in summaries
+        if isinstance(summary, dict) and summary.get("modelId")
+    }
+    return sorted(model_ids)
+
+
+def _discover_model_ids(provider: str, refresh: bool, region: str | None) -> list[str]:
+    """Return known model IDs for a provider."""
+    normalized_provider = provider.lower()
+    if normalized_provider == "bedrock":
+        return _list_bedrock_foundation_models(region)
+
+    from traigent.integrations.model_discovery import get_model_discovery
+    from traigent.integrations.model_discovery.registry import list_registered_providers
+
+    discovery = get_model_discovery(normalized_provider)
+    if discovery is None:
+        providers = sorted(["bedrock", *list_registered_providers()])
+        raise click.ClickException(
+            f"Unknown provider '{provider}'. Valid providers: {', '.join(providers)}"
+        )
+    return discovery.list_models(force_refresh=refresh)
+
+
+def _is_known_model_id(
+    provider: str,
+    model_id: str,
+    known_model_ids: list[str],
+) -> bool:
+    """Validate a model ID against the known provider surface."""
+    normalized_provider = provider.lower()
+    if normalized_provider == "bedrock":
+        return model_id in known_model_ids
+
+    from traigent.integrations.model_discovery import get_model_discovery
+
+    discovery = get_model_discovery(normalized_provider)
+    return bool(discovery and discovery.is_valid_model(model_id))
+
+
+def _print_model_ids(provider: str, region: str | None, model_ids: list[str]) -> None:
+    """Print discovered model IDs in a compact table."""
+    title = f"Known {provider} models"
+    if region:
+        title = f"{title} ({region})"
+    console.print(f"\n[bold blue]{title}[/bold blue]")
+    if not model_ids:
+        console.print("[yellow]No models were discovered for this provider.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Model ID", style="cyan")
+    for model_id in model_ids:
+        table.add_row(model_id)
+    console.print(table)
+
+
+@cli.command(name="models")
+@click.option(
+    "--provider",
+    "-p",
+    default="anthropic",
+    show_default=True,
+    help=(
+        "Provider to preflight. Use 'bedrock' for AWS Bedrock IDs, or one of the "
+        "registered direct providers such as anthropic/openai/gemini/mistral."
+    ),
+)
+@click.option(
+    "--model",
+    "model_id",
+    default=None,
+    help="Optional model ID to validate against the provider's known model list.",
+)
+@click.option(
+    "--region",
+    default=None,
+    help="AWS region for Bedrock model discovery. Ignored for non-Bedrock providers.",
+)
+@click.option(
+    "--refresh",
+    is_flag=True,
+    default=False,
+    help="Bypass cached provider discovery when the provider supports it.",
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Output model preflight details as JSON for scripts.",
+)
+def models(
+    provider: str,
+    model_id: str | None,
+    region: str | None,
+    refresh: bool,
+    output_json: bool,
+) -> None:
+    """List and validate model IDs before a first optimization run."""
+    normalized_provider = provider.lower()
+    model_ids = _discover_model_ids(normalized_provider, refresh, region)
+    is_valid = (
+        _is_known_model_id(normalized_provider, model_id, model_ids)
+        if model_id
+        else None
+    )
+
+    if output_json:
+        payload = {
+            "provider": normalized_provider,
+            "region": region if normalized_provider == "bedrock" else None,
+            "model": model_id,
+            "valid": is_valid,
+            "models": model_ids,
+            "note": (
+                "Bedrock validation lists regional foundation models only; it does "
+                "not invoke a model or prove account entitlement."
+                if normalized_provider == "bedrock"
+                else None
+            ),
+        }
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        _print_model_ids(normalized_provider, region, model_ids)
+        if model_id:
+            if is_valid:
+                console.print(f"\n[green]Model preflight passed:[/green] {model_id}")
+            else:
+                console.print(
+                    f"\n[red]Model preflight failed:[/red] {model_id} is not in "
+                    f"the known {normalized_provider} model surface."
+                )
+                console.print(
+                    "[yellow]Pick a model from the table above or update your "
+                    "provider/model configuration before running optimization.[/yellow]"
+                )
+
+        if normalized_provider == "bedrock":
+            console.print(
+                "\n[dim]Note: Bedrock preflight lists regional foundation models only; "
+                "it does not invoke a model or prove account entitlement.[/dim]"
+            )
+
+    if is_valid is False:
+        raise click.exceptions.Exit(1)
+
+
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--algorithm", "-a", default="grid", help="Optimization algorithm to use")
