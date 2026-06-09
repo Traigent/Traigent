@@ -133,7 +133,9 @@ def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
 
 
 def _find_best_per_objective(
-    trials: list, metric_info: list[tuple[str, str]]
+    trials: list,
+    metric_info: list[tuple[str, str]],
+    metric_overrides: dict[str, list[float]] | None = None,
 ) -> dict[str, set[int]]:
     """Return {metric_name: {best_trial_indices}} for all tied bests."""
     best_indices: dict[str, set[int]] = {}
@@ -144,7 +146,9 @@ def _find_best_per_objective(
         for i, trial in enumerate(trials):
             if not _trial_is_best_candidate(trial):
                 continue
-            val = _coerce_float(getattr(trial, "metrics", {}).get(metric_name))
+            val = _coerce_float(
+                _get_metric_value(trial, metric_name, i, metric_overrides)
+            )
             if val is None:
                 continue
             if best_val is None:
@@ -164,6 +168,19 @@ def _find_best_per_objective(
                 best_set = {i}
         best_indices[metric_name] = best_set
     return best_indices
+
+
+def _get_metric_value(
+    trial: Any,
+    metric_name: str,
+    trial_index: int,
+    metric_overrides: dict[str, list[float]] | None = None,
+) -> Any:
+    if metric_overrides and metric_name in metric_overrides:
+        override_values = metric_overrides[metric_name]
+        if trial_index < len(override_values):
+            return override_values[trial_index]
+    return getattr(trial, "metrics", {}).get(metric_name)
 
 
 def _find_best_trial(
@@ -354,6 +371,9 @@ def print_results_table(
     results: OptimizationResult,
     config_space: dict[str, list[Any]],
     objectives: Any,
+    *,
+    mode_label: str | None = None,
+    metric_overrides: dict[str, list[float]] | None = None,
 ) -> None:
     """Print a rich trial-results table to stdout.
 
@@ -361,6 +381,8 @@ def print_results_table(
         results: The :class:`OptimizationResult` returned by ``func.optimize()``.
         config_space: Configuration space dict (param name → list of values).
         objectives: Objectives list (e.g. ``["accuracy"]``) or ``ObjectiveSchema``.
+        mode_label: Optional label rendered in the table title, e.g. ``"MOCK"``.
+        metric_overrides: Optional per-metric display values by trial index.
     """
     trials = getattr(results, "trials", [])
     if not trials:
@@ -378,7 +400,11 @@ def print_results_table(
     param_names = list(config_space.keys())
 
     # Best-per-objective indices
-    best_per_objective = _find_best_per_objective(trials, metric_info)
+    best_per_objective = _find_best_per_objective(
+        trials,
+        metric_info,
+        metric_overrides,
+    )
 
     # Overall best trial identity, from optimizer selection metadata when present.
     best_trial_index = _find_best_trial_index(results, trials, metric_info, objectives)
@@ -398,8 +424,14 @@ def print_results_table(
         col_widths[param] = max(len(param), max_len) + 1
     for metric in metric_names:
         max_len = max(
-            len(_format_metric_value(metric, getattr(t, "metrics", {}).get(metric, 0)))
-            for t in trials
+            len(
+                _format_metric_value(
+                    metric,
+                    _coerce_float(_get_metric_value(t, metric, i, metric_overrides))
+                    or 0.0,
+                )
+            )
+            for i, t in enumerate(trials)
         )
         col_widths[metric] = max(len(metric), max_len) + 1
     if show_examples:
@@ -420,7 +452,8 @@ def print_results_table(
     BT, LT, RT, XT = "┴", "├", "┤", "┼"
 
     # Title bar
-    title = f" Trial Results ({len(trials)} trials) "
+    label_prefix = f"{mode_label.strip()} - " if mode_label else ""
+    title = f" Trial Results ({label_prefix}{len(trials)} trials) "
     padding = (total_width - len(title)) // 2
 
     print()
@@ -449,7 +482,6 @@ def print_results_table(
     # Data rows
     for i, trial in enumerate(trials):
         config = getattr(trial, "config", {})
-        metrics = getattr(trial, "metrics", {})
         is_overall_best = i == best_trial_index and not all_failed
 
         prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
@@ -460,7 +492,8 @@ def print_results_table(
             row_parts.append(f"{val:^{col_widths[param]}}")
 
         for metric in metric_names:
-            metric_val = float(metrics.get(metric, 0))
+            raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
+            metric_val = _coerce_float(raw_metric_val) or 0.0
             formatted = _format_metric_value(metric, metric_val)
             if not all_failed and i in best_per_objective.get(metric, set()):
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"

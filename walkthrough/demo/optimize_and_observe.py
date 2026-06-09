@@ -45,9 +45,9 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(WALKTHROUGH_ROOT))
 
 from utils.helpers import (
+    build_results_table_callback,
     print_cost_estimate,
     print_optimization_config,
-    print_results_table,
     sanitize_traigent_api_key,
 )
 from utils.mock_answers import (
@@ -641,18 +641,17 @@ async def main() -> None:
             algorithm=runtime.scale.algorithm,
             max_trials=runtime.scale.max_trials,
             show_progress=True,
+            callbacks=[
+                build_results_table_callback(
+                    is_mock=runtime.mode == "mock",
+                    task_type="simple_qa",
+                    dataset_size=len(runtime.eval_dataset),
+                    show_progress=True,
+                )
+            ],
             random_seed=42,
         )
         optimization_elapsed = time.perf_counter() - optimization_started_at
-
-        print_results_table(
-            results,
-            runtime.config_space,
-            OBJECTIVES,
-            is_mock=runtime.mode == "mock",
-            task_type="simple_qa",
-            dataset_size=len(runtime.eval_dataset),
-        )
 
         print("\nBest configuration:")
         print(f"  model: {results.best_config.get('model')}")

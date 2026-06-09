@@ -6,7 +6,6 @@ Common utilities for API key validation, logging setup, and environment configur
 from __future__ import annotations
 
 import logging
-import math
 import os
 from functools import reduce
 from pathlib import Path
@@ -19,10 +18,6 @@ if TYPE_CHECKING:
     from typing import Any
 
     from traigent.core.result import OptimizationResult
-
-BEST_METRIC_REL_TOL = 1e-9
-BEST_METRIC_ABS_TOL = 1e-12
-
 
 # Estimated times for real examples (in seconds) - from test_all_examples.sh
 EXAMPLE_ESTIMATED_TIMES: dict[str, int] = {
@@ -110,6 +105,7 @@ def sanitize_traigent_api_key() -> None:
         )
         os.environ.pop("TRAIGENT_API_KEY", None)
 
+
 def _find_repo_root(start_path: Path) -> Path:
     """Walk upward until the repository root (identified by pyproject.toml)."""
     for candidate in (start_path.parent, *start_path.parents):
@@ -126,8 +122,10 @@ def _required_real_example_message(
     repo_root = _find_repo_root(example_file)
     real_display_path = example_file.relative_to(repo_root).as_posix()
     mock_display_path = (
-        example_file.parent.parent / "mock" / example_file.name
-    ).relative_to(repo_root).as_posix()
+        (example_file.parent.parent / "mock" / example_file.name)
+        .relative_to(repo_root)
+        .as_posix()
+    )
     env_list = " or ".join(required_env_vars)
     primary_env = required_env_vars[0]
     return (
@@ -168,7 +166,9 @@ def maybe_run_mock_example(
             f"mock example directly.\n\n{_required_real_example_message(example_file, required_env_vars)}"
         )
     if not has_required_key:
-        raise SystemExit(_required_real_example_message(example_file, required_env_vars))
+        raise SystemExit(
+            _required_real_example_message(example_file, required_env_vars)
+        )
 
 
 def setup_example_logger(name: str) -> logging.Logger:
@@ -239,350 +239,6 @@ def print_optimization_config(
         print(f"    - {param}: [{values_str}]")
 
 
-def _coerce_float(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return max(int(value), 0)
-    except (TypeError, ValueError):
-        return None
-
-
-def _example_success_counts(trial: Any) -> tuple[int, int] | None:
-    metadata = getattr(trial, "metadata", {}) or {}
-    successful = _coerce_int(metadata.get("successful_examples"))
-    attempted = _coerce_int(metadata.get("examples_attempted"))
-    if attempted is None:
-        evaluation_result = metadata.get("evaluation_result")
-        attempted = _coerce_int(getattr(evaluation_result, "total_examples", None))
-    if successful is None or attempted is None:
-        return None
-    return successful, attempted
-
-
-def _trial_is_best_candidate(trial: Any) -> bool:
-    if not getattr(trial, "is_successful", False):
-        return False
-    counts = _example_success_counts(trial)
-    if counts is None:
-        return True
-    successful, _attempted = counts
-    return successful > 0
-
-
-def _find_best_trial(
-    trials: list,
-    metric_names: list[str],
-    weighted_scores: list[tuple[Any, float]] | None = None,
-    metric_info: list[tuple[str, str]] | None = None,
-) -> Any:
-    """Find the best trial by weighted scores or the primary displayed metric."""
-    if weighted_scores:
-        return max(weighted_scores, key=lambda item: item[1])[0]
-
-    eligible_trials = [trial for trial in trials if _trial_is_best_candidate(trial)]
-    if not eligible_trials:
-        return None
-
-    orientation_by_metric = dict(metric_info or [])
-    primary_metric = (
-        "accuracy"
-        if "accuracy" in metric_names
-        else (metric_names[0] if metric_names else None)
-    )
-    if primary_metric is None:
-        return eligible_trials[0]
-
-    is_minimize = orientation_by_metric.get(primary_metric) == "minimize"
-    chooser = min if is_minimize else max
-    missing = float("inf") if is_minimize else float("-inf")
-
-    def primary_score(trial: Any) -> float:
-        value = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
-        return missing if value is None else value
-
-    return chooser(
-        eligible_trials,
-        key=primary_score,
-    )
-
-
-def _format_config_value(val: Any) -> str:
-    """Format a configuration value for display."""
-    if isinstance(val, bool):
-        return "Yes" if val else "No"
-    if isinstance(val, float):
-        return f"{val:.1f}"
-    return str(val)
-
-
-def _format_metric_value(metric: str, val: float) -> str:
-    """Format a metric value for display."""
-    if metric == "cost":
-        return f"${val:.5f}"
-    if metric == "latency":
-        return f"{val:.3f}s"
-    return f"{val:.1%}"
-
-
-def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
-    """Extract objective names and orientations from objectives definition.
-
-    Returns list of (name, orientation) tuples. Orientation is 'maximize' or 'minimize'.
-    """
-    if hasattr(objectives, "objectives"):
-        return [
-            (obj.name, getattr(obj, "orientation", "maximize"))
-            for obj in objectives.objectives
-        ]
-    if isinstance(objectives, (list, tuple)):
-        # Default orientations: accuracy=maximize, cost/latency=minimize
-        result = []
-        for o in objectives:
-            name = str(o)
-            if name in ("cost", "latency"):
-                result.append((name, "minimize"))
-            else:
-                result.append((name, "maximize"))
-        return result
-    return []
-
-
-def _find_best_per_objective(
-    trials: list,
-    metric_info: list[tuple[str, str]],
-    metric_overrides: dict[str, list[float]] | None = None,
-) -> dict[str, set[int]]:
-    """Find the best trial index for each objective metric.
-
-    Returns dict mapping metric name to tied-best trial indices (0-based).
-    """
-    best_indices: dict[str, set[int]] = {}
-    for metric_name, orientation in metric_info:
-        best_set: set[int] = set()
-        best_val: float | None = None
-        is_minimize = orientation == "minimize"
-        for i, trial in enumerate(trials):
-            if not _trial_is_best_candidate(trial):
-                continue
-            raw_val = (
-                metric_overrides[metric_name][i]
-                if metric_overrides and metric_name in metric_overrides
-                else getattr(trial, "metrics", {}).get(metric_name)
-            )
-            val = _coerce_float(raw_val)
-            if val is None:
-                continue
-            if best_val is None:
-                best_val = val
-                best_set = {i}
-                continue
-            if math.isclose(
-                val,
-                best_val,
-                rel_tol=BEST_METRIC_REL_TOL,
-                abs_tol=BEST_METRIC_ABS_TOL,
-            ):
-                best_set.add(i)
-                continue
-            is_better = val < best_val if is_minimize else val > best_val
-            if is_better:
-                best_val = val
-                best_set = {i}
-        best_indices[metric_name] = best_set
-    return best_indices
-
-
-def _trial_identity_index(trials: list, target_trial: Any) -> int | None:
-    if target_trial is None:
-        return None
-    for index, trial in enumerate(trials):
-        if trial is target_trial:
-            return index
-    target_id = getattr(target_trial, "trial_id", None)
-    if target_id is None:
-        return None
-    for index, trial in enumerate(trials):
-        if getattr(trial, "trial_id", None) == target_id:
-            return index
-    return None
-
-
-def _find_trial_index_by_id(trials: list, trial_id: Any) -> int | None:
-    if trial_id is None:
-        return None
-    for index, trial in enumerate(trials):
-        if getattr(trial, "trial_id", None) == trial_id:
-            return index
-    return None
-
-
-def _find_best_trial_index(
-    results: OptimizationResult,
-    trials: list,
-    metric_info: list[tuple[str, str]],
-    objectives: Any,
-) -> int | None:
-    metric_names = [name for name, _orientation in metric_info]
-    metadata = getattr(results, "metadata", {}) or {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-    best_trial_id = metadata.get("best_trial_id") or getattr(
-        results, "best_trial_id", None
-    )
-    best_index = _find_trial_index_by_id(trials, best_trial_id)
-    if best_index is not None:
-        return best_index
-
-    try:
-        weighted_result = results.calculate_weighted_scores(objective_schema=objectives)
-        weighted_scores = weighted_result.get("weighted_scores") or []
-        best_trial = _find_best_trial(
-            trials, metric_names, weighted_scores, metric_info
-        )
-        best_index = _trial_identity_index(trials, best_trial)
-        if best_index is not None:
-            return best_index
-    except Exception:
-        pass
-
-    best_trial = _find_best_trial(trials, metric_names, metric_info=metric_info)
-    best_index = _trial_identity_index(trials, best_trial)
-    if best_index is not None:
-        return best_index
-
-    best_config = getattr(results, "best_config", None)
-    best_score = _coerce_float(getattr(results, "best_score", None))
-    primary_metric = metric_names[0] if metric_names else None
-    for index, trial in enumerate(trials):
-        if getattr(trial, "config", {}) != best_config:
-            continue
-        if best_score is None or primary_metric is None:
-            return index
-        trial_score = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
-        if trial_score is not None and math.isclose(
-            trial_score,
-            best_score,
-            rel_tol=BEST_METRIC_REL_TOL,
-            abs_tol=BEST_METRIC_ABS_TOL,
-        ):
-            return index
-    return None
-
-
-# ANSI color codes
-class _Colors:
-    """ANSI color codes for terminal output."""
-
-    BOLD = "\033[1m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    CYAN = "\033[96m"
-    DIM = "\033[2m"
-    RESET = "\033[0m"
-
-    @classmethod
-    def disable(cls) -> None:
-        """Disable colors (for non-TTY output)."""
-        cls.BOLD = cls.GREEN = cls.YELLOW = cls.CYAN = cls.DIM = cls.RESET = ""
-
-
-def _check_color_support() -> bool:
-    """Check if terminal supports colors."""
-    import sys
-
-    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
-        return False
-    return os.getenv("NO_COLOR") is None and os.getenv("TERM") != "dumb"
-
-
-def _calc_col_widths(
-    trials: list, param_names: list[str], metric_names: list[str]
-) -> dict[str, int]:
-    """Calculate column widths dynamically based on content."""
-    col_widths: dict[str, int] = {"#": 4}
-    for param in param_names:
-        max_len = max(
-            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
-            for t in trials
-        )
-        col_widths[param] = max(len(param), max_len) + 1
-    for metric in metric_names:
-        max_len = max(
-            len(_format_metric_value(metric, getattr(t, "metrics", {}).get(metric, 0)))
-            for t in trials
-        )
-        col_widths[metric] = max(len(metric), max_len) + 1
-    return col_widths
-
-
-def _build_table_row(
-    trial: Any,
-    idx: int,
-    param_names: list[str],
-    metric_names: list[str],
-    col_widths: dict[str, int],
-    best_per_objective: dict[str, set[int]],
-    is_overall_best: bool,
-    mock_metrics: dict[str, float] | None = None,
-    trailing_params: list[str] | None = None,
-    example_counts: tuple[int, int] | None = None,
-    show_examples: bool = False,
-) -> list[str]:
-    """Build a single table row string."""
-    C = _Colors
-    config = getattr(trial, "config", {})
-    metrics = getattr(trial, "metrics", {})
-
-    # Row prefix for best overall
-    row_prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
-    row_parts = [f"{row_prefix}{idx + 1:>{col_widths['#'] - 1}}"]
-
-    # Config values
-    for param in param_names:
-        val = _format_config_value(config.get(param, "?"))
-        row_parts.append(f"{val:^{col_widths[param]}}")
-
-    # Metric values with highlighting for best
-    for metric in metric_names:
-        # Use mock_metrics override if provided (for simulated costs in mock mode)
-        if mock_metrics and metric in mock_metrics:
-            val = mock_metrics[metric]
-        else:
-            val = metrics.get(metric, 0)
-        formatted = _format_metric_value(metric, val)
-        if idx in best_per_objective.get(metric, set()):
-            cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
-        else:
-            cell = f"{formatted:^{col_widths[metric]}}"
-        row_parts.append(cell)
-
-    if show_examples:
-        formatted_counts = (
-            f"{example_counts[0]}/{example_counts[1]}"
-            if example_counts is not None
-            else "?"
-        )
-        row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
-
-    # Trailing config values (shown after metrics)
-    if trailing_params:
-        for param in trailing_params:
-            val = _format_config_value(config.get(param, "?"))
-            row_parts.append(f"{val:^{col_widths[param]}}")
-
-    return row_parts
-
-
 def _get_mock_cost_for_trial(trial: Any, task_type: str, dataset_size: int) -> float:
     """Calculate mock cost for a trial based on model."""
     from utils.mock_answers import get_mock_cost
@@ -601,184 +257,69 @@ def _get_mock_latency_for_trial(trial: Any, task_type: str) -> float:
     return get_mock_latency(model, task_type)
 
 
-def print_results_table(
-    results: OptimizationResult,
-    config_space: dict[str, list[Any]],
-    objectives: Any,
+def _build_metric_overrides(
+    result: Any,
+    *,
+    is_mock: bool,
+    task_type: str,
+    dataset_size: int,
+) -> dict[str, list[float]] | None:
+    """Build walkthrough-only display metric overrides for mock runs."""
+    if not is_mock:
+        return None
+
+    trials = getattr(result, "trials", [])
+    if not trials:
+        return None
+
+    sample_metrics = getattr(trials[0], "metrics", {}) or {}
+    overrides: dict[str, list[float]] = {}
+    if "cost" in sample_metrics:
+        overrides["cost"] = [
+            _get_mock_cost_for_trial(trial, task_type, dataset_size) for trial in trials
+        ]
+    if "latency" in sample_metrics:
+        overrides["latency"] = [
+            _get_mock_latency_for_trial(trial, task_type) for trial in trials
+        ]
+    return overrides or None
+
+
+def build_results_table_callback(
+    *,
     is_mock: bool = False,
     task_type: str = "simple_qa",
     dataset_size: int = 20,
-) -> None:
-    """Print a comparison table of all trial results.
+    show_progress: bool = False,
+) -> Any:
+    """Build the single SDK results-table callback used by walkthroughs.
 
-    Args:
-        results: The optimization results from Traigent
-        config_space: Configuration space used for optimization
-        objectives: The objectives used for optimization
-        is_mock: Whether this is a mock run (affects displayed label and cost simulation)
-        task_type: Task type for mock cost estimation (default: simple_qa)
-        dataset_size: Dataset size for mock cost estimation (default: 20)
+    The SDK owns rendering. This helper only supplies walkthrough display context:
+    MOCK/REAL title labels and estimated mock cost/latency overrides.
     """
-    trials = getattr(results, "trials", [])
-    if not trials:
-        print("\nNo trials to display.")
-        return
+    from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
 
-    # Check color support
-    if not _check_color_support():
-        _Colors.disable()
-    C = _Colors
-
-    # Get objective and parameter info
-    objective_info = _get_objective_info(objectives)
-    sample_metrics = getattr(trials[0], "metrics", {})
-    metric_info = [(n, o) for n, o in objective_info if n in sample_metrics]
-    metric_names = [n for n, _ in metric_info]
-
-    # All config params shown in order from config_space
-    param_names = list(config_space.keys())
-    trailing_params = []  # No trailing params - all shown in config_space order
-
-    # Calculate mock costs and latencies for each trial (for mock mode)
-    mock_costs: list[float] = []
-    mock_latencies: list[float] = []
-    if is_mock and "cost" in metric_names:
-        mock_costs = [
-            _get_mock_cost_for_trial(t, task_type, dataset_size) for t in trials
-        ]
-    if is_mock and "latency" in metric_names:
-        mock_latencies = [_get_mock_latency_for_trial(t, task_type) for t in trials]
-
-    metric_overrides: dict[str, list[float]] = {}
-    if mock_costs:
-        metric_overrides["cost"] = mock_costs
-    if mock_latencies:
-        metric_overrides["latency"] = mock_latencies
-    best_per_objective = _find_best_per_objective(
-        trials, metric_info, metric_overrides or None
-    )
-
-    best_trial_index = _find_best_trial_index(results, trials, metric_info, objectives)
-    example_counts = [_example_success_counts(trial) for trial in trials]
-    show_examples = any(count is not None for count in example_counts)
-
-    # Calculate column widths (use mock costs for width calculation if in mock mode)
-    col_widths: dict[str, int] = {"#": 4}
-    for param in param_names:
-        max_len = max(
-            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
-            for t in trials
-        )
-        col_widths[param] = max(len(param), max_len) + 1
-    for metric in metric_names:
-        if metric == "cost" and mock_costs:
-            max_len = max(len(_format_metric_value(metric, c)) for c in mock_costs)
-        elif metric == "latency" and mock_latencies:
-            max_len = max(
-                len(_format_metric_value(metric, lat)) for lat in mock_latencies
-            )
-        else:
-            max_len = max(
-                len(
-                    _format_metric_value(
-                        metric, getattr(t, "metrics", {}).get(metric, 0)
-                    )
-                )
-                for t in trials
-            )
-        col_widths[metric] = max(len(metric), max_len) + 1
-    if show_examples:
-        max_len = max(
-            len(f"{count[0]}/{count[1]}") if count is not None else 1
-            for count in example_counts
-        )
-        col_widths["examples"] = max(len("examples"), max_len) + 1
-    # Calculate column widths for trailing params (shown after metrics)
-    for param in trailing_params:
-        max_len = max(
-            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
-            for t in trials
-        )
-        col_widths[param] = max(len(param), max_len) + 1
-
-    # Add trailing params after metrics
-    all_cols = ["#"] + param_names + metric_names + (
-        ["examples"] if show_examples else []
-    ) + trailing_params
-    total_width = sum(col_widths[c] for c in all_cols) + len(all_cols) * 3 - 1
-
-    # Box drawing characters
-    H, V = "─", "│"
-    TL, TR, BL, BR = "┌", "┐", "└", "┘"
-    B, L, R, X = "┴", "├", "┤", "┼"
-
-    # Print table header
     mode_label = "MOCK" if is_mock else "REAL"
-    title = f" Trial Results ({mode_label} - {len(trials)} trials) "
-    padding = (total_width - len(title)) // 2
-
-    print()
-    print(f"{C.BOLD}{TL}{H * total_width}{TR}{C.RESET}")
-    print(
-        f"{C.BOLD}{V}{' ' * padding}{title}{' ' * (total_width - padding - len(title))}{V}{C.RESET}"
+    footer_note = (
+        "Note: Mock mode - costs and latencies are estimated based on model characteristics."
+        if is_mock
+        else None
     )
-    print(f"{C.BOLD}{L}{H * total_width}{R}{C.RESET}")
 
-    # Column headers
-    header_parts = [f"{C.BOLD}{'#':^{col_widths['#']}}{C.RESET}"]
-    header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in param_names)
-    header_parts.extend(
-        f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names
-    )
-    if show_examples:
-        header_parts.append(f"{C.YELLOW}{'examples':^{col_widths['examples']}}{C.RESET}")
-    # Trailing params after metrics (cyan like other config params)
-    header_parts.extend(
-        f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in trailing_params
-    )
-    print(f"{V} " + f" {V} ".join(header_parts) + f" {V}")
-
-    # Separator
-    print(f"{L}" + X.join(H * (col_widths[c] + 2) for c in all_cols) + f"{R}")
-
-    # Data rows
-    for i, trial in enumerate(trials):
-        is_overall_best = i == best_trial_index
-
-        # Build mock_metrics override for this trial
-        mock_metrics = {}
-        if mock_costs:
-            mock_metrics["cost"] = mock_costs[i]
-        if mock_latencies:
-            mock_metrics["latency"] = mock_latencies[i]
-
-        row_parts = _build_table_row(
-            trial,
-            i,
-            param_names,
-            metric_names,
-            col_widths,
-            best_per_objective,
-            is_overall_best,
-            mock_metrics if mock_metrics else None,
-            trailing_params,
-            example_counts[i],
-            show_examples,
+    def metric_override_factory(result: Any) -> dict[str, list[float]] | None:
+        return _build_metric_overrides(
+            result,
+            is_mock=is_mock,
+            task_type=task_type,
+            dataset_size=dataset_size,
         )
-        print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 
-    # Bottom border
-    print(f"{BL}" + B.join(H * (col_widths[c] + 2) for c in all_cols) + f"{BR}")
-
-    # Legend
-    legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
-    legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
-    print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
-
-    if is_mock:
-        print(
-            f"{C.DIM}Note: Mock mode - costs and latencies are estimated based on model characteristics.{C.RESET}"
-        )
+    callback_cls = ProgressBarCallback if show_progress else ResultsTableCallback
+    return callback_cls(
+        mode_label=mode_label,
+        metric_override_factory=metric_override_factory,
+        footer_note=footer_note,
+    )
 
 
 def print_cost_estimate(
