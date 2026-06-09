@@ -53,6 +53,21 @@ sig Permit {
     active: Time -> one Bool
 }
 
+one sig TokenBudget {}
+
+one sig ProviderQuota {}
+
+one sig RateLimit {}
+
+one sig EnergyOrCarbonBudget {}
+
+one sig ResourceRequest {
+    tokenEstimate: one Int,
+    quotaEstimate: one Int,
+    rateEstimate: one Int,
+    energyOrCarbonEstimate: one Int
+}
+
 -- Boolean type
 abstract sig Bool {}
 one sig True, False extends Bool {}
@@ -127,6 +142,17 @@ pred committedExceedsLimit[e: CostEnforcer, t: Time] {
     e.accumulated_cost[t].value.plus[e.reserved_cost[t].value] > e.limit.value
 }
 
+pred resourceWithinLimits[e: CostEnforcer, req: ResourceRequest] {
+    some TokenBudget
+    some ProviderQuota
+    some RateLimit
+    some EnergyOrCarbonBudget
+    req.tokenEstimate >= 0 and req.tokenEstimate <= 2
+    req.quotaEstimate >= 0 and req.quotaEstimate <= 2
+    req.rateEstimate >= 0 and req.rateEstimate <= 2
+    req.energyOrCarbonEstimate >= 0 and req.energyOrCarbonEstimate <= 2
+}
+
 -- Invariant I5: Released permits have active=False
 pred I5_ReleasedInactive[e: CostEnforcer, p: Permit, t: Time] {
     p not in e.active_permits[t] implies p.active[t] = False
@@ -185,6 +211,18 @@ pred acquirePermit[e: CostEnforcer, t: Time, tNext: Time, p: Permit, estimated: 
     e.active_permits[tNext] = e.active_permits[t] + p
     e.accumulated_cost[tNext] = e.accumulated_cost[t]
     all q: Permit - p | q.active[tNext] = q.active[t]
+}
+
+pred resourceAwareAcquirePermit[
+    e: CostEnforcer,
+    t: Time,
+    tNext: Time,
+    p: Permit,
+    estimated: Float,
+    req: ResourceRequest
+] {
+    acquirePermit[e, t, tNext, p, estimated]
+    resourceWithinLimits[e, req]
 }
 
 -- Deny permit (budget exceeded)
@@ -313,6 +351,16 @@ assert AdmissionCommitsWithinLimit {
     }
 }
 
+-- Assert: resource-aware admission respects all non-USD resource budgets.
+assert ResourceAwareAdmissionRequiresAllResourceBounds {
+    all e: CostEnforcer | validTrace[e] implies {
+        all t: Time - last, p: Permit, est: Float, req: ResourceRequest |
+            resourceAwareAcquirePermit[e, t, t.next, p, est, req] implies {
+                resourceWithinLimits[e, req]
+            }
+    }
+}
+
 -- Assert: In-flight count never goes negative
 assert InFlightNeverNegative {
     all e: CostEnforcer | validTrace[e] implies {
@@ -402,6 +450,7 @@ assert PermitSumConsistency {
 -- ============================================================================
 
 check AdmissionCommitsWithinLimit for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 5 Int
+check ResourceAwareAdmissionRequiresAllResourceBounds for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 1 ResourceRequest, 5 Int
 check InFlightNeverNegative for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 5 Int
 check ReservedNeverNegative for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 5 Int
 check ActiveEqualsInFlight for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 5 Int
@@ -421,6 +470,24 @@ run showAcquireReachable {
     some e: CostEnforcer, p: Permit, t: Time - last, estimated: Float |
         validTrace[e] and acquirePermit[e, t, t.next, p, estimated]
 } for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 5 Int
+
+-- Find a valid trace with one resource-aware granted permit.
+run showResourceBoundedAdmissionReachable {
+    some e: CostEnforcer, p: Permit, t: Time - last, estimated: Float,
+         req: ResourceRequest |
+        validTrace[e] and
+        resourceAwareAcquirePermit[e, t, t.next, p, estimated, req]
+} for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 1 ResourceRequest, 5 Int
+
+-- Negative control: USD admission can succeed while non-USD resources exceed
+-- their limits if the resource-aware gate is not applied.
+run FinanciallyAdmittedResourceOverrun_buggy {
+    some e: CostEnforcer, p: Permit, t: Time - last, estimated: Float,
+         req: ResourceRequest |
+        validTrace[e] and
+        acquirePermit[e, t, t.next, p, estimated] and
+        not resourceWithinLimits[e, req]
+} for 3 but 4 Time, 3 Permit, 4 Float, 1 CostEnforcer, 1 ResourceRequest, 5 Int
 
 -- Find a valid trace where denial is triggered after a prior admission.
 run showDenyReachable {
