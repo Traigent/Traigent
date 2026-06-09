@@ -273,11 +273,14 @@ class BackendConfig:
         except Exception:
             pass
 
-        # Only warn if not in offline mode - offline mode doesn't need API keys
+        # Missing credentials are expected for local/mock runs. Keep the
+        # actionable user-facing notice in the session fallback path; this
+        # lower-level probe stays debug-only to avoid duplicate happy-path
+        # warnings.
         from traigent.utils.env_config import is_backend_offline
 
         if not is_backend_offline():
-            logger.warning(
+            logger.debug(
                 "No API key found (checked TRAIGENT_API_KEY and stored credentials). %s",
                 get_no_credentials_hint(),
             )

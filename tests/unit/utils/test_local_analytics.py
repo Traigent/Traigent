@@ -1072,6 +1072,25 @@ class TestConvenienceFunctions:
         result = collect_and_submit_analytics(config)
         assert result is None  # Function returns None
 
+    def test_collect_and_submit_analytics_skips_mock_mode(
+        self, temp_storage_path: str
+    ) -> None:
+        """Mock walkthroughs must not schedule remote analytics auth."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+
+        with (
+            patch("traigent.utils.env_config.is_mock_llm", return_value=True),
+            patch("traigent.utils.local_analytics.LocalAnalytics") as mock_analytics,
+        ):
+            result = collect_and_submit_analytics(config)
+
+        assert result is None
+        mock_analytics.assert_not_called()
+
     def test_collect_and_submit_analytics_in_async_context(
         self, temp_storage_path: str
     ) -> None:

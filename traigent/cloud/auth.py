@@ -1126,8 +1126,9 @@ class AuthManager:
                 error_message="Invalid API key format",
             )
 
-        # Structured warning: never log the key value or any value derived from it.
-        logger.warning(
+        # Structured lifecycle event: never log the key value or any value
+        # derived from it. Validation failures remain WARNING below.
+        logger.info(
             "auth.api_key.validate_start",
             extra={
                 "auth_mode": AuthMode.API_KEY.value,

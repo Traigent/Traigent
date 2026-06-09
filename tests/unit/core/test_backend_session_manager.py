@@ -3,6 +3,7 @@
 Tests the extracted backend session lifecycle manager with stub backend client.
 """
 
+import logging
 import re
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -1077,9 +1078,7 @@ class TestHandleSessionCreationResult:
     def test_no_api_key_warning_includes_signup_url(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
-        """handle_session_creation_result must emit WARNING with signup URL for NO_API_KEY."""
-        import logging
-
+        """NO_API_KEY local fallback emits INFO with signup URL, not WARNING."""
         from traigent.cloud.session_types import (
             SessionCreationFailureReason,
             SessionCreationResult,
@@ -1103,17 +1102,20 @@ class TestHandleSessionCreationResult:
         )
 
         with caplog.at_level(
-            logging.WARNING, logger="traigent.core.backend_session_manager"
+            logging.INFO, logger="traigent.core.backend_session_manager"
         ):
             session_id = manager.handle_session_creation_result(result)
 
         assert session_id == "local_test"
         assert not manager.backend_tracking_enabled
-        assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
+        no_key_records = [
+            record for record in caplog.records if "No API key found" in record.message
+        ]
+        assert len(no_key_records) == 1
+        assert no_key_records[0].levelno == logging.INFO
+        assert SIGNUP_URL in no_key_records[0].message
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warning_records) == 1
+        assert len(warning_records) == 0
 
     def test_auth_failure_aborts_by_default_with_structured_reason(
         self, traigent_config, objective_schema, mock_optimizer
@@ -1173,16 +1175,18 @@ class TestHandleSessionCreationResult:
         )
         from traigent.utils.exceptions import ConfigurationError
 
-        mock_backend_client.create_session.return_value = SessionCreationResult.fallback(
-            session_id="local_test",
-            reason=SessionCreationFailureReason.AUTH,
-            detail="Authentication failed (403)",
-            failure_response=SessionCreationFailureDetail.from_http_response(
-                403,
-                '{"error_code":"INSUFFICIENT_PERMISSIONS",'
-                '"message":"Missing required permissions: experiment.write",'
-                '"details":{"missing_permissions":["experiment.write"]}}',
-            ),
+        mock_backend_client.create_session.return_value = (
+            SessionCreationResult.fallback(
+                session_id="local_test",
+                reason=SessionCreationFailureReason.AUTH,
+                detail="Authentication failed (403)",
+                failure_response=SessionCreationFailureDetail.from_http_response(
+                    403,
+                    '{"error_code":"INSUFFICIENT_PERMISSIONS",'
+                    '"message":"Missing required permissions: experiment.write",'
+                    '"details":{"missing_permissions":["experiment.write"]}}',
+                ),
+            )
         )
 
         def func(x):
