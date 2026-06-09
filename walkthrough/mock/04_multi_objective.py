@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.helpers import print_optimization_config, print_results_table
+from utils.helpers import build_results_table_callback, print_optimization_config
 from utils.mock_answers import (
     CLASSIFICATION_LABELS,
     DEFAULT_MOCK_MODEL,
@@ -114,11 +114,13 @@ async def main() -> None:
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
     results = await ai_agent_classify_text_sentiment.optimize(
-        algorithm="random", max_trials=8, random_seed=42
-    )
-
-    print_results_table(
-        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="classification"
+        algorithm="random",
+        max_trials=8,
+        random_seed=42,
+        show_progress=False,
+        callbacks=[
+            build_results_table_callback(is_mock=True, task_type="classification")
+        ],
     )
 
     print("\nBest Configuration Found:")

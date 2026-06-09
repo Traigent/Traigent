@@ -232,6 +232,38 @@ class TestPrintResultsTableBanner:
         assert "All trials failed" in out
         assert "Overall Best" not in out
 
+    def test_mode_label_and_metric_overrides_render_once(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        trials = [
+            _trial(
+                {"model": "cheap"},
+                {"accuracy": 0.75, "cost": 0.0},
+                metadata={"successful_examples": 10, "examples_attempted": 10},
+                trial_id="t1",
+            ),
+            _trial(
+                {"model": "accurate"},
+                {"accuracy": 0.9, "cost": 0.0},
+                metadata={"successful_examples": 10, "examples_attempted": 10},
+                trial_id="t2",
+            ),
+        ]
+
+        print_results_table(
+            self._build_results(trials),
+            config_space={"model": ["cheap", "accurate"]},
+            objectives=["accuracy", "cost"],
+            mode_label="MOCK",
+            metric_overrides={"cost": [0.002, 0.015]},
+        )
+
+        out = capsys.readouterr().out
+        assert out.count("Trial Results") == 1
+        assert "MOCK - 2 trials" in out
+        assert "$0.00200" in out
+        assert "$0.01500" in out
+
 
 class TestBestPerObjective:
     def test_returns_all_tied_best_indices(self) -> None:

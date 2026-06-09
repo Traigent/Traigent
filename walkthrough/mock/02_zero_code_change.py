@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.helpers import print_optimization_config, print_results_table
+from utils.helpers import build_results_table_callback, print_optimization_config
 from utils.mock_answers import (
     ANSWERS,
     DEFAULT_MOCK_MODEL,
@@ -98,11 +98,11 @@ async def main() -> None:
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
     results = await answer_question.optimize(
-        algorithm="random", max_trials=6, random_seed=42
-    )
-
-    print_results_table(
-        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa"
+        algorithm="random",
+        max_trials=6,
+        random_seed=42,
+        show_progress=False,
+        callbacks=[build_results_table_callback(is_mock=True, task_type="simple_qa")],
     )
 
     print("\nBest Configuration Found:")
