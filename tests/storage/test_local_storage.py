@@ -607,3 +607,25 @@ class TestTrialResult:
         assert restored_trial.config == original_trial.config
         assert restored_trial.score == original_trial.score
         assert restored_trial.metadata == original_trial.metadata
+
+    def test_trial_cost_serialization(self):
+        """Test trial cost fields persist through serialization."""
+        original_trial = TrialResult(
+            trial_id="cost_trial",
+            config={"test": "config"},
+            score=0.75,
+            timestamp=datetime.now(UTC).isoformat(),
+            metadata={"provider": "mock"},
+            cost=0.03,
+            total_cost=0.03,
+            input_cost=0.01,
+            output_cost=0.02,
+        )
+
+        trial_dict = original_trial.to_dict()
+        restored_trial = TrialResult.from_dict(trial_dict)
+
+        assert restored_trial.cost == 0.03
+        assert restored_trial.total_cost == 0.03
+        assert restored_trial.input_cost == 0.01
+        assert restored_trial.output_cost == 0.02

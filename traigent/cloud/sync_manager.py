@@ -20,7 +20,12 @@ except ImportError:
 
 from ..config.backend_config import BackendConfig, get_no_credentials_hint
 from ..config.types import TraigentConfig
-from ..storage.local_storage import LocalStorageManager, OptimizationSession
+from ..storage.local_storage import (
+    TRIAL_COST_FIELDS,
+    LocalStorageManager,
+    OptimizationSession,
+    extract_trial_cost_fields,
+)
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
 
@@ -269,6 +274,19 @@ class SyncManager:
         results = []
 
         for trial in trials:
+            trial_cost_payload = dict(trial.metadata or {})
+            for field in TRIAL_COST_FIELDS:
+                field_value = getattr(trial, field, None)
+                if field_value is not None:
+                    trial_cost_payload[field] = field_value
+            cost_measures = {
+                field: value
+                for field, value in extract_trial_cost_fields(
+                    trial_cost_payload
+                ).items()
+                if value is not None
+            }
+
             result = {
                 "id": f"config_run_{trial.trial_id}",
                 "trial_id": trial.trial_id,
@@ -276,6 +294,7 @@ class SyncManager:
                 "measures": {
                     "score": trial.score,
                     "accuracy": trial.score,  # Map score to accuracy for compatibility
+                    **cost_measures,
                 },
                 "timestamp": trial.timestamp,
                 "status": "completed" if trial.error is None else "failed",

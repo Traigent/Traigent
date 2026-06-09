@@ -8,6 +8,7 @@ Inspired by DeepEval's approach to local JSON file storage.
 import json
 import os
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -27,6 +28,69 @@ from ..utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
 
+TRIAL_COST_FIELDS = ("cost", "total_cost", "input_cost", "output_cost")
+
+
+def _coerce_optional_cost(value: Any) -> float | None:
+    """Coerce a cost-like value to float without accepting booleans."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_trial_cost_fields(
+    metadata: Mapping[str, Any | None] | None,
+) -> dict[str, float | None]:
+    """Extract canonical trial cost fields from stored trial metadata.
+
+    Local edge_analytics runs have historically carried cost in metadata rather
+    than first-class storage fields. Keep sync backward-compatible by accepting
+    top-level metrics and the older total_example_cost alias.
+    """
+    costs: dict[str, float | None] = dict.fromkeys(TRIAL_COST_FIELDS)
+
+    if not isinstance(metadata, Mapping):
+        return costs
+
+    sources: list[Mapping[str, Any | None]] = [metadata]
+    for nested_key in ("all_metrics", "metrics"):
+        nested_value = metadata.get(nested_key)
+        if isinstance(nested_value, Mapping):
+            sources.append(nested_value)
+
+    evaluation_result = metadata.get("evaluation_result")
+    if isinstance(evaluation_result, Mapping):
+        sources.append(evaluation_result)
+        evaluation_metrics = evaluation_result.get("metrics")
+        if isinstance(evaluation_metrics, Mapping):
+            sources.append(evaluation_metrics)
+
+    for source in sources:
+        for field in TRIAL_COST_FIELDS:
+            if costs[field] is None:
+                costs[field] = _coerce_optional_cost(source.get(field))
+
+        if costs["total_cost"] is None:
+            costs["total_cost"] = _coerce_optional_cost(
+                source.get("total_example_cost")
+            )
+
+    if costs["total_cost"] is None and costs["cost"] is not None:
+        costs["total_cost"] = costs["cost"]
+    if costs["cost"] is None and costs["total_cost"] is not None:
+        costs["cost"] = costs["total_cost"]
+    if costs["total_cost"] is None:
+        input_cost = costs["input_cost"]
+        output_cost = costs["output_cost"]
+        if input_cost is not None and output_cost is not None:
+            costs["total_cost"] = input_cost + output_cost
+            costs["cost"] = costs["total_cost"]
+
+    return costs
+
 
 @dataclass
 class TrialResult:
@@ -38,6 +102,10 @@ class TrialResult:
     timestamp: str
     metadata: dict[str, Any | None] | None = None
     error: str | None = None
+    cost: float | None = None
+    total_cost: float | None = None
+    input_cost: float | None = None
+    output_cost: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -282,6 +350,10 @@ class LocalStorageManager:
         score: float | None,
         metadata: dict[str, Any | None] | None = None,
         error: str | None = None,
+        cost: float | None = None,
+        total_cost: float | None = None,
+        input_cost: float | None = None,
+        output_cost: float | None = None,
     ) -> None:
         """
         Add a trial result to the session.
@@ -292,6 +364,10 @@ class LocalStorageManager:
             score: Score achieved with this configuration (may be None when unavailable)
             metadata: Additional trial metadata
             error: Error message if trial failed
+            cost: Optional total trial cost alias in USD
+            total_cost: Optional total trial cost in USD
+            input_cost: Optional input-token cost in USD
+            output_cost: Optional output-token cost in USD
         """
         session = self.load_session(session_id)
         if not session:
@@ -300,6 +376,29 @@ class LocalStorageManager:
         if session.trials is None:
             session.trials = []
 
+        extracted_costs = extract_trial_cost_fields(metadata)
+        explicit_costs = {
+            "cost": cost,
+            "total_cost": total_cost,
+            "input_cost": input_cost,
+            "output_cost": output_cost,
+        }
+        for field, value in explicit_costs.items():
+            coerced_value = _coerce_optional_cost(value)
+            if coerced_value is not None:
+                extracted_costs[field] = coerced_value
+
+        if (
+            extracted_costs["total_cost"] is None
+            and extracted_costs["cost"] is not None
+        ):
+            extracted_costs["total_cost"] = extracted_costs["cost"]
+        if (
+            extracted_costs["cost"] is None
+            and extracted_costs["total_cost"] is not None
+        ):
+            extracted_costs["cost"] = extracted_costs["total_cost"]
+
         trial_result = TrialResult(
             trial_id=len(session.trials) + 1,
             config=config,
@@ -307,6 +406,10 @@ class LocalStorageManager:
             timestamp=datetime.now(UTC).isoformat(),
             metadata=metadata,
             error=error,
+            cost=extracted_costs["cost"],
+            total_cost=extracted_costs["total_cost"],
+            input_cost=extracted_costs["input_cost"],
+            output_cost=extracted_costs["output_cost"],
         )
 
         session.trials.append(trial_result)

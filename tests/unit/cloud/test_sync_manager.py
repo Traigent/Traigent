@@ -98,6 +98,58 @@ class TestSyncManager:
             metadata={"optimizer": "bayesian"},
         )
 
+    def test_convert_trials_to_results_includes_local_cost_measures(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Synced configuration_runs include local edge_analytics cost measures."""
+        trial = TrialResult(
+            trial_id=1,
+            config={"model": "gpt-4", "temperature": 0.2},
+            score=0.91,
+            timestamp="2026-06-09T10:00:00Z",
+            metadata={"provider": "mock"},
+            cost=0.03,
+            total_cost=0.03,
+            input_cost=0.01,
+            output_cost=0.02,
+        )
+
+        results = sync_manager._convert_trials_to_results([trial])
+
+        measures = results[0]["measures"]
+        assert measures["score"] == 0.91
+        assert measures["accuracy"] == 0.91
+        assert measures["cost"] == 0.03
+        assert measures["total_cost"] == 0.03
+        assert measures["input_cost"] == 0.01
+        assert measures["output_cost"] == 0.02
+
+    def test_convert_trials_to_results_includes_metadata_cost_measures(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Legacy local trials with metadata-only costs still sync cost measures."""
+        trial = TrialResult(
+            trial_id=1,
+            config={"model": "gpt-4", "temperature": 0.2},
+            score=0.91,
+            timestamp="2026-06-09T10:00:00Z",
+            metadata={
+                "total_example_cost": 0.04,
+                "all_metrics": {
+                    "input_cost": 0.015,
+                    "output_cost": 0.025,
+                },
+            },
+        )
+
+        results = sync_manager._convert_trials_to_results([trial])
+
+        measures = results[0]["measures"]
+        assert measures["cost"] == 0.04
+        assert measures["total_cost"] == 0.04
+        assert measures["input_cost"] == 0.015
+        assert measures["output_cost"] == 0.025
+
     # Initialization Tests
 
     def test_init_with_api_key(self, mock_config: TraigentConfig) -> None:
