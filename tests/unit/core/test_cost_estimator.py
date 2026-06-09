@@ -352,9 +352,18 @@ class TestCheckCostApproval:
 
         with (
             patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
-            pytest.raises(OptimizationAborted, match="Cost approval declined"),
+            pytest.raises(OptimizationAborted) as exc_info,
         ):
             estimator.check_cost_approval(_FakeDataset())
+
+        message = str(exc_info.value)
+        assert "Cost approval declined" in message
+        assert "Rough conservative upper-bound estimate" in message
+        assert "TRAIGENT_RUN_COST_LIMIT" in message
+        assert "TRAIGENT_COST_APPROVED=true" in message
+        assert "cost_approved=True" in message
+        assert "TRAIGENT_CUSTOM_MODEL_PRICING_FILE" in message
+        assert "TRAIGENT_CUSTOM_MODEL_PRICING_JSON" in message
 
 
 # ---------------------------------------------------------------------------

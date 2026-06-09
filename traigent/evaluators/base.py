@@ -155,7 +155,12 @@ def _resolve_dataset_source(
         resolved_path.relative_to(dataset_root)
     except ValueError as exc:
         raise ValidationError(
-            f"Dataset path must reside under {dataset_root}: {resolved_path}"
+            f"Dataset path must reside under {dataset_root}: {resolved_path}. "
+            "Hint: Dataset paths must reside under the current working "
+            "directory or the path specified by TRAIGENT_DATASET_ROOT. Move "
+            "the dataset under that root, pass a relative path from that root, "
+            "or set TRAIGENT_DATASET_ROOT to the directory containing approved "
+            "evaluation datasets."
         ) from exc
 
     if not resolved_path.is_file():
