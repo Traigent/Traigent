@@ -77,8 +77,8 @@ Configure how Traigent evaluates each trial using `EvaluationOptions`.
 
 | Field | Type | Description |
 |---|---|---|
-| `eval_dataset` | `str \| list[str] \| Dataset \| None` | Path to JSONL dataset or list of paths |
-| `custom_evaluator` | `Callable \| None` | Full-control evaluator: `(func, config, example) -> ExampleResult` |
+| `eval_dataset` | `str \| list[str] \| Dataset \| None` | Path to JSONL dataset or list of paths. JSONL rows use `input` or `input_data` plus an expected output field. |
+| `custom_evaluator` | `Callable \| None` | Full-control evaluator: `(func, config, example: EvaluationExample) -> ExampleResult` |
 | `scoring_function` | `Callable \| None` | Lightweight scorer: `(prediction, expected) -> float` |
 | `metric_functions` | `dict[str, Callable] \| None` | Named metrics: `{"accuracy": fn, "relevance": fn}` |
 
@@ -89,7 +89,7 @@ Configure how Traigent evaluates each trial using `EvaluationOptions`.
 | `eval_dataset` only | Built-in evaluation with default metrics | N/A (path string) |
 | `scoring_function` | Simple pass/fail or numeric scoring | `(prediction, expected) -> float` |
 | `metric_functions` | Multiple named metrics per example | `{"name": (prediction, expected, input_data) -> float}` |
-| `custom_evaluator` | Full control over execution and measurement | `(func, config, example) -> ExampleResult` |
+| `custom_evaluator` | Full control over execution and measurement | `(func, config, example: EvaluationExample) -> ExampleResult` |
 
 ### Example: Scoring Function
 

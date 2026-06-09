@@ -10,8 +10,8 @@ from traigent.api.decorators import EvaluationOptions
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `eval_dataset` | `str \| list[str] \| Dataset \| None` | `None` | Path to a JSONL evaluation dataset, a list of dataset paths, or a `Dataset` object. Each row should contain input fields and an expected output. |
-| `custom_evaluator` | `Callable \| None` | `None` | A callable with signature `(func, config, example) -> ExampleResult`. Gives full control over how each example is executed and scored. |
+| `eval_dataset` | `str \| list[str] \| Dataset \| None` | `None` | Path to a JSONL evaluation dataset, a list of dataset paths, or a `Dataset` object. Each row should contain `input` or `input_data` plus an expected output field. |
+| `custom_evaluator` | `Callable \| None` | `None` | A callable with signature `(func, config, example: EvaluationExample) -> ExampleResult`. Gives full control over how each example is executed and scored. |
 | `scoring_function` | `Callable \| None` | `None` | A lightweight callable with signature `(prediction, expected) -> float`. Returns a numeric score for each example. |
 | `metric_functions` | `dict[str, Callable] \| None` | `None` | Dictionary mapping metric names to callables. Each callable has signature `(prediction, expected, input_data) -> float`. |
 
@@ -25,7 +25,7 @@ The `custom_evaluator` gives you full control over trial execution and measureme
 def custom_evaluator(
     func: Callable,
     config: dict[str, Any],
-    example: dict[str, Any],
+    example: EvaluationExample,
 ) -> ExampleResult:
     ...
 ```
@@ -34,32 +34,65 @@ def custom_evaluator(
 
 - `func` - The original decorated function (not wrapped).
 - `config` - The configuration being tested in this trial (e.g., `{"model": "gpt-4", "temperature": 0.5}`).
-- `example` - A single row from the eval dataset as a dictionary.
+- `example` - An `EvaluationExample` object. Read function inputs from `example.input_data`, expected values from `example.expected_output`, and extra JSONL fields from `example.metadata`.
 
 ### Return Value
 
-Must return an `ExampleResult` (or compatible dict) containing at minimum:
-- `score` (float) - The primary score for this example.
-- `prediction` (str) - The model output.
+Must return an `ExampleResult` containing at minimum:
+- `example_id` (str) - Unique identifier for this example.
+- `input_data` (dict) - The inputs used for the function call.
+- `expected_output` - The expected value from the dataset.
+- `actual_output` - The function output.
+- `metrics` (dict[str, float]) - Per-objective scores, such as `{"accuracy": 1.0}`.
+- `execution_time` (float) - Elapsed time in seconds.
+- `success` (bool) - Whether the example evaluation succeeded.
 
 ### Example
 
 ```python
-from traigent.evaluators.base import ExampleResult
+import time
+from collections.abc import Callable
+from typing import Any
 
-def my_evaluator(func, config, example):
-    import time
-    start = time.time()
-    prediction = func(example["question"])
-    latency = time.time() - start
+from traigent.api.types import ExampleResult
+from traigent.evaluators.base import EvaluationExample
 
-    score = 1.0 if example["expected"] in prediction else 0.0
+def my_evaluator(
+    func: Callable[..., Any],
+    config: dict[str, Any],
+    example: EvaluationExample,
+) -> ExampleResult:
+    start = time.perf_counter()
+    actual_output = func(example.input_data["question"])
+    execution_time = time.perf_counter() - start
+
+    expected = example.expected_output
+    accuracy = (
+        1.0
+        if expected is not None
+        and str(expected).lower() in str(actual_output).lower()
+        else 0.0
+    )
+
+    metadata = dict(example.metadata or {})
+    if "model" in config:
+        metadata["model"] = config["model"]
 
     return ExampleResult(
-        score=score,
-        prediction=prediction,
-        measures={"latency_ms": latency * 1000},
+        example_id=str(metadata.get("example_id", "example")),
+        input_data=example.input_data,
+        expected_output=example.expected_output,
+        actual_output=actual_output,
+        metrics={"accuracy": accuracy},
+        execution_time=execution_time,
+        success=True,
+        metadata=metadata,
     )
+```
+
+```python
+import traigent
+from traigent.api.decorators import EvaluationOptions
 
 @traigent.optimize(
     evaluation=EvaluationOptions(custom_evaluator=my_evaluator),
@@ -167,11 +200,11 @@ def summarize(text: str) -> str:
 
 ## Dataset Format
 
-The `eval_dataset` JSONL file should have one JSON object per line. At minimum, include input fields that match your function parameters and an `expected` field:
+The `eval_dataset` JSONL file should have one JSON object per line. At minimum, include an `input` object whose keys match your function parameters and an expected output field. Extra top-level fields become `example.metadata`:
 
 ```json
-{"question": "What is Python?", "expected": "A programming language"}
-{"question": "What is 2+2?", "expected": "4"}
+{"input": {"question": "What is Python?"}, "expected": "A programming language", "db_path": "eval.sqlite"}
+{"input": {"question": "What is 2+2?"}, "expected": "4", "db_path": "eval.sqlite"}
 ```
 
 Multiple datasets can be provided as a list:
