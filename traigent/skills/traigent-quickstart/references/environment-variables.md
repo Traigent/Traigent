@@ -6,7 +6,7 @@ Complete reference of environment variables recognized by the Traigent SDK.
 
 | Variable                           | Default         | Description                                                                                         |
 | ---------------------------------- | --------------- | --------------------------------------------------------------------------------------------------- |
-| `TRAIGENT_MOCK_LLM`               | `false`         | When `true`, mocks all LLM API calls. No provider API keys needed. Use for development and testing. |
+| `TRAIGENT_MOCK_LLM`               | `false`         | When `true`, mocks supported LLM calls made through Traigent's integration/interceptor path. No provider API keys needed for the documented local dry-run path. |
 | `TRAIGENT_OFFLINE_MODE`            | `false`         | When `true`, skips all backend communication. Use for local-only development.                       |
 | `TRAIGENT_RUN_COST_LIMIT`         | `2.0`           | Maximum cost budget (in USD) per optimization run. Optimization stops when this limit is reached.    |
 | `TRAIGENT_COST_APPROVED`          | `false`         | Exact value `true` pre-approves both the cost-limit prompt and unpriced-model preflight. `1`, `yes`, and `on` do not approve. |
@@ -43,6 +43,12 @@ export TRAIGENT_OFFLINE_MODE=true
 export TRAIGENT_LOG_LEVEL=DEBUG
 python my_optimization.py
 ```
+
+Mock mode skips the optimized-function pricing preflight because supported
+provider calls are intercepted and return canned responses. It is not a global
+network sandbox: direct provider calls made before Traigent installs its
+interceptors, or calls through unsupported clients, should be stubbed explicitly
+or protected with provider-side spend controls.
 
 ### CI/CD Pipeline
 

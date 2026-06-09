@@ -294,8 +294,11 @@ pip install -e ".[recommended]"
 Cost estimates, budgets, limits, alerts, and thresholds are best-effort software controls, not
 provider-side billing guarantees. Actual billing is determined by your LLM/cloud providers, and you
 remain responsible for provider charges. The legacy `TRAIGENT_MOCK_LLM=true` env var is supported
-only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`. See
-[DISCLAIMER.md](DISCLAIMER.md) for details.
+only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`.
+Mock mode skips the optimized-function pricing preflight for supported calls made through
+Traigent's integration/interceptor path; direct provider calls made outside that path should
+be stubbed explicitly for a guaranteed $0 rehearsal. See [DISCLAIMER.md](DISCLAIMER.md)
+for details.
 
 ### Evaluation
 
