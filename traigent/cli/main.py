@@ -724,6 +724,7 @@ def _print_model_ids(provider: str, region: str | None, model_ids: list[str]) ->
     ),
 )
 @click.option(
+    "--check",
     "--model",
     "model_id",
     default=None,
@@ -2360,9 +2361,7 @@ def check(
             )
             return
 
-        console.print(
-            "\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]"
-        )
+        console.print("\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]")
         validator = OptimizationValidator(threshold_pct=threshold)
 
         async def run_validations() -> tuple[list[Any], int, int]:

@@ -38,7 +38,7 @@ uv pip install "traigent[recommended]"
 python hello_world.py
 ```
 
-The quickstart runs in mock mode by default - it simulates LLM calls so you can see the full optimization flow instantly.
+The quickstart runs in mock mode by default and pre-approves the local cost gate for the demo - it simulates LiteLLM/LangChain calls so you can see the full optimization flow instantly. For your own dry runs, use mock mode plus `cost_approved=True` or `TRAIGENT_COST_APPROVED=true`; raw `openai.chat.completions.create(...)` and `anthropic.messages.create(...)` calls are not mocked.
 
 2) Here's what it does - one decorator, automatic optimization:
 

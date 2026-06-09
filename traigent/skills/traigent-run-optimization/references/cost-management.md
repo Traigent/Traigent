@@ -12,7 +12,7 @@ Traigent provides real-time cost tracking and enforcement to prevent runaway LLM
 | `TRAIGENT_REQUIRE_COST_TRACKING` | `false` | Raise exception if cost tracking cannot extract costs. |
 | `TRAIGENT_COST_WARNING_THRESHOLD` | `0.5` | Warn when this fraction of the limit is consumed (0.0-1.0). |
 | `TRAIGENT_COST_DIVERGENCE_THRESHOLD` | `2.0` | Log warning if actual/estimated cost ratio exceeds this. |
-| `TRAIGENT_MOCK_LLM` | `false` | Mock provider calls and skip optimized-function pricing preflight; not a global `CostEnforcer` bypass. |
+| `TRAIGENT_MOCK_LLM` | `false` | Mock LiteLLM/LangChain provider calls and skip optimized-function pricing preflight; not a global `CostEnforcer` bypass. |
 
 ## Setting a Cost Limit
 
@@ -149,13 +149,17 @@ Trial 2: acquire_permit() -> execute -> track_cost(permit, $0.05)
 
 ## Mock Mode
 
-When `TRAIGENT_MOCK_LLM=true`, provider calls are mocked and the
-optimized-function pricing preflight is skipped because no provider spend
-occurs. Mock mode does not globally bypass `CostEnforcer` permits or accounting,
-so do not rely on it to disable budget checks in production.
+When `TRAIGENT_MOCK_LLM=true`, LiteLLM and LangChain provider calls are mocked
+and the optimized-function pricing preflight is skipped because no provider
+spend occurs through those paths. Raw SDK calls such as
+`openai.chat.completions.create(...)` and `anthropic.messages.create(...)` are
+not intercepted by mock mode. Mock mode does not globally bypass `CostEnforcer`
+permits or accounting, so include `cost_approved=True` in code or
+`TRAIGENT_COST_APPROVED=true` in shell dry runs.
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
+export TRAIGENT_COST_APPROVED=true
 export TRAIGENT_OFFLINE_MODE=true
 ```
 
@@ -175,6 +179,7 @@ python run_optimization.py
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
+export TRAIGENT_COST_APPROVED=true
 export TRAIGENT_OFFLINE_MODE=true
 
 pytest tests/

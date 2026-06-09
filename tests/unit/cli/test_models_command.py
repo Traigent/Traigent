@@ -11,19 +11,95 @@ from click.testing import CliRunner
 from traigent.cli.main import cli
 
 
-def test_models_command_lists_anthropic_models_as_json() -> None:
+class FakeDiscovery:
+    def __init__(self, valid: bool = True) -> None:
+        self.list_calls: list[bool] = []
+        self.valid_calls: list[str] = []
+        self.valid = valid
+
+    def list_models(self, force_refresh: bool = False) -> list[str]:
+        self.list_calls.append(force_refresh)
+        return ["claude-known-model"]
+
+    def is_valid_model(self, model_id: str) -> bool:
+        self.valid_calls.append(model_id)
+        return self.valid
+
+
+def test_models_command_lists_anthropic_models_via_discovery_api(
+    monkeypatch,
+) -> None:
+    discovery = FakeDiscovery()
+
+    def fake_get_model_discovery(provider: str) -> FakeDiscovery:
+        assert provider == "anthropic"
+        return discovery
+
+    monkeypatch.setattr(
+        "traigent.integrations.model_discovery.get_model_discovery",
+        fake_get_model_discovery,
+    )
     runner = CliRunner()
 
     result = runner.invoke(cli, ["models", "--provider", "anthropic", "--json"])
 
     assert result.exit_code == 0
+    assert discovery.list_calls == [False]
+    assert discovery.valid_calls == []
     payload = json.loads(result.output)
     assert payload["provider"] == "anthropic"
     assert payload["valid"] is None
-    assert "claude-3-5-sonnet-20241022" in payload["models"]
+    assert payload["models"] == ["claude-known-model"]
 
 
-def test_models_command_rejects_unknown_direct_provider_model() -> None:
+def test_models_command_check_validates_via_discovery_api(
+    monkeypatch,
+) -> None:
+    discovery = FakeDiscovery(valid=True)
+
+    def fake_get_model_discovery(provider: str) -> FakeDiscovery:
+        assert provider == "anthropic"
+        return discovery
+
+    monkeypatch.setattr(
+        "traigent.integrations.model_discovery.get_model_discovery",
+        fake_get_model_discovery,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "models",
+            "--provider",
+            "anthropic",
+            "--check",
+            "claude-known-model",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert discovery.list_calls == [False]
+    assert discovery.valid_calls == ["claude-known-model"]
+    payload = json.loads(result.output)
+    assert payload["model"] == "claude-known-model"
+    assert payload["valid"] is True
+
+
+def test_models_command_rejects_unknown_direct_provider_model(
+    monkeypatch,
+) -> None:
+    discovery = FakeDiscovery(valid=False)
+
+    def fake_get_model_discovery(provider: str) -> FakeDiscovery:
+        assert provider == "anthropic"
+        return discovery
+
+    monkeypatch.setattr(
+        "traigent.integrations.model_discovery.get_model_discovery",
+        fake_get_model_discovery,
+    )
     runner = CliRunner()
 
     result = runner.invoke(
@@ -32,6 +108,8 @@ def test_models_command_rejects_unknown_direct_provider_model() -> None:
     )
 
     assert result.exit_code == 1
+    assert discovery.list_calls == [False]
+    assert discovery.valid_calls == ["dead-model"]
     payload = json.loads(result.output)
     assert payload["model"] == "dead-model"
     assert payload["valid"] is False

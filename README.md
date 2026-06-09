@@ -169,7 +169,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 ## 🚀 Walkthrough — 8 runnable examples
 
-The walkthrough examples use local mock mode through the quickstart/testing helpers — no API keys needed.
+The walkthrough examples use local mock mode through the quickstart/testing helpers with cost approval pre-set for dry runs — no provider API keys needed when calls go through LiteLLM or LangChain.
 
 <details>
 <summary>Show all 8 walkthrough steps</summary>

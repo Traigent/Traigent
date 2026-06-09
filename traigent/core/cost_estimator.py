@@ -212,9 +212,16 @@ class CostEstimator:
             from traigent.core.cost_enforcement import OptimizationAborted
 
             raise OptimizationAborted(
-                f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
-                f"limit: ${self._cost_enforcer.config.limit:.2f}. "
-                f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
+                "Cost approval declined. Rough conservative upper-bound "
+                f"estimate: ${estimated_cost:.2f}, limit: "
+                f"${self._cost_enforcer.config.limit:.2f}. "
+                "Pre-run estimates use fixed token assumptions and conservative "
+                "fallback pricing when model pricing is unavailable. To proceed, "
+                "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
+                "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
+                "private/unpriced model rates with "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
             )
 
     def estimate_optimization_cost(self, dataset: Dataset) -> float:
