@@ -48,6 +48,25 @@ def test_dataset_from_jsonl_blocks_directory_traversal(monkeypatch, tmp_path):
         Dataset.from_jsonl(str(outside_file))
 
 
+def test_dataset_root_error_includes_actionable_guidance(monkeypatch, tmp_path):
+    dataset_root = tmp_path / "datasets"
+    dataset_root.mkdir()
+
+    outside_file = tmp_path / "outside.jsonl"
+    _write_sample_dataset(outside_file)
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl(str(outside_file))
+
+    message = str(exc_info.value)
+    assert "Dataset path must reside under" in message
+    assert "TRAIGENT_DATASET_ROOT" in message
+    assert "current working directory" in message
+    assert "Move the dataset under that root" in message
+
+
 def test_dataset_from_jsonl_blocks_symlink_escape(monkeypatch, tmp_path):
     if not hasattr(os, "symlink"):
         pytest.skip("OS does not support symlinks")

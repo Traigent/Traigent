@@ -102,6 +102,12 @@ def enable_mock_mode_for_quickstart() -> None:
                 "run in production. Enabled via "
                 "traigent.testing.enable_mock_mode_for_quickstart()."
             )
+            _logger.info(
+                "[traigent.testing] mock interception scope: LiteLLM and "
+                "LangChain calls are mocked. Raw openai.chat.completions.create(...) "
+                "and anthropic.messages.create(...) calls are not intercepted and "
+                "can hit the real provider API."
+            )
 
 
 def is_mock_mode_enabled() -> bool:

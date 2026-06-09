@@ -19,16 +19,16 @@ pip install -e ".[dev]"
 ```bash
 # Run all tests through the legacy shell fixture path
 # (may emit DeprecationWarning; prefer enable_mock_mode_for_quickstart() in code)
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest
 
 # Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=html
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=html
 
 # Run all unit tests with repo-default ignores
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/unit -q --tb=short
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest tests/unit -q --tb=short
 
 # Run tests matching a pattern
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest -k "test_optimization" -v
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest -k "test_optimization" -v
 ```
 
 ## Test Dependencies
@@ -102,7 +102,7 @@ Use the generated report (`coverage.xml` or `htmlcov/`) to track current coverag
 
 ## Mock Mode Testing
 
-Traigent includes a mock mode for testing without real API calls. In local tutorial or test code, use the in-code helper:
+Traigent includes a mock mode for testing LiteLLM/LangChain calls without real provider API calls. In local tutorial or test code, use the in-code helper:
 
 ```python
 from traigent.testing import enable_mock_mode_for_quickstart
@@ -113,14 +113,19 @@ enable_mock_mode_for_quickstart()
 For shell-only fixtures and older scripts, the legacy env var still works outside production, but direct user-set activation emits `DeprecationWarning`:
 
 ```bash
-TRAIGENT_MOCK_LLM=true pytest tests/
-TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true pytest tests/
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true python examples/core/rag-optimization/run.py
 ```
 
 **Mock Mode Features:**
-- No API keys required.
-- Fast execution — LLM calls are intercepted and replaced with canned
-  responses so trials don't hit the network.
+- No API keys required when optimized functions use LiteLLM or LangChain.
+- Fast execution — LiteLLM and LangChain LLM calls are intercepted and replaced
+  with canned responses so those trials don't hit the provider network.
+- Raw SDK calls such as `openai.chat.completions.create(...)` and
+  `anthropic.messages.create(...)` are not intercepted by mock mode.
+- Cost approval still runs in mock mode. Use `cost_approved=True` in code or
+  `TRAIGENT_COST_APPROVED=true` in shell dry runs; there is no separate
+  `dry_run` flag.
 - Evaluator scoring is unchanged — your `metric_functions`, custom
   evaluator, or the built-in `LocalEvaluator` accuracy calculator runs
   the same scoring logic in both mock and real modes. There is no
@@ -157,10 +162,10 @@ pip install -e ".[dev]"
 
 ```bash
 # Run all tests through the legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest
 
 # Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=term-missing
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
 ruff check traigent/

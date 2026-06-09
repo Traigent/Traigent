@@ -500,9 +500,14 @@ class CostEnforcer:
         # Check if stdin is a TTY (interactive terminal)
         if not sys.stdin.isatty():
             print(
-                f"\nTraigent: Estimated cost ${estimated:.2f} exceeds limit "
-                f"${self.config.limit:.2f}.\n"
-                f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT.\n",
+                "\nTraigent: Rough conservative upper-bound cost estimate "
+                f"${estimated:.2f} exceeds limit ${self.config.limit:.2f}.\n"
+                "Pre-run estimates use fixed token assumptions and conservative "
+                "fallback pricing when model pricing is unavailable.\n"
+                "To proceed, raise TRAIGENT_RUN_COST_LIMIT, approve after review "
+                "with TRAIGENT_COST_APPROVED=true, or calibrate private/unpriced "
+                "model rates with TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON.\n",
                 file=sys.stderr,
             )
             logger.warning(
@@ -519,12 +524,14 @@ class CostEnforcer:
 Traigent Cost Warning
 ================================================================================
 
-Estimated optimization cost: ${estimated:.2f} USD
+Rough conservative upper-bound cost estimate: ${estimated:.2f} USD
 Your current cost limit:     ${self.config.limit:.2f} USD
 
 NOTE: This is an ESTIMATE based on maximum context. Actual billing is
       determined solely by your LLM provider.
 NOTE: Traigent limits are best-effort local guardrails, not provider billing caps.
+NOTE: If model pricing is private or unavailable, calibrate rates with
+      TRAIGENT_CUSTOM_MODEL_PRICING_FILE or TRAIGENT_CUSTOM_MODEL_PRICING_JSON.
 
 Options:
   [y] Approve and continue with current limit

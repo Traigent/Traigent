@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
-import os
 import time
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
@@ -566,38 +565,3 @@ class BedrockChatClient:
                     text_piece = _extract_text_from_messages_response(data)
                     if text_piece:
                         yield text_piece
-
-
-def resolve_default_bedrock_model_id(model_hint: str | None) -> str:
-    """Return a Bedrock model id for a given model hint.
-
-    Allows environment override via `BEDROCK_MODEL_ID`. Fallback mapping supports
-    common Claude variants used in our experiments.
-    """
-
-    override = os.getenv("BEDROCK_MODEL_ID")
-    if override:
-        return override
-
-    hint = (model_hint or "").lower()
-    # Update these defaults as account access evolves
-    if "sonnet" in hint:
-        return "anthropic.claude-3-sonnet-20240229-v1:0"
-    if "haiku" in hint and "4.5" in hint:
-        # Map to latest Haiku release; update ID as AWS publishes newer revisions.
-        return "anthropic.claude-3-5-haiku-20241022-v1:0"
-    if "haiku" in hint and "3.5" in hint:
-        return "anthropic.claude-3-5-haiku-20241022-v1:0"
-    if "haiku" in hint:
-        return "anthropic.claude-3-haiku-20240307-v1:0"
-    if "opus" in hint:
-        return "anthropic.claude-3-opus-20240229-v1:0"
-    if "jamba" in hint or "ai21" in hint:
-        if "mini" in hint:
-            return "ai21.jamba-1-5-mini-v1:0"
-        if "large" in hint or "instruct" in hint:
-            return "ai21.jamba-1-5-large-v1:0"
-        # Default to the mini tier when size is unspecified to favour lower cost.
-        return "ai21.jamba-1-5-mini-v1:0"
-    # Sensible default for Claude 3 family
-    return "anthropic.claude-3-sonnet-20240229-v1:0"
