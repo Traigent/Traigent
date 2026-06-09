@@ -61,7 +61,7 @@ export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_OFFLINE_MODE=true
 ```
 
-- `TRAIGENT_MOCK_LLM=true` -- Mocks all LLM API calls so you do not need provider API keys or incur costs.
+- `TRAIGENT_MOCK_LLM=true` -- Mocks supported LLM calls made through Traigent's integration/interceptor path so local dry-runs do not need provider API keys or incur provider costs.
 - `TRAIGENT_OFFLINE_MODE=true` -- Skips backend communication so you do not need a running Traigent backend.
 
 ### Using a .env File

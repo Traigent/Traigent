@@ -2,7 +2,7 @@
 
 Traigent publishes [Agent Skills](https://agentskills.io/) — sets of instructions that teach your AI coding agent how to set up and run Traigent optimizations.
 
-When you ask your agent to "optimize this function with Traigent," the skill guides it through a **dry-run-first workflow**: validate everything at zero cost in mock mode, then switch to real execution only when you say so.
+When you ask your agent to "optimize this function with Traigent," the skill guides it through a **dry-run-first workflow**: validate the documented Traigent path at zero provider cost in mock mode, then switch to real execution only when you say so. If your code makes provider calls outside Traigent's optimized/evaluated path, stub those calls explicitly before treating the rehearsal as guaranteed $0.
 
 ## Compatible Agents
 

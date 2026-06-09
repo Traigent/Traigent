@@ -10,6 +10,7 @@ from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -199,9 +200,13 @@ class CostEstimator:
         Raises:
             OptimizationAborted: If cost approval is declined
         """
-        # S2-B Round 3: cost approval no longer skips on TRAIGENT_MOCK_LLM.
-        # The mock-mode bypass was removed because it could disable approval
-        # if the env var leaked into a production environment.
+        if is_mock_llm():
+            logger.info(
+                "Skipping optimized-function pricing preflight in mock LLM mode; "
+                "runtime CostEnforcer permits and accounting remain active."
+            )
+            return
+
         estimated_cost = self.estimate_optimization_cost(dataset)
         if not self._cost_enforcer.check_and_approve(estimated_cost):
             from traigent.core.cost_enforcement import OptimizationAborted
