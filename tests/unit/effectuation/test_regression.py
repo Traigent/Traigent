@@ -102,13 +102,23 @@ def test_catalog_executable_and_manual_statuses_are_honest() -> None:
         if entry["effectuation_status"] == "manual_guidance"
     }
     assert manual_names == {
+        "citation_policy",
+        "compression_ratio",
+        "context_order",
+        "context_selection_policy",
+        "edit_granularity",
         "retrieval_k",
         "schema_context",
         "evidence_usage",
+        "file_view_window",
         "fewshot_selector",
         "generation_path",
         "fewshot_k",
+        "patch_review_mode",
         "repair_policy",
+        "repo_context_strategy",
+        "summary_style",
+        "test_selection_strategy",
     }
 
 
@@ -144,7 +154,7 @@ def test_generate_config_json_recommendation_keys_remain_unchanged() -> None:
 def test_optimize_effectuation_defaults_off() -> None:
     calls: list[int] = []
 
-    def evaluator(func, config, example):
+    async def evaluator(func, config, example):
         output = func()
         return ExampleResult(
             example_id="example-1",
@@ -181,7 +191,7 @@ def test_optimize_effectuation_defaults_off() -> None:
 def test_optimize_effectuation_opt_in_emits_trial_metadata() -> None:
     responses = iter(["answer", "different", "answer"])
 
-    def evaluator(func, config, example):
+    async def evaluator(func, config, example):
         output = func()
         return ExampleResult(
             example_id="example-1",

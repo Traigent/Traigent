@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
-from traigent.utils.exceptions import ValidationError
+from traigent.utils.exceptions import OptimizationError, ValidationError
 
 # Check if sklearn is available
 try:
@@ -931,7 +931,9 @@ class TestBayesianOptimizerNotInstalled:
         # ImportError at import time, or via a guarded constructor raising).
         import importlib
 
-        with pytest.raises((ImportError, ModuleNotFoundError, RuntimeError)):
+        with pytest.raises(
+            (ImportError, ModuleNotFoundError, RuntimeError, OptimizationError)
+        ):
             mod = importlib.import_module("traigent.optimizers.bayesian")
             # If the module imported (because it guards with try/except),
             # constructing the optimizer must raise instead.

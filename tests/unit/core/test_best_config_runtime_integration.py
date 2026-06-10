@@ -7,10 +7,7 @@ import os
 import subprocess
 import sys
 import textwrap
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -27,10 +24,7 @@ from traigent.core.best_config_runtime import (
     BestConfigSource,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
-    canonical_json,
-    compute_spec_hash,
     function_ref_for,
-    sha256_digest,
     write_repo_best_config,
 )
 from traigent.core.optimized_function import OptimizedFunction
@@ -244,99 +238,101 @@ def test_export_best_config_writes_repo_spec(tmp_path):
 
 
 def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tmp_path):
-    seen_requests: list[dict[str, object]] = []
-    state: dict[str, dict[str, object]] = {}
+    requests_path = tmp_path / "backend_requests.jsonl"
+    state_path = tmp_path / "backend_state.json"
+    fake_backend_script = textwrap.dedent("""
+        import json
+        import os
+        from pathlib import Path
+        from urllib.parse import parse_qs, urlparse
 
-    class ContractBackend(BaseHTTPRequestHandler):
-        def _send_json(self, status_code: int, payload: dict[str, object]) -> None:
-            body = json.dumps(payload).encode("utf-8")
-            self.send_response(status_code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        import requests
 
-        def do_GET(self):  # noqa: N802
-            parsed = urlparse(self.path)
-            seen_requests.append(
-                {
-                    "method": "GET",
-                    "path": parsed.path,
-                    "query": parse_qs(parsed.query),
-                    "api_key": self.headers.get("X-API-Key"),
-                }
-            )
-            if (
-                parsed.path != "/api/v1/best-configs/fresh-promote"
-                or "spec" not in state
-            ):
-                self.send_response(404)
-                self.end_headers()
-                return
+        from traigent.core.best_config_runtime import (
+            canonical_json,
+            compute_spec_hash,
+            sha256_digest,
+        )
 
-            spec = state["spec"]
-            self._send_json(
-                200,
-                {
-                    "success": True,
-                    "data": {
-                        "config_id": "fresh-promote",
-                        "environment": "staging",
-                        "version": 1,
-                        "etag": 'W/"1-freshpublish"',
-                        "spec_hash": compute_spec_hash(spec),
-                        "config_hash": sha256_digest(canonical_json(spec["config"])),
-                        "spec": spec,
-                    },
-                },
-            )
+        _STATE_PATH = Path(os.environ["TRAIGENT_CONTRACT_STATE"])
+        _REQUESTS_PATH = Path(os.environ["TRAIGENT_CONTRACT_REQUESTS"])
 
-        def do_POST(self):  # noqa: N802
-            parsed = urlparse(self.path)
-            content_length = int(self.headers.get("Content-Length", "0"))
-            raw_body = self.rfile.read(content_length)
-            body = json.loads(raw_body.decode("utf-8"))
-            if parsed.path == "/api/v1/keys/validate":
-                self._send_json(200, {"valid": True})
-                return
-            spec = body["spec"]
-            state["spec"] = spec
-            seen_requests.append(
-                {
-                    "method": "POST",
-                    "path": parsed.path,
-                    "api_key": self.headers.get("X-API-Key"),
-                    "if_match": self.headers.get("If-Match"),
-                    "environment": body.get("environment"),
+        class _FakeResponse:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+                self.text = json.dumps(payload, sort_keys=True)
+
+            def json(self):
+                return self._payload
+
+        def _load_state():
+            if not _STATE_PATH.exists():
+                return {}
+            return json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+
+        def _save_state(state):
+            _STATE_PATH.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+
+        def _record(entry):
+            with _REQUESTS_PATH.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(entry, sort_keys=True) + "\\n")
+
+        def _response_payload(spec):
+            return {
+                "success": True,
+                "data": {
+                    "config_id": spec["config_id"],
+                    "environment": spec["environment"],
+                    "version": 1,
+                    "etag": 'W/"1-freshpublish"',
+                    "spec_hash": compute_spec_hash(spec),
+                    "config_hash": sha256_digest(canonical_json(spec["config"])),
                     "spec": spec,
-                }
-            )
-            self._send_json(
-                201,
-                {
-                    "success": True,
-                    "data": {
-                        "config_id": spec["config_id"],
-                        "environment": spec["environment"],
-                        "version": 1,
-                        "etag": 'W/"1-freshpublish"',
-                        "spec_hash": compute_spec_hash(spec),
-                        "config_hash": sha256_digest(canonical_json(spec["config"])),
-                        "spec": spec,
-                    },
                 },
-            )
+            }
 
-        def log_message(self, format, *args):  # noqa: A002
-            return
+        def _fake_get(url, params=None, headers=None, timeout=None):
+            parsed = urlparse(url)
+            query = parse_qs(parsed.query)
+            for key, value in (params or {}).items():
+                query[key] = [value]
+            _record({
+                "method": "GET",
+                "path": parsed.path,
+                "query": query,
+                "api_key": (headers or {}).get("X-API-Key"),
+            })
+            spec = _load_state().get("spec")
+            if parsed.path != "/api/v1/best-configs/fresh-promote" or not isinstance(
+                spec, dict
+            ):
+                return _FakeResponse(404, {})
+            return _FakeResponse(200, _response_payload(spec))
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), ContractBackend)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        backend_url = f"http://127.0.0.1:{server.server_port}"
-        api_key = FAKE_TRAIGENT_API_KEY
-        publish_script = textwrap.dedent("""
+        def _fake_post(url, json=None, headers=None, timeout=None):
+            parsed = urlparse(url)
+            body = json or {}
+            spec = body["spec"]
+            _save_state({"spec": spec})
+            _record({
+                "method": "POST",
+                "path": parsed.path,
+                "api_key": (headers or {}).get("X-API-Key"),
+                "if_match": (headers or {}).get("If-Match"),
+                "environment": body.get("environment"),
+                "spec": spec,
+            })
+            return _FakeResponse(201, _response_payload(spec))
+
+        requests.get = _fake_get
+        requests.post = _fake_post
+        """)
+    backend_url = "http://127.0.0.1:9"
+    api_key = FAKE_TRAIGENT_API_KEY
+    publish_script = (
+        fake_backend_script
+        + textwrap.dedent("""
             import json
 
             from traigent.cloud.auth import AuthManager
@@ -364,7 +360,10 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
                 "version": result["version"],
             }, sort_keys=True))
             """)
-        fetch_script = textwrap.dedent("""
+    )
+    fetch_script = (
+        fake_backend_script
+        + textwrap.dedent("""
             import json
             import os
 
@@ -393,38 +392,38 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
                 "source": wrapped.best_config_snapshot.source,
             }, sort_keys=True))
             """)
-        env = os.environ.copy()
-        env.update(
-            {
-                "TRAIGENT_API_KEY": api_key,
-                "TRAIGENT_BACKEND_URL": backend_url,
-                "TRAIGENT_API_URL": f"{backend_url}/api/v1",
-                "TRAIGENT_BEST_CONFIG_CACHE": str(tmp_path / "fetch-cache"),
-            }
-        )
-        repo_root = Path(__file__).resolve().parents[3]
-        publish_result = subprocess.run(
-            [sys.executable, "-c", publish_script],
-            cwd=repo_root,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=20,
-            check=False,
-        )
-        fetch_result = subprocess.run(
-            [sys.executable, "-c", fetch_script],
-            cwd=repo_root,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=20,
-            check=False,
-        )
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
-        server.server_close()
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "TRAIGENT_API_KEY": api_key,
+            "TRAIGENT_BACKEND_URL": backend_url,
+            "TRAIGENT_API_URL": f"{backend_url}/api/v1",
+            "TRAIGENT_BEST_CONFIG_CACHE": str(tmp_path / "fetch-cache"),
+            "TRAIGENT_CONTRACT_REQUESTS": str(requests_path),
+            "TRAIGENT_CONTRACT_STATE": str(state_path),
+            "TRAIGENT_ENV": "development",
+        }
+    )
+    repo_root = Path(__file__).resolve().parents[3]
+    publish_result = subprocess.run(
+        [sys.executable, "-c", publish_script],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    fetch_result = subprocess.run(
+        [sys.executable, "-c", fetch_script],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
 
     assert publish_result.returncode == 0, publish_result.stderr
     assert json.loads(publish_result.stdout.strip().splitlines()[-1]) == {
@@ -436,6 +435,10 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
         "source": BestConfigSource.CLOUD_FETCH.value,
         "temperature": 0.77,
     }
+    seen_requests = [
+        json.loads(line)
+        for line in requests_path.read_text(encoding="utf-8").splitlines()
+    ]
     assert [request["method"] for request in seen_requests] == ["GET", "POST", "GET"]
     assert seen_requests[1]["path"] == "/api/v1/best-configs"
     assert seen_requests[1]["if_match"] is None

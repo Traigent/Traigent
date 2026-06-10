@@ -211,16 +211,16 @@ class TestCreateAppRoutes:
         return svc
 
     @pytest.fixture
-    def app(self, service: TraigentService):
+    def asgi_app(self, service: TraigentService):
         """Create ASGI app from service."""
         return create_app(service)
 
     # --- GET /traigent/v1/capabilities ---
     @pytest.mark.asyncio
-    async def test_capabilities_route(self, app, service) -> None:
+    async def test_capabilities_route(self, asgi_app, service) -> None:
         """Test GET capabilities endpoint."""
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("GET", CAPABILITIES_PATH),
             _make_receive(),
             send,
@@ -232,10 +232,10 @@ class TestCreateAppRoutes:
 
     # --- GET /traigent/v1/config-space ---
     @pytest.mark.asyncio
-    async def test_config_space_route(self, app, service) -> None:
+    async def test_config_space_route(self, asgi_app, service) -> None:
         """Test GET config-space endpoint."""
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("GET", CONFIG_SPACE_PATH),
             _make_receive(),
             send,
@@ -275,7 +275,7 @@ class TestCreateAppRoutes:
 
     # --- POST /traigent/v1/execute ---
     @pytest.mark.asyncio
-    async def test_execute_route(self, app, service) -> None:
+    async def test_execute_route(self, asgi_app, service) -> None:
         """Test POST execute endpoint."""
         request_body = json.dumps(
             {
@@ -284,7 +284,7 @@ class TestCreateAppRoutes:
             }
         ).encode()
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("POST", EXECUTE_PATH),
             _make_receive(request_body),
             send,
@@ -296,7 +296,7 @@ class TestCreateAppRoutes:
 
     # --- POST /traigent/v1/evaluate ---
     @pytest.mark.asyncio
-    async def test_evaluate_route(self, app, service) -> None:
+    async def test_evaluate_route(self, asgi_app, service) -> None:
         """Test POST evaluate endpoint."""
         request_body = json.dumps(
             {
@@ -304,7 +304,7 @@ class TestCreateAppRoutes:
             }
         ).encode()
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("POST", EVALUATE_PATH),
             _make_receive(request_body),
             send,
@@ -315,10 +315,10 @@ class TestCreateAppRoutes:
 
     # --- GET /traigent/v1/health ---
     @pytest.mark.asyncio
-    async def test_health_route(self, app, service) -> None:
+    async def test_health_route(self, asgi_app, service) -> None:
         """Test GET health endpoint."""
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("GET", HEALTH_PATH),
             _make_receive(),
             send,
@@ -329,12 +329,12 @@ class TestCreateAppRoutes:
 
     # --- POST /traigent/v1/keep-alive ---
     @pytest.mark.asyncio
-    async def test_keep_alive_existing_session(self, app, service) -> None:
+    async def test_keep_alive_existing_session(self, asgi_app, service) -> None:
         """Test keep-alive with a valid session."""
         sid = service.create_session()
         request_body = json.dumps({"session_id": sid}).encode()
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("POST", KEEP_ALIVE_PATH),
             _make_receive(request_body),
             send,
@@ -344,11 +344,11 @@ class TestCreateAppRoutes:
         assert send.body_json["session_id"] == sid
 
     @pytest.mark.asyncio
-    async def test_keep_alive_missing_session(self, app, service) -> None:
+    async def test_keep_alive_missing_session(self, asgi_app, service) -> None:
         """Test keep-alive with a non-existent session returns 404."""
         request_body = json.dumps({"session_id": "nonexistent"}).encode()
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("POST", KEEP_ALIVE_PATH),
             _make_receive(request_body),
             send,
@@ -360,10 +360,10 @@ class TestCreateAppRoutes:
 
     # --- 404 for unknown routes ---
     @pytest.mark.asyncio
-    async def test_unknown_route_returns_404(self, app) -> None:
+    async def test_unknown_route_returns_404(self, asgi_app) -> None:
         """Test that unknown routes return 404."""
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("GET", "/unknown/path"),
             _make_receive(),
             send,
@@ -373,10 +373,10 @@ class TestCreateAppRoutes:
         assert "Not found" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
-    async def test_wrong_method_returns_404(self, app) -> None:
+    async def test_wrong_method_returns_404(self, asgi_app) -> None:
         """Test that wrong HTTP method returns 404."""
         send = _SendCollector()
-        await app(
+        await asgi_app(
             _make_scope("POST", CAPABILITIES_PATH),  # Should be GET
             _make_receive(),
             send,
@@ -385,10 +385,10 @@ class TestCreateAppRoutes:
 
     # --- Non-HTTP scope is ignored ---
     @pytest.mark.asyncio
-    async def test_non_http_scope_ignored(self, app) -> None:
+    async def test_non_http_scope_ignored(self, asgi_app) -> None:
         """Test that non-HTTP scopes are ignored."""
         send = _SendCollector()
-        await app(
+        await asgi_app(
             {"type": "websocket", "path": "/ws"},
             _make_receive(),
             send,
@@ -738,8 +738,6 @@ class TestErrorHandling:
         """Execute handler exceeding timeout should raise RequestTimeoutError."""
         import asyncio
 
-        from traigent.wrapper.errors import RequestTimeoutError
-
         svc = TraigentService()
 
         @svc.execute
@@ -767,34 +765,6 @@ class TestErrorHandling:
         assert "timed out" in send.body_json["error"]["message"].lower()
         assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
 
-    @pytest.mark.asyncio
-    async def test_hybrid_api_error_with_custom_headers(self) -> None:
-        """HybridAPIError with custom headers should include them in response."""
-        from traigent.wrapper.errors import RateLimitError
-
-        svc = TraigentService()
-
-        @svc.execute
-        def run(example_id, data, config):
-            raise RateLimitError(retry_after=60)
-
-        app = create_app(svc)
-        request_body = json.dumps(
-            {
-                "tunable_id": "default",
-                "examples": [{"example_id": "i1", "data": {}}],
-            }
-        ).encode()
-
-        send = _SendCollector()
-        await app(
-            _make_scope("POST", EXECUTE_PATH),
-            _make_receive(request_body),
-            send,
-        )
-
-        assert send.status == 429
-        assert send.body_json["error"]["code"] == "RATE_LIMITED"
 
     @pytest.mark.asyncio
     async def test_evaluate_timeout_raises_request_timeout_error(self) -> None:

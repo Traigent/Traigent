@@ -228,7 +228,7 @@ class TestOptimizeDecorator:
         """Preset selection should be exposed without replacing best_config."""
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
-        def evaluator(func, config, example):
+        async def evaluator(func, config, example):
             _ = func, example
             if config["model"] == "accurate":
                 metrics = {"accuracy": 0.9, "cost": 0.03}
@@ -279,7 +279,7 @@ class TestOptimizeDecorator:
             "bad-cheap": {"accuracy": 0.70, "cost": 0.001},
         }
 
-        def evaluator(func, config, example):
+        async def evaluator(func, config, example):
             _ = func, example
             return ExampleResult(
                 example_id="ex_1",
