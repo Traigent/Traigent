@@ -6,6 +6,7 @@ Handles migration of local data to Traigent backend when users upgrade.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
 import os
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,6 +32,13 @@ from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+VALID_SYNC_AGENT_TYPE_IDS = frozenset(
+    {"chat", "classification", "completion", "qa", "retrieval", "tool", "function"}
+)
+DEFAULT_SYNC_AGENT_TYPE_ID = "completion"
+_BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
+_BACKEND_NAME_SPACES = re.compile(r"\s+")
+
 
 def build_experiment_url(base_url: str, experiment_id: str) -> str:
     """Build the portal URL for an experiment.
@@ -39,6 +47,14 @@ def build_experiment_url(base_url: str, experiment_id: str) -> str:
     used by both SyncManager and the orchestrator.
     """
     return f"{base_url.rstrip('/')}/experiments/{experiment_id}"
+
+
+def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
+    """Normalize generated sync names to the backend name pattern."""
+
+    sanitized = _BACKEND_NAME_DISALLOWED.sub(" ", value)
+    sanitized = _BACKEND_NAME_SPACES.sub(" ", sanitized).strip()
+    return sanitized or fallback
 
 
 class SyncManager:
@@ -194,7 +210,9 @@ class SyncManager:
         agent_data = {
             "id": agent_id,
             "name": f"Local Agent: {session.function_name}",
-            "agent_type": "custom",
+            # Local imports are generic function-completion optimizations; use a
+            # deterministic backend enum value rather than the legacy "custom".
+            "agent_type_id": DEFAULT_SYNC_AGENT_TYPE_ID,
             "description": f"Imported from local optimization of {session.function_name}",
             "source": "local_import",
             "created_at": session.created_at,
@@ -205,7 +223,7 @@ class SyncManager:
             "id": dataset_id,
             "dataset_id": dataset_id,
             "benchmark_id": dataset_id,
-            "name": f"Local Dataset: {session.function_name}",
+            "name": sanitize_backend_name(f"Local Dataset {session.function_name}"),
             "label": f"{session.function_name}_eval",
             "description": f"Evaluation dataset for {session.function_name}",
             "type": "custom",
@@ -561,8 +579,15 @@ class SyncManager:
     def _sync_experiment_run(self, run_data: dict[str, Any]) -> dict[str, Any]:
         """Sync experiment run data to cloud."""
         try:
+            experiment_id = run_data.get("experiment_id")
+            if not experiment_id:
+                return {
+                    "success": False,
+                    "error": "Experiment run sync requires experiment_id",
+                }
+
             response = self._session.post(
-                f"{self.base_url}/experiment-runs",
+                f"{self.base_url}/experiment-runs/{experiment_id}/runs",
                 json=run_data,
                 timeout=self._request_timeout,
             )
