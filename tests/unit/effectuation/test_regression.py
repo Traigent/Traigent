@@ -15,7 +15,12 @@ from traigent.config_generator.subsystems.tvar_recommendations import (
     generate_recommendations,
 )
 from traigent.config_generator.types import AutoConfigResult
-from traigent.effectuation import apply_effectuation, compile_effectuation
+from traigent.effectuation import (
+    STRATEGY_REGISTRY,
+    _strategy_id_for_knob,
+    apply_effectuation,
+    compile_effectuation,
+)
 from traigent.evaluators.base import EvaluationExample
 
 
@@ -96,20 +101,20 @@ def test_catalog_executable_and_manual_statuses_are_honest() -> None:
     assert by_name["candidate_count"]["effectuation_status"] == "executable"
     assert by_name["candidate_count"]["effectuation_strategy"] == "self_consistency"
 
+    executable_strategies = {
+        entry["name"]: strategy_id
+        for entry in entries
+        if (strategy_id := _strategy_id_for_knob(entry)) is not None
+    }
+    assert executable_strategies == {"candidate_count": "self_consistency"}
+    assert set(executable_strategies.values()) <= set(STRATEGY_REGISTRY)
+
     manual_names = {
         entry["name"]
         for entry in entries
         if entry["effectuation_status"] == "manual_guidance"
     }
-    assert manual_names == {
-        "retrieval_k",
-        "schema_context",
-        "evidence_usage",
-        "fewshot_selector",
-        "generation_path",
-        "fewshot_k",
-        "repair_policy",
-    }
+    assert manual_names == set(by_name) - set(executable_strategies)
 
 
 def test_generate_config_json_recommendation_keys_remain_unchanged() -> None:

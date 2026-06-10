@@ -45,8 +45,12 @@ def test_recommend_command_smoke_table() -> None:
     assert result.exit_code == 0
     assert "TVar Recommendations for rag" in result.output
     assert "retrieval_k" in result.output
-    assert "manual_guidance" in result.output
+    assert "Manual wiring" in result.output
     assert "task-dependent" in result.output
+    assert {
+        row["effectuation_status"]
+        for row in recommend_configuration_space("rag")["recommendations"]
+    } == {"manual_guidance"}
 
 
 def test_recommend_command_json_filters() -> None:

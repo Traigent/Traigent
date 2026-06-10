@@ -145,10 +145,21 @@ class DummyBackend:
         search_space: dict,
         optimization_goal: str,
         metadata: dict,
+        objectives: list[Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        tvl_governance: dict[str, Any] | None = None,
     ):
         sid = f"sess-{len(self.sessions) + 1}"
         self.sessions.append(
-            {"id": sid, "fn": function_name, "space": search_space, "meta": metadata}
+            {
+                "id": sid,
+                "fn": function_name,
+                "space": search_space,
+                "meta": metadata,
+                "objectives": objectives,
+                "promotion_policy": promotion_policy,
+                "tvl_governance": tvl_governance,
+            }
         )
         return SessionCreationResult.connected(sid)
 
@@ -164,8 +175,19 @@ class DummyBackend:
             }
         )
 
-    def finalize_session_sync(self, session_id: str, succeeded: bool):
-        self.finalized.append({"id": session_id, "ok": succeeded})
+    def finalize_session_sync(
+        self,
+        session_id: str,
+        succeeded: bool,
+        certified_selection: dict[str, Any] | None = None,
+    ):
+        self.finalized.append(
+            {
+                "id": session_id,
+                "ok": succeeded,
+                "certified_selection": certified_selection,
+            }
+        )
         return {"status": "ok", "succeeded": succeeded}
 
 
@@ -300,7 +322,7 @@ async def test_local_mode_includes_aggregated_summary_in_submission():
         ):
             self.submissions.append({"session_id": session_id, "metadata": metadata})
 
-        def finalize_session_sync(self, session_id: str, *_):
+        def finalize_session_sync(self, session_id: str, *_, **__):
             self.finalized.append(session_id)
             return {"ok": True}
 

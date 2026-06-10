@@ -11,12 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
-from traigent.config.types import (
-    ExecutionMode,
-    InjectionMode,
-    resolve_execution_mode,
-    validate_execution_mode,
-)
+from traigent.config.types import ExecutionMode, InjectionMode, validate_execution_mode
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
@@ -75,8 +70,8 @@ class ParameterValidator:
             ValidationError: If any parameter is invalid
         """
         # Validate individual parameter groups
+        requested_privacy_alias = self._is_privacy_alias(params.execution_mode)
         execution_mode_enum = self._validate_execution_mode(params.execution_mode)
-        requested_execution_mode = resolve_execution_mode(params.execution_mode)
         self._validate_injection_mode(params.injection_mode)
         self._validate_dataset(params.eval_dataset)
         self._validate_objectives(params.objectives)
@@ -86,14 +81,19 @@ class ParameterValidator:
 
         # Normalize parameters
         params.injection_mode = self._normalize_injection_mode(params.injection_mode)
-        if (
-            requested_execution_mode is ExecutionMode.PRIVACY
-            and params.privacy_enabled is None
-        ):
+        if requested_privacy_alias and params.privacy_enabled is None:
             params.privacy_enabled = True
         params.execution_mode = execution_mode_enum.value
 
         return params
+
+    @staticmethod
+    def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
+        if isinstance(execution_mode, ExecutionMode):
+            return execution_mode is ExecutionMode.PRIVACY
+        if isinstance(execution_mode, str):
+            return execution_mode.strip().lower() == ExecutionMode.PRIVACY.value
+        return False
 
     def _validate_execution_mode(
         self, execution_mode: str | ExecutionMode
