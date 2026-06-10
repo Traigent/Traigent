@@ -3,6 +3,7 @@ Comprehensive test suite for SyncManager.
 Tests data conversion, API interactions, and sync operations.
 """
 
+import re
 import shutil
 import tempfile
 from datetime import datetime
@@ -12,11 +13,22 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from traigent.cloud.sync_manager import SyncManager
+from traigent.cloud.sync_manager import SyncManager, sanitize_backend_name
 from traigent.config.backend_config import BackendConfig
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
+
+VALID_AGENT_TYPE_IDS = {
+    "chat",
+    "classification",
+    "completion",
+    "qa",
+    "retrieval",
+    "tool",
+    "function",
+}
+BACKEND_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9 _-]+$")
 
 
 class TestSyncManager:
@@ -161,12 +173,14 @@ class TestSyncManager:
         # Check agent data
         agent = traigent_data["agent"]
         assert agent["name"] == "Local Agent: test_llm_function"
-        assert agent["agent_type"] == "custom"
+        assert "agent_type" not in agent
+        assert agent["agent_type_id"] in VALID_AGENT_TYPE_IDS
         assert agent["source"] == "local_import"
 
         # Check dataset data
         dataset = traigent_data["dataset"]
-        assert dataset["name"] == "Local Dataset: test_llm_function"
+        assert dataset["name"] == "Local Dataset test_llm_function"
+        assert BACKEND_NAME_PATTERN.fullmatch(dataset["name"])
         assert dataset["dataset_id"] == dataset["id"]
         assert dataset["benchmark_id"] == dataset["id"]
         assert dataset["type"] == "custom"
@@ -208,6 +222,8 @@ class TestSyncManager:
         """Ensure blocking HTTP calls include an explicit timeout."""
         sync_manager = self.sync_manager
         payload = {"id": "resource-123"}
+        if method_name == "_sync_experiment_run":
+            payload["experiment_id"] = "experiment-123"
         mock_response = Mock(status_code=201, text="created")
         original_post = sync_manager._session.post
 
@@ -216,7 +232,12 @@ class TestSyncManager:
             method = getattr(sync_manager, method_name)
             result = method(payload)
 
-            expected_url = f"{sync_manager.base_url}/{resource_path}"
+            expected_url = (
+                f"{sync_manager.base_url}/experiment-runs/"
+                f"{payload['experiment_id']}/runs"
+                if method_name == "_sync_experiment_run"
+                else f"{sync_manager.base_url}/{resource_path}"
+            )
             sync_manager._session.post.assert_called_once_with(
                 expected_url,
                 json=payload,
@@ -240,7 +261,9 @@ class TestSyncManager:
 
         try:
             sync_manager._session.post = Mock(side_effect=responses)
-            sync_manager._session.get = Mock(return_value=Mock(status_code=404, text="missing"))
+            sync_manager._session.get = Mock(
+                return_value=Mock(status_code=404, text="missing")
+            )
             result = sync_manager._sync_benchmark(payload)
 
             assert result["success"] is True
@@ -254,6 +277,49 @@ class TestSyncManager:
         finally:
             sync_manager._session.post = original_post
             sync_manager._session.get = original_get
+
+    def test_convert_session_payloads_match_backend_contract(self):
+        """Generated sync payloads satisfy current backend validation contracts."""
+        sanitized_name = sanitize_backend_name("Local Dataset: fn/with?punctuation")
+        assert sanitized_name == "Local Dataset fn with punctuation"
+        assert BACKEND_NAME_PATTERN.fullmatch(sanitized_name)
+
+        storage = self.sync_manager.storage
+        session_id = storage.create_session("fn:with/slash?and*punctuation")
+        storage.add_trial_result(
+            session_id,
+            {"param": 1},
+            0.91,
+            metadata={"total_cost": 0.17},
+        )
+        storage.finalize_session(session_id, "completed")
+        session = storage.load_session(session_id)
+
+        traigent_data = self.sync_manager.convert_session_to_traigent_format(session)
+
+        benchmark_name = traigent_data["benchmark"]["name"]
+        assert BACKEND_NAME_PATTERN.fullmatch(benchmark_name)
+        assert ":" not in benchmark_name
+
+        agent = traigent_data["agent"]
+        assert "agent_type" not in agent
+        assert agent["agent_type_id"] in VALID_AGENT_TYPE_IDS
+
+    def test_sync_experiment_run_posts_to_nested_backend_route(self):
+        """Experiment run creation uses the route exposed by the backend."""
+        run_data = {"id": "test_run", "experiment_id": "test_experiment"}
+        with patch.object(self.sync_manager.session, "post") as mock_post:
+            mock_response = Mock(status_code=201, text="created")
+            mock_post.return_value = mock_response
+
+            result = self.sync_manager._sync_experiment_run(run_data)
+
+            assert result["success"] is True
+            mock_post.assert_called_once_with(
+                f"{self.sync_manager.base_url}/experiment-runs/test_experiment/runs",
+                json=run_data,
+                timeout=self.sync_manager._request_timeout,
+            )
 
     def test_convert_trials_to_results(self):
         """Test converting local trials to Traigent configuration_run format."""
@@ -341,6 +407,55 @@ class TestSyncManager:
 
         # Should have made 4 API calls (agent, benchmark, experiment, experiment_run)
         assert mock_post.call_count == 4
+
+    def test_sync_session_to_cloud_contract_payloads_with_cost(self):
+        """A full mocked sync emits corrected URLs and a cost-bearing run body."""
+        storage = self.sync_manager.storage
+        session_id = storage.create_session("contract:sync/fn")
+        storage.add_trial_result(
+            session_id,
+            {"model": "gpt-test", "temperature": 0.2},
+            0.88,
+            metadata={"total_cost": 0.42, "input_cost": 0.2, "output_cost": 0.22},
+        )
+        storage.finalize_session(session_id, "completed")
+        mock_response = Mock(status_code=201, text="Created")
+        original_post = self.sync_manager._session.post
+
+        try:
+            self.sync_manager._session.post = Mock(return_value=mock_response)
+            result = self.sync_manager.sync_session_to_cloud(session_id, dry_run=False)
+        finally:
+            post_mock = self.sync_manager._session.post
+            self.sync_manager._session.post = original_post
+
+        assert result["status"] == "success"
+        assert post_mock.call_count == 4
+
+        calls = post_mock.call_args_list
+        experiment_id = f"local_import_{session_id}"
+        assert [call.args[0] for call in calls] == [
+            f"{self.sync_manager.base_url}/agents",
+            f"{self.sync_manager.base_url}/datasets",
+            f"{self.sync_manager.base_url}/experiments",
+            f"{self.sync_manager.base_url}/experiment-runs/{experiment_id}/runs",
+        ]
+
+        agent_payload = calls[0].kwargs["json"]
+        assert agent_payload["agent_type_id"] in VALID_AGENT_TYPE_IDS
+        assert "agent_type" not in agent_payload
+
+        benchmark_payload = calls[1].kwargs["json"]
+        assert BACKEND_NAME_PATTERN.fullmatch(benchmark_payload["name"])
+
+        experiment_payload = calls[2].kwargs["json"]
+        assert experiment_payload["agent_id"] == agent_payload["id"]
+
+        run_payload = calls[3].kwargs["json"]
+        result_payload = run_payload["results"][0]
+        assert result_payload["measures"]["cost"] == 0.42
+        assert result_payload["measures"]["total_cost"] == 0.42
+        assert result_payload["measures"]["cost"] > 0
 
     @patch("requests.Session.post")
     def test_sync_session_to_cloud_partial_failure(self, mock_post):

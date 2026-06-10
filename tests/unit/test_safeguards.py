@@ -328,14 +328,17 @@ class TestDeduplication:
             "test_func", "other_dataset", {"x": 1.0, "y": 2.0}
         )
 
-    def test_cache_policy_filtering(self):
+    def test_cache_policy_filtering(self, tmp_path):
         """Test that cache policy correctly filters configurations."""
         # Create minimal optimizer
         optimizer = MockOptimizer(config_space={"x": [1, 2, 3]}, objectives=["score"])
 
         evaluator = MockEvaluator()
 
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(
+            execution_mode="edge_analytics",
+            local_storage_path=str(tmp_path),
+        )
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
             evaluator=evaluator,
