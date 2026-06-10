@@ -617,13 +617,6 @@ class BackendSessionManager:
         if not self._backend_client or not session_id:
             return False
 
-        if not self._backend_tracking_enabled:
-            logger.debug(
-                "Skipping trial submission (backend disabled: %s)",
-                self._backend_disabled_reason,
-            )
-            return False
-
         _ = content_scores
 
         primary_objective = (
@@ -641,6 +634,20 @@ class BackendSessionManager:
         if self._strategy_preset_metadata is not None:
             trial_metadata["strategy_preset"] = dict(self._strategy_preset_metadata)
 
+        self._persist_trial_locally(
+            session_id=session_id,
+            trial_result=trial_result,
+            score=score,
+            metadata=trial_metadata,
+        )
+
+        if not self._backend_tracking_enabled:
+            logger.debug(
+                "Skipping trial submission (backend disabled: %s)",
+                self._backend_disabled_reason,
+            )
+            return False
+
         await self._log_trial_to_backend(
             session_id=session_id,
             trial_result=trial_result,
@@ -649,6 +656,39 @@ class BackendSessionManager:
         )
 
         return True
+
+    def _persist_trial_locally(
+        self,
+        *,
+        session_id: str,
+        trial_result: TrialResult,
+        score: float | None,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Record local analytics before any remote backend breaker can short-circuit."""
+
+        if not self._backend_client or not session_id:
+            return
+
+        sanitized_score = float(score) if score is not None else None
+        metadata_payload = dict(metadata)
+        if score is None:
+            metadata_payload["primary_objective_missing"] = True
+
+        try:
+            self._backend_client.submit_result(
+                session_id=session_id,
+                config=trial_result.config,
+                score=sanitized_score,
+                metadata=metadata_payload,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Local trial logging failed for session %s trial %s: %s",
+                session_id,
+                trial_result.trial_id,
+                exc,
+            )
 
     def is_trial_backend_acknowledged(self, session_id: str, trial_id: str) -> bool:
         """Whether the backend minted+accepted a result for ``trial_id``.
@@ -707,7 +747,7 @@ class BackendSessionManager:
         score: float | None,
         metadata: dict[str, Any],
     ) -> None:
-        """Persist trial outcome locally and submit metrics to backend when possible."""
+        """Submit trial metrics to backend when possible."""
 
         if not self._backend_client or not session_id:
             return
@@ -719,22 +759,6 @@ class BackendSessionManager:
         metadata_payload = dict(metadata)
         if score is None:
             metadata_payload["primary_objective_missing"] = True
-
-        # Always record locally so analytics remain available even without backend.
-        try:
-            self._backend_client.submit_result(
-                session_id=session_id,
-                config=trial_result.config,
-                score=sanitized_score,
-                metadata=metadata_payload,
-            )
-        except Exception as exc:
-            logger.debug(
-                "Local trial logging failed for session %s trial %s: %s",
-                session_id,
-                trial_result.trial_id,
-                exc,
-            )
 
         # Skip remote submission when no API key is configured (offline/local only).
         auth_manager = getattr(self._backend_client, "auth_manager", None)

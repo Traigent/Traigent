@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 
-from traigent.cloud.sync_manager import SyncManager
+from traigent.cloud.sync_manager import DEFAULT_SYNC_AGENT_TYPE_ID, SyncManager
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
@@ -345,11 +345,12 @@ class TestSyncManager:
 
         # Check agent data
         assert result["agent"]["name"] == "Local Agent: test_function"
-        assert result["agent"]["agent_type"] == "custom"
+        assert "agent_type" not in result["agent"]
+        assert result["agent"]["agent_type_id"] == DEFAULT_SYNC_AGENT_TYPE_ID
         assert result["agent"]["source"] == "local_import"
 
         # Check dataset/benchmark compatibility payload
-        assert result["benchmark"]["name"] == "Local Dataset: test_function"
+        assert result["benchmark"]["name"] == "Local Dataset test_function"
         assert result["benchmark"]["examples_count"] == 3
         assert result["benchmark"]["type"] == "custom"
 

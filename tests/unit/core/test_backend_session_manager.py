@@ -3,18 +3,28 @@
 Tests the extracted backend session lifecycle manager with stub backend client.
 """
 
+import json
 import logging
 import re
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult
-from traigent.cloud.session_types import SessionCreationResult
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
+from traigent.cloud.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
 from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.function_identity import resolve_function_descriptor
 
 
@@ -215,6 +225,18 @@ class TestBackendSessionManagerCreation:
 class TestBackendSessionManagerTrialSubmission:
     """Test trial submission."""
 
+    @staticmethod
+    def _wire_submit_result_to_storage(mock_backend_client, storage):
+        def submit_result(session_id, config, score, metadata=None):
+            storage.add_trial_result(
+                session_id=session_id,
+                config=config,
+                score=score,
+                metadata=metadata or {},
+            )
+
+        mock_backend_client.submit_result.side_effect = submit_result
+
     @pytest.mark.asyncio
     async def test_submit_trial_success(
         self, backend_session_manager, mock_trial_result, mock_backend_client
@@ -246,6 +268,130 @@ class TestBackendSessionManagerTrialSubmission:
         assert backend_session_manager.is_trial_backend_acknowledged(
             "test-session-id", "be_trial_mint_1"
         )
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_persists_locally_when_backend_tracking_disabled(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        mock_backend_client,
+        mock_trial_result,
+        tmp_path,
+    ):
+        """The backend breaker must not suppress local edge analytics storage."""
+        storage = LocalStorageManager(str(tmp_path))
+        session_id = storage.create_session(
+            "offline_func",
+            optimization_config={"objective_schema": {"primary": "accuracy"}},
+        )
+        self._wire_submit_result_to_storage(mock_backend_client, storage)
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        manager.disable_backend_tracking(SessionCreationFailureReason.NO_API_KEY)
+
+        result = await manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id=session_id,
+        )
+
+        assert result is False
+        mock_backend_client.submit_result.assert_called_once()
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        stored_session = storage.load_session(session_id)
+        assert stored_session is not None
+        assert stored_session.completed_trials == 1
+        assert len(stored_session.trials or []) == 1
+        stored_trial = stored_session.trials[0]
+        assert stored_trial.config == mock_trial_result.config
+        assert stored_trial.score == 0.9
+        assert stored_trial.cost == 0.5
+        assert stored_trial.total_cost == 0.5
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_records_locally_once_when_backend_enabled(
+        self,
+        backend_session_manager,
+        mock_backend_client,
+        mock_trial_result,
+        tmp_path,
+    ):
+        """A backend-enabled submit should perform one local compatibility write."""
+        storage = LocalStorageManager(str(tmp_path))
+        session_id = storage.create_session("online_func")
+        self._wire_submit_result_to_storage(mock_backend_client, storage)
+
+        result = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id=session_id,
+        )
+
+        assert result is True
+        mock_backend_client.submit_result.assert_called_once()
+        stored_session = storage.load_session(session_id)
+        assert stored_session is not None
+        assert stored_session.completed_trials == 1
+        assert len(stored_session.trials or []) == 1
+
+    @pytest.mark.asyncio
+    async def test_offline_two_trial_session_json_keeps_trials_and_cost(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        mock_backend_client,
+        tmp_path,
+    ):
+        """Regression boundary for edge_analytics sessions becoming empty husks."""
+        storage = LocalStorageManager(str(tmp_path))
+        session_id = storage.create_session("offline_func")
+        self._wire_submit_result_to_storage(mock_backend_client, storage)
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        manager.disable_backend_tracking(SessionCreationFailureReason.NO_API_KEY)
+
+        for index, cost in enumerate((0.11, 0.22), start=1):
+            trial = Mock(spec=TrialResult)
+            trial.trial_id = f"trial-{index}"
+            trial.config = {"param1": index}
+            trial.metrics = {"accuracy": 0.7 + index / 10, "total_cost": cost}
+            trial.is_successful = True
+            trial.status = TrialStatus.COMPLETED
+            trial.duration = 1.0
+            trial.error_message = None
+            trial.metadata = {}
+            trial.get_metric = Mock(
+                side_effect=lambda key, default=None, t=trial: t.metrics.get(
+                    key, default
+                )
+            )
+
+            await manager.submit_trial(trial_result=trial, session_id=session_id)
+
+        session_json = json.loads(
+            (tmp_path / "sessions" / f"{session_id}.json").read_text()
+        )
+        assert session_json["status"] == "pending"
+        assert session_json["completed_trials"] == 2
+        assert len(session_json["trials"]) == 2
+        assert [trial["total_cost"] for trial in session_json["trials"]] == [
+            0.11,
+            0.22,
+        ]
 
     @pytest.mark.asyncio
     async def test_submit_trial_fails_closed_when_no_backend_slot(
@@ -1366,9 +1512,9 @@ class TestHandleSessionCreationResult:
             manager.handle_session_creation_result(result)
 
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert (
-            len(warning_records) == 1
-        ), f"Expected exactly 1 warning, got {len(warning_records)}"
+        assert len(warning_records) == 1, (
+            f"Expected exactly 1 warning, got {len(warning_records)}"
+        )
 
     def test_success_logs_info(
         self, traigent_config, objective_schema, mock_optimizer, caplog
