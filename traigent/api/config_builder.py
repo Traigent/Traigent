@@ -15,7 +15,6 @@ from traigent.config.parallel import coerce_parallel_config
 from traigent.config.types import (
     ExecutionMode,
     InjectionMode,
-    resolve_execution_mode,
     validate_execution_mode,
 )
 from traigent.core.objectives import normalize_objectives
@@ -145,10 +144,11 @@ class ConfigurationBuilder:
 
     @staticmethod
     def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
-        try:
-            return resolve_execution_mode(execution_mode) is ExecutionMode.PRIVACY
-        except (TypeError, ValueError):
-            return False
+        if isinstance(execution_mode, ExecutionMode):
+            return execution_mode is ExecutionMode.PRIVACY
+        if isinstance(execution_mode, str):
+            return execution_mode.strip().lower() == ExecutionMode.PRIVACY.value
+        return False
 
     def _resolve_injection_mode(
         self, injection_mode: InjectionMode, config_param: str | None

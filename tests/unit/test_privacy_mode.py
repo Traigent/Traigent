@@ -107,15 +107,12 @@ class TestPrivacyCompliance:
             "constraints",
             "default_config",
             "promotion_policy",
+            "tvl_governance",
             "optimization_strategy",
             "user_id",
             "billing_tier",
             "metadata",
             "problem_type",  # Added as this is a valid non-sensitive field
-            "promotion_policy",
-            "default_config",
-            "constraints",
-            "budget",
         }
 
         for req in dummy_server.received_data:

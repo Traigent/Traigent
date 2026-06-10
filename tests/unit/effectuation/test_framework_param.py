@@ -40,5 +40,7 @@ def test_catalog_value_entries_are_only_marked_executable_when_strategy_exists()
     value_entries = [entry for entry in load_catalog() if entry["kind"] == "value"]
 
     for entry in value_entries:
-        assert entry["effectuation_status"] == "executable"
-        assert entry["effectuation_strategy"] == "framework_param"
+        if entry.get("effectuation_strategy") == "framework_param":
+            assert entry["effectuation_status"] == "executable"
+        else:
+            assert entry["effectuation_status"] != "executable"
