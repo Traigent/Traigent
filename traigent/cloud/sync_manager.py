@@ -226,7 +226,8 @@ class SyncManager:
             "name": sanitize_backend_name(f"Local Dataset {session.function_name}"),
             "label": f"{session.function_name}_eval",
             "description": f"Evaluation dataset for {session.function_name}",
-            "type": "custom",
+            # Valid backend BenchmarkType enum value (was the invalid "custom").
+            "type": "input-output",
             "examples_count": session.completed_trials,  # Approximate
             "source": "local_import",
         }
@@ -251,10 +252,12 @@ class SyncManager:
             "benchmark_id": dataset_id,
             "evaluation_set_id": dataset_id,
             "eval_dataset_id": dataset_id,
-            "model_parameters_id": model_params_id,
+            # model_parameters are not created during sync; omit the reference so
+            # experiment-create does not 404 on a non-existent ModelParameters id.
             "configurations": opt_config.get("search_space", {}),
             "measures": ["score", "accuracy"],  # Default measures
-            "status": session.status,
+            # Backend ExperimentStatus enum is UPPERCASE; local status is lowercase.
+            "status": (session.status or "completed").upper(),
             "source": "local_import",
             "metadata": {
                 "original_session_id": session.session_id,
@@ -268,7 +271,7 @@ class SyncManager:
             "id": f"{experiment_id}_run",
             "experiment_id": experiment_id,
             "experiment_data": experiment_data,
-            "status": session.status,
+            "status": (session.status or "completed").upper(),
             "results": self._convert_trials_to_results(session.trials or []),
             "metadata": {
                 "total_trials": session.completed_trials,
