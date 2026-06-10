@@ -1,0 +1,155 @@
+name: SDK Required PR Gate
+
+# Fast required gate for develop PRs + merge-queue candidates (two-tier CI
+# policy, mirroring TraigentBackend): develop PRs run preflight (changed-file
+# ruff) + the full unit suite (pytest -n auto via addopts); the comprehensive
+# release-gate (lint-type, tests-unit, tests-integration, security, codeql)
+# continues to protect main. Before this gate, develop PRs ran NO tests at all.
+
+on:
+  pull_request:
+    branches: [develop]
+  # Merge-queue candidate refs (gh-readonly-queue/*); required checks must
+  # report on the candidate commit.
+  merge_group: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-pr-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      py_changed: ${{ steps.changed.outputs.py_changed }}
+      code_changed: ${{ steps.changed.outputs.code_changed }}
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Three-dot (merge-base) range: classify only what THIS PR changes.
+          # For merge_group events, classify what the queue candidate changes
+          # on the base branch; FAIL CLOSED on missing shas (an empty range
+          # would classify everything unchanged -> untested silent-green merge).
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            base_sha="${{ github.event.merge_group.base_sha }}"
+            head_sha="${{ github.event.merge_group.head_sha }}"
+            if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+              echo "::error::merge_group event missing base/head sha; refusing to classify"
+              exit 1
+            fi
+            range="${base_sha}...${head_sha}"
+          else
+            range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          fi
+          changed_files="$(git diff --name-only --diff-filter=ACMRT "$range")"
+
+          has_match() {
+            printf '%s\n' "$changed_files" | grep -Eq "$1"
+          }
+          set_output_bool() {
+            local name="$1"; shift
+            if "$@"; then echo "${name}=true" >> "$GITHUB_OUTPUT"; else echo "${name}=false" >> "$GITHUB_OUTPUT"; fi
+          }
+
+          set_output_bool py_changed has_match '\.py$'
+          set_output_bool code_changed has_match '^(traigent|traigent_validation|tests|scripts|walkthrough)/|^(pyproject\.toml|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)'
+
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+      - name: Run changed-file Ruff checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.changes.outputs.py_changed }}" != "true" ]; then
+            echo "No Python files changed; skipping Ruff preflight."
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            range="${{ github.event.merge_group.base_sha }}...${{ github.event.merge_group.head_sha }}"
+          else
+            range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          fi
+          changed_py="$(git diff --name-only --diff-filter=ACMRT "$range" -- '*.py')"
+          printf '%s\n' "$changed_py" | xargs -r ruff check --output-format=github
+          printf '%s\n' "$changed_py" | xargs -r ruff format --check
+
+  unit:
+    name: unit
+    if: ${{ !cancelled() && needs.changes.outputs.code_changed == 'true' && (github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: changes
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Cache pip dependencies
+        uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-sdk-pr-gate-${{ hashFiles('**/requirements*.txt') }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-sdk-pr-gate-
+            ${{ runner.os }}-pip-
+      - name: Install test deps
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
+      - name: Run unit tests
+        env:
+          PYTHONPATH: .
+        # pyproject addopts already include -n auto --dist loadgroup (xdist).
+        run: pytest tests/unit -q --tb=short
+
+  required-pr-gate:
+    name: required-pr-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, preflight, unit]
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Verify required gate jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in \
+            "${{ needs.changes.result }}" \
+            "${{ needs.preflight.result }}" \
+            "${{ needs.unit.result }}"; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::Required dependency finished with ${result}"
+                exit 1
+                ;;
+            esac
+          done
+          echo "required-pr-gate passed"
