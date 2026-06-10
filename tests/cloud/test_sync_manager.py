@@ -31,6 +31,14 @@ VALID_AGENT_TYPE_IDS = {
 BACKEND_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9 _-]+$")
 
 
+def backend_response(status_code=201, payload=None, text="Created"):
+    response = Mock(status_code=status_code, text=text)
+    response.json.return_value = (
+        payload if payload is not None else {"id": "created-id"}
+    )
+    return response
+
+
 class TestSyncManager:
     """Test suite for SyncManager with comprehensive data conversion and sync tests."""
 
@@ -164,56 +172,65 @@ class TestSyncManager:
 
         # Check structure
         assert "agent" in traigent_data
-        assert "dataset" in traigent_data
         assert "benchmark" in traigent_data
-        assert "model_parameters" in traigent_data
         assert "experiment" in traigent_data
         assert "experiment_run" in traigent_data
+        assert "configuration_runs" in traigent_data
+        assert "model_parameters" not in traigent_data
 
         # Check agent data
         agent = traigent_data["agent"]
-        assert agent["name"] == "Local Agent: test_llm_function"
-        assert "agent_type" not in agent
-        assert agent["agent_type_id"] in VALID_AGENT_TYPE_IDS
-        assert agent["source"] == "local_import"
+        assert agent == {
+            "name": "Local Agent: test_llm_function",
+            "agent_type_id": "completion",
+        }
 
-        # Check dataset data
-        dataset = traigent_data["dataset"]
-        assert dataset["name"] == "Local Dataset test_llm_function"
-        assert BACKEND_NAME_PATTERN.fullmatch(dataset["name"])
-        assert dataset["dataset_id"] == dataset["id"]
-        assert dataset["benchmark_id"] == dataset["id"]
-        assert dataset["type"] == "custom"
-        assert dataset["examples_count"] == 4
-
-        # Legacy alias remains available for older callers
+        # Check benchmark data
         benchmark = traigent_data["benchmark"]
-        assert benchmark == dataset
+        assert benchmark["name"] == "Local Dataset test_llm_function"
+        assert BACKEND_NAME_PATTERN.fullmatch(benchmark["name"])
+        assert benchmark["type"] == "input-output"
+        assert benchmark["label"]
 
-        # Check experiment data
+        # Check experiment template data; returned backend IDs are filled at sync time.
         experiment = traigent_data["experiment"]
         assert experiment["name"] == "Local Import: test_llm_function"
-        assert experiment["agent_id"] == agent["id"]
-        assert experiment["dataset_id"] == dataset["id"]
-        assert experiment["benchmark_id"] == dataset["id"]
-        assert experiment["evaluation_set_id"] == dataset["id"]
-        assert experiment["eval_dataset_id"] == dataset["id"]
-        assert experiment["status"] == "completed"
-        assert "original_session_id" in experiment["metadata"]
+        assert experiment["status"] == "COMPLETED"
+        assert experiment["measures"]
+        assert "agent_id" not in experiment
+        assert "dataset_id" not in experiment
+        assert "model_parameters_id" not in experiment
 
-        # Check experiment run data
-        experiment_run = traigent_data["experiment_run"]
-        assert experiment_run["experiment_id"] == experiment["id"]
-        assert experiment_run["status"] == "completed"
-        assert len(experiment_run["results"]) == 4
-        assert experiment_run["metadata"]["total_trials"] == 4
-        assert experiment_run["metadata"]["best_score"] == 0.85
+        experiment_payload = self.sync_manager._build_experiment_payload(
+            experiment, "agent-123", "benchmark-456"
+        )
+        assert experiment_payload["agent_id"] == "agent-123"
+        assert experiment_payload["dataset_id"] == "benchmark-456"
+
+        # Check experiment run and configuration-run payloads
+        experiment_run = self.sync_manager._build_experiment_run_payload(
+            traigent_data["experiment_run"], "agent-123", "benchmark-456"
+        )
+        assert set(experiment_run) == {"experiment_data"}
+        assert experiment_run["experiment_data"] == {
+            "agent_id": "agent-123",
+            "benchmark_id": "benchmark-456",
+            "measures": traigent_data["experiment_run"]["measures"],
+            "configurations": traigent_data["experiment_run"]["configurations"],
+        }
+        assert len(traigent_data["configuration_runs"]) == 4
+        assert {
+            "experiment_parameters",
+            "measures",
+            "status",
+        } == set(traigent_data["configuration_runs"][0])
+        assert traigent_data["configuration_runs"][0]["status"] == "COMPLETED"
 
     @pytest.mark.parametrize(
         "method_name,resource_path,payload_key",
         [
             ("_sync_agent", "agents", "agent_id"),
-            ("_sync_benchmark", "datasets", "dataset_id"),
+            ("_sync_benchmark", "benchmarks", "benchmark_id"),
             ("_sync_experiment", "experiments", "experiment_id"),
             ("_sync_experiment_run", "experiment-runs", "run_id"),
         ],
@@ -221,20 +238,31 @@ class TestSyncManager:
     def test_sync_operations_use_timeout(self, method_name, resource_path, payload_key):
         """Ensure blocking HTTP calls include an explicit timeout."""
         sync_manager = self.sync_manager
-        payload = {"id": "resource-123"}
+        payload = {"name": "resource"}
         if method_name == "_sync_experiment_run":
-            payload["experiment_id"] = "experiment-123"
-        mock_response = Mock(status_code=201, text="created")
+            payload = {
+                "experiment_data": {
+                    "agent_id": "agent-123",
+                    "benchmark_id": "benchmark-123",
+                    "measures": ["score"],
+                    "configurations": {},
+                }
+            }
+        mock_response = backend_response(payload={"id": "resource-123"}, text="created")
         original_post = sync_manager._session.post
+        original_get = sync_manager._session.get
 
         try:
             sync_manager._session.post = Mock(return_value=mock_response)
+            sync_manager._session.get = Mock(return_value=backend_response(404))
             method = getattr(sync_manager, method_name)
-            result = method(payload)
+            if method_name == "_sync_experiment_run":
+                result = method("experiment-123", payload)
+            else:
+                result = method(payload)
 
             expected_url = (
-                f"{sync_manager.base_url}/experiment-runs/"
-                f"{payload['experiment_id']}/runs"
+                f"{sync_manager.base_url}/experiment-runs/experiment-123/runs"
                 if method_name == "_sync_experiment_run"
                 else f"{sync_manager.base_url}/{resource_path}"
             )
@@ -247,33 +275,30 @@ class TestSyncManager:
             assert payload_key in result
         finally:
             sync_manager._session.post = original_post
+            sync_manager._session.get = original_get
 
-    def test_sync_benchmark_falls_back_to_legacy_route(self):
-        """Test dataset sync falls back to legacy benchmark route on 404."""
+    def test_sync_benchmark_posts_to_canonical_route(self):
+        """Benchmark sync uses the canonical current backend route."""
         sync_manager = self.sync_manager
-        payload = {"id": "dataset-123", "dataset_id": "dataset-123"}
-        responses = [
-            Mock(status_code=404, text="not found"),
-            Mock(status_code=201, text="created"),
-        ]
+        payload = {"name": "Dataset 123", "type": "input-output", "label": "eval"}
         original_post = sync_manager._session.post
         original_get = sync_manager._session.get
 
         try:
-            sync_manager._session.post = Mock(side_effect=responses)
-            sync_manager._session.get = Mock(
-                return_value=Mock(status_code=404, text="missing")
+            sync_manager._session.post = Mock(
+                return_value=backend_response(payload={"id": "benchmark-123"})
             )
+            sync_manager._session.get = Mock(return_value=backend_response(404))
             result = sync_manager._sync_benchmark(payload)
 
             assert result["success"] is True
-            assert result["dataset_id"] == "dataset-123"
-            assert result["benchmark_id"] == "dataset-123"
-            assert sync_manager._session.post.call_count == 2
-            first_call = sync_manager._session.post.call_args_list[0]
-            second_call = sync_manager._session.post.call_args_list[1]
-            assert first_call.args[0] == f"{sync_manager.base_url}/datasets"
-            assert second_call.args[0] == f"{sync_manager.base_url}/benchmarks"
+            assert result["dataset_id"] == "benchmark-123"
+            assert result["benchmark_id"] == "benchmark-123"
+            sync_manager._session.post.assert_called_once_with(
+                f"{sync_manager.base_url}/benchmarks",
+                json=payload,
+                timeout=sync_manager._request_timeout,
+            )
         finally:
             sync_manager._session.post = original_post
             sync_manager._session.get = original_get
@@ -304,15 +329,37 @@ class TestSyncManager:
         agent = traigent_data["agent"]
         assert "agent_type" not in agent
         assert agent["agent_type_id"] in VALID_AGENT_TYPE_IDS
+        assert set(agent) == {"name", "agent_type_id"}
+
+        benchmark = traigent_data["benchmark"]
+        assert benchmark["type"] == "input-output"
+        assert benchmark["label"]
+
+        experiment_run = self.sync_manager._build_experiment_run_payload(
+            traigent_data["experiment_run"], "agent-id", "benchmark-id"
+        )
+        assert set(experiment_run["experiment_data"]) == {
+            "agent_id",
+            "benchmark_id",
+            "measures",
+            "configurations",
+        }
 
     def test_sync_experiment_run_posts_to_nested_backend_route(self):
         """Experiment run creation uses the route exposed by the backend."""
-        run_data = {"id": "test_run", "experiment_id": "test_experiment"}
+        run_data = {
+            "experiment_data": {
+                "agent_id": "agent-123",
+                "benchmark_id": "benchmark-123",
+                "measures": ["score"],
+                "configurations": {},
+            }
+        }
         with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock(status_code=201, text="created")
+            mock_response = backend_response(payload={"id": "run-123"})
             mock_post.return_value = mock_response
 
-            result = self.sync_manager._sync_experiment_run(run_data)
+            result = self.sync_manager._sync_experiment_run("test_experiment", run_data)
 
             assert result["success"] is True
             mock_post.assert_called_once_with(
@@ -392,10 +439,17 @@ class TestSyncManager:
         """Test successful session sync to cloud."""
         # Mock successful API responses
         self.test_session = self._create_test_session()
-        mock_response = Mock()
-        mock_response.status_code = 201
-        mock_response.text = "Created"
-        mock_post.return_value = mock_response
+        self.sync_manager._session.get = Mock(return_value=backend_response(404))
+        mock_post.side_effect = [
+            backend_response(payload={"id": "agent-id"}),
+            backend_response(payload={"id": "benchmark-id"}),
+            backend_response(payload={"id": "experiment-id"}),
+            backend_response(payload={"id": "experiment-run-id"}),
+            *[
+                backend_response(payload={"id": f"configuration-run-{index}"})
+                for index in range(4)
+            ],
+        ]
 
         result = self.sync_manager.sync_session_to_cloud(
             self.test_session.session_id, dry_run=False
@@ -405,8 +459,8 @@ class TestSyncManager:
         assert len(result["errors"]) == 0
         assert "cloud_url" in result
 
-        # Should have made 4 API calls (agent, benchmark, experiment, experiment_run)
-        assert mock_post.call_count == 4
+        # agent, benchmark, experiment, experiment_run, and one config row per trial.
+        assert mock_post.call_count == 8
 
     def test_sync_session_to_cloud_contract_payloads_with_cost(self):
         """A full mocked sync emits corrected URLs and a cost-bearing run body."""
@@ -419,55 +473,88 @@ class TestSyncManager:
             metadata={"total_cost": 0.42, "input_cost": 0.2, "output_cost": 0.22},
         )
         storage.finalize_session(session_id, "completed")
-        mock_response = Mock(status_code=201, text="Created")
         original_post = self.sync_manager._session.post
+        original_get = self.sync_manager._session.get
 
         try:
-            self.sync_manager._session.post = Mock(return_value=mock_response)
+            self.sync_manager._session.get = Mock(return_value=backend_response(404))
+            self.sync_manager._session.post = Mock(
+                side_effect=[
+                    backend_response(payload={"id": "agent-id"}),
+                    backend_response(payload={"id": "benchmark-id"}),
+                    backend_response(payload={"id": "experiment-id"}),
+                    backend_response(payload={"id": "experiment-run-id"}),
+                    backend_response(payload={"id": "configuration-run-id"}),
+                ]
+            )
             result = self.sync_manager.sync_session_to_cloud(session_id, dry_run=False)
         finally:
             post_mock = self.sync_manager._session.post
             self.sync_manager._session.post = original_post
+            self.sync_manager._session.get = original_get
 
         assert result["status"] == "success"
-        assert post_mock.call_count == 4
+        assert post_mock.call_count == 5
 
         calls = post_mock.call_args_list
-        experiment_id = f"local_import_{session_id}"
         assert [call.args[0] for call in calls] == [
             f"{self.sync_manager.base_url}/agents",
-            f"{self.sync_manager.base_url}/datasets",
+            f"{self.sync_manager.base_url}/benchmarks",
             f"{self.sync_manager.base_url}/experiments",
-            f"{self.sync_manager.base_url}/experiment-runs/{experiment_id}/runs",
+            f"{self.sync_manager.base_url}/experiment-runs/experiment-id/runs",
+            f"{self.sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
         ]
 
         agent_payload = calls[0].kwargs["json"]
-        assert agent_payload["agent_type_id"] in VALID_AGENT_TYPE_IDS
-        assert "agent_type" not in agent_payload
+        assert agent_payload == {
+            "name": "Local Agent: contract:sync/fn",
+            "agent_type_id": "completion",
+        }
 
         benchmark_payload = calls[1].kwargs["json"]
         assert BACKEND_NAME_PATTERN.fullmatch(benchmark_payload["name"])
+        assert benchmark_payload["type"] == "input-output"
+        assert benchmark_payload["label"]
 
         experiment_payload = calls[2].kwargs["json"]
-        assert experiment_payload["agent_id"] == agent_payload["id"]
+        assert experiment_payload["agent_id"] == "agent-id"
+        assert experiment_payload["dataset_id"] == "benchmark-id"
+        assert experiment_payload["status"] == "COMPLETED"
+        assert experiment_payload["measures"]
+        assert "model_parameters_id" not in experiment_payload
 
         run_payload = calls[3].kwargs["json"]
-        result_payload = run_payload["results"][0]
-        assert result_payload["measures"]["cost"] == 0.42
-        assert result_payload["measures"]["total_cost"] == 0.42
-        assert result_payload["measures"]["cost"] > 0
+        assert set(run_payload) == {"experiment_data"}
+        assert run_payload["experiment_data"] == {
+            "agent_id": "agent-id",
+            "benchmark_id": "benchmark-id",
+            "measures": experiment_payload["measures"],
+            "configurations": experiment_payload["configurations"],
+        }
+
+        configuration_payload = calls[4].kwargs["json"]
+        assert configuration_payload["experiment_parameters"] == {
+            "model": "gpt-test",
+            "temperature": 0.2,
+        }
+        assert configuration_payload["status"] == "COMPLETED"
+        assert isinstance(configuration_payload["measures"]["cost"], float)
+        assert configuration_payload["measures"]["cost"] == 0.42
+        assert configuration_payload["measures"]["total_cost"] == 0.42
+        assert configuration_payload["measures"]["input_cost"] == 0.2
+        assert configuration_payload["measures"]["output_cost"] == 0.22
 
     @patch("requests.Session.post")
     def test_sync_session_to_cloud_partial_failure(self, mock_post):
         """Test session sync with partial failures."""
         # Mock mixed success/failure responses
         responses = [
-            Mock(status_code=201, text="Created"),  # Agent success
-            Mock(status_code=400, text="Bad Request"),  # Benchmark failure
-            Mock(status_code=201, text="Created"),  # Experiment success
-            Mock(status_code=201, text="Created"),  # Run success
+            backend_response(payload={"id": "agent-id"}),  # Agent success
+            backend_response(status_code=400, text="Bad Request"),  # Benchmark failure
         ]
         self.test_session = self._create_test_session()
+        self.sync_manager._session.get = Mock(return_value=backend_response(404))
         mock_post.side_effect = responses
 
         result = self.sync_manager.sync_session_to_cloud(
@@ -482,6 +569,7 @@ class TestSyncManager:
     def test_sync_session_to_cloud_complete_failure(self, mock_post):
         """Test session sync with complete failure."""
         self.test_session = self._create_test_session()
+        self.sync_manager._session.get = Mock(return_value=backend_response(404))
         mock_post.side_effect = Exception("Network error")
 
         result = self.sync_manager.sync_session_to_cloud(
@@ -509,9 +597,8 @@ class TestSyncManager:
         # Create test session for this test
         self.test_session = self._create_test_session()
         # Mock successful API responses
-        mock_response = Mock()
-        mock_response.status_code = 201
-        mock_post.return_value = mock_response
+        self.sync_manager._session.get = Mock(return_value=backend_response(404))
+        mock_post.return_value = backend_response()
 
         result = self.sync_manager.sync_all_sessions(dry_run=False)
 
@@ -533,15 +620,12 @@ class TestSyncManager:
         failed_session_id = storage.create_session("failed_function")
         storage.finalize_session(failed_session_id, "completed")
 
-        # Mock responses - first session succeeds, second fails
-        success_response = Mock(status_code=201, text="Created")
-        failure_response = Mock(status_code=400, text="Bad Request")
+        self.sync_manager._session.get = Mock(return_value=backend_response(404))
+        success_response = backend_response()
+        failure_response = backend_response(status_code=400, text="Bad Request")
 
         mock_post.side_effect = [
-            success_response,
-            success_response,
-            success_response,
-            success_response,  # First session
+            *[success_response for _ in range(8)],  # First session
             failure_response,  # Second session fails on first call
         ]
 
@@ -555,12 +639,14 @@ class TestSyncManager:
 
     def test_sync_agent_success(self):
         """Test successful agent sync."""
-        agent_data = {"id": "test_agent", "name": "Test Agent"}
+        agent_data = {"name": "Test Agent", "agent_type_id": "completion"}
 
-        with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock()
-            mock_response.status_code = 201
-            mock_post.return_value = mock_response
+        with (
+            patch.object(self.sync_manager.session, "get") as mock_get,
+            patch.object(self.sync_manager.session, "post") as mock_post,
+        ):
+            mock_get.return_value = backend_response(404)
+            mock_post.return_value = backend_response(payload={"id": "test_agent"})
 
             result = self.sync_manager._sync_agent(agent_data)
 
@@ -576,27 +662,39 @@ class TestSyncManager:
             )
 
     def test_sync_agent_already_exists(self):
-        """Test agent sync when agent already exists (409 conflict)."""
-        agent_data = {"id": "existing_agent", "name": "Existing Agent"}
+        """Test agent sync reuses an existing matching agent."""
+        agent_data = {"name": "Existing Agent", "agent_type_id": "completion"}
 
-        with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock()
-            mock_response.status_code = 409  # Conflict
-            mock_post.return_value = mock_response
+        with (
+            patch.object(self.sync_manager.session, "get") as mock_get,
+            patch.object(self.sync_manager.session, "post") as mock_post,
+        ):
+            mock_get.return_value = backend_response(
+                200,
+                payload={
+                    "agents": [{"id": "existing_agent", "name": "Existing Agent"}]
+                },
+            )
 
             result = self.sync_manager._sync_agent(agent_data)
 
-            assert result["success"] is True  # 409 is treated as success
+            assert result["success"] is True
+            assert result["agent_id"] == "existing_agent"
+            assert result["reused"] is True
+            mock_post.assert_not_called()
 
     def test_sync_agent_failure(self):
         """Test agent sync failure."""
-        agent_data = {"id": "test_agent", "name": "Test Agent"}
+        agent_data = {"name": "Test Agent", "agent_type_id": "completion"}
 
-        with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock()
-            mock_response.status_code = 400
-            mock_response.text = "Validation error"
-            mock_post.return_value = mock_response
+        with (
+            patch.object(self.sync_manager.session, "get") as mock_get,
+            patch.object(self.sync_manager.session, "post") as mock_post,
+        ):
+            mock_get.return_value = backend_response(404)
+            mock_post.return_value = backend_response(
+                status_code=400, text="Validation error"
+            )
 
             result = self.sync_manager._sync_agent(agent_data)
 
@@ -605,9 +703,13 @@ class TestSyncManager:
 
     def test_sync_agent_exception(self):
         """Test agent sync with network exception."""
-        agent_data = {"id": "test_agent", "name": "Test Agent"}
+        agent_data = {"name": "Test Agent", "agent_type_id": "completion"}
 
-        with patch.object(self.sync_manager.session, "post") as mock_post:
+        with (
+            patch.object(self.sync_manager.session, "get") as mock_get,
+            patch.object(self.sync_manager.session, "post") as mock_post,
+        ):
+            mock_get.return_value = backend_response(404)
             mock_post.side_effect = requests.ConnectionError("Network error")
 
             result = self.sync_manager._sync_agent(agent_data)
@@ -617,46 +719,70 @@ class TestSyncManager:
 
     def test_sync_benchmark_operations(self):
         """Test benchmark sync operations."""
-        benchmark_data = {"id": "test_benchmark", "name": "Test Benchmark"}
+        benchmark_data = {
+            "name": "Test Benchmark",
+            "type": "input-output",
+            "label": "eval",
+        }
 
         # Test success
-        with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock(status_code=201)
-            mock_post.return_value = mock_response
+        with (
+            patch.object(self.sync_manager.session, "get") as mock_get,
+            patch.object(self.sync_manager.session, "post") as mock_post,
+        ):
+            mock_get.return_value = backend_response(404)
+            mock_post.return_value = backend_response(payload={"id": "test_benchmark"})
 
             result = self.sync_manager._sync_benchmark(benchmark_data)
             assert result["success"] is True
 
         # Test failure
-        with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock(status_code=500, text="Server error")
-            mock_post.return_value = mock_response
+        with (
+            patch.object(self.sync_manager.session, "get") as mock_get,
+            patch.object(self.sync_manager.session, "post") as mock_post,
+        ):
+            mock_get.return_value = backend_response(404)
+            mock_post.return_value = backend_response(
+                status_code=400, text="Bad request"
+            )
 
             result = self.sync_manager._sync_benchmark(benchmark_data)
             assert result["success"] is False
 
     def test_sync_experiment_operations(self):
         """Test experiment sync operations."""
-        experiment_data = {"id": "test_experiment", "name": "Test Experiment"}
+        experiment_data = {
+            "name": "Test Experiment",
+            "agent_id": "agent-123",
+            "dataset_id": "benchmark-123",
+            "measures": ["score"],
+            "configurations": {},
+            "status": "COMPLETED",
+        }
 
         # Test success
         with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock(status_code=201)
-            mock_post.return_value = mock_response
+            mock_post.return_value = backend_response(payload={"id": "test_experiment"})
 
             result = self.sync_manager._sync_experiment(experiment_data)
             assert result["success"] is True
 
     def test_sync_experiment_run_operations(self):
         """Test experiment run sync operations."""
-        run_data = {"id": "test_run", "experiment_id": "test_experiment"}
+        run_data = {
+            "experiment_data": {
+                "agent_id": "agent-123",
+                "benchmark_id": "benchmark-123",
+                "measures": ["score"],
+                "configurations": {},
+            }
+        }
 
         # Test success
         with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock(status_code=200)
-            mock_post.return_value = mock_response
+            mock_post.return_value = backend_response(payload={"id": "test_run"})
 
-            result = self.sync_manager._sync_experiment_run(run_data)
+            result = self.sync_manager._sync_experiment_run("test_experiment", run_data)
             assert result["success"] is True
 
     def test_get_cloud_analytics_preview_empty(self):
@@ -746,8 +872,8 @@ class TestSyncManager:
         )
 
         # Should handle empty trials gracefully
-        assert len(traigent_data["experiment_run"]["results"]) == 0
-        assert traigent_data["experiment_run"]["metadata"]["total_trials"] == 0
+        assert len(traigent_data["configuration_runs"]) == 0
+        assert traigent_data["experiment_run"]["measures"] == ["score"]
 
     def test_edge_case_large_session(self):
         """Test handling of session with many trials."""
@@ -768,8 +894,7 @@ class TestSyncManager:
         )
 
         # Should handle large number of trials
-        assert len(traigent_data["experiment_run"]["results"]) == 100
-        assert traigent_data["experiment_run"]["metadata"]["total_trials"] == 100
+        assert len(traigent_data["configuration_runs"]) == 100
 
     def test_edge_case_special_characters(self):
         """Test handling of special characters in session data."""
@@ -793,7 +918,7 @@ class TestSyncManager:
         # Should handle special characters without issues
         assert "测试" in traigent_data["agent"]["name"]
         assert (
-            traigent_data["experiment_run"]["results"][0]["experiment_parameters"][
+            traigent_data["configuration_runs"][0]["experiment_parameters"][
                 "unicode_param"
             ]
             == "测试"
@@ -808,13 +933,20 @@ class TestSyncManager:
         assert "X-API-Key" in headers or "Authorization" in headers
 
         # Test that session is reused for multiple requests
-        with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_response = Mock(status_code=201)
-            mock_post.return_value = mock_response
+        with (
+            patch.object(self.sync_manager.session, "get") as mock_get,
+            patch.object(self.sync_manager.session, "post") as mock_post,
+        ):
+            mock_get.return_value = backend_response(404)
+            mock_post.return_value = backend_response()
 
             # Make multiple sync calls
-            self.sync_manager._sync_agent({"id": "agent1"})
-            self.sync_manager._sync_benchmark({"id": "benchmark1"})
+            self.sync_manager._sync_agent(
+                {"name": "agent1", "agent_type_id": "completion"}
+            )
+            self.sync_manager._sync_benchmark(
+                {"name": "benchmark1", "type": "input-output", "label": "eval"}
+            )
 
             # Should use same session instance
             assert mock_post.call_count == 2
