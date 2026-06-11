@@ -104,6 +104,18 @@ def _format_raw_reason(result: SessionCreationResult) -> str | None:
     return raw_reason.replace("\n", "\\n")[:500]
 
 
+def _backend_disabled_label(reason: SessionCreationFailureReason | None) -> str:
+    """Return a log-safe, non-secret label for disabled backend tracking."""
+
+    if reason == SessionCreationFailureReason.AUTH:
+        return "authentication-failed"
+    if reason == SessionCreationFailureReason.NO_API_KEY:
+        return "credentials-unavailable"
+    if reason == SessionCreationFailureReason.SESSION_FAILED:
+        return "session-create-failed"
+    return "unknown"
+
+
 def _format_untracked_warning_block(
     result: SessionCreationResult,
     classification: SessionCreationFailureClassification,
@@ -642,9 +654,12 @@ class BackendSessionManager:
         )
 
         if not self._backend_tracking_enabled:
+            backend_disabled_label = _backend_disabled_label(
+                self._backend_disabled_reason
+            )
             logger.debug(
                 "Skipping trial submission (backend disabled: %s)",
-                self._backend_disabled_reason,
+                backend_disabled_label,
             )
             return False
 
@@ -939,9 +954,12 @@ class BackendSessionManager:
             return 0
 
         if not self._backend_tracking_enabled:
+            backend_disabled_label = _backend_disabled_label(
+                self._backend_disabled_reason
+            )
             logger.debug(
                 "Skipping weighted score updates (backend disabled: %s)",
-                self._backend_disabled_reason,
+                backend_disabled_label,
             )
             return 0
 

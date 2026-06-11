@@ -278,6 +278,7 @@ class TestBackendSessionManagerTrialSubmission:
         mock_backend_client,
         mock_trial_result,
         tmp_path,
+        caplog,
     ):
         """The backend breaker must not suppress local edge analytics storage."""
         storage = LocalStorageManager(str(tmp_path))
@@ -297,14 +298,20 @@ class TestBackendSessionManagerTrialSubmission:
         )
         manager.disable_backend_tracking(SessionCreationFailureReason.NO_API_KEY)
 
-        result = await manager.submit_trial(
-            trial_result=mock_trial_result,
-            session_id=session_id,
-        )
+        with caplog.at_level(
+            logging.DEBUG, logger="traigent.core.backend_session_manager"
+        ):
+            result = await manager.submit_trial(
+                trial_result=mock_trial_result,
+                session_id=session_id,
+            )
 
         assert result is False
         mock_backend_client.submit_result.assert_called_once()
         mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert "credentials-unavailable" in caplog.text
+        assert "NO_API_KEY" not in caplog.text
+        assert "no_api_key" not in caplog.text
         stored_session = storage.load_session(session_id)
         assert stored_session is not None
         assert stored_session.completed_trials == 1
