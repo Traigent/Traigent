@@ -2361,7 +2361,9 @@ def check(
             )
             return
 
-        console.print("\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]")
+        console.print(
+            "\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]"
+        )
         validator = OptimizationValidator(threshold_pct=threshold)
 
         async def run_validations() -> tuple[list[Any], int, int]:
@@ -2406,6 +2408,10 @@ cli.add_command(detect_tvars)
 from traigent.cli.generate_config_command import generate_config  # noqa: E402
 
 cli.add_command(generate_config)
+
+from traigent.cli.next_steps_command import next_steps  # noqa: E402
+
+cli.add_command(next_steps)
 
 from traigent.cli.onboard_commands import first_prompt, onboard  # noqa: E402
 
