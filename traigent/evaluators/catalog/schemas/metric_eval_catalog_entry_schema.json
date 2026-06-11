@@ -1,0 +1,278 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Metric/Evaluator Catalog Entry Schema",
+  "description": "Defines a catalog entry for task-specific metric and evaluator recommendations.",
+  "version": "1.0.0",
+  "definitions": {
+    "TaskType": {
+      "type": "string",
+      "enum": [
+        "code_gen",
+        "rag",
+        "general"
+      ]
+    },
+    "MeasureType": {
+      "type": "string",
+      "enum": [
+        "sanity_check",
+        "accuracy",
+        "quality",
+        "latency",
+        "safety",
+        "efficiency",
+        "reliability"
+      ]
+    },
+    "MetricOutputType": {
+      "type": "string",
+      "enum": [
+        "binary",
+        "discrete",
+        "continuous",
+        "ranking"
+      ]
+    },
+    "EvaluationMethod": {
+      "type": "string",
+      "enum": [
+        "deterministic",
+        "llm_based",
+        "statistical",
+        "hybrid"
+      ]
+    },
+    "BuiltinFunction": {
+      "enum": [
+        "accuracy",
+        "success_rate",
+        "error_rate",
+        "avg_output_length",
+        "cost",
+        "latency",
+        null
+      ]
+    },
+    "BindingKind": {
+      "type": "string",
+      "enum": [
+        "builtin",
+        "custom_template",
+        "llm_judge_template"
+      ]
+    },
+    "ProvenanceKind": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "operational_practice"
+      ]
+    },
+    "EvidenceLabel": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "CatalogStatus": {
+      "type": "string",
+      "const": "active"
+    },
+    "Metric": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "output_type": {
+          "$ref": "#/definitions/MetricOutputType"
+        },
+        "builtin_function": {
+          "$ref": "#/definitions/BuiltinFunction"
+        },
+        "definition_note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "name",
+        "output_type",
+        "builtin_function",
+        "definition_note"
+      ],
+      "additionalProperties": false
+    },
+    "EvaluatorBinding": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/BindingKind"
+        },
+        "sdk_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "setup_note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "kind",
+        "sdk_ref",
+        "setup_note"
+      ],
+      "additionalProperties": false
+    },
+    "Provenance": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ProvenanceKind"
+        },
+        "citation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 1900,
+          "maximum": 2100
+        },
+        "venue": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "url_or_doi": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "finding_summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "kind",
+        "citation",
+        "year",
+        "finding_summary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "entry_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "$ref": "#/definitions/CatalogStatus"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_types": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/TaskType"
+      }
+    },
+    "measure_type": {
+      "$ref": "#/definitions/MeasureType"
+    },
+    "metric": {
+      "$ref": "#/definitions/Metric"
+    },
+    "evaluation_method": {
+      "$ref": "#/definitions/EvaluationMethod"
+    },
+    "evaluator_binding": {
+      "$ref": "#/definitions/EvaluatorBinding"
+    },
+    "provenance": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/Provenance"
+      }
+    },
+    "impact_estimate": {
+      "$ref": "#/definitions/EvidenceLabel"
+    },
+    "confidence": {
+      "$ref": "#/definitions/EvidenceLabel",
+      "description": "Evidence-strength label, not a statistical confidence interval."
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "cost_note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    }
+  },
+  "required": [
+    "entry_id",
+    "schema_version",
+    "status",
+    "version",
+    "task_types",
+    "measure_type",
+    "metric",
+    "evaluation_method",
+    "evaluator_binding",
+    "provenance",
+    "impact_estimate",
+    "confidence",
+    "limitations"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "evaluation_method": {
+            "const": "llm_based"
+          }
+        },
+        "required": [
+          "evaluation_method"
+        ]
+      },
+      "then": {
+        "required": [
+          "cost_note"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}
