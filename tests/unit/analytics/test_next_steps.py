@@ -25,15 +25,11 @@ def _online_backend(jwt_development_mode, monkeypatch):
 
 
 def _schema_path() -> Path:
+    # Vendored from TraigentSchema PR #120 so tests run without a sibling
+    # checkout (CI); swap to the packaged traigent-schema contract once
+    # #120 ships in a release.
     repo_root = Path(__file__).resolve().parents[3]
-    return (
-        repo_root.parent
-        / "TraigentSchema"
-        / "traigent_schema"
-        / "schemas"
-        / "analytics"
-        / "next_steps_schema.json"
-    )
+    return repo_root / "tests" / "fixtures" / "contracts" / "next_steps_schema.json"
 
 
 def _schema_required_fields() -> set[str]:

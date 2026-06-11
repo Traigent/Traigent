@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://traigent.ai/schemas/analytics/next_steps.json",
+  "title": "NextSteps",
+  "description": "CLIENT-SAFE next-step recommendation response for an experiment run. This contract follows an IP allowlist discipline: it may expose only category-level recommendation labels, templated rationale text, action templates, and coarse evidence labels. Example-scoring signals, rankings, formulas, and signal-derived values are proprietary and are NOT returned to clients.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "experiment_run_id",
+    "caveat",
+    "summary",
+    "next_steps"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Version of this response contract."
+    },
+    "experiment_run_id": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "ID of the experiment run this recommendation response belongs to.",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "caveat": {
+      "type": "string",
+      "description": "Client-facing caveat explaining recommendation limitations."
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "confidence_label"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "winner_config_ref": {
+          "type": "string",
+          "description": "Optional safe reference to the current winning configuration."
+        },
+        "confidence_label": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "description": "Coarse confidence bucket for the recommendation set."
+        },
+        "trade_off_note": {
+          "type": "string",
+          "description": "Optional client-facing summary of relevant trade-offs."
+        }
+      }
+    },
+    "next_steps": {
+      "type": "array",
+      "description": "Recommended next actions. May be empty when no safe recommendation is available.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "category",
+          "priority",
+          "rationale",
+          "action",
+          "evidence_level"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable identifier for this recommendation item."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "expand_dataset",
+              "refine_metric",
+              "adjust_config_space",
+              "rerun_larger_sample",
+              "add_safety_gate",
+              "compare_with_baseline",
+              "promote_winner"
+            ],
+            "description": "Safe recommendation category."
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Display priority; lower values should be shown first."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "templated category-level text; MUST NOT carry proprietary signal values."
+          },
+          "action": {
+            "type": "object",
+            "required": [
+              "kind",
+              "command_template"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cli",
+                  "sdk",
+                  "skill"
+                ],
+                "description": "Action surface for the recommendation."
+              },
+              "command_template": {
+                "type": "string",
+                "description": "Templated command or invocation for this recommendation."
+              }
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "description": "Coarse evidence level supporting this recommendation."
+          }
+        }
+      }
+    }
+  }
+}
