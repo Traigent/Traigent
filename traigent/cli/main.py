@@ -2362,7 +2362,7 @@ def check(
             return
 
         console.print(
-            "\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]"
+            "\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]",
         )
         validator = OptimizationValidator(threshold_pct=threshold)
 
