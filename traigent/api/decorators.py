@@ -1697,6 +1697,7 @@ def optimize(  # NOSONAR(S107)
     # Guided generation: configure here, then run via fn.optimize_with_guidance(provider)
     prompt_rewrite: dict[str, Any] | None = None,
     grow_dataset: dict[str, Any] | None = None,
+    skill_train: dict[str, Any] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -2404,6 +2405,7 @@ def optimize(  # NOSONAR(S107)
             # Guided-generation defaults (consumed by optimize_with_guidance)
             prompt_rewrite=prompt_rewrite,
             grow_dataset=grow_dataset,
+            skill_train=skill_train,
             **combined_runtime_overrides,
         )
 

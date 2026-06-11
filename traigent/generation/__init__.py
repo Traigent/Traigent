@@ -33,7 +33,7 @@ from .models import (
     GuidanceResultSubmission,
     PlanKind,
 )
-from .options import DatasetGrowthOptions, PromptRewriteOptions
+from .options import DatasetGrowthOptions, PromptRewriteOptions, SkillTrainOptions
 from .prompt_rewriter import PromptRewriter, merge_prompt_candidates
 
 __all__ = [
@@ -66,4 +66,5 @@ __all__ = [
     # options
     "PromptRewriteOptions",
     "DatasetGrowthOptions",
+    "SkillTrainOptions",
 ]
