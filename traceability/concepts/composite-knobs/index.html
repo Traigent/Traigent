@@ -8,31 +8,27 @@
       
       
       
-        <link rel="canonical" href="https://docs.traigent.ai/architecture/project-structure/">
+        <link rel="canonical" href="https://docs.traigent.ai/traceability/concepts/composite-knobs/">
       
       
-        <link rel="prev" href="../ARCHITECTURE/">
-      
-      
-        <link rel="next" href="../plugin_architecture/">
       
       
         
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Project Structure - Traigent</title>
+        <title>Composite Knobs: Patterns, Execution, and Telemetry - Traigent</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,7 +47,7 @@
       
     
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#traigent-sdk-project-structure" class="md-skip">
+        <a href="#composite-knobs-patterns-execution-and-telemetry" class="md-skip">
           Skip to content
         </a>
       
@@ -90,7 +86,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Traigent" class="md-header__button md-logo" aria-label="Traigent" data-md-component="logo">
+    <a href="../../.." title="Traigent" class="md-header__button md-logo" aria-label="Traigent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -110,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Project Structure
+              Composite Knobs: Patterns, Execution, and Telemetry
             
           </span>
         </div>
@@ -223,7 +219,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../.." class="md-tabs__link">
+      <a href="../../.." class="md-tabs__link">
         
   
   
@@ -263,7 +259,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../getting-started/" class="md-tabs__link">
+        <a href="../../../getting-started/" class="md-tabs__link">
           
   
   
@@ -283,7 +279,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../concepts/guided-generation/" class="md-tabs__link">
+        <a href="../../../concepts/guided-generation/" class="md-tabs__link">
           
   
   
@@ -303,7 +299,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../features/" class="md-tabs__link">
+        <a href="../../../features/" class="md-tabs__link">
           
   
   
@@ -330,7 +326,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../guides/execution-modes/" class="md-tabs__link">
+        <a href="../../../guides/execution-modes/" class="md-tabs__link">
           
   
   
@@ -353,7 +349,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../api-reference/complete-function-specification/" class="md-tabs__link">
+        <a href="../../../api-reference/complete-function-specification/" class="md-tabs__link">
           
   
   
@@ -373,7 +369,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../examples/" class="md-tabs__link">
+        <a href="../../../examples/" class="md-tabs__link">
           
   
   
@@ -393,7 +389,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../security/trust_model/" class="md-tabs__link">
+        <a href="../../../security/trust_model/" class="md-tabs__link">
           
   
   
@@ -409,13 +405,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../ARCHITECTURE/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../../architecture/ARCHITECTURE/" class="md-tabs__link">
           
   
   
@@ -435,7 +429,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../contributing/" class="md-tabs__link">
+        <a href="../../../contributing/" class="md-tabs__link">
           
   
   
@@ -469,7 +463,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Traigent" class="md-nav__button md-logo" aria-label="Traigent" data-md-component="logo">
+    <a href="../../.." title="Traigent" class="md-nav__button md-logo" aria-label="Traigent" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -499,7 +493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   
@@ -605,7 +599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/" class="md-nav__link">
+      <a href="../../../getting-started/" class="md-nav__link">
         
   
   
@@ -633,7 +627,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/GETTING_STARTED/" class="md-nav__link">
+      <a href="../../../getting-started/GETTING_STARTED/" class="md-nav__link">
         
   
   
@@ -661,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/installation/" class="md-nav__link">
+      <a href="../../../getting-started/installation/" class="md-nav__link">
         
   
   
@@ -689,7 +683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/minimal-integration/" class="md-nav__link">
+      <a href="../../../getting-started/minimal-integration/" class="md-nav__link">
         
   
   
@@ -717,7 +711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/testing/" class="md-nav__link">
+      <a href="../../../getting-started/testing/" class="md-nav__link">
         
   
   
@@ -745,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/portal-dev-laptop-agent/" class="md-nav__link">
+      <a href="../../../getting-started/portal-dev-laptop-agent/" class="md-nav__link">
         
   
   
@@ -832,7 +826,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/guided-generation/" class="md-nav__link">
+      <a href="../../../concepts/guided-generation/" class="md-nav__link">
         
   
   
@@ -860,7 +854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+      <a href="../../../concepts/composite-knob-ir/" class="md-nav__link">
         
   
   
@@ -888,7 +882,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/composite-knobs/" class="md-nav__link">
+      <a href="../../../concepts/composite-knobs/" class="md-nav__link">
         
   
   
@@ -916,7 +910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
+      <a href="../../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
   
@@ -944,7 +938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tvl/CONSTRAINT_EXPRESSIONS/" class="md-nav__link">
+      <a href="../../../tvl/CONSTRAINT_EXPRESSIONS/" class="md-nav__link">
         
   
   
@@ -972,7 +966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/dataflow-detection/" class="md-nav__link">
+      <a href="../../../features/dataflow-detection/" class="md-nav__link">
         
   
   
@@ -1000,7 +994,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../traceability/schema/" class="md-nav__link">
+      <a href="../../schema/" class="md-nav__link">
         
   
   
@@ -1028,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../traceability/taxonomy_reference/" class="md-nav__link">
+      <a href="../../taxonomy_reference/" class="md-nav__link">
         
   
   
@@ -1115,7 +1109,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/" class="md-nav__link">
+      <a href="../../../features/" class="md-nav__link">
         
   
   
@@ -1143,7 +1137,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent-skill/" class="md-nav__link">
+      <a href="../../../agent-skill/" class="md-nav__link">
         
   
   
@@ -1171,7 +1165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/authentication/" class="md-nav__link">
+      <a href="../../../features/authentication/" class="md-nav__link">
         
   
   
@@ -1199,7 +1193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/constraint-dsl/" class="md-nav__link">
+      <a href="../../../features/constraint-dsl/" class="md-nav__link">
         
   
   
@@ -1227,7 +1221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/framework_override_enhanced_features/" class="md-nav__link">
+      <a href="../../../features/framework_override_enhanced_features/" class="md-nav__link">
         
   
   
@@ -1255,7 +1249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/prompt_management/" class="md-nav__link">
+      <a href="../../../features/prompt_management/" class="md-nav__link">
         
   
   
@@ -1283,7 +1277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/seamless_injection/" class="md-nav__link">
+      <a href="../../../features/seamless_injection/" class="md-nav__link">
         
   
   
@@ -1311,7 +1305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/strict_metrics_nulls/" class="md-nav__link">
+      <a href="../../../features/strict_metrics_nulls/" class="md-nav__link">
         
   
   
@@ -1339,7 +1333,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/onboarding/" class="md-nav__link">
+      <a href="../../../features/onboarding/" class="md-nav__link">
         
   
   
@@ -1367,7 +1361,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/mcp-server/" class="md-nav__link">
+      <a href="../../../features/mcp-server/" class="md-nav__link">
         
   
   
@@ -1395,7 +1389,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/recommendations/" class="md-nav__link">
+      <a href="../../../features/recommendations/" class="md-nav__link">
         
   
   
@@ -1423,7 +1417,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/strategy-presets/" class="md-nav__link">
+      <a href="../../../features/strategy-presets/" class="md-nav__link">
         
   
   
@@ -1451,7 +1445,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/safety-gates/" class="md-nav__link">
+      <a href="../../../features/safety-gates/" class="md-nav__link">
         
   
   
@@ -1479,7 +1473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/observability-spans/" class="md-nav__link">
+      <a href="../../../features/observability-spans/" class="md-nav__link">
         
   
   
@@ -1507,7 +1501,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
+      <a href="../../../hybrid-mode-api-contract/" class="md-nav__link">
         
   
   
@@ -1535,7 +1529,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hybrid-mode-client-guide/" class="md-nav__link">
+      <a href="../../../hybrid-mode-client-guide/" class="md-nav__link">
         
   
   
@@ -1563,7 +1557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../walkthrough/" class="md-nav__link">
+      <a href="../../../walkthrough/" class="md-nav__link">
         
   
   
@@ -1702,7 +1696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/execution-modes/" class="md-nav__link">
+      <a href="../../../guides/execution-modes/" class="md-nav__link">
         
   
   
@@ -1730,7 +1724,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/evaluation/" class="md-nav__link">
+      <a href="../../../guides/evaluation/" class="md-nav__link">
         
   
   
@@ -1758,7 +1752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/js-bridge/" class="md-nav__link">
+      <a href="../../../guides/js-bridge/" class="md-nav__link">
         
   
   
@@ -1786,7 +1780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/llm_plugin_migration_guide/" class="md-nav__link">
+      <a href="../../../guides/llm_plugin_migration_guide/" class="md-nav__link">
         
   
   
@@ -1814,7 +1808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/parallel-configuration/" class="md-nav__link">
+      <a href="../../../guides/parallel-configuration/" class="md-nav__link">
         
   
   
@@ -1842,7 +1836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/secrets_management/" class="md-nav__link">
+      <a href="../../../guides/secrets_management/" class="md-nav__link">
         
   
   
@@ -1870,7 +1864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/VSCODE_RESTART_GUIDE/" class="md-nav__link">
+      <a href="../../../guides/VSCODE_RESTART_GUIDE/" class="md-nav__link">
         
   
   
@@ -1958,7 +1952,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/" class="md-nav__link">
+      <a href="../../../user-guide/" class="md-nav__link">
         
   
   
@@ -1986,7 +1980,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/agent_optimization/" class="md-nav__link">
+      <a href="../../../user-guide/agent_optimization/" class="md-nav__link">
         
   
   
@@ -2014,7 +2008,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/choosing_optimization_model/" class="md-nav__link">
+      <a href="../../../user-guide/choosing_optimization_model/" class="md-nav__link">
         
   
   
@@ -2042,7 +2036,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/evaluation_guide/" class="md-nav__link">
+      <a href="../../../user-guide/evaluation_guide/" class="md-nav__link">
         
   
   
@@ -2070,7 +2064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/injection_modes/" class="md-nav__link">
+      <a href="../../../user-guide/injection_modes/" class="md-nav__link">
         
   
   
@@ -2098,7 +2092,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/interactive_optimization/" class="md-nav__link">
+      <a href="../../../user-guide/interactive_optimization/" class="md-nav__link">
         
   
   
@@ -2126,7 +2120,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/optuna_integration/" class="md-nav__link">
+      <a href="../../../user-guide/optuna_integration/" class="md-nav__link">
         
   
   
@@ -2154,7 +2148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/tuned_variables/" class="md-nav__link">
+      <a href="../../../user-guide/tuned_variables/" class="md-nav__link">
         
   
   
@@ -2242,7 +2236,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../operations/azure_openai/" class="md-nav__link">
+      <a href="../../../operations/azure_openai/" class="md-nav__link">
         
   
   
@@ -2270,7 +2264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../operations/bedrock/" class="md-nav__link">
+      <a href="../../../operations/bedrock/" class="md-nav__link">
         
   
   
@@ -2298,7 +2292,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../operations/google_gemini/" class="md-nav__link">
+      <a href="../../../operations/google_gemini/" class="md-nav__link">
         
   
   
@@ -2386,7 +2380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../testing/CREATIVE_STRESS_TESTING/" class="md-nav__link">
+      <a href="../../../testing/CREATIVE_STRESS_TESTING/" class="md-nav__link">
         
   
   
@@ -2414,7 +2408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../testing/RELEASE_READINESS_TESTING/" class="md-nav__link">
+      <a href="../../../testing/RELEASE_READINESS_TESTING/" class="md-nav__link">
         
   
   
@@ -2509,7 +2503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/complete-function-specification/" class="md-nav__link">
+      <a href="../../../api-reference/complete-function-specification/" class="md-nav__link">
         
   
   
@@ -2537,7 +2531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/decorator-reference/" class="md-nav__link">
+      <a href="../../../api-reference/decorator-reference/" class="md-nav__link">
         
   
   
@@ -2565,7 +2559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/enterprise-beta-api/" class="md-nav__link">
+      <a href="../../../api-reference/enterprise-beta-api/" class="md-nav__link">
         
   
   
@@ -2593,7 +2587,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/interactive_optimizer/" class="md-nav__link">
+      <a href="../../../api-reference/interactive_optimizer/" class="md-nav__link">
         
   
   
@@ -2621,7 +2615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/telemetry/" class="md-nav__link">
+      <a href="../../../api-reference/telemetry/" class="md-nav__link">
         
   
   
@@ -2649,7 +2643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/thread-pool-examples/" class="md-nav__link">
+      <a href="../../../api-reference/thread-pool-examples/" class="md-nav__link">
         
   
   
@@ -2736,7 +2730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/" class="md-nav__link">
+      <a href="../../../examples/" class="md-nav__link">
         
   
   
@@ -2764,7 +2758,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/START_HERE/" class="md-nav__link">
+      <a href="../../../examples/START_HERE/" class="md-nav__link">
         
   
   
@@ -2792,7 +2786,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/API_PATTERNS/" class="md-nav__link">
+      <a href="../../../examples/API_PATTERNS/" class="md-nav__link">
         
   
   
@@ -2820,7 +2814,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/LEARNING_ROADMAP/" class="md-nav__link">
+      <a href="../../../examples/LEARNING_ROADMAP/" class="md-nav__link">
         
   
   
@@ -2848,7 +2842,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/QUICK_REFERENCE/" class="md-nav__link">
+      <a href="../../../examples/QUICK_REFERENCE/" class="md-nav__link">
         
   
   
@@ -2876,7 +2870,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/TROUBLESHOOTING/" class="md-nav__link">
+      <a href="../../../examples/TROUBLESHOOTING/" class="md-nav__link">
         
   
   
@@ -2956,7 +2950,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../demos/" class="md-nav__link">
+      <a href="../../../demos/" class="md-nav__link">
         
   
   
@@ -2984,7 +2978,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../demos/DEMO_VIDEO_GUIDE/" class="md-nav__link">
+      <a href="../../../demos/DEMO_VIDEO_GUIDE/" class="md-nav__link">
         
   
   
@@ -3079,7 +3073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../security/trust_model/" class="md-nav__link">
+      <a href="../../../security/trust_model/" class="md-nav__link">
         
   
   
@@ -3107,7 +3101,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/SECURITY/" class="md-nav__link">
+      <a href="../../../contributing/SECURITY/" class="md-nav__link">
         
   
   
@@ -3135,7 +3129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/authentication/" class="md-nav__link">
+      <a href="../../../features/authentication/" class="md-nav__link">
         
   
   
@@ -3163,7 +3157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cost-architecture-validation/" class="md-nav__link">
+      <a href="../../../architecture/cost-architecture-validation/" class="md-nav__link">
         
   
   
@@ -3191,7 +3185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/aikido_triage/" class="md-nav__link">
+      <a href="../../../contributing/aikido_triage/" class="md-nav__link">
         
   
   
@@ -3223,31 +3217,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
         
           
-          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
             
   
   
@@ -3265,7 +3254,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_10">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3283,7 +3272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ARCHITECTURE/" class="md-nav__link">
+      <a href="../../../architecture/ARCHITECTURE/" class="md-nav__link">
         
   
   
@@ -3308,37 +3297,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Project Structure
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../../architecture/project-structure/" class="md-nav__link">
         
   
   
@@ -3354,164 +3316,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#root-directory" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Root Directory
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#key-directories-explained" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Key Directories Explained
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Key Directories Explained">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#traigent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /traigent/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /tests/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#docs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /docs/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /examples/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /tools/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#scripts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /scripts/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#plugins" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /plugins/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#requirements" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /requirements/
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#file-organization-principles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        File Organization Principles
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3524,7 +3328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../plugin_architecture/" class="md-nav__link">
+      <a href="../../../architecture/plugin_architecture/" class="md-nav__link">
         
   
   
@@ -3552,7 +3356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../integrations-inventory/" class="md-nav__link">
+      <a href="../../../architecture/integrations-inventory/" class="md-nav__link">
         
   
   
@@ -3580,7 +3384,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../stop_conditions/" class="md-nav__link">
+      <a href="../../../architecture/stop_conditions/" class="md-nav__link">
         
   
   
@@ -3608,7 +3412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../execution_mode_follow_up/" class="md-nav__link">
+      <a href="../../../architecture/execution_mode_follow_up/" class="md-nav__link">
         
   
   
@@ -3636,7 +3440,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cost-architecture-validation/" class="md-nav__link">
+      <a href="../../../architecture/cost-architecture-validation/" class="md-nav__link">
         
   
   
@@ -3723,7 +3527,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/" class="md-nav__link">
+      <a href="../../../contributing/" class="md-nav__link">
         
   
   
@@ -3751,7 +3555,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/CONTRIBUTING/" class="md-nav__link">
+      <a href="../../../contributing/CONTRIBUTING/" class="md-nav__link">
         
   
   
@@ -3779,7 +3583,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/ADDING_NEW_INTEGRATIONS/" class="md-nav__link">
+      <a href="../../../contributing/ADDING_NEW_INTEGRATIONS/" class="md-nav__link">
         
   
   
@@ -3807,7 +3611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/code_review_instructions/" class="md-nav__link">
+      <a href="../../../contributing/code_review_instructions/" class="md-nav__link">
         
   
   
@@ -3835,7 +3639,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/test-quality-guide/" class="md-nav__link">
+      <a href="../../../contributing/test-quality-guide/" class="md-nav__link">
         
   
   
@@ -3863,7 +3667,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/CODE_OF_CONDUCT/" class="md-nav__link">
+      <a href="../../../contributing/CODE_OF_CONDUCT/" class="md-nav__link">
         
   
   
@@ -3891,7 +3695,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/EXAMPLE_TEMPLATE/" class="md-nav__link">
+      <a href="../../../contributing/EXAMPLE_TEMPLATE/" class="md-nav__link">
         
   
   
@@ -3946,10 +3750,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#root-directory" class="md-nav__link">
+  <a href="#pattern-catalog" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Root Directory
+        Pattern catalog
       
     </span>
   </a>
@@ -3957,99 +3761,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#key-directories-explained" class="md-nav__link">
+  <a href="#executing-a-composite" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Key Directories Explained
+        Executing a composite
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Key Directories Explained">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#certified-selection-with-a-composite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Certified selection with a composite
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#telemetry-the-measures-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Telemetry → the measures channel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Telemetry → the measures channel">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#traigent" class="md-nav__link">
+  <a href="#integration-recipe-riding-the-existing-channel" class="md-nav__link">
     <span class="md-ellipsis">
       
-        /traigent/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /tests/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#docs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /docs/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /examples/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /tools/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#scripts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /scripts/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#plugins" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /plugins/
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#requirements" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        /requirements/
+        Integration recipe (riding the existing channel)
       
     </span>
   </a>
@@ -4062,21 +3811,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#file-organization-principles" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
-        File Organization Principles
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes
+        See also
       
     </span>
   </a>
@@ -4103,76 +3841,256 @@
   
 
 
-<h1 id="traigent-sdk-project-structure">Traigent SDK Project Structure<a class="headerlink" href="#traigent-sdk-project-structure" title="Permanent link">&para;</a></h1>
-<p>This document outlines the current structure of the Traigent SDK project.</p>
-<h2 id="root-directory">Root Directory<a class="headerlink" href="#root-directory" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>Traigent/
-├── README.md                  # Main project documentation
-├── LICENSE                    # AGPLv3 license text for open-source releases
-├── pyproject.toml             # Build, packaging, and tool config
-├── uv.lock                    # Lockfile (uv)
-├── traigent/                  # Core SDK source code
-├── tests/                     # Test suite
-├── examples/                  # Usage examples and demo runners
-├── docs/                      # Documentation (this folder)
-├── tools/                     # Architecture analysis and dev utilities
-├── scripts/                   # Utility and automation scripts
-├── plugins/                   # Optional plugin packages
-├── requirements/              # Dependency sets and guides
-└── configs/                   # Configuration, baselines, and runtime
-    ├── auto_tune_config.yaml
-    ├── env-templates/
-    ├── baselines/             # Performance baselines
-    └── runtime/               # Runtime configs
-</code></pre></div>
+<h1 id="composite-knobs-patterns-execution-and-telemetry">Composite Knobs: Patterns, Execution, and Telemetry<a class="headerlink" href="#composite-knobs-patterns-execution-and-telemetry" title="Permanent link">&para;</a></h1>
+<p>Composite knobs let you declare grouped control-flow shapes — cascades,
+ensembles, and refinement loops — over the RFC 0001 one-knob binding model
+(<code>Tuned | Fixed | Calibrated</code>). The declaration layer (the
+<a href="../composite-knob-ir/">Composite-Knob IR</a>) is the algebra; this page covers the
+<strong>runnable</strong> surface the SDK ships today:</p>
+<ul>
+<li>the <strong>pattern catalog</strong> (the six named factories and what each expands to);</li>
+<li><strong>executing a composite</strong> in-trial with <code>execute_composite</code> + <code>StageRunner</code>;</li>
+<li><strong>certified selection</strong> with a composite (the <code>binary_cascade</code> strict recipe);</li>
+<li><strong>telemetry → the measures channel</strong> (<code>composite_measures</code>).</li>
+</ul>
+<p>A runnable, offline example accompanies this page:
+<code>examples/advanced/composite-knobs/composite_telemetry.py</code>.</p>
 <blockquote>
-<p><strong>Note</strong>: Use-cases, demos, playground, paper experiments, and non-essential tools
-have been moved to the <a href="https://github.com/Traigent/TraigentDemo">TraigentDemo</a> repository.</p>
+<p>Scope note: this page documents what the SDK <em>does</em> procedurally. It does not
+make guarantees about model behavior or future inputs. Where a "certified"
+decision is mentioned, it is a procedural decision over the evidence and
+policy you supply.</p>
 </blockquote>
-<h2 id="key-directories-explained">Key Directories Explained<a class="headerlink" href="#key-directories-explained" title="Permanent link">&para;</a></h2>
-<h3 id="traigent"><code>/traigent/</code><a class="headerlink" href="#traigent" title="Permanent link">&para;</a></h3>
-<p>Core SDK source code, including:
-- <code>api/</code> public decorators and functions
-- <code>config/</code> configuration and injection providers
-- <code>core/</code> orchestration and optimized function
-- <code>optimizers/</code> algorithms (grid/random/optuna/interactive)
-- <code>evaluators/</code> dataset and evaluation
-- <code>integrations/</code> framework adapters (OpenAI, Anthropic, LangChain, Bedrock, Azure, Gemini, Cohere, HuggingFace, LiteLLM, LlamaIndex, Mistral, PydanticAI, vector stores, and observability)
-- <code>cloud/</code> hybrid/backend auth and sync clients; remote cloud execution remains reserved for future service-backed runs
-- <code>storage/</code>, <code>utils/</code>, <code>visualization/</code>, <code>tvl/</code>, etc.</p>
-<h3 id="tests"><code>/tests/</code><a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
-<p>Unit, integration, e2e, security, and performance suites.</p>
-<h3 id="docs"><code>/docs/</code><a class="headerlink" href="#docs" title="Permanent link">&para;</a></h3>
-<p>Documentation content:
-- <code>getting-started/</code> quickstart and install
-- <code>user-guide/</code> how-to guides
-- <code>examples/</code> canonical example guides and navigation docs
-- <code>api-reference/</code> API docs
-- <code>architecture/</code> design docs
-- <code>guides/</code>, <code>operations/</code>, <code>testing/</code> practitioner docs
-- <code>feature_matrices/</code>, <code>traceability/</code>, <code>internal/</code>, <code>reviews/</code></p>
-<h3 id="examples"><code>/examples/</code><a class="headerlink" href="#examples" title="Permanent link">&para;</a></h3>
-<p>Usage examples, datasets, and the browser gallery assets (<code>examples/gallery/</code>).</p>
-<h3 id="tools"><code>/tools/</code><a class="headerlink" href="#tools" title="Permanent link">&para;</a></h3>
-<p>Architecture analysis (<code>tools/architecture/</code>) and environment utilities.
-CI workflow dependency via <code>.github/workflows/architecture-analysis.yml</code>.</p>
-<h3 id="scripts"><code>/scripts/</code><a class="headerlink" href="#scripts" title="Permanent link">&para;</a></h3>
-<p>Helper scripts (e.g., launchers, verification, utilities).</p>
-<h3 id="plugins"><code>/plugins/</code><a class="headerlink" href="#plugins" title="Permanent link">&para;</a></h3>
-<p>Optional plugin packages: analytics, tracing, OPAL, tuned-variables, UI.</p>
-<h3 id="requirements"><code>/requirements/</code><a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h3>
-<p>Legacy dependency mirrors and supporting guides. <code>pyproject.toml</code> extras are
-the canonical install surface for current package builds.</p>
-<h2 id="file-organization-principles">File Organization Principles<a class="headerlink" href="#file-organization-principles" title="Permanent link">&para;</a></h2>
+<h2 id="pattern-catalog">Pattern catalog<a class="headerlink" href="#pattern-catalog" title="Permanent link">&para;</a></h2>
+<p><code>traigent.knobs.patterns</code> provides six named factories over the composite
+algebra. Each returns a <code>CompositeKnob</code> declaration bundle (<code>.structure</code> is the
+IR root, <code>.members</code> are member knob declarations, <code>.provenance</code> stamps the
+pattern name + a hash of its validated params, <code>.telemetry_names</code> are the
+§3.10 standard measure names). Factories return <strong>declarations only</strong>; they do
+not bind values and do not trigger cloud effectuation.</p>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Kind</th>
+<th>Expands to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>binary_cascade</code></td>
+<td>cascade</td>
+<td><code>Cascade(arms=[stage(base), stage(expert)], gates=[margin_below θ], post)</code> — the two-arm escalate-or-stop policy.</td>
+</tr>
+<tr>
+<td><code>n_cascade</code></td>
+<td>cascade</td>
+<td><code>Cascade(arms=[stage(a₁)..stage(a_m)], gates=[θ₁..θ_{m-1}], post)</code> — ordered escalation; <code>|thresholds| == |stages| - 1</code>.</td>
+</tr>
+<tr>
+<td><code>self_consistency</code></td>
+<td>ensemble</td>
+<td><code>Ensemble(arms=[stage(a)], cardinality=k, majority_vote, accept?)</code> — sample <code>k</code> times, majority-vote; optional <code>vote_margin</code> acceptance.</td>
+</tr>
+<tr>
+<td><code>best_of_n</code></td>
+<td>ensemble</td>
+<td><code>Ensemble(arms=[stage(a)], cardinality=k, judge_max(stage(judge)))</code> — sample <code>k</code>, pick the judge's highest-scoring candidate.</td>
+</tr>
+<tr>
+<td><code>self_refine</code></td>
+<td>loop</td>
+<td><code>Loop(body=stage(a), state_keys, stop=signal_accept(σ, θ), max_iters=K)</code> — refine until a calibrated signal accepts (unroll-eligible).</td>
+</tr>
+<tr>
+<td><code>self_debug</code></td>
+<td>loop</td>
+<td><code>Loop(body=stage(a), state_keys, stop=external_accept(tests), max_iters=K)</code> — retry until an opaque predicate (e.g. tests) passes.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.knobs.patterns</span><span class="w"> </span><span class="kn">import</span> <span class="n">binary_cascade</span>
+
+<span class="n">answerer</span> <span class="o">=</span> <span class="n">binary_cascade</span><span class="p">(</span>
+    <span class="s2">&quot;answerer&quot;</span><span class="p">,</span>
+    <span class="n">base_stage</span><span class="o">=</span><span class="s2">&quot;cheap&quot;</span><span class="p">,</span>
+    <span class="n">expert_stage</span><span class="o">=</span><span class="s2">&quot;strong&quot;</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="o">=</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">,</span>  <span class="c1"># a calibrated CVAR name</span>
+<span class="p">)</span>
+</code></pre></div>
+<h2 id="executing-a-composite">Executing a composite<a class="headerlink" href="#executing-a-composite" title="Permanent link">&para;</a></h2>
+<p>The SDK ships execution for the <strong>post-cascade</strong> kind today (ensemble and loop
+execution are deferred and raise an explicit <code>NotImplementedError</code> naming the
+gap — they are never silently skipped).</p>
+<p>You execute a composite for one item with <code>execute_composite</code>, supplying a
+<code>StageRunner</code> (or a bare callable) for each stage name and the live calibrated
+gate thresholds:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.knobs.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">StageRunner</span><span class="p">,</span> <span class="n">execute_composite</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">stage</span><span class="p">(</span><span class="n">outputs</span><span class="p">):</span>
+    <span class="c1"># A voting stage: returns its sample multiset; key_fn maps an output to a</span>
+    <span class="c1"># content-free equivalence key (required for a stage that feeds a gate).</span>
+    <span class="k">return</span> <span class="n">StageRunner</span><span class="p">(</span><span class="n">run</span><span class="o">=</span><span class="k">lambda</span> <span class="n">_item</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">outputs</span><span class="p">),</span> <span class="n">key_fn</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
+                       <span class="n">samples</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">outputs</span><span class="p">))</span>
+
+
+<span class="n">run</span> <span class="o">=</span> <span class="n">execute_composite</span><span class="p">(</span>
+    <span class="n">answerer</span><span class="o">.</span><span class="n">structure</span><span class="p">,</span>
+    <span class="n">stages</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cheap&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">]),</span> <span class="s2">&quot;strong&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">&quot;STRONG&quot;</span><span class="p">])},</span>
+    <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="s2">&quot;strong&quot;</span><span class="p">},</span>
+    <span class="n">calibrated_values</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">},</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">result_kind</span><span class="p">)</span>  <span class="c1"># output | no_accept | error</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">)</span>       <span class="c1"># the selected arm&#39;s output (when result_kind is output)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">measures</span><span class="p">)</span>     <span class="c1"># the §3.10 content-free telemetry dict</span>
+</code></pre></div>
+<p><code>execute_composite</code> returns a frozen <code>CompositeRunResult</code>:</p>
+<ul>
+<li><code>result_kind</code> is the result-algebra tag: <code>output</code>, <code>no_accept</code> (ran but
+  nothing met acceptance — an honest no-output outcome, not an error), or
+  <code>error</code>;</li>
+<li><code>output</code> carries the selected arm's output only when <code>result_kind</code> is
+  <code>output</code>;</li>
+<li><code>measures</code> is the §3.10 telemetry dict (see below);</li>
+<li><code>error</code> carries a fail-closed diagnostic string when <code>result_kind</code> is <code>error</code>.</li>
+</ul>
+<p>Execution <strong>fails closed</strong>: a stage exception, a missing stage callable, or a
+missing / non-finite calibrated threshold yields an <code>error</code> result — never a
+silent fallback to some stage's output.</p>
+<h2 id="certified-selection-with-a-composite">Certified selection with a composite<a class="headerlink" href="#certified-selection-with-a-composite" title="Permanent link">&para;</a></h2>
+<p>A composite's gate threshold is a <strong>calibrated variable</strong> (a CVAR), so a
+<code>binary_cascade</code> slots into the strict certified-selection path. The shape
+(mirrored by the offline example and the integration suite):</p>
 <ol>
-<li><strong>Clean Root</strong>: Only essential project directories at root level</li>
-<li><strong>Grouped Dependencies</strong>: All requirements files in dedicated directory</li>
-<li><strong>Logical Grouping</strong>: Related functionality grouped together</li>
-<li><strong>Clear Naming</strong>: Descriptive directory and file names</li>
-<li><strong>Separation of Concerns</strong>: Demos and use-cases live in TraigentDemo repo</li>
+<li>declare the cascade with a calibrated gate threshold;</li>
+<li>build a <code>ConfigSpace</code> from <code>binary_cascade(...).members</code> with the gate bound
+   <code>Calibrated</code> (the searched space is the tuned variant; the calibrated
+   threshold stays client-side);</li>
+<li>execute the composite in-trial so the gate creates real, observable
+   dominance between candidate configs;</li>
+<li>let the promotion gate decide over the collected metrics.</li>
 </ol>
-<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
-<p>This structure provides a clean, scalable layout that makes the project easy to navigate for both users and contributors.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.tvl.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">PromotionPolicy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.tvl.promotion_gate</span><span class="w"> </span><span class="kn">import</span> <span class="n">ObjectiveSpec</span><span class="p">,</span> <span class="n">PromotionGate</span>
+
+<span class="n">gate</span> <span class="o">=</span> <span class="n">PromotionGate</span><span class="p">(</span>
+    <span class="n">PromotionPolicy</span><span class="p">(</span><span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">min_effect</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">}),</span>
+    <span class="p">[</span><span class="n">ObjectiveSpec</span><span class="p">(</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;maximize&quot;</span><span class="p">)],</span>
+<span class="p">)</span>
+<span class="n">decision</span> <span class="o">=</span> <span class="n">gate</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span>
+    <span class="n">incumbent_metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">incumbent_accuracy_samples</span><span class="p">},</span>
+    <span class="n">candidate_metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">candidate_accuracy_samples</span><span class="p">},</span>
+<span class="p">)</span>
+<span class="c1"># decision.decision is &quot;promote&quot;, &quot;reject&quot;, or &quot;no_decision&quot;.</span>
+</code></pre></div>
+<p><code>decision.decision</code> is one of <code>promote</code>, <code>reject</code>, or <code>no_decision</code>. A
+<code>no_decision</code> is the honest outcome when the evidence does not establish
+dominance under the policy — it is not a failure and is never reported as a
+winner. The offline example prints a CALIBRATION-BACKED WINNER (client-attested) or an honest "no winner
+yet" depending on the samples it collects.</p>
+<p>In a hybrid or cloud run you do not call the promotion gate yourself; the
+orchestrator runs it over the per-trial metrics your decorated function
+submits.</p>
+<h2 id="telemetry-the-measures-channel">Telemetry → the measures channel<a class="headerlink" href="#telemetry-the-measures-channel" title="Permanent link">&para;</a></h2>
+<p>Every composite run produces the RFC 0002 §3.10 <strong>content-free</strong> telemetry dict
+(counts, rates, enums, finite numbers only — never anything output-derived).
+For a cascade:</p>
+<ul>
+<li><code>escalation_rate</code> — the per-run 0/1 escalated indicator;</li>
+<li><code>stage_selected</code> — the selected arm index;</li>
+<li><code>gate_margin_pass_rate</code> — a per-gate map (keyed by gate index) over the gates
+  actually evaluated: <code>1.0</code> where the gate did not escalate (the margin
+  passed), <code>0.0</code> where it did.</li>
+</ul>
+<p><code>run.measures</code> is structured (it nests the per-gate map). The Traigent
+<strong>measures wire channel</strong> — the per-trial numeric metrics that ride a trial
+submission — is flat: numeric values only, with Python-identifier keys, and a
+backend cap of 50 keys per trial (<code>traigent.cloud.dtos.MeasuresDict</code>).</p>
+<p><code>traigent.knobs.telemetry.composite_measures</code> is the adapter between the two.
+It flattens the run's measures into identifier-safe, numeric-only keys:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.knobs.telemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">composite_measures</span><span class="p">,</span> <span class="n">merge_composite_measures</span>
+
+<span class="n">composite_measures</span><span class="p">(</span><span class="n">run</span><span class="p">)</span>
+<span class="c1"># {</span>
+<span class="c1">#   &quot;composite_escalation_rate&quot;: 1.0,</span>
+<span class="c1">#   &quot;composite_stage_selected&quot;: 1,</span>
+<span class="c1">#   &quot;composite_gate_0_margin_pass_rate&quot;: 0.0,</span>
+<span class="c1"># }</span>
+</code></pre></div>
+<p>Flattening rules:</p>
+<ul>
+<li>a scalar measure <code>m</code> becomes <code>{prefix}_{m}</code> (default prefix <code>composite</code>);</li>
+<li>the per-gate map is flattened per gate into
+  <code>{prefix}_gate_{index}_margin_pass_rate</code>;</li>
+<li>non-finite or non-numeric values are dropped (the channel carries finite
+  numbers only);</li>
+<li>the total key count is capped with headroom below the 50-key ceiling so your
+  own metrics co-exist; over the cap the lowest-priority keys are truncated
+  deterministically and a warning is logged — <code>composite_measures</code> never raises
+  mid-trial.</li>
+</ul>
+<p>The output is content-free by construction: the adapter reads <code>run.measures</code>
+only (never <code>run.output</code>) and emits finite numbers and integer gate indices.</p>
+<h3 id="integration-recipe-riding-the-existing-channel">Integration recipe (riding the existing channel)<a class="headerlink" href="#integration-recipe-riding-the-existing-channel" title="Permanent link">&para;</a></h3>
+<p>To make composite telemetry visible on the wire, merge <code>composite_measures(run)</code>
+into the metrics your decorated function returns. No new wire surface is
+introduced — the <code>composite_*</code> keys ride the existing per-trial measures
+channel as ordinary numeric metrics:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.knobs.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">execute_composite</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.knobs.telemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">composite_measures</span><span class="p">,</span> <span class="n">merge_composite_measures</span>
+
+
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+    <span class="n">eval_dataset</span><span class="o">=...</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;cheap&quot;</span><span class="p">,</span> <span class="s2">&quot;strong&quot;</span><span class="p">]},</span>
+    <span class="n">default_config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="s2">&quot;cheap&quot;</span><span class="p">},</span>
+    <span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;hybrid&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
+    <span class="n">run</span> <span class="o">=</span> <span class="n">execute_composite</span><span class="p">(</span>
+        <span class="n">answerer</span><span class="o">.</span><span class="n">structure</span><span class="p">,</span>
+        <span class="n">stages</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cheap&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="o">...</span><span class="p">]),</span> <span class="s2">&quot;strong&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">&quot;STRONG&quot;</span><span class="p">])},</span>
+        <span class="n">config</span><span class="o">=</span><span class="n">params</span><span class="p">,</span>
+        <span class="n">calibrated_values</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">:</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">]},</span>
+    <span class="p">)</span>
+    <span class="n">metrics</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;STRONG&quot;</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">}</span>
+    <span class="n">merge_composite_measures</span><span class="p">(</span><span class="n">metrics</span><span class="p">,</span> <span class="n">run</span><span class="p">)</span>  <span class="c1"># composite_* keys ride the wire</span>
+    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">),</span> <span class="n">metrics</span>
+</code></pre></div>
+<p>The evaluator unpacks a return that is EXACTLY a length-2 tuple
+<code>(output, metrics)</code> whose <code>metrics</code> is a <code>Mapping</code> with all-identifier keys
+(every key is a string satisfying <code>str.isidentifier()</code>, matching the
+<code>MeasuresDict</code> wire contract — a key like <code>"bad-key"</code> makes the shape NOT match,
+so the raw tuple rides through untouched) and all-numeric (non-<code>bool</code>) values:
+<code>output</code> (element <code>[0]</code>) is used for accuracy, <code>actual_output</code>, and scoring,
+while <code>metrics</code> (element <code>[1]</code>) mean-aggregates across examples onto the trial —
+every other return shape is left untouched, so existing string/dict returns are
+unaffected. A user metric never overrides a reserved evaluator-computed key
+(<code>accuracy</code>, <code>success_rate</code>, <code>error_rate</code>, <code>avg_output_length</code>, <code>latency</code>,
+<code>cost</code>, <code>examples_attempted</code>, the token/cost aggregates, …): such keys are
+skipped (warning-logged) at every merge and aggregation site, regardless of
+ordering. The aggregated trial metrics are capped at the same
+<code>TOTAL_MEASURES_CEILING</code> (50) total keys as <code>merge_composite_measures</code> — only
+user keys are truncated (deterministically, warning-logged); evaluator keys are
+never dropped.</p>
+<p>On submission, the SDK splits off the reserved <code>measures</code> / <code>summary_stats</code>
+keys and validates the remaining numeric metrics (your <code>accuracy</code> plus the
+<code>composite_*</code> keys) through <code>MeasuresDict</code> before posting them in the trial
+result body. The integration tests in
+<code>tests/unit/cloud/test_composite_measures_submission.py</code> assert the
+<code>composite_*</code> keys appear in the posted body — both from a pre-merged metrics
+dict and end-to-end from a tuple-returning function through the real evaluator.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../composite-knob-ir/">Composite-Knob IR</a> — the declaration algebra.</li>
+<li><code>examples/advanced/composite-knobs/composite_telemetry.py</code> — the runnable,
+  offline example mirrored from this page.</li>
+</ul>
 
 
 
@@ -4222,10 +4140,10 @@ the canonical install surface for current package builds.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

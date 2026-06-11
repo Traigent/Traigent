@@ -1028,6 +1028,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/composite-knobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite Knobs (Execution & Telemetry)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -3999,7 +4027,7 @@ python<span class="w"> </span>hello_world.py
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
 python<span class="w"> </span>hello_world.py
 </code></pre></div>
-<p>The quickstart runs in mock mode by default - it simulates LLM calls so you can see the full optimization flow instantly.</p>
+<p>The quickstart runs in mock mode by default and pre-approves the local cost gate for the demo - it simulates LiteLLM/LangChain calls so you can see the full optimization flow instantly. For your own dry runs, use mock mode plus <code>cost_approved=True</code> or <code>TRAIGENT_COST_APPROVED=true</code>; raw <code>openai.chat.completions.create(...)</code> and <code>anthropic.messages.create(...)</code> calls are not mocked.</p>
 <p>2) Here's what it does - one decorator, automatic optimization:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">langchain_openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatOpenAI</span>

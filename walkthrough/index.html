@@ -888,6 +888,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../concepts/composite-knobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composite Knobs (Execution & Telemetry)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../user-guide/configuration-spaces/" class="md-nav__link">
         
   
@@ -3910,13 +3938,18 @@
 
 
 <h1 id="walkthrough-8-runnable-examples">Walkthrough - 8 Runnable Examples<a class="headerlink" href="#walkthrough-8-runnable-examples" title="Permanent link">&para;</a></h1>
-<p>Step through Traigent's features with 8 progressive examples. All run in mock mode - no API keys, no cost.</p>
+<p>Step through Traigent's features with 8 progressive examples. All run in mock mode with cost approval pre-set for local dry runs - no provider API keys, no provider spend.</p>
 <h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
 <p>The bundled <code>walkthrough/mock/*</code> scripts self-select mock behavior for local demos. For your own tutorial code, prefer the in-code helper:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">enable_mock_mode_for_quickstart</span>
 
 <span class="n">enable_mock_mode_for_quickstart</span><span class="p">()</span>
 </code></pre></div>
+<p>For a genuinely free dry run outside the bundled scripts, combine mock mode
+with <code>cost_approved=True</code> in code or <code>TRAIGENT_COST_APPROVED=true</code> in the shell.
+Mock mode intercepts LiteLLM and LangChain calls only; raw
+<code>openai.chat.completions.create(...)</code> and <code>anthropic.messages.create(...)</code>
+calls can still hit real provider APIs.</p>
 <p>The legacy <code>TRAIGENT_MOCK_LLM=true</code> env var remains available outside production for shell fixtures and backwards compatibility, but direct user-set activation emits <code>DeprecationWarning</code>.</p>
 <h2 id="steps">Steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h2>
 <table>
