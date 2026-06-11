@@ -31,6 +31,11 @@ from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_edge_analytics_commands
+from traigent.evaluators import (
+    list_eval_recommendation_task_types,
+    recommend_evaluator,
+    recommend_metrics,
+)
 from traigent.utils.logging import setup_logging
 from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import (
@@ -576,6 +581,100 @@ def recommend(
     _print_recommendations_table(data)
 
 
+@cli.command("recommend-eval")
+@click.argument("task_type", required=False)
+@click.option(
+    "--list-types",
+    is_flag=True,
+    default=False,
+    help="List valid metric/evaluator recommendation task types.",
+)
+@click.option(
+    "--measure-type",
+    "measure_types",
+    multiple=True,
+    type=click.Choice(
+        [
+            "sanity_check",
+            "accuracy",
+            "quality",
+            "latency",
+            "safety",
+            "efficiency",
+            "reliability",
+        ],
+        case_sensitive=False,
+    ),
+    help="Measure type to include. Can be repeated.",
+)
+@click.option(
+    "--evaluator",
+    "show_evaluator",
+    is_flag=True,
+    default=False,
+    help="Show evaluator recommendations instead of metric recommendations.",
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Output recommendations as JSON for tooling integration.",
+)
+def recommend_eval(
+    task_type: str | None,
+    list_types: bool,
+    measure_types: tuple[str, ...],
+    show_evaluator: bool,
+    output_json: bool,
+) -> None:
+    """Show metric/evaluator recommendations for a task type.
+
+    Examples:
+        traigent recommend-eval rag
+        traigent recommend-eval code_gen --measure-type accuracy
+        traigent recommend-eval general --evaluator
+        traigent recommend-eval --list-types
+    """
+    valid_types = list_eval_recommendation_task_types()
+    if list_types:
+        if output_json:
+            click.echo(json.dumps({"valid_task_types": list(valid_types)}, indent=2))
+            return
+        console.print(
+            "Valid metric/evaluator recommendation task types: "
+            + ", ".join(f"[cyan]{task_type}[/cyan]" for task_type in valid_types)
+        )
+        return
+
+    if task_type is None:
+        raise click.ClickException(
+            "task_type is required unless --list-types is provided. "
+            f"Valid types: {', '.join(valid_types)}"
+        )
+
+    try:
+        data = (
+            recommend_evaluator(task_type)
+            if show_evaluator
+            else recommend_metrics(
+                task_type,
+                measure_types=measure_types or None,
+            )
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if output_json:
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    if show_evaluator:
+        _print_eval_evaluator_table(data)
+        return
+    _print_eval_metrics_table(data)
+
+
 def _print_recommendations_table(data: dict[str, Any]) -> None:
     recommendations = data["recommendations"]
     console.print(
@@ -616,6 +715,102 @@ def _print_recommendations_table(data: dict[str, Any]) -> None:
             f"[cyan]{row['name']}[/cyan]: "
             f"{_truncate_text(str(row['apply_guidance']), 300)}"
         )
+
+
+def _print_eval_metrics_table(data: dict[str, Any]) -> None:
+    recommendations = data["recommendations"]
+    console.print(
+        f"\n[bold blue]Metric Recommendations for {data['task_type']}[/bold blue]"
+    )
+    console.print(f"[dim]{data['caveat']}[/dim]\n")
+
+    if not recommendations:
+        console.print(
+            "[yellow]No recommendations matched the requested filters.[/yellow]"
+        )
+        return
+
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Measure", no_wrap=True)
+    table.add_column("Method", no_wrap=True)
+    table.add_column("Function", style="green", no_wrap=True)
+    table.add_column("Impact / Evidence", no_wrap=True)
+
+    for row in recommendations:
+        metric = row["metric"]
+        table.add_row(
+            str(metric["name"]),
+            str(row["measure_type"]),
+            str(row["evaluation_method"]),
+            str(metric.get("builtin_function") or "custom"),
+            f"{row['impact_estimate']} / {row['confidence']}",
+        )
+
+    console.print(table)
+    console.print("\n[bold]Provenance[/bold]")
+    for row in recommendations:
+        metric = row["metric"]
+        console.print(
+            f"[cyan]{metric['name']}[/cyan]: "
+            f"{_truncate_text(_format_eval_provenance(row), 300)}"
+        )
+
+
+def _print_eval_evaluator_table(data: dict[str, Any]) -> None:
+    recommendations = data["recommendations"]
+    console.print(
+        f"\n[bold blue]Evaluator Recommendations for {data['task_type']}[/bold blue]"
+    )
+    console.print(f"[dim]{data['caveat']}[/dim]\n")
+
+    if not recommendations:
+        console.print(
+            "[yellow]No evaluator recommendations matched the requested filters."
+            "[/yellow]"
+        )
+        return
+
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Method", no_wrap=True)
+    table.add_column("Binding", style="green", no_wrap=True)
+    table.add_column("Cost", no_wrap=True)
+    table.add_column("Impact / Evidence", no_wrap=True)
+
+    for row in recommendations:
+        binding = row["evaluator_binding"]
+        table.add_row(
+            str(row["metric_name"]),
+            str(row["evaluation_method"]),
+            f"{binding['kind']}\n{binding['sdk_ref']}",
+            str(row["cost_tier"]),
+            f"{row['impact_estimate']} / {row['confidence']}",
+        )
+
+    console.print(table)
+    console.print("\n[bold]Setup Notes[/bold]")
+    for row in recommendations:
+        binding = row["evaluator_binding"]
+        console.print(
+            f"[cyan]{row['metric_name']}[/cyan]: "
+            f"{_truncate_text(str(binding['setup_note']), 300)}"
+        )
+    console.print("\n[bold]Cost Notes[/bold]")
+    for row in recommendations:
+        console.print(
+            f"[cyan]{row['metric_name']}[/cyan]: "
+            f"{_truncate_text(str(row['cost_note']), 300)}"
+        )
+
+
+def _format_eval_provenance(row: dict[str, Any]) -> str:
+    parts = []
+    for ref in row.get("provenance", []):
+        citation = str(ref.get("citation", ""))
+        summary = str(ref.get("finding_summary", ""))
+        parts.append(f"{citation}: {summary}")
+    return "; ".join(parts) or "No provenance note listed."
 
 
 def _format_recommendation_range(row: dict[str, Any]) -> str:
@@ -2361,7 +2556,9 @@ def check(
             )
             return
 
-        console.print("\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]")
+        console.print(
+            "\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]"
+        )
         validator = OptimizationValidator(threshold_pct=threshold)
 
         async def run_validations() -> tuple[list[Any], int, int]:
