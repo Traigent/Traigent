@@ -116,6 +116,32 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.hybrid_api_transport is transport
 
+    def test_decorator_execution_mode_registry_matches_runtime(self):
+        """Decorator validation accepts the same modes advertised by runtime."""
+        from traigent.config.types import accepted_execution_mode_values
+
+        @optimize(configuration_space={"x": [1, 2]}, execution_mode="local")
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "edge_analytics"
+
+        with pytest.raises(ConfigurationError) as exc_info:
+
+            @optimize(configuration_space={"x": [1, 2]}, execution_mode="standard")
+            def removed_mode_function(x: int) -> int:
+                return x
+
+        assert str(list(accepted_execution_mode_values())) in str(exc_info.value)
+        for mode in accepted_execution_mode_values():
+
+            @optimize(configuration_space={"x": [1, 2]}, execution_mode=mode)
+            def accepted_mode_function(x: int) -> int:
+                return x
+
+            assert isinstance(accepted_mode_function, OptimizedFunction)
+
     def test_decorator_max_trials_reaches_optimized_function(self):
         """Regression: max_trials from decorator must reach OptimizedFunction.
 
@@ -202,7 +228,7 @@ class TestOptimizeDecorator:
         """Preset selection should be exposed without replacing best_config."""
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
-        def evaluator(func, config, example):
+        async def evaluator(func, config, example):
             _ = func, example
             if config["model"] == "accurate":
                 metrics = {"accuracy": 0.9, "cost": 0.03}
@@ -253,7 +279,7 @@ class TestOptimizeDecorator:
             "bad-cheap": {"accuracy": 0.70, "cost": 0.001},
         }
 
-        def evaluator(func, config, example):
+        async def evaluator(func, config, example):
             _ = func, example
             return ExampleResult(
                 example_id="ex_1",

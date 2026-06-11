@@ -25,8 +25,9 @@ export AWS_PROFILE=traigent-bedrock
 # Optional explicit model override
 # export BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
 
-# Optional: Mock Bedrock to dry-run without AWS credentials
-# export BEDROCK_MOCK=true
+# Local mock mode: export TRAIGENT_MOCK_LLM=true, or call
+# traigent.testing.enable_mock_mode_for_quickstart() in tutorial code.
+# Provider-specific *_MOCK env vars are ignored.
 ```
 
 ## Credential Boundary
@@ -42,7 +43,7 @@ credential with the same boundary. It belongs in your local AWS credential
 environment or tooling, not in Traigent backend configuration.
 
 For the broader credential and telemetry boundary, see the
-[Credential & data trust model](../../SECURITY.md#credential--data-trust-model).
+[Credential & data trust model](../security/trust_model.md).
 
 ## Dependency Installation
 Ensure you installed integration dependencies:
@@ -64,7 +65,10 @@ With AWS credentials configured, you can exercise the shipped Bedrock example:
 python examples/integrations/bedrock/bedrock_hello.py
 ```
 
-If the Bedrock path is selected, the pipeline will route through `traigent.integrations.bedrock_client.BedrockChatClient`.
+Bedrock coverage includes the native `BedrockChatClient` plus LangChain
+`ChatBedrock` and `ChatBedrockConverse` interception. In mock mode,
+`TRAIGENT_MOCK_LLM` routes Bedrock calls through `MockAdapter`; in real mode,
+responses are captured for token/cost/latency extraction.
 
 ## Troubleshooting
 - `AccessDeniedException`: Verify model access is granted in Bedrock console and IAM policy includes `InvokeModel*`.

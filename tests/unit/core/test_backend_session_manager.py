@@ -3,17 +3,28 @@
 Tests the extracted backend session lifecycle manager with stub backend client.
 """
 
+import json
+import logging
 import re
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult
-from traigent.cloud.session_types import SessionCreationResult
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
+from traigent.cloud.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
 from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.function_identity import resolve_function_descriptor
 
 
@@ -30,6 +41,9 @@ def mock_backend_client():
     client.upload_example_features = Mock(return_value=True)
     client.submit_result = Mock()
     client.register_trial_start = AsyncMock()
+    # The backend mints the configuration_run id via next-trial; the manager
+    # rebinds the trial to it before submitting results.
+    client.request_trial_slot = AsyncMock(return_value="be_trial_mint_1")
     client._submit_trial_result_via_session = AsyncMock(return_value=True)
     client.update_trial_weighted_scores = AsyncMock(return_value=True)
     client.finalize_session = Mock(return_value={"status": "completed"})
@@ -211,6 +225,18 @@ class TestBackendSessionManagerCreation:
 class TestBackendSessionManagerTrialSubmission:
     """Test trial submission."""
 
+    @staticmethod
+    def _wire_submit_result_to_storage(mock_backend_client, storage):
+        def submit_result(session_id, config, score, metadata=None):
+            storage.add_trial_result(
+                session_id=session_id,
+                config=config,
+                score=score,
+                metadata=metadata or {},
+            )
+
+        mock_backend_client.submit_result.side_effect = submit_result
+
     @pytest.mark.asyncio
     async def test_submit_trial_success(
         self, backend_session_manager, mock_trial_result, mock_backend_client
@@ -223,10 +249,264 @@ class TestBackendSessionManagerTrialSubmission:
 
         assert result is True
 
-        # Verify backend calls
+        # Verify backend calls: the manager acquires a backend-minted trial
+        # slot (next-trial) and submits the result under THAT id, rebinding
+        # the trial in place.
         mock_backend_client.submit_result.assert_called_once()
-        mock_backend_client.register_trial_start.assert_called_once()
+        mock_backend_client.request_trial_slot.assert_called_once_with(
+            "test-session-id"
+        )
         mock_backend_client._submit_trial_result_via_session.assert_called_once()
+        submit_kwargs = (
+            mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        )
+        assert submit_kwargs["trial_id"] == "be_trial_mint_1"
+        # The trial object's id is rebound to the backend slot so the
+        # incumbent the certified report reads carries the backend id.
+        assert mock_trial_result.trial_id == "be_trial_mint_1"
+        # And the backend acknowledged that slot.
+        assert backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "be_trial_mint_1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_persists_locally_when_backend_tracking_disabled(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        mock_backend_client,
+        mock_trial_result,
+        tmp_path,
+        caplog,
+    ):
+        """The backend breaker must not suppress local edge analytics storage."""
+        storage = LocalStorageManager(str(tmp_path))
+        session_id = storage.create_session(
+            "offline_func",
+            optimization_config={"objective_schema": {"primary": "accuracy"}},
+        )
+        self._wire_submit_result_to_storage(mock_backend_client, storage)
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        manager.disable_backend_tracking(SessionCreationFailureReason.NO_API_KEY)
+
+        with caplog.at_level(
+            logging.DEBUG, logger="traigent.core.backend_session_manager"
+        ):
+            result = await manager.submit_trial(
+                trial_result=mock_trial_result,
+                session_id=session_id,
+            )
+
+        assert result is False
+        mock_backend_client.submit_result.assert_called_once()
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert "credentials-unavailable" in caplog.text
+        assert "NO_API_KEY" not in caplog.text
+        assert "no_api_key" not in caplog.text
+        stored_session = storage.load_session(session_id)
+        assert stored_session is not None
+        assert stored_session.completed_trials == 1
+        assert len(stored_session.trials or []) == 1
+        stored_trial = stored_session.trials[0]
+        assert stored_trial.config == mock_trial_result.config
+        assert stored_trial.score == 0.9
+        assert stored_trial.cost == 0.5
+        assert stored_trial.total_cost == 0.5
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_records_locally_once_when_backend_enabled(
+        self,
+        backend_session_manager,
+        mock_backend_client,
+        mock_trial_result,
+        tmp_path,
+    ):
+        """A backend-enabled submit should perform one local compatibility write."""
+        storage = LocalStorageManager(str(tmp_path))
+        session_id = storage.create_session("online_func")
+        self._wire_submit_result_to_storage(mock_backend_client, storage)
+
+        result = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id=session_id,
+        )
+
+        assert result is True
+        mock_backend_client.submit_result.assert_called_once()
+        stored_session = storage.load_session(session_id)
+        assert stored_session is not None
+        assert stored_session.completed_trials == 1
+        assert len(stored_session.trials or []) == 1
+
+    @pytest.mark.asyncio
+    async def test_offline_two_trial_session_json_keeps_trials_and_cost(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        mock_backend_client,
+        tmp_path,
+    ):
+        """Regression boundary for edge_analytics sessions becoming empty husks."""
+        storage = LocalStorageManager(str(tmp_path))
+        session_id = storage.create_session("offline_func")
+        self._wire_submit_result_to_storage(mock_backend_client, storage)
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        manager.disable_backend_tracking(SessionCreationFailureReason.NO_API_KEY)
+
+        for index, cost in enumerate((0.11, 0.22), start=1):
+            trial = Mock(spec=TrialResult)
+            trial.trial_id = f"trial-{index}"
+            trial.config = {"param1": index}
+            trial.metrics = {"accuracy": 0.7 + index / 10, "total_cost": cost}
+            trial.is_successful = True
+            trial.status = TrialStatus.COMPLETED
+            trial.duration = 1.0
+            trial.error_message = None
+            trial.metadata = {}
+            trial.get_metric = Mock(
+                side_effect=lambda key, default=None, t=trial: t.metrics.get(
+                    key, default
+                )
+            )
+
+            await manager.submit_trial(trial_result=trial, session_id=session_id)
+
+        session_json = json.loads(
+            (tmp_path / "sessions" / f"{session_id}.json").read_text()
+        )
+        assert session_json["status"] == "pending"
+        assert session_json["completed_trials"] == 2
+        assert len(session_json["trials"]) == 2
+        assert [trial["total_cost"] for trial in session_json["trials"]] == [
+            0.11,
+            0.22,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_fails_closed_when_no_backend_slot(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """When the backend declines to mint a trial slot (next-trial returns
+        no id), the manager MUST NOT submit a result under a client-hashed id
+        (it would 404) and MUST NOT acknowledge the trial — the certified
+        report later withholds for this unbindable incumbent (Rule 1/2)."""
+        mock_backend_client.request_trial_slot = AsyncMock(return_value=None)
+        original_id = mock_trial_result.trial_id
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        # No remote result submission attempted (no fake completion).
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        # The trial id is NOT rebound to a fabricated backend id.
+        assert mock_trial_result.trial_id == original_id
+        # And it is NOT acknowledged — the report guard will withhold.
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", original_id
+        )
+
+    @pytest.mark.asyncio
+    async def test_submission_carries_only_the_tuned_projection(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """P8 content-freedom on the submission path (live-E2E finding): the
+        resolved trial config carries injected CALIBRATED values; the wire
+        submission must carry ONLY the tuned search-space keys — a calibrated
+        value (e.g. a fitted threshold) must never ride to the backend, and
+        the backend's create-time key-subset validation would reject it
+        anyway (silently voiding the trial record)."""
+        backend_session_manager._optimizer.config_space = {"variant": ["a", "b"]}
+        mock_trial_result.config = {"variant": "a", "threshold": 0.7}
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_3"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=True
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        kwargs = mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        assert kwargs["config"] == {"variant": "a"}
+        assert "threshold" not in kwargs["config"]  # P8 canary
+        # the LOCAL trial result keeps its full resolved view
+        assert mock_trial_result.config == {"variant": "a", "threshold": 0.7}
+
+    @pytest.mark.asyncio
+    async def test_slot_allocated_but_submit_failed_is_never_attestable(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Codex lane-fix round (non-blocking, pinned): a slot CAN be
+        allocated and the trial id rebound before the result submission
+        fails — that half-bound state is intentional (the id is real, the
+        backend holds a pending trial) but it must NEVER become an
+        attestation path: no acknowledgment without a truthy submission."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_1"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=False
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        # rebound (documented half-bound state — the backend DID mint it)
+        assert mock_trial_result.trial_id == "trial_backend_minted_1"
+        # but NEVER acknowledged — the certified report withholds.
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "trial_backend_minted_1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_slot_allocated_but_submit_raised_is_never_attestable(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Same pin for the raising path: a transport error after slot
+        allocation must not acknowledge."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_2"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            side_effect=ConnectionError("boom")
+        )
+
+        try:
+            await backend_session_manager.submit_trial(
+                trial_result=mock_trial_result,
+                session_id="test-session-id",
+            )
+        except ConnectionError:
+            pass  # propagation policy is the manager's existing behavior
+
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "trial_backend_minted_2"
+        )
 
     @pytest.mark.asyncio
     async def test_submit_trial_without_backend(
@@ -448,7 +728,7 @@ class TestBackendSessionManagerFinalization:
 
         assert summary == {"status": "completed"}
         mock_backend_client.finalize_session_sync.assert_called_once_with(
-            "test-session-id", True
+            "test-session-id", True, certified_selection=None
         )
 
     def test_finalize_session_without_backend(
@@ -951,9 +1231,7 @@ class TestHandleSessionCreationResult:
     def test_no_api_key_warning_includes_signup_url(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
-        """handle_session_creation_result must emit WARNING with signup URL for NO_API_KEY."""
-        import logging
-
+        """NO_API_KEY local fallback emits INFO with signup URL, not WARNING."""
         from traigent.cloud.session_types import (
             SessionCreationFailureReason,
             SessionCreationResult,
@@ -977,22 +1255,161 @@ class TestHandleSessionCreationResult:
         )
 
         with caplog.at_level(
+            logging.INFO, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert not manager.backend_tracking_enabled
+        no_key_records = [
+            record for record in caplog.records if "No API key found" in record.message
+        ]
+        assert len(no_key_records) == 1
+        assert no_key_records[0].levelno == logging.INFO
+        assert SIGNUP_URL in no_key_records[0].message
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_records) == 0
+
+    def test_auth_failure_aborts_by_default_with_structured_reason(
+        self, traigent_config, objective_schema, mock_optimizer
+    ):
+        """403 session creation failures abort before trial spend by default."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.utils.exceptions import ConfigurationError
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (403)",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"Missing required permissions: experiment.write",'
+                '"details":{"missing_permissions":["experiment.write"]}}',
+            ),
+        )
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            manager.handle_session_creation_result(result)
+
+        assert not manager.backend_tracking_enabled
+        message = str(exc_info.value)
+        assert "missing-permission" in message
+        assert "INSUFFICIENT_PERMISSIONS" in message
+        assert "experiment.write" in message
+        assert "Aborting before trials or LLM calls" in message
+        assert "TRAIGENT_ALLOW_UNTRACKED=1" in message
+
+    def test_create_session_auth_abort_before_trial_submission(
+        self,
+        backend_session_manager,
+        mock_backend_client,
+        mock_dataset,
+    ):
+        """Session-create auth failures stop before any trial backend write."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.utils.exceptions import ConfigurationError
+
+        mock_backend_client.create_session.return_value = (
+            SessionCreationResult.fallback(
+                session_id="local_test",
+                reason=SessionCreationFailureReason.AUTH,
+                detail="Authentication failed (403)",
+                failure_response=SessionCreationFailureDetail.from_http_response(
+                    403,
+                    '{"error_code":"INSUFFICIENT_PERMISSIONS",'
+                    '"message":"Missing required permissions: experiment.write",'
+                    '"details":{"missing_permissions":["experiment.write"]}}',
+                ),
+            )
+        )
+
+        def func(x):
+            return x
+
+        descriptor = resolve_function_descriptor(func)
+
+        with pytest.raises(ConfigurationError):
+            backend_session_manager.create_session(
+                func=func,
+                dataset=mock_dataset,
+                function_descriptor=descriptor,
+                max_trials=10,
+                start_time=1234567890.0,
+            )
+
+        mock_backend_client.submit_result.assert_not_called()
+        mock_backend_client.request_trial_slot.assert_not_called()
+        assert not backend_session_manager.backend_tracking_enabled
+
+    def test_auth_failure_allows_local_only_with_explicit_opt_in(
+        self, traigent_config, objective_schema, mock_optimizer, caplog, monkeypatch
+    ):
+        """TRAIGENT_ALLOW_UNTRACKED=1 preserves local-only fallback for auth errors."""
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        monkeypatch.setenv("TRAIGENT_ALLOW_UNTRACKED", "1")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (403)",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"Missing required permissions: experiment.write",'
+                '"details":{"missing_permissions":["experiment.write"]}}',
+            ),
+        )
+
+        with caplog.at_level(
             logging.WARNING, logger="traigent.core.backend_session_manager"
         ):
             session_id = manager.handle_session_creation_result(result)
 
         assert session_id == "local_test"
         assert not manager.backend_tracking_enabled
-        assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
-        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warning_records) == 1
+        assert any("missing-permission" in msg for msg in caplog.messages)
+        assert any("experiment.write" in msg for msg in caplog.messages)
+        assert any("Continuing local-only" in msg for msg in caplog.messages)
 
-    def test_auth_failure_warning(
+    def test_connection_failure_warns_and_continues_local(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
-        """handle_session_creation_result must emit WARNING for AUTH failure."""
+        """Transient backend unreachability remains warn-and-continue."""
         import logging
 
         from traigent.cloud.session_types import (
@@ -1012,17 +1429,61 @@ class TestHandleSessionCreationResult:
 
         result = SessionCreationResult.fallback(
             session_id="local_test",
-            reason=SessionCreationFailureReason.AUTH,
-            detail="Authentication failed (401)",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Backend unavailable (connection failed)",
         )
 
         with caplog.at_level(
             logging.WARNING, logger="traigent.core.backend_session_manager"
         ):
-            manager.handle_session_creation_result(result)
+            session_id = manager.handle_session_creation_result(result)
 
+        assert session_id == "local_test"
         assert not manager.backend_tracking_enabled
-        assert any("authentication failed" in msg.lower() for msg in caplog.messages)
+        assert any("backend-unreachable" in msg for msg in caplog.messages)
+        assert any("Continuing local-only" in msg for msg in caplog.messages)
+
+    def test_unknown_4xx_warning_includes_raw_reason(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Unknown 4xx responses are classified without dropping the raw body."""
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert any("Classification: unknown" in msg for msg in caplog.messages)
+        assert any(
+            "Bad request from session endpoint" in msg for msg in caplog.messages
+        )
 
     def test_idempotent_warns_only_once(
         self, traigent_config, objective_schema, mock_optimizer, caplog
@@ -1047,7 +1508,8 @@ class TestHandleSessionCreationResult:
 
         result = SessionCreationResult.fallback(
             session_id="local_test",
-            reason=SessionCreationFailureReason.AUTH,
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Backend unavailable",
         )
 
         with caplog.at_level(
@@ -1057,9 +1519,9 @@ class TestHandleSessionCreationResult:
             manager.handle_session_creation_result(result)
 
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert (
-            len(warning_records) == 1
-        ), f"Expected exactly 1 warning, got {len(warning_records)}"
+        assert len(warning_records) == 1, (
+            f"Expected exactly 1 warning, got {len(warning_records)}"
+        )
 
     def test_success_logs_info(
         self, traigent_config, objective_schema, mock_optimizer, caplog

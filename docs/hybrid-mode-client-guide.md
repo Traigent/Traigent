@@ -25,7 +25,7 @@ Before running optimization, verify:
 3. `POST /traigent/v1/execute` enforces capability matching and returns `operational_metrics.total_cost_usd`.
 4. `POST /traigent/v1/evaluate` is implemented when `supports_evaluate=true`.
 5. Optional fields (`constraints`, `objectives`, `exploration`, `promotion_policy`, `defaults`, `measures`) are omitted unless intentionally used.
-6. Auth behavior is consistent across all endpoints if `Authorization` is required.
+6. Auth behavior is consistent across all endpoints if authentication is required; accept both `Authorization` and `x-api-key` because the SDK sends both from `hybrid_api_auth_header`.
 7. Timeout/error behavior is explicit for `400/401/404/408/429/500/503` and client retry logic is implemented.
 
 ## Privacy-Preserving Mode (Default)
@@ -433,6 +433,7 @@ class ExecuteRequest(BaseModel):
     tunable_id: str
     config: dict
     examples: list[dict]
+    session_id: str | None = None
 
 @app.get("/traigent/v1/capabilities")
 async def capabilities():
@@ -615,7 +616,7 @@ import traigent
 def my_agent(_query: str):
     return ""  # Execution is delegated to the external hybrid API
 
-result = my_agent.optimize()
+result = await my_agent.optimize()
 print(f"Best config: {result.best_config}")
 print(f"Best metrics: {result.best_metrics}")
 ```
@@ -896,4 +897,4 @@ Backend tracking unavailable ... Results will be saved locally
 
 - [API Contract](./hybrid-mode-api-contract.md) - Detailed endpoint specifications
 - See inline Flask and FastAPI examples in this guide
-- [TraigentService Wrapper](../traigent/wrapper/) - Decorator-based SDK
+- TraigentService wrapper: see the wrapper example above.

@@ -7,35 +7,33 @@ Release-ready, minimal install steps for the SDK and examples.
 ### Fast path (pip)
 
 ```bash
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"           # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
+pip install "traigent[recommended]"       # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
 ```
 
 ### Fast path (uv)
 
 Use this path if your environment already uses `uv`. It installs the same
-source checkout and extras; `pip` remains fully supported. Replace `3.11` with
+published package and extras; `pip` remains fully supported. Replace `3.11` with
 any supported Python 3.11-3.13 interpreter available in your environment.
 
 ```bash
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
 uv venv --python 3.11
 source .venv/bin/activate
-uv pip install -e ".[recommended]"        # Same recommended bundle as the pip path
+uv pip install "traigent[recommended]"    # Same recommended bundle as the pip path
 ```
 
 ### PyPI vs source installs
 
-`0.10.0` release validation uses the source install from this repository. Use a published package only if your team separately validates that artifact for your environment.
+For Traigent SDK 0.12.0, prefer the published PyPI package: `pip install "traigent[recommended]"`. Use a source checkout only for development or when validating unreleased changes.
+
+License: Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigent-Commercial.
 
 ## Extras (from `pyproject.toml`)
 
 | Extra | What's included | Install example |
 | --- | --- | --- |
-| **`recommended`** | **All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)** | **`pip install -e ".[recommended]"`** |
+| **`recommended`** | **All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)** | **`pip install "traigent[recommended]"`** |
 | `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `pip install -e ".[integrations]"` |
 | `analytics` | numpy, pandas, matplotlib | `pip install -e ".[analytics]"` |
 | `bayesian` | Optuna + sklearn/scipy | `pip install -e ".[bayesian]"` |
@@ -51,20 +49,18 @@ uv pip install -e ".[recommended]"        # Same recommended bundle as the pip p
 
 ## Common Scenarios
 
-- **Run examples from a pip-managed source checkout (no API keys):**
+- **Run the packaged quickstart with pip (no API keys):**
 
   ```bash
-  pip install -e ".[recommended]"
-  export TRAIGENT_MOCK_LLM=true
-  python hello_world.py
+  pip install "traigent[recommended]"
+  traigent quickstart
   ```
 
-- **Run examples from a uv-managed source checkout (no API keys):**
+- **Run the packaged quickstart with uv (no API keys):**
 
   ```bash
-  uv pip install -e ".[recommended]"
-  export TRAIGENT_MOCK_LLM=true
-  python hello_world.py
+  uv pip install "traigent[recommended]"
+  traigent quickstart
   ```
 
 - **Develop/contribute:**
@@ -95,9 +91,9 @@ PY
 
 ## Troubleshooting (quick fixes)
 
-- **`ModuleNotFoundError: langchain`** — install recommended extras: `pip install -e ".[recommended]"`.
-- **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_LLM=true`). On Ubuntu desktop, you can also store keys in GNOME Keyring and export them with `secret-tool lookup ...` before running examples (see `docs/guides/secrets_management.md`).
-- **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install -e ".[recommended]"`.
+- **`ModuleNotFoundError: langchain`** — install recommended extras: `pip install "traigent[recommended]"`.
+- **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, or call `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial code. On Ubuntu desktop, you can also store keys in GNOME Keyring and export them with `secret-tool lookup ...` before running examples (see `docs/guides/secrets_management.md`).
+- **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install "traigent[recommended]"`.
 
 ---
 

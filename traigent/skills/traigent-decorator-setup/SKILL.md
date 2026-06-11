@@ -1,7 +1,7 @@
 ---
 name: traigent-decorator-setup
 description: "Configure the @traigent.optimize() decorator with evaluation, injection, and execution options. Use when setting up eval_dataset, choosing injection_mode, configuring execution_mode, defining objectives, using EvaluationOptions/InjectionOptions/ExecutionOptions, or integrating custom evaluators."
-license: Apache-2.0
+license: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
 metadata:
   author: Traigent
   version: "1.0"

@@ -1,6 +1,6 @@
 # Walkthrough - 8 Runnable Examples
 
-Step through Traigent's features with 8 progressive examples. All run in mock mode - no API keys, no cost.
+Step through Traigent's features with 8 progressive examples. All run in mock mode with cost approval pre-set for local dry runs - no provider API keys, no provider spend.
 
 ## Setup
 
@@ -11,6 +11,12 @@ from traigent.testing import enable_mock_mode_for_quickstart
 
 enable_mock_mode_for_quickstart()
 ```
+
+For a genuinely free dry run outside the bundled scripts, combine mock mode
+with `cost_approved=True` in code or `TRAIGENT_COST_APPROVED=true` in the shell.
+Mock mode intercepts LiteLLM and LangChain calls only; raw
+`openai.chat.completions.create(...)` and `anthropic.messages.create(...)`
+calls can still hit real provider APIs.
 
 The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility, but direct user-set activation emits `DeprecationWarning`.
 
@@ -58,4 +64,4 @@ These are not part of the core 8-step path, but they complement it:
 
 ## Browse source
 
-[walkthrough/mock/](../walkthrough/mock/)
+Browse source in the repository: `walkthrough/mock/`.

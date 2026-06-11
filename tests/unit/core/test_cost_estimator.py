@@ -317,22 +317,29 @@ class TestEstimateOptimizationCost:
 
 
 class TestCheckCostApproval:
-    def test_does_not_skip_in_mock_mode(self) -> None:
-        """S2-B Round 3: mock-mode bypass was removed; approval always runs."""
+    def test_skips_optimized_function_preflight_in_mock_mode(self) -> None:
+        """Mock provider calls spend $0, so dry-runs skip the pre-run estimate gate."""
         enforcer = MagicMock()
-        # is_mock_mode is no longer consulted; spec it away so attribute access
-        # would fail and prove the new code path doesn't read it.
-        del enforcer.is_mock_mode
         enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
-        estimator.check_cost_approval(_FakeDataset())
-        enforcer.check_and_approve.assert_called_once()
+        with (
+            patch("traigent.core.cost_estimator.is_mock_llm", return_value=True),
+            patch.object(
+                estimator,
+                "estimate_optimization_cost",
+                return_value=999.0,
+            ) as estimate_cost,
+        ):
+            estimator.check_cost_approval(_FakeDataset())
+        estimate_cost.assert_not_called()
+        enforcer.check_and_approve.assert_not_called()
 
     def test_passes_when_approved(self) -> None:
         enforcer = MagicMock(is_mock_mode=False)
         enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
-        estimator.check_cost_approval(_FakeDataset())
+        with patch("traigent.core.cost_estimator.is_mock_llm", return_value=False):
+            estimator.check_cost_approval(_FakeDataset())
         enforcer.check_and_approve.assert_called_once()
 
     def test_raises_when_declined(self) -> None:
@@ -343,8 +350,20 @@ class TestCheckCostApproval:
 
         from traigent.core.cost_enforcement import OptimizationAborted
 
-        with pytest.raises(OptimizationAborted, match="Cost approval declined"):
+        with (
+            patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
+            pytest.raises(OptimizationAborted) as exc_info,
+        ):
             estimator.check_cost_approval(_FakeDataset())
+
+        message = str(exc_info.value)
+        assert "Cost approval declined" in message
+        assert "Rough conservative upper-bound estimate" in message
+        assert "TRAIGENT_RUN_COST_LIMIT" in message
+        assert "TRAIGENT_COST_APPROVED=true" in message
+        assert "cost_approved=True" in message
+        assert "TRAIGENT_CUSTOM_MODEL_PRICING_FILE" in message
+        assert "TRAIGENT_CUSTOM_MODEL_PRICING_JSON" in message
 
 
 # ---------------------------------------------------------------------------

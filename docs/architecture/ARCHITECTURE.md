@@ -9,7 +9,10 @@ Traigent is a zero-code LLM optimization SDK that automatically finds the best c
 - **Parameter Optimization**: Automatically tune model selection, temperature, prompts, and other parameters
 - **Multi-Objective Optimization**: Balance accuracy, cost, latency, and other metrics simultaneously
 - **Framework Integration**: Native support for LangChain, DSPy, OpenAI, Anthropic, and more
-- **Flexible Execution**: Run locally (edge analytics) or in the cloud
+- **Flexible Execution**: Run locally (`edge_analytics`), with backend tracking
+  (`hybrid`), or through an external Hybrid API service (`hybrid_api`).
+  `privacy` is a legacy alias for `hybrid` with privacy enabled; `cloud` is
+  reserved and fails closed.
 - **TVL Specifications**: Define optimization specs in YAML for version control and collaboration
 
 ---
@@ -395,16 +398,15 @@ from traigent import Range, Choices
     # Configure evaluation
     evaluation={"eval_dataset": "test_cases.jsonl"},
 
-    # Set budget
-    exploration={"budget": 50}
+    # Runtime limits are passed to .optimize()
 )
 def my_agent(query: str) -> str:
     config = traigent.get_config()
     # Your LLM logic here
     return response
 
-# Run optimization
-result = my_agent.optimize()
+# Run optimization from synchronous code
+result = my_agent.optimize_sync(max_trials=50, cost_limit=50.0)
 print(f"Best config: {result.best_config}")
 print(f"Accuracy: {result.best_metrics['accuracy']:.2%}")
 ```
@@ -413,4 +415,4 @@ print(f"Accuracy: {result.best_metrics['accuracy']:.2%}")
 
 ## Learn More
 
-- [Examples](../../examples/)
+- Examples in the repository source (`examples/`)

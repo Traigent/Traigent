@@ -169,7 +169,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 ## 🚀 Walkthrough — 8 runnable examples
 
-The walkthrough examples use local mock mode through the quickstart/testing helpers — no API keys needed.
+The walkthrough examples use local mock mode through the quickstart/testing helpers with cost approval pre-set for dry runs — no provider API keys needed when calls go through LiteLLM or LangChain.
 
 <details>
 <summary>Show all 8 walkthrough steps</summary>
@@ -294,8 +294,11 @@ pip install -e ".[recommended]"
 Cost estimates, budgets, limits, alerts, and thresholds are best-effort software controls, not
 provider-side billing guarantees. Actual billing is determined by your LLM/cloud providers, and you
 remain responsible for provider charges. The legacy `TRAIGENT_MOCK_LLM=true` env var is supported
-only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`. See
-[DISCLAIMER.md](DISCLAIMER.md) for details.
+only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`.
+Mock mode skips the optimized-function pricing preflight for supported calls made through
+Traigent's integration/interceptor path; direct provider calls made outside that path should
+be stubbed explicitly for a guaranteed $0 rehearsal. See [DISCLAIMER.md](DISCLAIMER.md)
+for details.
 
 ### Evaluation
 

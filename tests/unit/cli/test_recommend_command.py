@@ -45,7 +45,7 @@ def test_recommend_command_smoke_table() -> None:
     assert result.exit_code == 0
     assert "TVar Recommendations for rag" in result.output
     assert "retrieval_k" in result.output
-    assert "manual_guidance" in result.output
+    assert "Manual wiring" in result.output
     assert "task-dependent" in result.output
 
 

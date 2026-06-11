@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.helpers import print_optimization_config, print_results_table
+from utils.helpers import build_results_table_callback, print_optimization_config
 from utils.mock_answers import (
     ANSWERS,
     DEFAULT_MOCK_MODEL,
@@ -37,7 +37,7 @@ traigent.initialize(
 DATASETS = Path(__file__).parent.parent / "datasets"
 RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
 SIMULATED_BEST = {"model": "gpt-3.5-turbo", "temperature": 0.1}
-MOCK_MODE_CONFIG = {"base_accuracy": 0.9, "variance": 0.0, "random_seed": 42}
+MOCK_MODE_CONFIG = {"base_accuracy": 0.9, "variance": 0.0}
 OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -85,10 +85,12 @@ async def main() -> None:
 
     print("\nLOCAL - All data stays on your machine")
 
-    results = await local_mode.optimize(algorithm="grid", max_trials=2, random_seed=42)
-
-    print_results_table(
-        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa"
+    results = await local_mode.optimize(
+        algorithm="grid",
+        max_trials=2,
+        random_seed=42,
+        show_progress=False,
+        callbacks=[build_results_table_callback(is_mock=True, task_type="simple_qa")],
     )
 
     print("\nBest Configuration Found:")

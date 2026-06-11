@@ -37,6 +37,33 @@ class ExecutionMode(StrEnum):
     HYBRID_API = "hybrid_api"
 
 
+# Canonical runtime-supported modes and accepted public aliases. Keep this as
+# the single source for decorator-time and runtime validation messages.
+_SUPPORTED_MODES = (
+    ExecutionMode.EDGE_ANALYTICS,
+    ExecutionMode.HYBRID,
+    ExecutionMode.HYBRID_API,
+)
+_EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
+    "local": ExecutionMode.EDGE_ANALYTICS,
+    "privacy": ExecutionMode.HYBRID,
+}
+_NOT_YET_SUPPORTED_MODES = {ExecutionMode.CLOUD}
+# STANDARD is removed; CLOUD is reserved for future remote execution.
+
+
+def accepted_execution_mode_values() -> tuple[str, ...]:
+    """Return accepted execution_mode strings for all public validators."""
+
+    values = {mode.value for mode in _SUPPORTED_MODES}
+    values.update(_EXECUTION_MODE_ALIASES)
+    return tuple(sorted(values))
+
+
+def _accepted_execution_mode_message() -> str:
+    return f"accepted values are {list(accepted_execution_mode_values())}"
+
+
 def resolve_execution_mode(
     mode: ExecutionMode | str | None,
     *,
@@ -47,30 +74,24 @@ def resolve_execution_mode(
     if mode is None:
         return default
     if isinstance(mode, ExecutionMode):
+        if mode is ExecutionMode.PRIVACY:
+            return ExecutionMode.HYBRID
         return mode
     if isinstance(mode, str):
         normalized = mode.strip().lower()
         if not normalized:
             return default
+        if normalized in _EXECUTION_MODE_ALIASES:
+            return _EXECUTION_MODE_ALIASES[normalized]
         try:
             return ExecutionMode(normalized)
         except ValueError as exc:  # pragma: no cover - defensive
             raise ValueError(
-                f"execution_mode must be one of {[m.value for m in ExecutionMode]}, got '{mode}'"
+                f"execution_mode must be one of {list(accepted_execution_mode_values())}, got '{mode}'"
             ) from exc
     raise TypeError(
         f"execution_mode must be a string or ExecutionMode, got {type(mode).__name__}"
     )
-
-
-# Currently supported execution modes
-_SUPPORTED_MODES = {
-    ExecutionMode.EDGE_ANALYTICS,
-    ExecutionMode.HYBRID,
-    ExecutionMode.HYBRID_API,
-}
-_NOT_YET_SUPPORTED_MODES = {ExecutionMode.CLOUD}
-# PRIVACY is a legacy alias for HYBRID + privacy_enabled=True. STANDARD is removed.
 
 
 def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
@@ -87,17 +108,19 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     try:
         resolved = resolve_execution_mode(mode)
     except ValueError:
-        raise ConfigurationError(f"No such mode '{mode}'") from None
+        raise ConfigurationError(
+            f"No such mode '{mode}'; {_accepted_execution_mode_message()}"
+        ) from None
 
-    if resolved is ExecutionMode.PRIVACY:
-        return ExecutionMode.HYBRID
     if resolved in _NOT_YET_SUPPORTED_MODES:
         raise ConfigurationError(
             "Cloud remote execution is not available yet; use hybrid for "
-            "portal-tracked optimization."
+            f"portal-tracked optimization; {_accepted_execution_mode_message()}."
         )
     if resolved not in _SUPPORTED_MODES:
-        raise ConfigurationError(f"No such mode '{resolved.value}'")
+        raise ConfigurationError(
+            f"No such mode '{resolved.value}'; {_accepted_execution_mode_message()}"
+        )
 
     return resolved
 
@@ -189,6 +212,7 @@ class TraigentConfig:
     # Execution mode and storage configuration
     execution_mode: Literal[
         "edge_analytics",
+        "local",
         "privacy",
         "hybrid",
         "hybrid_api",
@@ -245,11 +269,11 @@ class TraigentConfig:
         # Validate execution mode against the public support contract.
         requested_mode = resolve_execution_mode(self.execution_mode)
         mode_enum = validate_execution_mode(requested_mode)
-        if requested_mode is ExecutionMode.PRIVACY:
+        if isinstance(self.execution_mode, str) and self.execution_mode == "privacy":
             self.privacy_enabled = True
 
         self.execution_mode = cast(
-            Literal["edge_analytics", "privacy", "hybrid", "hybrid_api"],
+            Literal["edge_analytics", "local", "privacy", "hybrid", "hybrid_api"],
             mode_enum.value,
         )
 
@@ -504,7 +528,7 @@ class TraigentConfig:
         elif key == "execution_mode" and value is not None:
             requested_mode = resolve_execution_mode(value)
             resolved_mode = validate_execution_mode(requested_mode)
-            if requested_mode is ExecutionMode.PRIVACY:
+            if isinstance(value, str) and value.strip().lower() == "privacy":
                 # Promote legacy alias to hybrid and enable privacy
                 object.__setattr__(self, "privacy_enabled", True)
                 object.__setattr__(self, "_privacy_enforced_by_execution_mode", True)

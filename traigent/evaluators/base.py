@@ -25,7 +25,13 @@ from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
 )
-from traigent.evaluators.metrics_tracker import extract_llm_metrics
+from traigent.evaluators.metrics_tracker import (
+    USER_METRIC_KEY_PATTERN,
+    aggregate_user_custom_metrics,
+    enforce_user_metric_ceiling,
+    extract_llm_metrics,
+    is_reserved_metric_key,
+)
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -149,7 +155,12 @@ def _resolve_dataset_source(
         resolved_path.relative_to(dataset_root)
     except ValueError as exc:
         raise ValidationError(
-            f"Dataset path must reside under {dataset_root}: {resolved_path}"
+            f"Dataset path must reside under {dataset_root}: {resolved_path}. "
+            "Hint: Dataset paths must reside under the current working "
+            "directory or the path specified by TRAIGENT_DATASET_ROOT. Move "
+            "the dataset under that root, pass a relative path from that root, "
+            "or set TRAIGENT_DATASET_ROOT to the directory containing approved "
+            "evaluation datasets."
         ) from exc
 
     if not resolved_path.is_file():
@@ -764,6 +775,35 @@ class BaseEvaluator(ABC):
             logger.debug(f"Overriding metric: {name}")
         self._metric_registry[name] = func
 
+    def _evaluator_computable_metric_names(self) -> frozenset[str]:
+        """Names this evaluator can compute itself, beyond the static reserved set.
+
+        The static :data:`RESERVED_METRIC_KEYS` cannot enumerate metrics that are
+        only known at runtime — three runtime sources the evaluator computes and
+        writes into the trial metrics:
+
+        * registered custom metrics (``_metric_registry``);
+        * RAGAS metrics (``context_precision`` etc., tracked in
+          ``_ragas_metric_names``);
+        * user-passed custom metric functions (``self.metric_functions``, set on
+          ``SimpleScoringEvaluator`` / ``LocalEvaluator``). These are NEVER
+          registered into ``_metric_registry`` — they are invoked directly — so
+          a name like ``f1`` would otherwise be invisible here. Omitting them let
+          a user tuple key named ``f1`` overwrite the evaluator-computed ``f1``,
+          and let the final-union cap treat the evaluator's own ``f1`` as a
+          droppable user key under ceiling pressure.
+
+        A user-supplied tuple key with one of these names must NOT overwrite the
+        evaluator's computed value, so this set is threaded into every
+        user-metric merge site (and the final factory cap) as ``extra_reserved``.
+        We derive it at runtime rather than hand-copy names into a frozenset
+        (which would drift).
+        """
+        names: set[str] = set(self._metric_registry)
+        names.update(getattr(self, "_ragas_metric_names", set()))
+        names.update(getattr(self, "metric_functions", None) or {})
+        return frozenset(names)
+
     def compute_metrics(
         self,
         outputs: list[Any],
@@ -1047,6 +1087,145 @@ class BaseEvaluator(ABC):
         return 0.0
 
     # Common evaluation methods to reduce duplication in subclasses
+
+    @staticmethod
+    def _unpack_user_metrics(raw: Any) -> tuple[Any, dict[str, float] | None]:
+        """Split a decorated function's return into (output, per-example metrics).
+
+        Strict, conservative unpack rule (back-compat is absolute): the return
+        is unpacked ONLY when ``raw`` is EXACTLY a length-2 ``tuple`` whose
+        second element is a ``Mapping`` with all-wire-valid keys (every key is a
+        ``str`` matching :data:`USER_METRIC_KEY_PATTERN`, the ASCII identifier
+        pattern that exactly mirrors the ``MeasuresDict`` wire contract — NOT
+        ``str.isidentifier()``, which accepts Unicode identifiers the wire
+        rejects) and all-numeric (``int``/``float``, excluding ``bool``)
+        values. In that case element ``[0]`` becomes the output used for ALL
+        downstream purposes (accuracy comparison, ``actual_output`` storage,
+        scoring functions) and element ``[1]`` becomes the per-example user
+        metrics dict.
+
+        EVERY other shape is left untouched and returned as raw output with no
+        user metrics — longer/shorter tuples, a non-tuple, a ``[1]`` that is not
+        a Mapping (e.g. a list), a Mapping with any non-``str`` key or any key
+        rejected by :data:`USER_METRIC_KEY_PATTERN` (e.g. ``"bad-key"`` or the
+        Unicode identifier ``"π_metric"``), or a Mapping with any non-numeric /
+        ``bool``
+        value. This makes the rule idempotent: an already-unpacked output (whose
+        ``[0]`` is not itself such a 2-tuple) is a no-op, so calling this at more
+        than one boundary is safe.
+
+        NEAR-MISS warning (no behavior change): when ``raw`` IS a 2-tuple whose
+        ``[1]`` is a Mapping but a key or value fails the strict rule (e.g.
+        ``("YES", {"bad-key": 1.0})`` or a ``bool`` / non-numeric value), the
+        user almost certainly meant ``(output, metrics)`` — leaving it raw
+        silently poisons their accuracy. Exactly ONE ``WARNING`` is logged naming
+        the FIRST offending key/value and stating the tuple was NOT treated as
+        ``(output, metrics)`` and why. Shapes that are silent by design (a plain
+        return, a 3-tuple, a tuple whose ``[1]`` is a list) carry no intent to
+        ship metrics and are NOT warned — warning there would be noise.
+
+        The numeric values are coerced to ``float`` so they aggregate by mean and
+        satisfy the ``MeasuresDict`` numeric contract downstream.
+
+        Args:
+            raw: The raw value returned by the user's decorated function.
+
+        Returns:
+            ``(output, user_metrics)`` where ``user_metrics`` is ``None`` unless
+            the strict 2-tuple shape matched.
+        """
+        if not (type(raw) is tuple and len(raw) == 2):
+            return raw, None
+        output, candidate = raw
+        if not isinstance(candidate, Mapping):
+            return raw, None
+        # The shape is a NEAR-MISS: a 2-tuple whose [1] is a Mapping, i.e. the
+        # user almost certainly intended (output, metrics). If any key/value
+        # fails the strict wire rule the tuple is left as RAW output for absolute
+        # back-compat — but that silently poisons the user's accuracy (the raw
+        # tuple becomes the output) with zero signal. Surface exactly ONE warning
+        # naming the FIRST offender and stating why; behavior is unchanged.
+        for key, value in candidate.items():
+            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
+                logger.warning(
+                    "Return value %r looks like an (output, metrics) tuple but "
+                    "key %r is not a wire-valid metric name (must match "
+                    "%s, ASCII); the tuple was NOT treated as (output, metrics) "
+                    "and is passed through as raw output.",
+                    raw,
+                    key,
+                    USER_METRIC_KEY_PATTERN.pattern,
+                )
+                return raw, None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                logger.warning(
+                    "Return value %r looks like an (output, metrics) tuple but "
+                    "value %r for key %r is not a finite number (got %s); the "
+                    "tuple was NOT treated as (output, metrics) and is passed "
+                    "through as raw output.",
+                    raw,
+                    value,
+                    key,
+                    type(value).__name__,
+                )
+                return raw, None
+        user_metrics = {key: float(value) for key, value in candidate.items()}
+        return output, user_metrics
+
+    def _merge_user_metrics(
+        self,
+        target: dict[str, Any],
+        user_metrics: dict[str, float] | None,
+        *,
+        context: str,
+        extra_reserved: frozenset[str] | None = None,
+    ) -> None:
+        """Merge per-example user metrics into ``target`` without overriding.
+
+        User keys are first-class but NEVER override an evaluator-computed key.
+        Guards, applied regardless of merge ordering or ``setdefault`` timing (so
+        a reserved key is protected even when the evaluator writes it AFTER this
+        merge):
+
+        * a key in :data:`RESERVED_METRIC_KEYS` OR in ``extra_reserved`` is
+          skipped and warning-logged — the user asked for a key they cannot have
+          (e.g. ``success_rate``, ``latency``, ``examples_attempted``, or a
+          runtime-only evaluator-computable name such as the RAGAS metric
+          ``context_precision``). ``extra_reserved`` defaults to this evaluator's
+          own metric-registry + RAGAS names;
+        * a key already present in ``target`` is skipped (the evaluator's own
+          value wins).
+
+        Unlike the shared aggregator's DEBUG split, the reserved-key skip here
+        WARNS: this method receives the GENUINELY user-supplied tuple dict, so a
+        collision is a real user mistake worth surfacing.
+        """
+        if not user_metrics:
+            return
+        reserved_extra = (
+            extra_reserved
+            if extra_reserved is not None
+            else self._evaluator_computable_metric_names()
+        )
+        for key, value in user_metrics.items():
+            if is_reserved_metric_key(key) or key in reserved_extra:
+                logger.warning(
+                    "Skipping user metric %r (%s): %r is a reserved "
+                    "evaluator-computed key and cannot be overwritten",
+                    key,
+                    context,
+                    key,
+                )
+                continue
+            if key in target:
+                logger.debug(
+                    "Skipping user metric %r (%s): evaluator already set it to %r",
+                    key,
+                    context,
+                    target[key],
+                )
+                continue
+            target[key] = value
 
     def _prepare_call_arguments(
         self,
@@ -2102,10 +2281,16 @@ class BaseEvaluator(ABC):
             # Default evaluation with correlation key
             capture_key = self._get_capture_key_context()
             with capture_key(example_id):
-                output, error = await self._execute_function(
+                raw_output, error = await self._execute_function(
                     func, config, example.input_data, executor
                 )
             execution_time = time.time() - start_time
+
+            # Strict 2-tuple unpack: a (output, numeric-metrics) return becomes
+            # output[0] for ALL downstream purposes (actual_output, accuracy,
+            # scoring); the metrics ride to per-example custom metrics. Any other
+            # shape is left untouched (back-compat).
+            output, user_metrics = self._unpack_user_metrics(raw_output)
 
             result = ExampleResult(
                 example_id=example_id,
@@ -2117,6 +2302,7 @@ class BaseEvaluator(ABC):
                 success=(error is None),
                 error_message=error,
                 metadata=example.metadata.copy() if example.metadata else {},
+                user_metrics=user_metrics,
             )
 
             # Record to tracing span
@@ -2713,9 +2899,15 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 with _maybe_restore_trial_context(trial_ctx):
                     with ConfigurationContext(config):
                         if asyncio.iscoroutinefunction(func):
-                            output = await func(**example.input_data)
+                            raw_output = await func(**example.input_data)
                         else:
-                            output = func(**example.input_data)
+                            raw_output = func(**example.input_data)
+
+                # Strict 2-tuple unpack: a (output, numeric-metrics) return
+                # becomes output[0] for ALL downstream purposes; the metrics
+                # merge into this example's metrics (no-override). Any other
+                # shape is left untouched (back-compat).
+                output, user_metrics = self._unpack_user_metrics(raw_output)
 
                 per_example_duration = time.time() - example_start_time
 
@@ -2730,6 +2922,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 # Add LLM metrics if captured
                 if llm_metrics:
                     self._add_llm_metrics_to_example(example_metrics, llm_metrics)
+
+                # Merge per-example user metrics (never overriding computed keys).
+                self._merge_user_metrics(
+                    example_metrics, user_metrics, context="simple-scoring lane"
+                )
 
                 # Calculate execution time
                 execution_time = per_example_duration
@@ -2807,7 +3004,41 @@ class SimpleScoringEvaluator(BaseEvaluator):
         # Aggregate RAGAS metrics if applicable
         self._aggregate_ragas_metrics(example_results, aggregated_metrics)
 
+        # Surface tuple-supplied user metrics on the trial result. The custom-,
+        # LLM-, and RAGAS-aggregations above only cover keys the evaluator knows
+        # about (``self.metrics`` / token / cost), so user keys reach
+        # ``example_results[*].metrics`` but never ``result.metrics`` without
+        # this. Uses the SAME shared helper as the local/tracker path: reserved
+        # evaluator keys are skipped (warning-logged), already-present keys are
+        # never clobbered, and the total is capped at the MeasuresDict ceiling
+        # by truncating user keys only.
+        successful_example_metrics = [
+            metric
+            for metric, ex_result in zip(all_metrics, example_results, strict=False)
+            if metric and ex_result is not None and ex_result.is_successful
+        ]
+        aggregate_user_custom_metrics(
+            aggregated_metrics,
+            successful_example_metrics,
+            context="simple-scoring trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
+
         aggregated_metrics.setdefault("examples_attempted", len(example_results))
+
+        # Authoritative final-union cap. ``aggregate_user_custom_metrics`` above
+        # caps the union as it MERGES user keys, but reserved evaluator keys are
+        # added to ``aggregated_metrics`` AFTER that (the custom/LLM/RAGAS
+        # aggregations and ``examples_attempted`` here), so the per-merge cap
+        # alone cannot bound the FINAL union. Re-apply the ceiling as the LAST
+        # step before returning trial metrics so >50 flat metrics can never
+        # escape; only user keys are dropped (evaluator keys are never
+        # sacrificed), matching the local lane's enforce-ceiling call.
+        enforce_user_metric_ceiling(
+            aggregated_metrics,
+            context="simple-scoring trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
 
         # Log results
         success_count = sum(1 for result in example_results if result.is_successful)

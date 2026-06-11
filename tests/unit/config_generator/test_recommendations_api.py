@@ -57,15 +57,22 @@ def test_recommend_configuration_space_valid_type_returns_structured_rows() -> N
     assert result["agent_type"] == "rag"
     assert "task-dependent" in result["caveat"]
     assert result["valid_agent_types"] == ["code_gen", "rag"]
-    assert result["configuration_space"] == {"retrieval_k": {"low": 1, "high": 5}}
+    assert result["configuration_space"]["retrieval_k"] == {"low": 1, "high": 5}
+    assert {
+        "context_selection_policy",
+        "context_order",
+        "summary_style",
+        "compression_ratio",
+        "citation_policy",
+    } <= set(result["configuration_space"])
     config_space = ConfigSpace.from_decorator_args(
         configuration_space=result["configuration_space"]
     )
-    assert set(config_space.tvars) == {"retrieval_k"}
+    assert set(config_space.tvars) == set(result["configuration_space"])
 
     recommendations = result["recommendations"]
-    assert len(recommendations) == 1
-    retrieval_k = recommendations[0]
+    assert len(recommendations) >= 6
+    retrieval_k = next(row for row in recommendations if row["name"] == "retrieval_k")
     assert list(retrieval_k) == _EXPECTED_RECOMMENDATION_KEYS
     assert retrieval_k["name"] == "retrieval_k"
     assert retrieval_k["range_type"] == "IntRange"

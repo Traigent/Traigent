@@ -1,7 +1,7 @@
 ---
 name: traigent-run-optimization
 description: "Run Traigent optimization: async/sync execution, algorithm selection, cost limits, stop conditions, and parallel trials. Use when calling func.optimize() or optimize_sync(), choosing algorithms (grid/random/bayesian/optuna), setting max_trials or cost_limit, configuring parallel execution, or handling CostLimitExceeded."
-license: Apache-2.0
+license: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
 metadata:
   author: Traigent
   version: "1.0"
@@ -169,13 +169,31 @@ Skip the interactive cost approval handshake:
 export TRAIGENT_COST_APPROVED=true
 ```
 
+`TRAIGENT_COST_APPROVED=true` must be the exact environment value `true`; values
+such as `1`, `yes`, or `on` do not approve cost-sensitive execution. The runtime
+`cost_approved=True` option must be a real boolean; strings are ignored and
+logged as warnings.
+
+Pre-approval covers both the cost-limit prompt and the unpriced-model preflight
+gate. It proceeds with a warning for unpriced models; it does not add pricing
+coverage. Without pre-approval, unpriced models block before trial 1: interactive
+shells show a `y/N` prompt, and non-interactive shells fail closed.
+
+Mock LLM mode skips the optimized-function pricing preflight because no provider
+spend occurs, but it is not a global `CostEnforcer` bypass.
+
 ### Strict Cost Accounting
 
-Fail fast if cost tracking cannot extract costs from LLM responses:
+Fail fast before trial 1 on unpriced models, and fail if runtime cost tracking
+cannot extract costs from LLM responses:
 
 ```bash
 export TRAIGENT_STRICT_COST_ACCOUNTING=true
 ```
+
+`TRAIGENT_STRICT_COST_ACCOUNTING=true` must be the exact value `true`. Budget
+overruns are separate: they are controlled by `TRAIGENT_RUN_COST_LIMIT` and raise
+`CostLimitExceeded`.
 
 ## Stop Conditions
 

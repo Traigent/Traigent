@@ -353,5 +353,399 @@
     "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch on cfg['repair_policy']: 'off' returns the first generation, 'sqlite_error_once' retries once when SQLite reports an error, and 'sqlite_error_or_empty_once' retries once on error or empty result. Add eval coverage for each policy. NOTE: apply_config() only inserts the decorator + imports; retry handling remains your code.",
     "status": "active",
     "version": "1.0.0"
+  },
+  {
+    "entry_id": "code_gen.repo_context_strategy.v1",
+    "schema_version": "1.0.0",
+    "name": "repo_context_strategy",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "issue_locality_first",
+        "focused_search",
+        "call_graph_plus_tests",
+        "repo_index"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "agent_computer_interface",
+    "reasoning": "External software-engineering-agent literature reports that agent-computer interface design affects issue-fix success, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "medium",
+    "agent_types": [
+      "code_gen"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:swe_agent_neurips_2024+swe_bench_iclr_2024",
+        "metric": "software_engineering_task_success",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "unstructured_agent_interface",
+        "candidate": "agent_computer_interface_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch repository navigation on cfg['repo_context_strategy']: 'issue_locality_first' starts from issue-linked files, 'focused_search' searches targeted symbols and errors, 'call_graph_plus_tests' expands along callers/tests, and 'repo_index' uses a broader repository index. Validate on held-out issue-fix tasks. CVAR vocabulary for a future catalog version: confidence_to_edit and min_test_signal. Public type proposal: software_engineering_agent is intentionally not added to agent_types; this row remains on code_gen until that type is accepted.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "code_gen.file_view_window.v1",
+    "schema_version": "1.0.0",
+    "name": "file_view_window",
+    "range_type": "IntRange",
+    "range_kwargs": {
+      "low": 50,
+      "high": 400,
+      "default": 120
+    },
+    "kind": "value",
+    "effectuation_status": "manual_guidance",
+    "category": "agent_computer_interface",
+    "reasoning": "External software-engineering-agent literature suggests interface context size affects edit quality, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "medium",
+    "agent_types": [
+      "code_gen"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:swe_agent_neurips_2024+swe_bench_iclr_2024",
+        "metric": "software_engineering_task_success",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "unstructured_agent_interface",
+        "candidate": "file_view_window_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, read cfg['file_view_window'] as the number of surrounding lines or equivalent file-view budget exposed to the coding agent. Keep the baseline window in evals and measure patch acceptance plus regression rate. CVAR vocabulary for a future catalog version: confidence_to_edit and min_test_signal. Public type proposal: software_engineering_agent is intentionally not added to agent_types; this row remains on code_gen until that type is accepted.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "code_gen.edit_granularity.v1",
+    "schema_version": "1.0.0",
+    "name": "edit_granularity",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "minimal_patch",
+        "function_scope",
+        "file_scope",
+        "multi_file_plan"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "agent_computer_interface",
+    "reasoning": "External software-engineering-agent literature suggests the edit interface shape affects task success, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "medium",
+    "agent_types": [
+      "code_gen"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:swe_agent_neurips_2024+swe_bench_iclr_2024",
+        "metric": "software_engineering_task_success",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "unstructured_agent_interface",
+        "candidate": "edit_granularity_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch patch planning on cfg['edit_granularity']: 'minimal_patch' constrains edits to the smallest diff, 'function_scope' edits one function-level unit, 'file_scope' permits one file, and 'multi_file_plan' requires an explicit plan before multi-file changes. CVAR vocabulary for a future catalog version: confidence_to_edit and min_test_signal. Public type proposal: software_engineering_agent is intentionally not added to agent_types; this row remains on code_gen until that type is accepted.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "code_gen.test_selection_strategy.v1",
+    "schema_version": "1.0.0",
+    "name": "test_selection_strategy",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "none",
+        "focused_changed_files",
+        "related_unit_tests",
+        "full_regression_budgeted"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "agent_computer_interface",
+    "reasoning": "External software-engineering-agent literature and SWE-bench-style tasks emphasize test feedback, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "medium",
+    "agent_types": [
+      "code_gen"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:swe_agent_neurips_2024+swe_bench_iclr_2024",
+        "metric": "software_engineering_task_success",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "unstructured_agent_interface",
+        "candidate": "test_selection_strategy_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch validation on cfg['test_selection_strategy']: 'none' skips test execution, 'focused_changed_files' runs tests local to changed files, 'related_unit_tests' expands to likely related units, and 'full_regression_budgeted' runs the largest suite allowed by the budget. CVAR vocabulary for a future catalog version: confidence_to_edit and min_test_signal. Public type proposal: software_engineering_agent is intentionally not added to agent_types; this row remains on code_gen until that type is accepted.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "code_gen.patch_review_mode.v1",
+    "schema_version": "1.0.0",
+    "name": "patch_review_mode",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "off",
+        "self_review",
+        "diff_then_test_review",
+        "reviewer_agent"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "agent_computer_interface",
+    "reasoning": "External software-engineering-agent literature suggests review loops can affect patch quality, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "low",
+    "agent_types": [
+      "code_gen"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:swe_agent_neurips_2024+swe_bench_iclr_2024",
+        "metric": "software_engineering_task_success",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "unstructured_agent_interface",
+        "candidate": "patch_review_mode_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch post-edit review on cfg['patch_review_mode']: 'off' returns the patch directly, 'self_review' asks the same agent to inspect its diff, 'diff_then_test_review' reviews both diff and test output, and 'reviewer_agent' invokes a separate reviewer. CVAR vocabulary for a future catalog version: confidence_to_edit and min_test_signal. Public type proposal: software_engineering_agent is intentionally not added to agent_types; this row remains on code_gen until that type is accepted.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "rag.context_selection_policy.v1",
+    "schema_version": "1.0.0",
+    "name": "context_selection_policy",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "similarity",
+        "recency",
+        "hybrid_relevance",
+        "evidence_first"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "context_budget",
+    "reasoning": "Lost-in-the-Middle reports that relevant information is used less robustly in long contexts, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "medium",
+    "agent_types": [
+      "rag"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:lost_in_the_middle_tacl_2024",
+        "metric": "long_context_answer_quality",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "unstructured_context_selection",
+        "candidate": "context_selection_policy_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch retrieval/context assembly on cfg['context_selection_policy']: 'similarity' ranks by vector score, 'recency' favors fresh items, 'hybrid_relevance' blends scores, and 'evidence_first' prioritizes directly supporting passages. CVAR vocabulary for a future catalog version: evidence_coverage_min and max_context_tokens.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "rag.context_order.v1",
+    "schema_version": "1.0.0",
+    "name": "context_order",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "relevance_desc",
+        "primacy_recency",
+        "question_then_evidence",
+        "key_evidence_edges"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "context_budget",
+    "reasoning": "Lost-in-the-Middle reports position sensitivity in long-context use, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "medium",
+    "agent_types": [
+      "rag"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:lost_in_the_middle_tacl_2024",
+        "metric": "long_context_answer_quality",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "unstructured_context_ordering",
+        "candidate": "context_order_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch context layout on cfg['context_order']: 'relevance_desc' sorts by rank, 'primacy_recency' places important evidence near beginning and end, 'question_then_evidence' places the query before evidence, and 'key_evidence_edges' anchors the strongest passages at context boundaries. CVAR vocabulary for a future catalog version: evidence_coverage_min and max_context_tokens.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "rag.summary_style.v1",
+    "schema_version": "1.0.0",
+    "name": "summary_style",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "none",
+        "extractive_bullets",
+        "claim_evidence_pairs",
+        "abstractive_brief"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "context_budget",
+    "reasoning": "Long-context evidence suggests context packaging can affect answer quality, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "low",
+    "agent_types": [
+      "rag"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:lost_in_the_middle_tacl_2024",
+        "metric": "long_context_answer_quality",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "raw_context",
+        "candidate": "summary_style_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch compression on cfg['summary_style']: 'none' keeps source text, 'extractive_bullets' keeps quoted key facts, 'claim_evidence_pairs' pairs each claim with support, and 'abstractive_brief' rewrites a short context brief. CVAR vocabulary for a future catalog version: evidence_coverage_min and max_context_tokens.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "rag.compression_ratio.v1",
+    "schema_version": "1.0.0",
+    "name": "compression_ratio",
+    "range_type": "Range",
+    "range_kwargs": {
+      "low": 0.2,
+      "high": 1.0,
+      "default": 0.5
+    },
+    "kind": "value",
+    "effectuation_status": "manual_guidance",
+    "category": "context_budget",
+    "reasoning": "Long-context evidence suggests budget and placement affect answer quality, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "low",
+    "agent_types": [
+      "rag"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:lost_in_the_middle_tacl_2024",
+        "metric": "long_context_answer_quality",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "uncompressed_context",
+        "candidate": "compression_ratio_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, read cfg['compression_ratio'] as the fraction of original retrieved content to retain before answer generation. Evaluate both answer support and cost, and keep an uncompressed baseline. CVAR vocabulary for a future catalog version: evidence_coverage_min and max_context_tokens.",
+    "status": "active",
+    "version": "1.0.0"
+  },
+  {
+    "entry_id": "rag.citation_policy.v1",
+    "schema_version": "1.0.0",
+    "name": "citation_policy",
+    "range_type": "Choices",
+    "range_kwargs": {
+      "values": [
+        "none",
+        "source_ids",
+        "inline_spans",
+        "claim_level"
+      ]
+    },
+    "kind": "policy",
+    "effectuation_status": "manual_guidance",
+    "category": "context_budget",
+    "reasoning": "Long-context evidence motivates preserving support structure, but Traigent has not measured a catalog delta for this row.",
+    "impact_estimate": "low",
+    "agent_types": [
+      "rag"
+    ],
+    "evidence_refs": [
+      {
+        "scope": "external_paper:lost_in_the_middle_tacl_2024",
+        "metric": "long_context_answer_quality",
+        "n": 0,
+        "model": "paper_reported",
+        "baseline": "no_citation_policy",
+        "candidate": "citation_policy_knob",
+        "delta": null,
+        "limitations": [
+          "external_paper_not_traigent_measured",
+          "not_catalog_metric_delta"
+        ]
+      }
+    ],
+    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, branch answer formatting on cfg['citation_policy']: 'none' emits no citations, 'source_ids' appends source identifiers, 'inline_spans' marks exact supporting spans, and 'claim_level' requires support per claim. CVAR vocabulary for a future catalog version: evidence_coverage_min and max_context_tokens.",
+    "status": "active",
+    "version": "1.0.0"
   }
 ]

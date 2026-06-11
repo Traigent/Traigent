@@ -6,6 +6,8 @@ Handles migration of local data to Traigent backend when users upgrade.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
 import os
+import re
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,11 +22,23 @@ except ImportError:
 
 from ..config.backend_config import BackendConfig, get_no_credentials_hint
 from ..config.types import TraigentConfig
-from ..storage.local_storage import LocalStorageManager, OptimizationSession
+from ..storage.local_storage import (
+    TRIAL_COST_FIELDS,
+    LocalStorageManager,
+    OptimizationSession,
+    extract_trial_cost_fields,
+)
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+VALID_SYNC_AGENT_TYPE_IDS = frozenset(
+    {"chat", "classification", "completion", "qa", "retrieval", "tool", "function"}
+)
+DEFAULT_SYNC_AGENT_TYPE_ID = "completion"
+_BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
+_BACKEND_NAME_SPACES = re.compile(r"\s+")
 
 
 def build_experiment_url(base_url: str, experiment_id: str) -> str:
@@ -34,6 +48,14 @@ def build_experiment_url(base_url: str, experiment_id: str) -> str:
     used by both SyncManager and the orchestrator.
     """
     return f"{base_url.rstrip('/')}/experiments/{experiment_id}"
+
+
+def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
+    """Normalize generated sync names to the backend name pattern."""
+
+    sanitized = _BACKEND_NAME_DISALLOWED.sub(" ", value)
+    sanitized = _BACKEND_NAME_SPACES.sub(" ", sanitized).strip()
+    return sanitized or fallback
 
 
 class SyncManager:
@@ -69,7 +91,6 @@ class SyncManager:
         if api_key:
             self._session.headers.update(self.headers)
         self._request_timeout = self._resolve_request_timeout()
-        self._dataset_route_supported: bool | None = None
 
     @property
     def session(self):
@@ -179,96 +200,130 @@ class SyncManager:
         Returns:
             Dict in Traigent experiment/experiment_run format
         """
-        # Generate placeholder IDs for required fields
-        experiment_id = f"local_import_{session.session_id}"
-        agent_id = f"local_agent_{session.function_name}"
-        dataset_id = f"local_dataset_{session.function_name}"
-        model_params_id = f"edge_analytics_model_params_{session.session_id}"
-
-        # Create minimal agent definition
-        agent_data = {
-            "id": agent_id,
-            "name": f"Local Agent: {session.function_name}",
-            "agent_type": "custom",
-            "description": f"Imported from local optimization of {session.function_name}",
-            "source": "local_import",
-            "created_at": session.created_at,
-        }
-
-        # Create minimal dataset definition
-        dataset_data = {
-            "id": dataset_id,
-            "dataset_id": dataset_id,
-            "benchmark_id": dataset_id,
-            "name": f"Local Dataset: {session.function_name}",
-            "label": f"{session.function_name}_eval",
-            "description": f"Evaluation dataset for {session.function_name}",
-            "type": "custom",
-            "examples_count": session.completed_trials,  # Approximate
-            "source": "local_import",
-        }
-
-        # Create model parameters
         opt_config = session.optimization_config or {}
-        model_params_data = {
-            "id": model_params_id,
-            "model_id": (opt_config.get("search_space", {}) or {}).get(
-                "model", "unknown"
+        search_space = opt_config.get("search_space", {})
+        if not isinstance(search_space, dict):
+            search_space = {}
+        # The experiment-run create validator requires a top-level
+        # `infrastructure` key inside `configurations` (presence-checked); the
+        # canonical shape is {infrastructure, parameters}.
+        configurations = {"infrastructure": {}, "parameters": search_space}
+
+        configuration_runs = self._convert_trials_to_configuration_runs(
+            session.trials or []
+        )
+        measures = self._derive_experiment_measures(configuration_runs)
+
+        # Create minimal agent definition accepted by POST /agents.
+        agent_data = {
+            "name": f"Local Agent: {session.function_name}",
+            "agent_type_id": DEFAULT_SYNC_AGENT_TYPE_ID,
+        }
+
+        # The backend benchmark route is the dataset source for experiments.
+        benchmark_data = {
+            "name": sanitize_backend_name(f"Local Dataset {session.function_name}"),
+            "type": "input-output",
+            "label": sanitize_backend_name(
+                f"{session.function_name} eval", fallback="Local Eval"
             ),
-            "source": "local_import",
         }
 
-        # Create experiment
+        # agent_id and dataset_id are filled with returned backend IDs at sync time.
         experiment_data = {
-            "id": experiment_id,
             "name": f"Local Import: {session.function_name}",
-            "description": "Imported optimization session from Edge Analytics mode",
-            "agent_id": agent_id,
-            "dataset_id": dataset_id,
-            "benchmark_id": dataset_id,
-            "evaluation_set_id": dataset_id,
-            "eval_dataset_id": dataset_id,
-            "model_parameters_id": model_params_id,
-            "configurations": opt_config.get("search_space", {}),
-            "measures": ["score", "accuracy"],  # Default measures
-            "status": session.status,
-            "source": "local_import",
-            "metadata": {
-                "original_session_id": session.session_id,
-                "import_timestamp": datetime.now(UTC).isoformat(),
-                "edge_analytics_version": "1.0.0",
-            },
+            "measures": measures,
+            "configurations": configurations,
+            "status": "COMPLETED",
         }
 
-        # Create experiment run with trials
+        # experiment_data is filled with returned backend IDs at sync time.
         experiment_run_data = {
-            "id": f"{experiment_id}_run",
-            "experiment_id": experiment_id,
-            "experiment_data": experiment_data,
-            "status": session.status,
-            "results": self._convert_trials_to_results(session.trials or []),
-            "metadata": {
-                "total_trials": session.completed_trials,
-                "best_score": session.best_score,
-                "best_config": session.best_config,
-                "baseline_score": session.baseline_score,
-            },
+            "measures": measures,
+            "configurations": configurations,
         }
 
         return {
             "agent": agent_data,
-            "dataset": dataset_data,
-            "benchmark": dataset_data,
-            "model_parameters": model_params_data,
+            "benchmark": benchmark_data,
             "experiment": experiment_data,
             "experiment_run": experiment_run_data,
+            "configuration_runs": configuration_runs,
         }
+
+    def _convert_trials_to_configuration_runs(
+        self, trials: list[Any]
+    ) -> list[dict[str, Any]]:
+        """Reshape local trial results into configuration-run create payloads."""
+        configuration_runs: list[dict[str, Any]] = []
+
+        for result in self._convert_trials_to_results(trials):
+            measures = self._configuration_run_measures(result)
+            configuration_runs.append(
+                {
+                    "experiment_parameters": result.get("experiment_parameters", {}),
+                    "measures": measures,
+                    "status": "COMPLETED",
+                }
+            )
+
+        return configuration_runs
+
+    def _configuration_run_measures(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Build measures for the backend configuration-run schema."""
+        measures: dict[str, Any] = {}
+
+        metadata = result.get("metadata")
+        if isinstance(metadata, Mapping):
+            for key, value in metadata.items():
+                if self._is_numeric(value):
+                    measures[key] = value
+
+        for key, value in (result.get("measures") or {}).items():
+            if key in TRIAL_COST_FIELDS:
+                if self._is_numeric(value):
+                    measures[key] = float(value)
+            elif value is not None:
+                measures[key] = value
+
+        return measures
+
+    @staticmethod
+    def _is_numeric(value: Any) -> bool:
+        """Return True for JSON numeric values while excluding booleans."""
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    @staticmethod
+    def _derive_experiment_measures(
+        configuration_runs: list[dict[str, Any]],
+    ) -> list[str]:
+        """Derive the experiment-level measure list from trial payloads."""
+        measures: list[str] = []
+        for configuration_run in configuration_runs:
+            for measure_name in configuration_run.get("measures", {}):
+                if measure_name not in measures:
+                    measures.append(measure_name)
+
+        return measures or ["score"]
 
     def _convert_trials_to_results(self, trials: list[Any]) -> list[dict[str, Any]]:
         """Convert local trials to Traigent configuration_run format."""
         results = []
 
         for trial in trials:
+            trial_cost_payload = dict(trial.metadata or {})
+            for field in TRIAL_COST_FIELDS:
+                field_value = getattr(trial, field, None)
+                if field_value is not None:
+                    trial_cost_payload[field] = field_value
+            cost_measures = {
+                field: value
+                for field, value in extract_trial_cost_fields(
+                    trial_cost_payload
+                ).items()
+                if value is not None
+            }
+
             result = {
                 "id": f"config_run_{trial.trial_id}",
                 "trial_id": trial.trial_id,
@@ -276,6 +331,7 @@ class SyncManager:
                 "measures": {
                     "score": trial.score,
                     "accuracy": trial.score,  # Map score to accuracy for compatibility
+                    **cost_measures,
                 },
                 "timestamp": trial.timestamp,
                 "status": "completed" if trial.error is None else "failed",
@@ -311,14 +367,14 @@ class SyncManager:
         # Convert to Traigent format
         traigent_data = self.convert_session_to_traigent_format(session)
 
-        sync_result = {
+        sync_result: dict[str, Any] = {
             "session_id": session_id,
             "function_name": session.function_name,
             "status": "success",
             "dry_run": dry_run,
             "data_converted": True,
-            "cloud_experiment_id": traigent_data["experiment"]["id"],
-            "trials_converted": len(traigent_data["experiment_run"]["results"]),
+            "cloud_experiment_id": None,
+            "trials_converted": len(traigent_data["configuration_runs"]),
             "errors": [],
         }
 
@@ -326,9 +382,8 @@ class SyncManager:
             sync_result["preview"] = {
                 "experiment_name": traigent_data["experiment"]["name"],
                 "agent_name": traigent_data["agent"]["name"],
-                "dataset_name": traigent_data["dataset"]["name"],
                 "benchmark_name": traigent_data["benchmark"]["name"],
-                "trial_count": len(traigent_data["experiment_run"]["results"]),
+                "trial_count": len(traigent_data["configuration_runs"]),
                 "best_score": session.best_score,
             }
             return sync_result
@@ -342,53 +397,78 @@ class SyncManager:
             return sync_result
 
         try:
-            # Track success/failure of each step
             successful_steps = 0
-            total_steps = 4
+            total_steps = 4 + len(traigent_data["configuration_runs"])
 
-            # Step 1: Create or verify agent
             agent_result = self._sync_agent(traigent_data["agent"])
             if not agent_result["success"]:
                 sync_result["errors"].append(
                     f"Agent sync failed: {agent_result['error']}"
                 )
-            else:
-                successful_steps += 1
+                sync_result["status"] = "error"
+                return sync_result
 
-            # Step 2: Create or verify benchmark
-            benchmark_result = self._sync_benchmark(traigent_data["dataset"])
+            successful_steps += 1
+            agent_id = agent_result["agent_id"]
+
+            benchmark_result = self._sync_benchmark(traigent_data["benchmark"])
             if not benchmark_result["success"]:
                 sync_result["errors"].append(
                     f"Benchmark sync failed: {benchmark_result['error']}"
                 )
-            else:
-                successful_steps += 1
+                sync_result["status"] = "partial"
+                return sync_result
 
-            # Step 3: Create experiment
-            experiment_result = self._sync_experiment(traigent_data["experiment"])
+            successful_steps += 1
+            benchmark_id = benchmark_result["benchmark_id"]
+
+            experiment_payload = self._build_experiment_payload(
+                traigent_data["experiment"], agent_id, benchmark_id
+            )
+            experiment_result = self._sync_experiment(experiment_payload)
             if not experiment_result["success"]:
                 sync_result["errors"].append(
                     f"Experiment sync failed: {experiment_result['error']}"
                 )
-            else:
-                successful_steps += 1
+                sync_result["status"] = "partial"
+                return sync_result
 
-            # Step 4: Create experiment run with results
-            run_result = self._sync_experiment_run(traigent_data["experiment_run"])
+            successful_steps += 1
+            experiment_id = experiment_result["experiment_id"]
+            sync_result["cloud_experiment_id"] = experiment_id
+
+            run_payload = self._build_experiment_run_payload(
+                traigent_data["experiment_run"], agent_id, benchmark_id
+            )
+            run_result = self._sync_experiment_run(experiment_id, run_payload)
             if not run_result["success"]:
                 sync_result["errors"].append(
                     f"Experiment run sync failed: {run_result['error']}"
                 )
-            else:
-                successful_steps += 1
+                sync_result["status"] = "partial"
+                return sync_result
 
-            # Determine status based on success rate
+            successful_steps += 1
+            experiment_run_id = run_result["experiment_run_id"]
+
+            configuration_result = self._sync_configuration_runs(
+                experiment_run_id, traigent_data["configuration_runs"]
+            )
+            successful_steps += configuration_result["synced"]
+            if not configuration_result["success"]:
+                sync_result["errors"].extend(
+                    [
+                        f"Configuration run sync failed: {error}"
+                        for error in configuration_result["errors"]
+                    ]
+                )
+
             if successful_steps == 0:
                 sync_result["status"] = "error"  # Complete failure
             elif successful_steps == total_steps:
                 sync_result["status"] = "success"
                 sync_result["cloud_url"] = build_experiment_url(
-                    self.base_url, traigent_data["experiment"]["id"]
+                    self.base_url, experiment_id
                 )
             else:
                 sync_result["status"] = "partial"  # Some steps succeeded
@@ -453,73 +533,107 @@ class SyncManager:
         }
 
     def _sync_agent(self, agent_data: dict[str, Any]) -> dict[str, Any]:
-        """Sync agent data to cloud."""
+        """Create or reuse the local-import agent by stable name."""
         try:
+            existing_agent = self._find_existing_by_name(
+                "agents", agent_data["name"], "agents"
+            )
+            if existing_agent:
+                agent_id = self._extract_resource_id(existing_agent)
+                if agent_id:
+                    return {"success": True, "agent_id": agent_id, "reused": True}
+
             response = self._session.post(
                 f"{self.base_url}/agents",
                 json=agent_data,
                 timeout=self._request_timeout,
             )
-            if response.status_code in [200, 201, 409]:  # 409 = already exists
-                return {"success": True, "agent_id": agent_data["id"]}
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}",
-                }
+
+            if response.status_code == 429:
+                existing_agent = self._find_existing_by_name(
+                    "agents", agent_data["name"], "agents"
+                )
+                if existing_agent:
+                    agent_id = self._extract_resource_id(existing_agent)
+                    if agent_id:
+                        return {
+                            "success": True,
+                            "agent_id": agent_id,
+                            "reused": True,
+                        }
+
+            if response.status_code in [200, 201]:
+                agent_id = self._extract_response_id(response)
+                if not agent_id:
+                    return {
+                        "success": False,
+                        "error": "Agent create response did not include id",
+                    }
+                return {"success": True, "agent_id": agent_id, "reused": False}
+
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     def _sync_benchmark(self, benchmark_data: dict[str, Any]) -> dict[str, Any]:
-        """Sync dataset data to cloud with legacy benchmark fallback."""
+        """Create or reuse the benchmark by stable name."""
         try:
+            existing_benchmark = self._find_existing_by_name(
+                "benchmarks", benchmark_data["name"], "benchmarks"
+            )
+            if existing_benchmark:
+                benchmark_id = self._extract_resource_id(existing_benchmark)
+                if benchmark_id:
+                    return {
+                        "success": True,
+                        "dataset_id": benchmark_id,
+                        "benchmark_id": benchmark_id,
+                        "reused": True,
+                    }
+
             response = self._session.post(
-                f"{self.base_url}/datasets",
+                f"{self.base_url}/benchmarks",
                 json=benchmark_data,
                 timeout=self._request_timeout,
             )
-            if response.status_code == 404 and not self._supports_dataset_route():
-                response = self._session.post(
-                    f"{self.base_url}/benchmarks",
-                    json=benchmark_data,
-                    timeout=self._request_timeout,
+
+            if response.status_code in [409, 500]:
+                existing_benchmark = self._find_existing_by_name(
+                    "benchmarks", benchmark_data["name"], "benchmarks"
                 )
-            if response.status_code in [200, 201, 409]:
-                dataset_id = benchmark_data.get("dataset_id", benchmark_data["id"])
+                if existing_benchmark:
+                    benchmark_id = self._extract_resource_id(existing_benchmark)
+                    if benchmark_id:
+                        return {
+                            "success": True,
+                            "dataset_id": benchmark_id,
+                            "benchmark_id": benchmark_id,
+                            "reused": True,
+                        }
+
+            if response.status_code in [200, 201]:
+                benchmark_id = self._extract_response_id(response)
+                if not benchmark_id:
+                    return {
+                        "success": False,
+                        "error": "Benchmark create response did not include id",
+                    }
                 return {
                     "success": True,
-                    "dataset_id": dataset_id,
-                    "benchmark_id": dataset_id,
+                    "dataset_id": benchmark_id,
+                    "benchmark_id": benchmark_id,
+                    "reused": False,
                 }
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}",
-                }
+
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
-
-    def _supports_dataset_route(self) -> bool:
-        """Detect whether the canonical /datasets endpoint exists on the remote."""
-        if self._dataset_route_supported is not None:
-            return self._dataset_route_supported
-
-        try:
-            response = self._session.get(
-                f"{self.base_url}/datasets",
-                params={"page": 1, "per_page": 1},
-                timeout=self._request_timeout,
-            )
-        except requests.RequestException as exc:
-            logger.warning(
-                "Failed probing /datasets route support; using canonical endpoint "
-                "for this attempt without caching route support: %s",
-                exc,
-            )
-            return True
-
-        self._dataset_route_supported = response.status_code != 404
-        return self._dataset_route_supported
 
     def _sync_experiment(self, experiment_data: dict[str, Any]) -> dict[str, Any]:
         """Sync experiment data to cloud."""
@@ -529,33 +643,196 @@ class SyncManager:
                 json=experiment_data,
                 timeout=self._request_timeout,
             )
-            if response.status_code in [200, 201, 409]:
-                return {"success": True, "experiment_id": experiment_data["id"]}
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}",
-                }
+            if response.status_code in [200, 201]:
+                experiment_id = self._extract_response_id(response)
+                if not experiment_id:
+                    return {
+                        "success": False,
+                        "error": "Experiment create response did not include id",
+                    }
+                return {"success": True, "experiment_id": experiment_id}
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _sync_experiment_run(self, run_data: dict[str, Any]) -> dict[str, Any]:
+    def _sync_experiment_run(
+        self, experiment_id: str, run_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """Sync experiment run data to cloud."""
         try:
+            if not experiment_id:
+                return {
+                    "success": False,
+                    "error": "Experiment run sync requires experiment_id",
+                }
+
             response = self._session.post(
-                f"{self.base_url}/experiment-runs",
+                f"{self.base_url}/experiment-runs/{experiment_id}/runs",
                 json=run_data,
                 timeout=self._request_timeout,
             )
             if response.status_code in [200, 201]:
-                return {"success": True, "run_id": run_data["id"]}
-            else:
+                experiment_run_id = self._extract_response_id(response)
+                if not experiment_run_id:
+                    return {
+                        "success": False,
+                        "error": "Experiment-run create response did not include id",
+                    }
                 return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "success": True,
+                    "run_id": experiment_run_id,
+                    "experiment_run_id": experiment_run_id,
                 }
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _sync_configuration_runs(
+        self, experiment_run_id: str, trials: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Create the cost-bearing configuration rows for an experiment run."""
+        errors: list[str] = []
+        configuration_run_ids: list[str] = []
+        synced = 0
+
+        for index, trial in enumerate(trials, start=1):
+            try:
+                response = self._session.post(
+                    f"{self.base_url}/configuration-runs/runs/"
+                    f"{experiment_run_id}/configurations",
+                    json=trial,
+                    timeout=self._request_timeout,
+                )
+            except Exception as exc:
+                errors.append(f"trial {index}: {exc}")
+                continue
+
+            if response.status_code == 201:
+                synced += 1
+                configuration_run_id = self._extract_response_id(response)
+                if configuration_run_id:
+                    configuration_run_ids.append(configuration_run_id)
+                continue
+
+            errors.append(
+                f"trial {index}: HTTP {response.status_code}: {response.text}"
+            )
+
+        return {
+            "success": not errors,
+            "synced": synced,
+            "errors": errors,
+            "configuration_run_ids": configuration_run_ids,
+        }
+
+    @staticmethod
+    def _build_experiment_payload(
+        experiment_data: dict[str, Any], agent_id: str, benchmark_id: str
+    ) -> dict[str, Any]:
+        """Fill returned backend IDs into the experiment create payload."""
+        return {
+            **experiment_data,
+            "agent_id": agent_id,
+            "dataset_id": benchmark_id,
+        }
+
+    @staticmethod
+    def _build_experiment_run_payload(
+        run_data: dict[str, Any], agent_id: str, benchmark_id: str
+    ) -> dict[str, Any]:
+        """Build the closed-schema experiment-run payload."""
+        return {
+            "experiment_data": {
+                "agent_id": agent_id,
+                "benchmark_id": benchmark_id,
+                "measures": run_data["measures"],
+                "configurations": run_data["configurations"],
+            }
+        }
+
+    def _find_existing_by_name(
+        self, resource_path: str, name: str, collection_key: str
+    ) -> dict[str, Any] | None:
+        """Find an existing backend resource by exact name."""
+        response = self._session.get(
+            f"{self.base_url}/{resource_path}",
+            params={"name": name},
+            timeout=self._request_timeout,
+        )
+        if response.status_code != 200:
+            return None
+
+        payload = self._response_json(response)
+        for item in self._iter_response_items(payload, collection_key):
+            if item.get("name") == name:
+                return item
+
+        return None
+
+    def _iter_response_items(
+        self, payload: Any, collection_key: str
+    ) -> Iterable[dict[str, Any]]:
+        """Yield resource dicts from common list-response envelope shapes."""
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    yield item
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        if "name" in payload and self._extract_resource_id(payload):
+            yield payload
+
+        for key in (collection_key, "items", "data", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        yield item
+            elif isinstance(value, dict):
+                yield from self._iter_response_items(value, collection_key)
+
+    @staticmethod
+    def _response_json(response: requests.Response) -> Any:
+        try:
+            return response.json()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_resource_id(payload: Mapping[str, Any]) -> str | None:
+        for key in (
+            "id",
+            "agent_id",
+            "benchmark_id",
+            "dataset_id",
+            "experiment_id",
+            "experiment_run_id",
+            "run_id",
+        ):
+            value = payload.get(key)
+            if value is not None:
+                return str(value)
+        # Backend responses wrap the resource in the standard envelope
+        # {success, data: {id, ...}, message}; unwrap one level.
+        data = payload.get("data")
+        if isinstance(data, Mapping):
+            return SyncManager._extract_resource_id(data)
+        return None
+
+    def _extract_response_id(self, response: requests.Response) -> str | None:
+        payload = self._response_json(response)
+        if isinstance(payload, Mapping):
+            return self._extract_resource_id(payload)
+        return None
 
     def get_cloud_analytics_preview(self) -> dict[str, Any]:
         """Get preview of analytics available in cloud after sync."""

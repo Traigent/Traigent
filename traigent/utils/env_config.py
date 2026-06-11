@@ -470,6 +470,12 @@ def is_backend_offline() -> bool:
     return get_env_var("TRAIGENT_OFFLINE_MODE", "false").lower() == "true"
 
 
+def is_untracked_fallback_allowed() -> bool:
+    """Return True when auth failures may proceed local-only by explicit opt-in."""
+
+    return is_truthy(os.environ.get("TRAIGENT_ALLOW_UNTRACKED"))
+
+
 def raise_if_backend_offline(operation: str = "This backend request") -> None:
     """Fail closed when offline mode is enabled.
 

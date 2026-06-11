@@ -32,11 +32,11 @@ except Exception as exc:
     ) from exc
 
 from utils.helpers import (
+    build_results_table_callback,
     configure_logging,
     print_cost_estimate,
     print_estimated_time,
     print_optimization_config,
-    print_results_table,
     sanitize_traigent_api_key,
 )
 from utils.scoring import semantic_overlap_score
@@ -179,11 +179,10 @@ async def main() -> None:
         algorithm="random",
         max_trials=10,
         show_progress=True,
+        callbacks=[build_results_table_callback(is_mock=False, show_progress=True)],
         random_seed=42,
         parallel_config=parallel_config,
     )
-
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     print("\nBest Configuration Found:")
     print(f"  Retrieval k: {results.best_config.get('k')}")

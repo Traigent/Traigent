@@ -16,6 +16,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
 from traigent.utils.logging import get_logger
@@ -50,6 +51,15 @@ def _coerce_non_negative_int(value: Any) -> int:
         return max(int(value), 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _coerce_optional_non_negative_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return None
 
 
 def _infer_total_examples(eval_result: Any) -> tuple[int, Any, bool]:
@@ -260,6 +270,13 @@ def _build_success_trial_metadata(
     if examples_attempted is not None:
         trial_metadata["examples_attempted"] = int(examples_attempted)
 
+    attempted = trial_metadata.get("examples_attempted")
+    successful = trial_metadata.get("successful_examples")
+    if successful is not None and attempted is not None:
+        trial_metadata["example_success_summary"] = (
+            f"{successful}/{attempted} examples succeeded"
+        )
+
     if total_cost is not None:
         try:
             trial_metadata["total_example_cost"] = float(total_cost)
@@ -267,6 +284,27 @@ def _build_success_trial_metadata(
             pass
 
     return trial_metadata
+
+
+def _all_attempted_examples_failed(
+    eval_result: Any,
+    examples_attempted: int | None,
+) -> bool:
+    successful_examples = _coerce_optional_non_negative_int(
+        getattr(eval_result, "successful_examples", None)
+    )
+    if successful_examples != 0:
+        return False
+
+    total_examples = _coerce_optional_non_negative_int(
+        getattr(eval_result, "total_examples", None)
+    )
+    attempted = (
+        _coerce_optional_non_negative_int(examples_attempted)
+        if examples_attempted is not None
+        else total_examples
+    )
+    return attempted is not None and attempted > 0
 
 
 def _set_metric_if_convertible(
@@ -340,8 +378,17 @@ def build_success_result(
     examples_attempted: int | None,
     total_cost: float | None,
     optuna_trial_id: int | None,
+    extra_reserved: frozenset[str] = frozenset(),
 ) -> TrialResult:
-    """Create a successful :class:`TrialResult` instance."""
+    """Create a successful :class:`TrialResult` instance.
+
+    ``extra_reserved`` carries the evaluator's runtime-only computable metric
+    names (registered custom metrics, RAGAS metrics, user-passed metric
+    functions) that the static :data:`RESERVED_METRIC_KEYS` cannot enumerate.
+    The final-union ceiling below uses it so an evaluator-computed runtime name
+    (e.g. ``f1``, ``context_precision``) is never mistaken for a droppable user
+    key under ceiling pressure.
+    """
     trial_metadata = _build_success_trial_metadata(
         eval_result,
         examples_attempted,
@@ -352,9 +399,18 @@ def build_success_result(
         trial_id=trial_id,
         config=copy.deepcopy(evaluation_config),
         metrics=getattr(eval_result, "metrics", {}) or {},
-        status=TrialStatus.COMPLETED,
+        status=(
+            TrialStatus.FAILED
+            if _all_attempted_examples_failed(eval_result, examples_attempted)
+            else TrialStatus.COMPLETED
+        ),
         duration=duration,
         timestamp=datetime.now(UTC),
+        error_message=(
+            "No examples succeeded"
+            if _all_attempted_examples_failed(eval_result, examples_attempted)
+            else None
+        ),
         metadata=trial_metadata,
     )
 
@@ -378,6 +434,28 @@ def build_success_result(
             float,
             trial_id,
         )
+
+    # Authoritative final-union ceiling — the SINGLE cap that bounds what every
+    # lane actually ships on a successful trial. Both evaluator lanes already cap
+    # ``eval_result.metrics`` (the local lane's enforce_user_metric_ceiling /
+    # format_for_backend pre-trims, the SimpleScoring lane's own ceiling), but
+    # this assembly site writes reserved keys (``examples_attempted``,
+    # ``total_cost``) AFTER those caps ran, so the per-lane cap alone cannot bound
+    # the final union — a 50-key eval_result + total_cost would ship 51. Re-apply
+    # the ceiling here as the last metric mutation: only NON-reserved user keys
+    # are dropped (deterministically, warning-logged); the evaluator/assembly
+    # reserved keys are never sacrificed. The static RESERVED_METRIC_KEYS covers
+    # the keys written here and the standard evaluator-lane keys (accuracy, score,
+    # duration, the token/cost family, examples_attempted, total_cost, ...), but
+    # NOT the evaluator's runtime-only computable names (registered custom metrics,
+    # RAGAS metrics, user metric functions such as ``f1``). Those arrive via
+    # ``extra_reserved`` so the cap never sacrifices an evaluator-computed runtime
+    # objective (e.g. ``f1``) to fit a flood of user keys.
+    enforce_user_metric_ceiling(
+        trial_result.metrics,
+        context=f"trial {trial_id} final assembly",
+        extra_reserved=extra_reserved,
+    )
 
     if getattr(eval_result, "summary_stats", None):
         trial_result.summary_stats = redact_sensitive_data(  # type: ignore[attr-defined]

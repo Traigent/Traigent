@@ -1,6 +1,6 @@
 # Traigent SDK API Reference
 
-Authoritative reference for Traigent SDK **v0.10.0 (Beta)**.
+Authoritative reference for Traigent SDK **0.12.0**.
 
 ## Quick Navigation
 
@@ -22,7 +22,8 @@ def optimize(
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
-    constraints: list[Constraint | Callable[..., Any]] | None = None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
+    safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
     # TVL integration
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
@@ -30,15 +31,39 @@ def optimize(
     # Grouped options (preferred)
     evaluation: EvaluationOptions | dict[str, Any] | None = None,
     injection: InjectionOptions | dict[str, Any] | None = None,
+    effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
+    strategy: str | None = None,
+    strategy_params: Mapping[str, Any] | None = None,
+    # Multi-agent configuration
+    agents: dict[str, AgentDefinition] | None = None,
+    agent_prefixes: list[str] | None = None,
+    agent_measures: dict[str, list[str]] | None = None,
+    global_measures: list[str] | None = None,
+    # Config persistence
+    auto_load_best: bool = False,
+    load_from: str | None = None,
+    config_id: str | None = None,
+    best_config_source: str = "off",
+    best_config_strict: bool = False,
+    best_config_cache_dir: str | None = None,
+    best_config_cache_ttl_seconds: int = 24 * 60 * 60,
+    best_config_stale_ok_ttl_seconds: int | None = None,
+    enable_auto_load_dev_logs: bool | None = None,
+    # Guided generation
+    prompt_rewrite: dict[str, Any] | None = None,
+    grow_dataset: dict[str, Any] | None = None,
     # Legacy compatibility
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
-) -> OptimizedFunction
+) -> Callable[[Callable[..., Any]], Any]
 ```
 
 > **New in 0.8.0** – The decorator now uses keyword-only arguments with grouped option bundles. Legacy arguments are supported via the `legacy` parameter or directly in `**runtime_overrides`. Conflicting values between a bundle and a direct keyword raise `TypeError`.
+
+`optimize(...)` is a decorator factory. Applying the returned decorator to a
+function returns Traigent's optimized wrapper.
 
 **Core Parameters**
 
@@ -48,6 +73,13 @@ def optimize(
 | `configuration_space` | `dict[str, Any] \| ConfigSpace \| None` | `None` | Search space describing tunable parameters. Lists denote discrete choices; `(min, max)` tuples denote ranges. `Range`, `IntRange`, `LogRange`, `Choices`, and `ConfigSpace` are supported directly. Required for optimization. |
 | `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys remain unset unless you provide defaults via `default_config` or parameter defaults (for example `Range(..., default=...)`). |
 | `constraints` | `list[Constraint \| Callable[..., Any]] \| None` | `None` | Hard constraints evaluated before running a trial. Accepts SE-friendly `Constraint` objects and/or callables that take `(config, metrics=None)` and return `True/False`. |
+| `safety_constraints` | `list[SafetyConstraint \| CompoundSafetyConstraint] \| None` | `None` | Safety metric gates evaluated as part of optimization. |
+| `strategy` | `str \| None` | `None` | Optional strategy preset name. 0.12.0 presets are advisory selection rules over completed trials. |
+| `strategy_params` | `Mapping[str, Any] \| None` | `None` | Parameters for the selected strategy preset. |
+| `effectuation` | `bool` | `False` | Enables effectuation tracking for tuned-variable observations. |
+| `agents`, `agent_prefixes`, `agent_measures`, `global_measures` | See signature | `None` | Multi-agent measurement configuration. |
+| Config persistence fields | See signature | See signature | `auto_load_best`, `load_from`, `config_id`, `best_config_*`, and cache TTL controls for persisted best configurations. |
+| Guided-generation fields | `dict[str, Any] \| None` | `None` | `prompt_rewrite` and `grow_dataset` configure guided generation; run it with `.optimize_with_guidance(provider)`. |
 
 **SE-friendly tuned variables (first-class)**
 
@@ -87,17 +119,31 @@ def my_agent(question: str) -> str:
 | `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, and `max_total_examples`. |
 | `mock` | `MockModeOptions \| dict \| None` | **Deprecated — all fields inert.** Retained on the schema for backwards compatibility (config round-trip). Mock mode is enabled by calling `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code, not via this object. The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility but emits `DeprecationWarning` when users set it directly. See issue #874. |
 
-**ExecutionOptions Fields** (open-source builds run in `edge_analytics` only; other modes are roadmap-compatible but not currently provisioned)
+**ExecutionOptions Fields**
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` runs locally. `"hybrid"` runs trials locally and submits sessions/trial metrics to the backend for portal tracking. `"cloud"` is reserved for future remote execution and fails closed with guidance to use `"hybrid"`. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. |
+| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` runs locally. `"hybrid"` runs trials locally and submits sessions/trial metrics to the backend for portal tracking. `"hybrid_api"` delegates trial execution to an external service implementing the Traigent Hybrid API contract. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. `"cloud"` is reserved for future remote execution and fails closed with guidance to use `"hybrid"`. |
 | `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
 | `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
 | `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
+| `reps_per_trial` | `int` | `1` | Number of repetitions per configuration. OSS SDK accepts only `1`; other values raise `pydantic.ValidationError` and require Traigent Enterprise. |
+| `reps_aggregation` | `str` | `"mean"` | Repetition aggregation method. OSS SDK accepts only `"mean"`; other values raise `pydantic.ValidationError` and require Traigent Enterprise. |
+| `hybrid_api_endpoint` | `str \| None` | `None` | External-agent Hybrid API base endpoint. |
+| `tunable_id` | `str \| None` | `None` | Optional Hybrid API tunable identifier. |
+| `hybrid_api_transport` | `Any \| None` | `None` | Custom Hybrid API transport object. |
+| `hybrid_api_transport_type` | `str` | `"auto"` | Hybrid API transport type selector. |
+| `hybrid_api_batch_size` | `int` | `1` | Number of examples per Hybrid API execute request. |
+| `hybrid_api_batch_parallelism` | `int` | `1` | Concurrent Hybrid API batch execution limit. |
+| `hybrid_api_keep_alive` | `bool` | `True` | Reuse Hybrid API HTTP connections. |
+| `hybrid_api_heartbeat_interval` | `float` | `30.0` | Heartbeat interval for Hybrid API transports. |
+| `hybrid_api_timeout` | `float \| None` | `None` | Hybrid API request timeout override. |
+| `hybrid_api_auth_header` | `str \| None` | `None` | Auth token/header value sent as both `Authorization` and `x-api-key`. |
+| `hybrid_api_auto_discover_tvars` | `bool` | `False` | Auto-discover Hybrid API tuned variables when supported. |
+| `cloud_fallback_policy` | `str \| None` | `None` | Legacy/future cloud fallback policy. It does not enable `execution_mode="cloud"` in 0.12.0. |
 
 **Legacy Compatibility**
 
@@ -171,6 +217,9 @@ async def optimize(
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
     tvl: TVLOptions | dict[str, Any] | None = None,
+    strategy: str | None = None,
+    strategy_params: Mapping[str, Any] | None = None,
+    progress_bar: bool | None = None,
     **algorithm_kwargs: Any,
 ) -> OptimizationResult
 ```
@@ -190,6 +239,9 @@ async def optimize(
 | `tvl_spec` | `str \| Path \| None` | `None` | Load TVL spec at runtime. |
 | `tvl_environment` | `str \| None` | `None` | Environment overlay from the TVL spec. |
 | `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options for runtime overrides. |
+| `strategy` | `str \| None` | `None` | Runtime strategy preset override. Preset selections are advisory only. |
+| `strategy_params` | `Mapping[str, Any] \| None` | `None` | Runtime parameters for the strategy preset. |
+| `progress_bar` | `bool \| None` | `None` | Runtime progress-bar override. |
 | `**algorithm_kwargs` | `Any` | – | Extra tuning knobs. See recognised keys below. |
 
 **Recognised `algorithm_kwargs`**
@@ -201,7 +253,7 @@ async def optimize(
 | `max_total_examples` | Global sample budget across all trials. |
 | `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
 | `cost_limit` | Maximum USD spending for this run. |
-| `cost_approved` | Skip cost approval prompt. |
+| `cost_approved` | Skip cost approval prompt only when passed as real Python `True`; strings such as `"true"` are ignored. Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not approve. |
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
 | `budget_limit` / `budget_metric` / `budget_include_pruned` | Deprecated aliases for metric-limit controls. Use `cost_limit` for hard USD spend control. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
@@ -229,12 +281,14 @@ def get_best_config() -> dict[str, Any] | None
 ```
 
 #### `.current_config`
-**Get/set current configuration**
+**Get current configuration**
 
 ```python
 @property
 def current_config() -> dict[str, Any]
 ```
+
+`current_config` is read-only. Change the active override with `.set_config()`.
 
 #### `.set_config()`
 **Set current configuration**
@@ -380,6 +434,64 @@ def override_config(
 def get_available_strategies() -> dict[str, Any]
 ```
 
+### Recommendation Catalog and Strategy Presets
+
+0.12.0 exposes local catalog helpers and advisory selection presets through
+`traigent.api`.
+
+```python
+def list_recommendation_agent_types() -> tuple[str, ...]
+
+def recommend_configuration_space(
+    agent_type: str,
+    *,
+    min_impact: str | None = None,
+    min_confidence: str | None = None,
+) -> dict[str, Any]
+```
+
+`recommend_configuration_space()` returns catalog metadata for supported
+agent/task types: knob names, suggested ranges, impact estimates, evidence
+notes, effectuation status, and apply guidance. It does not call a remote
+service.
+
+```python
+VALID_PRESET_NAMES: tuple[str, ...] = (
+    "max_accuracy_then_cheapest_within_epsilon",
+    "quality_floor_min_cost",
+    "pareto_frontier",
+)
+
+def normalize_strategy_preset(
+    preset_name: str | None,
+    params: Mapping[str, Any] | None = None,
+) -> NormalizedStrategyPreset
+
+def select_strategy_preset(
+    preset: NormalizedStrategyPreset,
+    trials: Iterable[TrialResult],
+) -> PresetSelection
+```
+
+Strategy presets are advisory selection rules over completed trials. They are
+task-local heuristics and do not provide a statistical certificate.
+
+### CLI surfaces in 0.12.0
+
+The local CLI includes these onboarding and recommendation entry points:
+
+- `traigent onboard`
+- `traigent auth device-login`
+- `traigent first-prompt --agent claude|cursor|codex`
+- `traigent quickstart`
+- `traigent mcp serve`
+- `traigent recommend`
+
+The local MCP server in this worktree exposes these tools: `auth_status`,
+`list_recommendation_agent_types`, `recommend_configuration_space`,
+`detect_tvars`, `scaffold_eval`, `validate_dataset`, `estimate_cost`,
+`run_optimization`, `get_results`, and `export_evidence`.
+
 ### `traigent.get_optimization_insights()`
 
 ```python
@@ -398,7 +510,7 @@ def get_optimization_insights(
 class OptimizationResult:
     trials: list[TrialResult]
     best_config: dict[str, Any]
-    best_score: float
+    best_score: float | None
     optimization_id: str
     duration: float
     convergence_info: dict[str, Any]
@@ -411,11 +523,16 @@ class OptimizationResult:
     total_cost: float | None = None
     total_tokens: int | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
+    preset_selection: PresetSelection | None = None
+    stop_reason: StopReason | None = None
+    experiment_id: str | None = None
+    cloud_url: str | None = None
+    run_label: str | None = None
 ```
 
 **Properties:**
 - `total_trials`: Total number of trials executed
-- `successful_trials`: Number of trials that completed successfully
+- `successful_trials`: List of trials that completed successfully
 - `success_rate`: Ratio of successful trials to total trials
 
 ### TrialResult
@@ -431,6 +548,7 @@ class TrialResult:
     timestamp: datetime
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    error: TrialError | None = None
 ```
 
 **Properties:**
@@ -443,10 +561,12 @@ class TrialResult:
 
 ```python
 class TrialStatus(Enum):
+    NOT_STARTED = "not_started"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     PRUNED = "pruned"
 ```
 
@@ -454,6 +574,7 @@ class TrialStatus(Enum):
 
 ```python
 class OptimizationStatus(Enum):
+    NOT_STARTED = "not_started"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -592,4 +713,4 @@ def my_function(input_text: str) -> str:
 
 ---
 
-This documentation reflects Traigent SDK v0.10.0.
+This documentation reflects Traigent SDK 0.12.0.

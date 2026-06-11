@@ -247,7 +247,14 @@ class MeasuresDict(UserDict):
     """
 
     MAX_KEYS = 50
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$")
+    # ``re.ASCII`` pins ``\w`` to ``[A-Za-z0-9_]`` so the regex matches the
+    # documented ``^[a-zA-Z_][a-zA-Z0-9_]*$`` contract exactly. Without it,
+    # ``\w`` would also accept Unicode word characters (e.g. ``"a_πmetric"``),
+    # which the SDK evaluators' identifier gate rejects — that divergence is the
+    # Unicode-identifier bypass closed in the composite-knobs metrics channel.
+    # ``traigent.evaluators.metrics_tracker.USER_METRIC_KEY_PATTERN`` mirrors this
+    # exactly; the consistency test pins the two together.
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         """Initialize with optional data dictionary.

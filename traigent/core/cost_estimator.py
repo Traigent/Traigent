@@ -10,6 +10,7 @@ from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -199,17 +200,28 @@ class CostEstimator:
         Raises:
             OptimizationAborted: If cost approval is declined
         """
-        # S2-B Round 3: cost approval no longer skips on TRAIGENT_MOCK_LLM.
-        # The mock-mode bypass was removed because it could disable approval
-        # if the env var leaked into a production environment.
+        if is_mock_llm():
+            logger.info(
+                "Skipping optimized-function pricing preflight in mock LLM mode; "
+                "runtime CostEnforcer permits and accounting remain active."
+            )
+            return
+
         estimated_cost = self.estimate_optimization_cost(dataset)
         if not self._cost_enforcer.check_and_approve(estimated_cost):
             from traigent.core.cost_enforcement import OptimizationAborted
 
             raise OptimizationAborted(
-                f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
-                f"limit: ${self._cost_enforcer.config.limit:.2f}. "
-                f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
+                "Cost approval declined. Rough conservative upper-bound "
+                f"estimate: ${estimated_cost:.2f}, limit: "
+                f"${self._cost_enforcer.config.limit:.2f}. "
+                "Pre-run estimates use fixed token assumptions and conservative "
+                "fallback pricing when model pricing is unavailable. To proceed, "
+                "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
+                "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
+                "private/unpriced model rates with "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
             )
 
     def estimate_optimization_cost(self, dataset: Dataset) -> float:

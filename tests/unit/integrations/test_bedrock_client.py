@@ -24,7 +24,6 @@ from traigent.integrations.bedrock_client import (
     _default_anthropic_version,
     _extract_text_from_messages_response,
     _require_boto3,
-    resolve_default_bedrock_model_id,
 )
 from traigent.utils.langchain_interceptor import (
     clear_captured_responses,
@@ -1046,97 +1045,3 @@ class TestBedrockChatClientAsyncInvokeStream:
         # Verify all expected chunks are present
         assert "First" in chunks
         assert "second" in chunks
-
-
-class TestResolveDefaultBedrockModelId:
-    """Tests for resolve_default_bedrock_model_id function."""
-
-    def test_resolve_uses_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id respects BEDROCK_MODEL_ID env var."""
-        monkeypatch.setenv("BEDROCK_MODEL_ID", "custom.model.id")
-        result = resolve_default_bedrock_model_id("sonnet")
-        assert result == "custom.model.id"
-
-    def test_resolve_sonnet_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps sonnet hint correctly."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("sonnet")
-        assert result == "anthropic.claude-3-sonnet-20240229-v1:0"
-
-    def test_resolve_haiku_4_5_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps haiku 4.5 hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("haiku 4.5")
-        assert result == "anthropic.claude-3-5-haiku-20241022-v1:0"
-
-    def test_resolve_haiku_3_5_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps haiku 3.5 hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("haiku 3.5")
-        assert result == "anthropic.claude-3-5-haiku-20241022-v1:0"
-
-    def test_resolve_haiku_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps haiku hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("haiku")
-        assert result == "anthropic.claude-3-haiku-20240307-v1:0"
-
-    def test_resolve_opus_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps opus hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("opus")
-        assert result == "anthropic.claude-3-opus-20240229-v1:0"
-
-    def test_resolve_jamba_mini_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps jamba mini hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("jamba mini")
-        assert result == "ai21.jamba-1-5-mini-v1:0"
-
-    def test_resolve_jamba_large_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps jamba large hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("jamba large")
-        assert result == "ai21.jamba-1-5-large-v1:0"
-
-    def test_resolve_jamba_instruct_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps jamba instruct hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("jamba instruct")
-        assert result == "ai21.jamba-1-5-large-v1:0"
-
-    def test_resolve_jamba_default_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id defaults jamba to mini."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("jamba")
-        assert result == "ai21.jamba-1-5-mini-v1:0"
-
-    def test_resolve_ai21_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id maps ai21 hint."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("ai21")
-        assert result == "ai21.jamba-1-5-mini-v1:0"
-
-    def test_resolve_none_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id with None hint uses default."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id(None)
-        assert result == "anthropic.claude-3-sonnet-20240229-v1:0"
-
-    def test_resolve_empty_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id with empty hint uses default."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("")
-        assert result == "anthropic.claude-3-sonnet-20240229-v1:0"
-
-    def test_resolve_unknown_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id with unknown hint uses default."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("unknown-model")
-        assert result == "anthropic.claude-3-sonnet-20240229-v1:0"
-
-    def test_resolve_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test resolve_default_bedrock_model_id is case insensitive."""
-        monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
-        result = resolve_default_bedrock_model_id("SONNET")
-        assert result == "anthropic.claude-3-sonnet-20240229-v1:0"

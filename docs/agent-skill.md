@@ -1,8 +1,8 @@
 # AI Agent Skill
 
-Traigent ships a built-in [Agent Skill](https://agentskills.io/) — a set of instructions that teach your AI coding agent how to set up and run Traigent optimizations.
+Traigent publishes [Agent Skills](https://agentskills.io/) — sets of instructions that teach your AI coding agent how to set up and run Traigent optimizations.
 
-When you ask your agent to "optimize this function with Traigent," the skill guides it through a **dry-run-first workflow**: validate everything at zero cost in mock mode, then switch to real execution only when you say so.
+When you ask your agent to "optimize this function with Traigent," the skill guides it through a **dry-run-first workflow**: validate the documented Traigent path at zero provider cost in mock mode, then switch to real execution only when you say so. If your code makes provider calls outside Traigent's optimized/evaluated path, stub those calls explicitly before treating the rehearsal as guaranteed $0.
 
 ## Compatible Agents
 
@@ -10,18 +10,17 @@ Works with Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Gemini CLI, Windsu
 
 ## Install
 
-**Option A — npx (all 8 skills):**
+The canonical SDK skill source is [`Traigent/traigent-skills`](https://github.com/Traigent/traigent-skills). SDK checkouts do not vendor `.agents/` or `.claude/skills/` copies; install from the remote repo so your local agent cache can be updated independently.
+
+**Install all SDK skills:**
 ```bash
-npx skills add Traigent/agents-skills
+npx skills add Traigent/traigent-skills --skill '*'
 ```
 
-> **Note:** The older `Traigent/agent-skills` repo (without the trailing `s`)
-> is deprecated and pinned to 7 skills missing the dry-run-first orchestrator.
-> Use `Traigent/agents-skills` instead.
-
-**Option B — already included:**
-
-If you cloned the Traigent repo, the skill is already at [`.agents/skills/traigent/SKILL.md`](../.agents/skills/traigent/SKILL.md). Agents that support the `.agents/` convention will discover it automatically.
+**Install only the Python entry points:**
+```bash
+npx skills add Traigent/traigent-skills --skill traigent --skill traigent-quickstart
+```
 
 ## What the Skill Does
 
@@ -31,6 +30,6 @@ If you cloned the Traigent repo, the skill is already at [`.agents/skills/traige
 4. Reports results and estimates real costs
 5. Waits for your go-ahead before spending real tokens
 
-## View the Skill
+## View the Skills
 
-[Read the full skill instructions →](../.agents/skills/traigent/SKILL.md)
+[Read the canonical skill instructions →](https://github.com/Traigent/traigent-skills/tree/main/skills/traigent)

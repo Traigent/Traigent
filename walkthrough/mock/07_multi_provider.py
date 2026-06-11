@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.helpers import print_optimization_config, print_results_table
+from utils.helpers import build_results_table_callback, print_optimization_config
 from utils.mock_answers import (
     ANSWERS,
     DEFAULT_MOCK_MODEL,
@@ -73,7 +73,6 @@ CONFIG_SPACE = {
 MOCK_MODE_CONFIG = {
     "base_accuracy": 0.85,
     "variance": 0.0,
-    "random_seed": 42,
 }
 
 
@@ -153,11 +152,12 @@ async def main() -> None:
         algorithm="grid",
         max_trials=10,
         show_progress=True,
+        callbacks=[
+            build_results_table_callback(
+                is_mock=True, task_type="simple_qa", show_progress=True
+            )
+        ],
         random_seed=42,
-    )
-
-    print_results_table(
-        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa"
     )
 
     # Show best configuration with provider info

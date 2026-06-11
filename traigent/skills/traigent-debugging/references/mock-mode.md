@@ -6,7 +6,7 @@ Traigent provides two environment variables for running without external depende
 
 | Variable | Purpose |
 |---|---|
-| `TRAIGENT_MOCK_LLM=true` | Mock all LLM API calls. No API keys required. |
+| `TRAIGENT_MOCK_LLM=true` | Mock supported LLM calls made through Traigent's integration/interceptor path. No API keys required for the documented local dry-run path. |
 | `TRAIGENT_OFFLINE_MODE=true` | Skip backend/cloud connection. No Traigent service needed. |
 
 These are typically used together for testing, CI/CD, and development.
@@ -56,9 +56,9 @@ TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/
 
 When `TRAIGENT_MOCK_LLM=true`:
 
-- LLM API calls return synthetic/mock responses instead of calling real providers
+- supported LLM API calls return synthetic/mock responses instead of calling real providers
 - No API keys are required (OpenAI, Anthropic, etc.)
-- No network calls are made to LLM providers
+- No network calls are made to LLM providers for supported calls made while Traigent's interceptors are active
 - Cost tracking reports zero or minimal cost
 - Response times are near-instant
 
@@ -66,7 +66,7 @@ When `TRAIGENT_MOCK_LLM=true`:
 
 - OpenAI API calls (`openai.chat.completions.create`)
 - Anthropic API calls (`anthropic.messages.create`)
-- LiteLLM completion calls
+- LiteLLM completion calls made inside optimized/evaluated Traigent runs after the SDK installs its LiteLLM interceptor
 - Any provider accessed through Traigent's integration layer
 
 ### What Is NOT Mocked
@@ -76,6 +76,8 @@ When `TRAIGENT_MOCK_LLM=true`:
 - Dataset loading and validation
 - Configuration space sampling
 - The optimization loop itself
+- Provider calls made before the Traigent optimization/evaluation path installs interceptors
+- Provider clients that Traigent does not support yet; stub those calls explicitly for a guaranteed $0 rehearsal
 
 This means mock mode is useful for testing:
 - Configuration space setup
@@ -110,7 +112,7 @@ TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python my_script.py
 This gives you a fully self-contained environment:
 - No API keys needed
 - No backend connection needed
-- No network calls at all
+- No provider network calls for supported calls made through the documented Traigent dry-run path
 - Fast execution (no real LLM latency)
 
 ## Limitations of Mock Mode
@@ -165,6 +167,7 @@ import traigent
         "temperature": [0.0, 0.5, 1.0],
     },
     objectives=["accuracy"],
+    eval_dataset="data.jsonl",
     max_trials=3,
 )
 def my_func(text):
@@ -172,7 +175,7 @@ def my_func(text):
     return f"Response using {config['model']}"
 
 # Quick validation run
-results = my_func.optimize(dataset="data.jsonl")
+results = my_func.optimize()
 
 print(f"Ran {len(results.trials)} trials")
 print(f"Stop reason: {results.stop_reason}")

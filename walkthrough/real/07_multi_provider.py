@@ -46,11 +46,11 @@ _error_counts: Counter[str] = Counter()
 _MAX_ERRORS_PER_MODEL = 1  # Only show first error per model
 
 from utils.helpers import (
+    build_results_table_callback,
     configure_logging,
     print_cost_estimate,
     print_estimated_time,
     print_optimization_config,
-    print_results_table,
 )
 from utils.scoring import token_match_score
 
@@ -241,13 +241,12 @@ async def main() -> None:
         parallel_config={"trial_concurrency": PARALLEL_TRIALS},
         timeout=600,  # 10 min for 10 trials
         show_progress=True,
+        callbacks=[build_results_table_callback(is_mock=False, show_progress=True)],
         random_seed=42,
     )
     if record_runtime:
         runtime_seconds = time.perf_counter() - start_time
         print(f"\nRecorded runtime (for estimate update): {runtime_seconds:.1f}s")
-
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     # Show best configuration with provider info
     best_model = results.best_config.get("model", "unknown")

@@ -66,6 +66,26 @@ class TestCollectSpan:
         mgr.collect_span(_FakeSpan())
         assert len(mgr._collected_spans) == 0
 
+    def test_rebind_configuration_run_id_updates_matching_collected_spans(self) -> None:
+        mgr = _make_manager(tracker=MagicMock())
+        mgr._collected_spans = [
+            _FakeSpan(configuration_run_id="client-trial-1"),
+            _FakeSpan(configuration_run_id="other-trial"),
+            _FakeSpan(configuration_run_id="client-trial-1"),
+        ]
+
+        updated = mgr.rebind_configuration_run_id(
+            "client-trial-1",
+            "backend-trial-1",
+        )
+
+        assert updated == 2
+        assert [span.configuration_run_id for span in mgr._collected_spans] == [
+            "backend-trial-1",
+            "other-trial",
+            "backend-trial-1",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # submit_traces

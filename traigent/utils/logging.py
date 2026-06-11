@@ -5,6 +5,49 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
+from types import ModuleType
+from typing import Any, cast
+
+
+def _resolve_logging_level(level: str | None = None) -> str:
+    """Resolve SDK logging level, honoring the documented env override."""
+
+    configured = os.environ.get("TRAIGENT_LOG_LEVEL") or level or "INFO"
+    return configured.strip().upper()
+
+
+def configure_litellm_logging(
+    level: str | None = None,
+    *,
+    litellm_module: ModuleType | None = None,
+) -> None:
+    """Apply Traigent's LiteLLM logging policy.
+
+    The logger policy can be applied before LiteLLM is imported. When a LiteLLM
+    module is available, the same function also toggles its debug banner flag.
+    """
+
+    log_level = _resolve_logging_level(level)
+    debug_enabled = log_level == "DEBUG"
+
+    litellm_logger = logging.getLogger("LiteLLM")
+    if debug_enabled:
+        litellm_logger.setLevel(logging.DEBUG)
+        litellm_logger.propagate = True
+    else:
+        litellm_logger.setLevel(logging.WARNING)
+        litellm_logger.propagate = False
+
+    module = litellm_module
+    if module is None:
+        candidate = sys.modules.get("litellm")
+        if isinstance(candidate, ModuleType):
+            module = candidate
+
+    if module is not None:
+        cast(Any, module).suppress_debug_info = not debug_enabled
 
 
 def setup_logging(
@@ -40,6 +83,7 @@ def setup_logging(
     # Set specific levels for third-party libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    configure_litellm_logging(level)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -56,3 +100,6 @@ def get_logger(name: str) -> logging.Logger:
 
 # Create default logger
 logger = get_logger(__name__)
+
+# Configure third-party loggers early without importing optional dependencies.
+configure_litellm_logging()

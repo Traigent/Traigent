@@ -8,10 +8,12 @@ from traigent.mcp.tools import (
     auth_status_tool,
     detect_tvars_tool,
     estimate_cost_tool,
+    export_evidence_tool,
     get_results_tool,
     list_recommendation_agent_types_tool,
     recommend_configuration_space_tool,
     run_optimization_tool,
+    scaffold_eval_tool,
     validate_dataset_tool,
 )
 
@@ -92,6 +94,27 @@ def create_server() -> Any:
 
     @server.tool(
         description=(
+            "Scaffold a reviewable draft JSONL evaluation dataset and a local "
+            "Traigent approval manifest. Generated examples are draft evidence; "
+            "real optimization refuses them until a human approves or replaces "
+            "the dataset."
+        )
+    )
+    def scaffold_eval(
+        agent_type: str = "agent",
+        output_path: str = "eval.draft.jsonl",
+        example_count: int = 3,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        return scaffold_eval_tool(
+            agent_type=agent_type,
+            output_path=output_path,
+            example_count=example_count,
+            overwrite=overwrite,
+        )
+
+    @server.tool(
+        description=(
             "Validate a JSON/JSONL dataset using Validators.validate_dataset. "
             "Path security: path must resolve under TRAIGENT_DATASET_ROOT when "
             "set, otherwise under the MCP server's current working directory."
@@ -123,6 +146,8 @@ def create_server() -> Any:
             "Run local optimization for @traigent.optimize functions in a Python "
             "script. Defaults to mode='mock' dry-run. Real mode spends provider "
             "tokens/money and refuses unless confirm=true and cost_limit is set. "
+            "Real mode also refuses any local draft eval manifest that has not "
+            "been human-approved. "
             "Path security: script_path must resolve under the current working "
             "directory. Note: this runs synchronously and blocks the MCP stdio "
             "loop for the full duration of the run (single-agent v1 limitation); "
@@ -154,6 +179,19 @@ def create_server() -> Any:
     )
     def get_results(result_name: str | None = None) -> dict[str, Any]:
         return get_results_tool(result_name=result_name)
+
+    @server.tool(
+        description=(
+            "Export a local Traigent evidence bundle as Markdown plus JSON from "
+            "saved optimization results. The bundle carries dataset approval "
+            "status and labels generated/unapproved evals as draft evidence."
+        )
+    )
+    def export_evidence(
+        result_name: str | None = None,
+        output_dir: str = ".traigent/evidence",
+    ) -> dict[str, Any]:
+        return export_evidence_tool(result_name=result_name, output_dir=output_dir)
 
     return server
 

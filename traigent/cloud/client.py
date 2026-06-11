@@ -1962,6 +1962,13 @@ class CloudServiceError(StandardizedClientError):
         super().__init__(message, "cloud_service", original_error)
 
 
+class SessionContractError(CloudServiceError):
+    """A session-create CONTRACT failure (Phase 8): an invalid
+    TRAIGENT_SESSION_CONTRACT value or a governed/strict session forced onto
+    the legacy shape. NEVER absorbed into the local-fallback path — silently
+    degrading a contract refusal would launder strict mode (RFC 0001 P7)."""
+
+
 class CloudRemoteExecutionUnavailableError(CloudServiceError):
     """Raised when remote cloud execution endpoints are intentionally unavailable."""
 

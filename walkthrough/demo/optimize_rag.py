@@ -16,9 +16,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.helpers import print_optimization_config, print_results_table
+from utils.helpers import print_optimization_config
 
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.utils.results_table import print_results_table
 
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
@@ -155,9 +156,7 @@ def main() -> None:
     progress_animation()
 
     results = build_results()
-    print_results_table(
-        results, CONFIG_SPACE, OBJECTIVES, is_mock=False, task_type="rag_qa"
-    )
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, mode_label="REAL")
 
     print("\nBest Configuration Found:")
     print(f"  Model:        {results.best_config['model']}")
@@ -169,7 +168,9 @@ def main() -> None:
     print(f"  Accuracy: {results.best_metrics['accuracy']:.1%}")
     print(f"  Cost:     ${results.best_metrics['cost']:.5f}")
     print(f"  Latency:  {results.best_metrics['latency']:.3f}s")
-    print("\nNote: Results recorded from real OpenAI API calls. Replayed here to save time.")
+    print(
+        "\nNote: Results recorded from real OpenAI API calls. Replayed here to save time."
+    )
 
 
 if __name__ == "__main__":

@@ -57,6 +57,7 @@ import litellm
         "max_tokens": [256, 512],
     },
     objectives=["accuracy"],
+    eval_dataset="qa_eval.jsonl",
     max_trials=15,
 )
 def answer(question):
@@ -70,7 +71,7 @@ def answer(question):
     )
     return response.choices[0].message.content
 
-results = answer.optimize(dataset="qa_eval.jsonl")
+results = answer.optimize()
 ```
 
 ## Cost Tracking
@@ -78,7 +79,7 @@ results = answer.optimize(dataset="qa_eval.jsonl")
 LiteLLM tracks cost per completion call. You can access this through Traigent's results:
 
 ```python
-results = answer.optimize(dataset="qa_eval.jsonl")
+results = answer.optimize()
 
 # Traigent aggregates cost across all trials
 if results.total_cost is not None:
@@ -98,7 +99,7 @@ print(f"Cost per config: ${stats.cost_per_configuration:.4f}")
 ### Cost-Accuracy Tradeoff Analysis
 
 ```python
-results = answer.optimize(dataset="qa_eval.jsonl")
+results = answer.optimize()
 
 # Group trials by provider
 from collections import defaultdict
@@ -142,6 +143,7 @@ import litellm
         "max_tokens": [256, 512, 1024],
     },
     objectives=["accuracy"],
+    eval_dataset="eval_prompts.jsonl",
     max_trials=20,
 )
 def generate_response(prompt):
@@ -160,7 +162,7 @@ def generate_response(prompt):
 
 
 # Run optimization
-results = generate_response.optimize(dataset="eval_prompts.jsonl")
+results = generate_response.optimize()
 
 # Analyze results
 print(f"Best model: {results.best_config['model']}")

@@ -7,12 +7,12 @@ Traigent provides real-time cost tracking and enforcement to prevent runaway LLM
 | Variable | Default | Description |
 |---|---|---|
 | `TRAIGENT_RUN_COST_LIMIT` | `2.0` | Maximum USD spending per optimization run. |
-| `TRAIGENT_COST_APPROVED` | `false` | Set to `"true"` to skip the interactive cost approval handshake. |
-| `TRAIGENT_STRICT_COST_ACCOUNTING` | `false` | Fail fast if cost extraction from LLM responses fails. |
+| `TRAIGENT_COST_APPROVED` | `false` | Exact value `true` pre-approves both the cost-limit prompt and unpriced-model preflight. `1`, `yes`, and `on` do not approve. |
+| `TRAIGENT_STRICT_COST_ACCOUNTING` | `false` | Exact value `true` fails fast before trial 1 on unpriced models and when runtime cost extraction is missing or unknown. |
 | `TRAIGENT_REQUIRE_COST_TRACKING` | `false` | Raise exception if cost tracking cannot extract costs. |
 | `TRAIGENT_COST_WARNING_THRESHOLD` | `0.5` | Warn when this fraction of the limit is consumed (0.0-1.0). |
 | `TRAIGENT_COST_DIVERGENCE_THRESHOLD` | `2.0` | Log warning if actual/estimated cost ratio exceeds this. |
-| `TRAIGENT_MOCK_LLM` | `false` | Bypass all cost tracking (no real LLM costs in mock mode). |
+| `TRAIGENT_MOCK_LLM` | `false` | Mock LiteLLM/LangChain provider calls and skip optimized-function pricing preflight; not a global `CostEnforcer` bypass. |
 
 ## Setting a Cost Limit
 
@@ -89,25 +89,38 @@ This means the enforcer gets better at predicting costs as the optimization prog
 
 ## Pre-Approving Costs
 
-By default, Traigent may prompt for cost approval before running optimization (especially for expensive configurations). To skip this:
+By default, Traigent may prompt for cost approval before running optimization
+(especially for expensive or unpriced configurations). To pre-approve
+cost-sensitive execution:
 
 ```bash
 export TRAIGENT_COST_APPROVED=true
 ```
 
-This is useful in CI/CD pipelines, automated scripts, or when you have already verified the budget is acceptable.
+The environment value must be exactly `true`; values such as `1`, `yes`, and
+`on` do not approve. In code, runtime `cost_approved=True` must be a real
+boolean; string values are ignored and logged as warnings.
+
+Pre-approval covers both the cost-limit prompt and the unpriced-model preflight
+gate. It proceeds with a warning for unpriced models; it does not add pricing
+coverage. Without pre-approval, unpriced models block before trial 1: interactive
+terminals prompt `y/N`, and non-interactive shells fail closed.
 
 ## Strict Cost Accounting
 
-Enable strict mode to fail fast when cost information is unavailable:
+Enable strict mode to fail fast before trial 1 on unpriced models, and fail if
+runtime cost information is missing or unknown:
 
 ```bash
 export TRAIGENT_STRICT_COST_ACCOUNTING=true
 ```
 
-In strict mode, if Traigent cannot extract the cost from an LLM response (e.g., the provider does not report usage), it raises `CostTrackingRequiredError` instead of logging a warning and continuing.
+The environment value must be exactly `true`. In strict mode, unpriced models
+fail fast before trial 1, and missing or unknown runtime cost extraction raises
+`CostTrackingRequiredError` instead of logging a warning and continuing.
 
-This is recommended for production environments where accurate cost tracking is critical.
+Budget overruns are separate: `TRAIGENT_RUN_COST_LIMIT` controls the run budget
+and raises `CostLimitExceeded` when exceeded.
 
 ## Cost Warning Threshold
 
@@ -136,10 +149,17 @@ Trial 2: acquire_permit() -> execute -> track_cost(permit, $0.05)
 
 ## Mock Mode
 
-When `TRAIGENT_MOCK_LLM=true`, all cost tracking is bypassed. No permits are issued, no costs are recorded, and `CostLimitExceeded` is never raised. Use this for local development and testing.
+When `TRAIGENT_MOCK_LLM=true`, LiteLLM and LangChain provider calls are mocked
+and the optimized-function pricing preflight is skipped because no provider
+spend occurs through those paths. Raw SDK calls such as
+`openai.chat.completions.create(...)` and `anthropic.messages.create(...)` are
+not intercepted by mock mode. Mock mode does not globally bypass `CostEnforcer`
+permits or accounting, so include `cost_approved=True` in code or
+`TRAIGENT_COST_APPROVED=true` in shell dry runs.
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
+export TRAIGENT_COST_APPROVED=true
 export TRAIGENT_OFFLINE_MODE=true
 ```
 
@@ -159,6 +179,7 @@ python run_optimization.py
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
+export TRAIGENT_COST_APPROVED=true
 export TRAIGENT_OFFLINE_MODE=true
 
 pytest tests/

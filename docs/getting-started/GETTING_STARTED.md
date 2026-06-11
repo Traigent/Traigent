@@ -7,17 +7,25 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 1) Install and run - no API keys needed:
 
 ```bash
-pip install "traigent[integrations]"
-python -m traigent.examples.quickstart
+pip install "traigent[recommended]"
+traigent quickstart
 ```
 
-Or from a source checkout:
+For guided setup after the quickstart:
+
+```bash
+traigent onboard
+traigent auth device-login
+traigent first-prompt --agent codex
+```
+
+From a source checkout for development:
 
 Pip:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"
+pip install "traigent[recommended]"
 python hello_world.py
 ```
 
@@ -26,11 +34,11 @@ Uv:
 ```bash
 uv venv --python 3.11
 source .venv/bin/activate
-uv pip install -e ".[recommended]"
+uv pip install "traigent[recommended]"
 python hello_world.py
 ```
 
-The quickstart runs in mock mode by default - it simulates LLM calls so you can see the full optimization flow instantly.
+The quickstart runs in mock mode by default and pre-approves the local cost gate for the demo - it simulates LiteLLM/LangChain calls so you can see the full optimization flow instantly. For your own dry runs, use mock mode plus `cost_approved=True` or `TRAIGENT_COST_APPROVED=true`; raw `openai.chat.completions.create(...)` and `anthropic.messages.create(...)` calls are not mocked.
 
 2) Here's what it does - one decorator, automatic optimization:
 
@@ -101,6 +109,12 @@ def classify(text: str) -> str:
 ```bash
 traigent info                                   # Version/features
 traigent algorithms                             # Available strategies
+traigent quickstart                             # Packaged mock-mode demo
+traigent onboard                                # Guided project setup
+traigent auth device-login                      # Browser device login
+traigent first-prompt --agent codex             # Coding-agent prompt
+traigent recommend rag                          # Configuration recommendations
+traigent mcp serve                              # Local stdio MCP server
 traigent optimize examples/core/rag-optimization/run.py -a grid -n 5
 traigent validate examples/datasets/rag-optimization/evaluation_set.jsonl
 traigent plot my_run -p progress
@@ -144,4 +158,4 @@ To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MO
 
 ---
 
-Ready for more? Dive into the [examples](../../examples/) and the [API reference](../api-reference/complete-function-specification.md).
+Ready for more? Dive into the [examples](../examples/) and the [API reference](../api-reference/complete-function-specification.md).

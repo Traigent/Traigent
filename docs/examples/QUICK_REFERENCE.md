@@ -5,7 +5,7 @@ Everything you need to run and adapt examples quickly.
 ## Common commands
 ```bash
 # Install from repo root (includes example deps)
-pip install -e ".[examples]"
+pip install "traigent[recommended]"
 
 # Auto-mocks when ANTHROPIC_API_KEY is unset
 python examples/core/simple-prompt/run.py
@@ -34,7 +34,7 @@ def summarize(text: str) -> str:
 - `edge_analytics` (default and supported) - local execution with analytics.
 - `hybrid` (supported) - local trial execution with backend/portal session and metric tracking.
 - `cloud` (reserved) - future remote execution; currently fails closed with guidance to use `hybrid`.
-- Mock: `TRAIGENT_MOCK_LLM=true` works in OSS/local mode.
+- Mock: call `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial code.
 
 ## Quick knobs
 - Constrain cost: smaller `max_trials`, cheaper models, `constraints={"cost_per_call": "<0.01"}`.
@@ -52,8 +52,8 @@ examples/
 ```
 
 ## Troubleshooting highlights
-- `ModuleNotFoundError: traigent` -> `pip install -e ".[examples]"` from repo root.
-- `API key not found` -> `TRAIGENT_MOCK_LLM=true` or export keys.
+- `ModuleNotFoundError: traigent` -> `pip install "traigent[recommended]"`.
+- `API key not found` -> call `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial code or export keys.
 - Slow runs -> lower `max_trials` or narrow the configuration space.
 - Empty results -> verify dataset paths in `eval_dataset`.
 

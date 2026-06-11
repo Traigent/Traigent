@@ -90,15 +90,34 @@ class OptimizationCallback(ABC):
 class ProgressBarCallback(OptimizationCallback):
     """Progress bar callback using simple text output."""
 
-    def __init__(self, width: int = 50, update_interval: float = 1.0) -> None:
+    def __init__(
+        self,
+        width: int = 50,
+        update_interval: float = 1.0,
+        *,
+        mode_label: str | None = None,
+        metric_overrides: dict[str, list[float]] | None = None,
+        metric_override_factory: (
+            Callable[[Any], dict[str, list[float]] | None] | None
+        ) = None,
+        footer_note: str | None = None,
+    ) -> None:
         """Initialize progress bar callback.
 
         Args:
             width: Width of progress bar in characters
             update_interval: Minimum seconds between updates
+            mode_label: Optional label for the trailing results table.
+            metric_overrides: Optional fixed display metric overrides.
+            metric_override_factory: Optional per-result display override factory.
+            footer_note: Optional note printed after the trailing results table.
         """
         self.width = width
         self.update_interval = update_interval
+        self._table_mode_label = mode_label
+        self._table_metric_overrides = metric_overrides
+        self._table_metric_override_factory = metric_override_factory
+        self._table_footer_note = footer_note
         self.last_update = 0.0
         self.start_time = 0.0
         # Track last progress for final update
@@ -228,7 +247,18 @@ class ProgressBarCallback(OptimizationCallback):
         try:
             from traigent.utils.results_table import print_results_table
 
-            print_results_table(result, self._config_space, self._objectives)
+            metric_overrides = self._table_metric_overrides
+            if self._table_metric_override_factory is not None:
+                metric_overrides = self._table_metric_override_factory(result)
+            print_results_table(
+                result,
+                self._config_space,
+                self._objectives,
+                mode_label=self._table_mode_label,
+                metric_overrides=metric_overrides,
+            )
+            if self._table_footer_note:
+                print(self._table_footer_note)
         except Exception as exc:
             logger.warning("Failed to render results table: %s", exc)
 
@@ -243,9 +273,22 @@ class ResultsTableCallback(OptimizationCallback):
     progress bar is suppressed.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        mode_label: str | None = None,
+        metric_overrides: dict[str, list[float]] | None = None,
+        metric_override_factory: (
+            Callable[[Any], dict[str, list[float]] | None] | None
+        ) = None,
+        footer_note: str | None = None,
+    ) -> None:
         self._config_space: dict[str, Any] = {}
         self._objectives: list[str] = []
+        self._table_mode_label = mode_label
+        self._table_metric_overrides = metric_overrides
+        self._table_metric_override_factory = metric_override_factory
+        self._table_footer_note = footer_note
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
@@ -267,7 +310,18 @@ class ResultsTableCallback(OptimizationCallback):
         try:
             from traigent.utils.results_table import print_results_table
 
-            print_results_table(result, self._config_space, self._objectives)
+            metric_overrides = self._table_metric_overrides
+            if self._table_metric_override_factory is not None:
+                metric_overrides = self._table_metric_override_factory(result)
+            print_results_table(
+                result,
+                self._config_space,
+                self._objectives,
+                mode_label=self._table_mode_label,
+                metric_overrides=metric_overrides,
+            )
+            if self._table_footer_note:
+                print(self._table_footer_note)
         except Exception as exc:
             logger.warning("Failed to render results table: %s", exc)
 

@@ -209,29 +209,22 @@ For shell-only fixtures, `TRAIGENT_MOCK_LLM=true` remains available outside prod
 ### Pattern 1: RAG Quality Evaluator
 
 ```python
-from traigent.metrics.rag import (
-    calculate_relevance,
-    calculate_faithfulness,
-    calculate_context_precision
-)
+def token_overlap(output: str, expected: str) -> float:
+    output_tokens = {token.lower() for token in str(output).split()}
+    expected_tokens = {token.lower() for token in str(expected).split()}
+    if not expected_tokens:
+        return 0.0
+    return len(output_tokens & expected_tokens) / len(expected_tokens)
 
-def rag_evaluator(output: str, expected: str, context: Dict[str, Any]) -> float:
-    """Evaluate RAG system quality"""
+
+def rag_evaluator(output: str, expected: str, context: dict[str, object]) -> float:
     retrieved_docs = context.get("retrieved_docs", [])
+    context_text = " ".join(str(doc) for doc in retrieved_docs)
 
-    # Calculate RAG-specific metrics
-    relevance = calculate_relevance(output, retrieved_docs)
-    faithfulness = calculate_faithfulness(output, retrieved_docs)
-    answer_similarity = semantic_similarity(output, expected)
+    answer_similarity = token_overlap(output, expected)
+    context_support = token_overlap(output, context_text)
 
-    # Weighted combination
-    score = (
-        0.4 * answer_similarity +
-        0.3 * relevance +
-        0.3 * faithfulness
-    )
-
-    return score
+    return 0.7 * answer_similarity + 0.3 * context_support
 ```
 
 ### Pattern 2: Classification Evaluator
@@ -498,7 +491,7 @@ Best accuracy: 0.00
 - [Execution Modes](execution-modes.md)
 - [Parallel Configuration](parallel-configuration.md)
 - [API Reference](../api-reference/)
-- [Examples](../../examples/)
+- [Examples](../examples/)
 
 ---
 

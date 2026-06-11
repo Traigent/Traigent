@@ -291,14 +291,43 @@ class TestBuildSessionPayload:
         mock_client = Mock()
         self.ops = ApiOperations(mock_client)
 
-    def test_basic_payload(self):
-        """Test basic payload structure."""
+    def test_basic_payload_is_typed_since_phase8(self):
+        """The default contract is the TYPED shape (Phase 8) — the legacy
+        problem_statement/search_space shape survives only behind
+        TRAIGENT_SESSION_CONTRACT=legacy (see the legacy test below)."""
+        request = Mock()
+        request.function_name = "test_func"
+        request.metadata = None
+        request.dataset_metadata = {"size": 100}
+        request.configuration_space = {"param": [1, 2, 3]}
+        request.objectives = ["accuracy"]
+        request.promotion_policy = None
+        request.tvl_governance = None
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["function_name"] == "test_func"
+        # DELIBERATELY EVOLVED (live composites-E2E finding): the shorthand
+        # list form now normalizes to the typed contract the backend's typed
+        # path actually accepts — the verbatim pass-through 400'd on every
+        # decorator call with bare-list spaces.
+        assert payload["configuration_space"] == {
+            "param": {"type": "categorical", "choices": [1, 2, 3]}
+        }
+        assert payload["objectives"] == ["accuracy"]
+        assert payload["max_trials"] == 10
+        assert "problem_statement" not in payload
+
+    def test_legacy_payload_behind_contract_flag(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
         request = Mock()
         request.function_name = "test_func"
         request.metadata = None
         request.dataset_metadata = {"size": 100}
         request.configuration_space = {"param": [1, 2, 3]}
         request.objectives = ["maximize"]
+        request.promotion_policy = None
+        request.tvl_governance = None
 
         payload = self.ops._build_session_payload(request, 10)
 
@@ -316,6 +345,9 @@ class TestBuildSessionPayload:
         request.dataset_metadata = {}
         request.configuration_space = {}
         request.objectives = []
+        # bare Mock auto-attributes must not reach the policy serializer
+        request.promotion_policy = None
+        request.tvl_governance = None
 
         payload = self.ops._build_session_payload(request, 20)
 
@@ -323,14 +355,17 @@ class TestBuildSessionPayload:
         assert payload["metadata"]["custom_key"] == "value"
         assert payload["metadata"]["function_name"] == "test_func"
 
-    def test_payload_empty_objectives(self):
-        """Test payload with empty objectives uses default."""
+    def test_payload_empty_objectives(self, monkeypatch):
+        """Legacy contract: empty objectives fall back to the maximize goal."""
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
         request = Mock()
         request.function_name = "test_func"
         request.metadata = None
         request.dataset_metadata = {}
         request.configuration_space = {}
         request.objectives = []
+        request.promotion_policy = None
+        request.tvl_governance = None
 
         payload = self.ops._build_session_payload(request, 10)
 
@@ -370,8 +405,18 @@ class TestHandleSessionError:
         """Test 403 error raises AuthenticationError."""
         from traigent.cloud.auth import AuthenticationError
 
-        with pytest.raises(AuthenticationError, match="Authentication failed"):
-            self.ops._handle_session_error(403, "Forbidden")
+        with pytest.raises(AuthenticationError, match="Authentication failed") as exc:
+            self.ops._handle_session_error(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"Missing required permissions: experiment.write",'
+                '"details":{"missing_permissions":["experiment.write"]}}',
+            )
+
+        detail = getattr(exc.value, "session_creation_failure")
+        assert detail.error_code == "INSUFFICIENT_PERMISSIONS"
+        assert detail.message == "Missing required permissions: experiment.write"
+        assert detail.missing_permissions == ("experiment.write",)
 
     def test_500_error_raises_cloud_service_error(self):
         """Test 500 error raises CloudServiceError."""
@@ -395,8 +440,12 @@ class TestHandleSessionError:
 
     def test_other_error_raises_cloud_service_error(self):
         """Test other errors raise CloudServiceError."""
-        with pytest.raises(CloudServiceError, match="Session creation failed"):
+        with pytest.raises(CloudServiceError, match="Session creation failed") as exc:
             self.ops._handle_session_error(400, "Bad Request")
+
+        detail = getattr(exc.value, "session_creation_failure")
+        assert detail.status_code == 400
+        assert detail.raw_body == "Bad Request"
 
 
 class TestHandleClientError:

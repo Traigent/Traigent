@@ -17,7 +17,9 @@ These tests pin the post-fix behavior:
   locked path.
 * The bypass machinery (``_check_mock_mode`` / ``is_mock_mode`` /
   ``_mock_mode_cached``) is removed from the public+private API.
-* ``CostEstimator.check_cost_approval`` no longer skips when mock-mode is set.
+* ``CostEstimator.check_cost_approval`` may skip only the pre-run pricing
+  estimate when the central mock-mode source of truth says LLM calls are
+  mocked; it must still run normally when that source of truth is false.
 """
 
 from __future__ import annotations
@@ -147,10 +149,12 @@ class TestCostEnforcerNoMockBypass:
             # Now budget is exhausted; the bypass would have granted id=0,
             # but the real path must deny.
             second = enforcer.acquire_permit()
-            assert not second.is_granted, (
-                "Mock-mode must not override real cost limits after exhaustion"
-            )
-            assert second.id == -1, "Denied permit must use sentinel id=-1, not bypass id=0"
+            assert (
+                not second.is_granted
+            ), "Mock-mode must not override real cost limits after exhaustion"
+            assert (
+                second.id == -1
+            ), "Denied permit must use sentinel id=-1, not bypass id=0"
 
     def test_release_permit_uses_real_locked_path_under_mock_env(
         self, mock_env: dict[str, str]
@@ -169,10 +173,37 @@ class TestCostEnforcerNoMockBypass:
             assert enforcer._in_flight_count == 0
 
 
-class TestCostEstimatorNoMockBypass:
-    """CostEstimator.check_cost_approval must not skip on TRAIGENT_MOCK_LLM=true."""
+class TestCostEstimatorMockPreflight:
+    """CostEstimator mock behavior is limited to optimized-function preflight."""
 
-    def test_check_cost_approval_does_not_short_circuit(
+    def test_check_cost_approval_skips_only_preflight_when_mock_llm_enabled(
+        self, mock_env: dict[str, str]
+    ) -> None:
+        from traigent.core.cost_estimator import CostEstimator
+
+        with patch.dict(os.environ, mock_env, clear=False):
+            enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, approved=False))
+
+            estimator = CostEstimator.__new__(CostEstimator)
+            estimator._cost_enforcer = enforcer
+            with (
+                patch("traigent.core.cost_estimator.is_mock_llm", return_value=True),
+                patch.object(
+                    CostEstimator,
+                    "estimate_optimization_cost",
+                    return_value=999.0,
+                ) as estimate_cost,
+                patch(
+                    "traigent.core.cost_enforcement.CostEnforcer._request_user_approval",
+                    return_value=False,
+                ) as request_approval,
+            ):
+                estimator.check_cost_approval(dataset=None)
+
+            estimate_cost.assert_not_called()
+            request_approval.assert_not_called()
+
+    def test_raw_mock_env_does_not_bypass_when_mock_sot_false(
         self, mock_env: dict[str, str]
     ) -> None:
         from traigent.core.cost_enforcement import OptimizationAborted
@@ -183,8 +214,8 @@ class TestCostEstimatorNoMockBypass:
 
             estimator = CostEstimator.__new__(CostEstimator)
             estimator._cost_enforcer = enforcer
-            # Force a high estimate via patching the estimation method
             with (
+                patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
                 patch.object(
                     CostEstimator,
                     "estimate_optimization_cost",

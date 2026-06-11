@@ -50,6 +50,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcer,
     CostEnforcerConfig,
     Permit,
+    normalize_cost_approved,
 )
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import VendorErrorCategory
@@ -76,7 +77,12 @@ from traigent.core.parallel_execution_manager import (
     PermittedTrialResult,
 )
 from traigent.core.progress_manager import ProgressManager
-from traigent.core.result_selection import TieBreaker, select_best_configuration
+from traigent.core.result_selection import (
+    TieBreaker,
+    _primary_scores_tied,
+    _secondary_metric_key,
+    select_best_configuration,
+)
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
@@ -434,7 +440,7 @@ class OptimizationOrchestrator:
         """Map public agent types to workflow graph node types."""
 
         if agent.agent_type in {"llm", "retriever", "router", "tool"}:
-            return agent.agent_type
+            return cast(str, agent.agent_type)
         return "agent"
 
     def _register_declared_workflow_trace_nodes(self) -> None:
@@ -602,12 +608,12 @@ class OptimizationOrchestrator:
     def _setup_cost_enforcer(self) -> None:
         """Initialize cost enforcer for cost limit enforcement."""
         cost_limit = self.config.get("cost_limit")
-        cost_approved = self.config.get("cost_approved", False)
+        cost_approved = normalize_cost_approved(self.config.get("cost_approved", False))
         cost_config = None
         if cost_limit is not None or cost_approved:
             cost_config = CostEnforcerConfig(
                 limit=float(cost_limit) if cost_limit else DEFAULT_COST_LIMIT_USD,
-                approved=bool(cost_approved),
+                approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
         self.parallel_execution_manager.set_cost_enforcer(self.cost_enforcer)
@@ -698,6 +704,10 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # The backend session id for the active run. Read by the
+        # certified-selection report guard to verify the incumbent's trial id
+        # was backend-acknowledged before attesting a winner.
+        self._active_session_id: str | None = None
         # RFC 0001 (knob bindings): optional resolver injecting Fixed/CVAR
         # values post-suggest, pre-validation. None => byte-identical legacy
         # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
@@ -770,7 +780,8 @@ class OptimizationOrchestrator:
         if self._best_trial_cached is not None:
             return self._best_trial_cached
 
-        if not self._trials:
+        rankable_trials = [trial for trial in self._trials if trial.is_successful]
+        if not rankable_trials:
             return None
 
         # Find trial with best primary objective (assuming first objective is primary)
@@ -779,19 +790,19 @@ class OptimizationOrchestrator:
             minimization = is_minimization_objective(primary_objective)
             if minimization:
                 best_trial = min(
-                    self._trials,
+                    rankable_trials,
                     key=lambda t: t.metrics.get(primary_objective, float("inf")),
                 )
             else:
                 best_trial = max(
-                    self._trials,
+                    rankable_trials,
                     key=lambda t: t.metrics.get(primary_objective, float("-inf")),
                 )
             self._best_trial_cached = best_trial
             return best_trial
 
         # If no objectives defined, return last trial
-        return self._trials[-1] if self._trials else None
+        return rankable_trials[-1] if rankable_trials else None
 
     def _get_config_hash(self, config: dict[str, Any] | None) -> str:
         """Generate a hash for a configuration to track metrics across trials."""
@@ -888,6 +899,115 @@ class OptimizationOrchestrator:
         ):
             return True
         return bool(getattr(policy, "chance_constraints", None))
+
+    def _build_wire_governance(
+        self,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Project the declared governance onto the wire (RFC 0001 P8).
+
+        promotion_policy: from the promotion gate's declared policy.
+        tvl_governance: cvar names/types/governed flags from the resolver's
+        DECLARED bindings (the same source _is_strict_evidence_mode trusts) —
+        never runtime or calibrated state. Both None for ungoverned sessions
+        so their wire payload stays byte-identical.
+        """
+        from traigent.cloud.governance import (
+            build_tvl_governance,
+            promotion_policy_to_wire,
+        )
+
+        gate = self._promotion_gate
+        policy = getattr(gate, "policy", None) if gate is not None else None
+        wire_policy = promotion_policy_to_wire(policy)
+
+        wire_governance = None
+        resolver = getattr(self, "knob_resolver", None)
+        space = getattr(resolver, "_space", None) if resolver is not None else None
+        if space is not None:
+            wire_governance = build_tvl_governance(space)
+        return wire_policy, wire_governance
+
+    def _build_certified_selection_report(self) -> dict[str, Any] | None:
+        """Phase 8: the client-attested certified-selection finalize report.
+
+        Built ONLY when every condition holds (mirror of the server's
+        fail-closed rules so a 400 means a bug, not a flow): strict evidence
+        mode, a certified incumbent exists, the resolver's DECLARED governed
+        cvars are each backed by a CERTIFIED certificate with an issued
+        hash. Any gap ⇒ None ⇒ the honest no-winner finalize. The incumbent's
+        trial_id is the BACKEND id (trials are submitted under it), so the
+        server can bind the winner to its own record.
+        """
+        if not self._is_strict_evidence_mode():
+            return None
+        # The FIRST trial seeds the incumbent as comparison initialization,
+        # NOT as certification — terminal strict selection only names a
+        # winner after >=1 explicit gate promotion (the _certified_promotions
+        # guard in result assembly). Mirror it here so the wire report can
+        # never overclaim a winner the SDK result itself refuses to certify.
+        # An absent attribute reads 0 ⇒ fail closed.
+        if not getattr(self, "_certified_promotions", 0):
+            return None
+        incumbent = self._best_trial_cached
+        if incumbent is None or not getattr(incumbent, "trial_id", None):
+            return None
+        # The report binds the winner to its BACKEND trial id. If the
+        # incumbent's id was never minted+acknowledged by the backend (the
+        # slot request or result submission failed), the server cannot bind
+        # it — sending a report would be a 400 at best and an attestation of
+        # an unbound winner at worst. Fail closed: send NO report (the
+        # risk-register rule for the unbindable case).
+        manager = getattr(self, "backend_session_manager", None)
+        ack = (
+            getattr(manager, "is_trial_backend_acknowledged", None) if manager else None
+        )
+        session_id = getattr(self, "_active_session_id", None)
+        if callable(ack):
+            if session_id is None or not ack(session_id, incumbent.trial_id):
+                logger.debug(
+                    "certified_selection withheld: incumbent trial %s is not "
+                    "backend-acknowledged (unbindable)",
+                    incumbent.trial_id,
+                )
+                return None
+        resolver = getattr(self, "knob_resolver", None)
+        space = getattr(resolver, "_space", None) if resolver is not None else None
+        if space is None:
+            return None
+
+        try:
+            from traigent.knobs.bindings import Calibrated, is_governed
+        except Exception:  # pragma: no cover - knobs is a hard dependency
+            return None
+
+        governed = [
+            name
+            for name, knob in dict(getattr(space, "knobs", {}) or {}).items()
+            if isinstance(getattr(knob, "binding", None), Calibrated)
+            and is_governed(knob.binding)
+        ]
+        if not governed:
+            return None
+
+        calibrated_inputs = getattr(resolver, "_calibrated_inputs", {}) or {}
+        certificates: dict[str, Any] = {}
+        for name in governed:
+            certificate = getattr(calibrated_inputs.get(name), "certificate", None)
+            if certificate is None:
+                logger.debug(
+                    "certified_selection withheld: governed cvar %s has no "
+                    "certificate at finalize",
+                    name,
+                )
+                return None
+            certificates[name] = certificate
+
+        from traigent.cloud.governance import build_certified_selection
+
+        return cast(
+            dict[str, Any] | None,
+            build_certified_selection(incumbent.trial_id, certificates),
+        )
 
     def _withhold_promotion(self, reason: str) -> bool:
         """Fail closed: record + log a strict-mode withheld promotion."""
@@ -1025,9 +1145,34 @@ class OptimizationOrchestrator:
             return True
 
         minimization = is_minimization_objective(primary_objective)
+        new_score_value = cast(float, new_score)
+        current_score_value = cast(float, current_score)
+        if _primary_scores_tied(new_score_value, current_score_value):
+            return self._secondary_tie_breaks_incumbent(trial_result, primary_objective)
         if minimization:
-            return new_score < current_score
-        return new_score > current_score
+            return new_score_value < current_score_value
+        return new_score_value > current_score_value
+
+    def _secondary_tie_breaks_incumbent(
+        self,
+        trial_result: TrialResult,
+        primary_objective: str,
+    ) -> bool:
+        """Return whether secondary declared objectives promote the candidate."""
+        if len(self.optimizer.objectives) <= 1 or self._best_trial_cached is None:
+            return False
+
+        candidate_key = _secondary_metric_key(
+            trial_result.metrics or {},
+            primary_objective,
+            self.optimizer.objectives,
+        )
+        incumbent_key = _secondary_metric_key(
+            self._best_trial_cached.metrics or {},
+            primary_objective,
+            self.optimizer.objectives,
+        )
+        return candidate_key > incumbent_key
 
     def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
         if not self.optimizer.objectives:
@@ -1275,11 +1420,26 @@ class OptimizationOrchestrator:
             self._register_examples_attempted(trial_result)
 
         if self.backend_client and session_id:
+            pre_submit_trial_id = (
+                str(trial_result.trial_id)
+                if getattr(trial_result, "trial_id", None) is not None
+                else None
+            )
             await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
                 session_id=session_id,
                 dataset_name=getattr(self, "_dataset_name", "dataset"),
             )
+            post_submit_trial_id = (
+                str(trial_result.trial_id)
+                if getattr(trial_result, "trial_id", None) is not None
+                else None
+            )
+            if post_submit_trial_id != pre_submit_trial_id:
+                self._workflow_trace_manager.rebind_configuration_run_id(
+                    pre_submit_trial_id,
+                    post_submit_trial_id,
+                )
 
         if hasattr(self.optimizer, "tell"):
             try:
@@ -1938,7 +2098,10 @@ class OptimizationOrchestrator:
                 descriptor.identifier,
             )
 
-        # Create backend session using manager
+        # Create backend session using manager. Governance crosses the wire
+        # content-free (Phase 8): the declared promotion policy and the
+        # cvar summary from DECLARED bindings — never values or evidence.
+        wire_policy, wire_governance = self._build_wire_governance()
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -1947,8 +2110,12 @@ class OptimizationOrchestrator:
             max_total_examples=self.max_total_examples,
             start_time=self._start_time or time.time(),
             agent_configuration=self._agent_configuration,
+            objectives=list(self.optimizer.objectives or []),
+            promotion_policy=wire_policy,
+            tvl_governance=wire_governance,
         )
         session_id: str | None = session_context.session_id
+        self._active_session_id = session_id
 
         if session_id:
             self._initialize_logger(session_id, func, dataset)
@@ -2045,7 +2212,7 @@ class OptimizationOrchestrator:
                     raw_result
                 )
             )
-            return session_id
+            return cast(str, session_id)
         else:
             # Return a mock session ID if no backend client
             mock_session_id = f"mock-session-{self._optimization_id[:8]}"
@@ -2402,7 +2569,9 @@ class OptimizationOrchestrator:
         self.backend_session_manager.submit_session_aggregation(result, session_id)
 
         session_summary = self.backend_session_manager.finalize_session(
-            session_id, self._status
+            session_id,
+            self._status,
+            certified_selection=self._build_certified_selection_report(),
         )
         self.backend_session_manager.attach_session_metadata(
             result, session_id, session_summary
@@ -2837,6 +3006,7 @@ class OptimizationOrchestrator:
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
             tie_breakers=self._tie_breakers or None,
             band_target=self._band_target,
+            objective_order=self.optimizer.objectives,
             comparability_mode=self.traigent_config.get_comparability_mode(),
             require_certified=strict_mode,
             certified_config=certified_config,
@@ -2902,6 +3072,14 @@ class OptimizationOrchestrator:
         now = datetime.now(UTC)
         run_label = generate_run_label(func_name, self._optimization_id, now)
 
+        result_metadata = self._build_result_metadata(
+            session_summary,
+            safeguards_telemetry,
+            strategy_preset_metadata,
+        )
+        if selection.best_trial_id:
+            result_metadata["best_trial_id"] = selection.best_trial_id
+
         # Create optimization result
         optimization_result = OptimizationResult(
             trials=self._trials.copy(),
@@ -2917,11 +3095,7 @@ class OptimizationOrchestrator:
             total_cost=total_cost if total_cost > 0 else None,
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
-            metadata=self._build_result_metadata(
-                session_summary,
-                safeguards_telemetry,
-                strategy_preset_metadata,
-            ),
+            metadata=result_metadata,
             preset_selection=preset_selection,
             stop_reason=self._stop_reason,
             run_label=run_label,

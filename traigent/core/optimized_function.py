@@ -55,6 +55,7 @@ from traigent.config.types import (
 )
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
+from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -218,6 +219,21 @@ def _extract_config_model_ids(config: Mapping[str, Any]) -> list[str]:
 
 def _format_model_id_list(model_ids: Sequence[str]) -> str:
     return ", ".join(f"`{model_id}`" for model_id in model_ids)
+
+
+def _format_unpriced_model_warning(model_ids: Sequence[str]) -> str:
+    formatted = _format_model_id_list(model_ids)
+    if len(model_ids) == 1:
+        return (
+            f"Cost for {formatted} is unavailable — results will report $0 "
+            "for it. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
+            "Traigent to add coverage."
+        )
+    return (
+        f"Costs for {formatted} are unavailable — results will report $0 "
+        "for them. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
+        "Traigent to add coverage."
+    )
 
 
 def _emit_cost_warning_once() -> None:
@@ -1935,7 +1951,10 @@ class OptimizedFunction:
         return algorithm
 
     def _preflight_model_cost_coverage(
-        self, effective_config_space: Mapping[str, Any]
+        self,
+        effective_config_space: Mapping[str, Any],
+        *,
+        cost_approved: bool = False,
     ) -> None:
         """Warn or fail before trials when a real run includes unpriced models."""
         if is_mock_llm():
@@ -1964,19 +1983,80 @@ class OptimizedFunction:
                 "pricing, or contact Traigent to add coverage."
             )
 
-        if len(missing) == 1:
-            message = (
-                f"Cost for {formatted} is unavailable — results will report $0 "
-                "for it. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
-                "Traigent to add coverage."
+        message = _format_unpriced_model_warning(missing)
+
+        if is_cost_preapproved(cost_approved):
+            warnings.warn(message, UserWarning, stacklevel=3)
+            logger.info(
+                "Proceeding with unpriced models because cost execution was "
+                "pre-approved: %s",
+                ", ".join(missing),
             )
-        else:
-            message = (
-                f"Costs for {formatted} are unavailable — results will report $0 "
-                "for them. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
-                "Traigent to add coverage."
+            return
+
+        if not sys.stdin.isatty():
+            raise UnknownModelError(
+                "Cost coverage preflight failed before any optimization trial "
+                "started: pricing is unavailable for "
+                f"{formatted}. Cannot prompt for confirmation in a "
+                "non-interactive shell. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON "
+                "or TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+                "pricing, set TRAIGENT_COST_APPROVED=true to acknowledge this "
+                "cost concern, or run interactively."
             )
+
+        plural = "model has" if len(missing) == 1 else "models have"
+        print(
+            f"""
+================================================================================
+Traigent Unpriced Model Warning
+================================================================================
+
+The following {len(missing)} {plural} NO known pricing:
+  {formatted}
+
+Their optimization results will report $0 cost for those calls, but your LLM
+provider may still bill you.
+
+Remediation:
+  - Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON with explicit per-token pricing
+  - Contact Traigent to add model pricing coverage
+  - Set TRAIGENT_COST_APPROVED=true to skip this prompt after acknowledging
+    this cost concern
+
+================================================================================
+""",
+            file=sys.stderr,
+        )
+
+        try:
+            print(
+                "Proceed despite unpriced models? [y/N]: ",
+                end="",
+                file=sys.stderr,
+                flush=True,
+            )
+            choice = input().strip().lower()
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise UnknownModelError(
+                "Cost coverage preflight failed before any optimization trial "
+                "started: user confirmation was interrupted for unpriced "
+                f"models {formatted}."
+            ) from exc
+
+        if choice not in {"y", "yes"}:
+            raise UnknownModelError(
+                "Cost coverage preflight failed before any optimization trial "
+                "started: user declined to proceed with unpriced models "
+                f"{formatted}."
+            )
+
         warnings.warn(message, UserWarning, stacklevel=3)
+        logger.info(
+            "Proceeding with unpriced models after interactive user "
+            "confirmation: %s",
+            ", ".join(missing),
+        )
 
     async def _execute_optimization(
         self,
@@ -2075,7 +2155,12 @@ class OptimizedFunction:
             self.max_total_examples = max_total_examples_value
 
         # Phase 3.5: cost coverage preflight before any cloud or local trial dispatch.
-        self._preflight_model_cost_coverage(effective_config_space)
+        self._preflight_model_cost_coverage(
+            effective_config_space,
+            cost_approved=normalize_cost_approved(
+                algorithm_kwargs.get("cost_approved", False)
+            ),
+        )
 
         # Phase 4: Try cloud execution if applicable
         cloud_result = await self._try_cloud_execution(
@@ -2675,7 +2760,7 @@ class OptimizedFunction:
 
     def publish_best_config(self, *, target: str = "cloud") -> dict[str, Any]:
         """Publish the best config to a durable remote target when supported."""
-        return self._csm.publish_best_config(target=target)
+        return self._csm.publish_best_config(target=target)  # type: ignore[no-any-return]
 
     def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
         """Load config from a file path. Delegates to ConfigStateManager."""

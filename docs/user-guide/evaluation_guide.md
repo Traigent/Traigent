@@ -162,9 +162,10 @@ def classifier(text):
 
 For testing without real API calls:
 
-```bash
-export TRAIGENT_MOCK_LLM=true
-python your_script.py
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
 ```
 
 Mock mode provides:
@@ -330,8 +331,10 @@ def summarizer(text):
    ERROR log.
 
 5. **Use Mock Mode for Testing**
-   ```bash
-   export TRAIGENT_MOCK_LLM=true
+   ```python
+   from traigent.testing import enable_mock_mode_for_quickstart
+
+   enable_mock_mode_for_quickstart()
    ```
 
 ### Issue: Inconsistent Results
@@ -389,7 +392,10 @@ def sentiment_score(output, expected, llm_metrics=None):
     objectives=["accuracy"],
     max_trials=10
 )
-def sentiment_classifier(text, temperature=0.3, model="gpt-3.5-turbo"):
+def sentiment_classifier(text):
+    cfg = traigent.get_config()
+    temperature = cfg["temperature"]
+    model = cfg["model"]
     # Your LLM logic here
     # This is simplified for example
     if "amazing" in text.lower() or "great" in text.lower():
@@ -436,11 +442,12 @@ def semantic_accuracy(output: str, expected: str) -> float:
     objectives=["accuracy", "cost"],
     max_trials=15,
 )
-def qa_system(question, temperature=0.5, max_tokens=100):
+def qa_system(question: str) -> str:
+    cfg = traigent.get_config()
     response = litellm.completion(
         model="gpt-4o-mini",
-        temperature=temperature,
-        max_tokens=max_tokens,
+        temperature=cfg["temperature"],
+        max_tokens=cfg["max_tokens"],
         messages=[{"role": "user", "content": f"Answer concisely: {question}"}],
     )
 
@@ -460,6 +467,6 @@ def qa_system(question, temperature=0.5, max_tokens=100):
 
 ## Next Steps
 
-- [Custom Evaluator Patterns](../../docs/examples/API_PATTERNS.md)
-- [Dataset Creation Tools](../../examples/datasets/)
+- [Custom Evaluator Patterns](../examples/API_PATTERNS.md)
+- Dataset creation tools are available in the repository examples.
 - [Troubleshooting Guide](../README.md#troubleshooting)

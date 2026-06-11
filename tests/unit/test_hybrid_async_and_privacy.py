@@ -145,10 +145,17 @@ class DummyBackend:
         search_space: dict,
         optimization_goal: str,
         metadata: dict,
+        **kwargs: Any,
     ):
         sid = f"sess-{len(self.sessions) + 1}"
         self.sessions.append(
-            {"id": sid, "fn": function_name, "space": search_space, "meta": metadata}
+            {
+                "id": sid,
+                "fn": function_name,
+                "space": search_space,
+                "meta": metadata,
+                "kwargs": kwargs,
+            }
         )
         return SessionCreationResult.connected(sid)
 
@@ -164,7 +171,7 @@ class DummyBackend:
             }
         )
 
-    def finalize_session_sync(self, session_id: str, succeeded: bool):
+    def finalize_session_sync(self, session_id: str, succeeded: bool, **kwargs: Any):
         self.finalized.append({"id": session_id, "ok": succeeded})
         return {"status": "ok", "succeeded": succeeded}
 
@@ -300,7 +307,7 @@ async def test_local_mode_includes_aggregated_summary_in_submission():
         ):
             self.submissions.append({"session_id": session_id, "metadata": metadata})
 
-        def finalize_session_sync(self, session_id: str, *_):
+        def finalize_session_sync(self, session_id: str, *_, **__):
             self.finalized.append(session_id)
             return {"ok": True}
 

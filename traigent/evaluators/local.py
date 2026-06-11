@@ -20,6 +20,7 @@ from traigent.evaluators.metrics_tracker import (
     ExampleMetrics,
     MetricsCalculator,
     MetricsTracker,
+    enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
 from traigent.utils.exceptions import EvaluationError
@@ -34,6 +35,23 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 _METADATA_PATCHES_ATTEMPTED = False
+
+_OUTPUT_METRIC_PARAM_NAMES = {
+    "actual",
+    "actual_output",
+    "output",
+    "prediction",
+    "predicted",
+    "result",
+}
+_EXPECTED_METRIC_PARAM_NAMES = {
+    "expected",
+    "expected_output",
+    "ground_truth",
+    "reference",
+    "target",
+}
+_LLM_METRIC_PARAM_NAMES = {"llm_metrics", "metrics"}
 
 
 @dataclass
@@ -578,6 +596,50 @@ class LocalEvaluator(BaseEvaluator):
                 float(value) if value is not None else 0.0
             )
 
+    def _build_metric_keyword_arguments(
+        self,
+        parameters: list[inspect.Parameter],
+        output: Any,
+        example_obj: Any,
+        config: dict[str, Any],
+        llm_payload: dict[str, Any],
+        example_index: int,
+    ) -> dict[str, Any]:
+        keyword_values: dict[str, Any] = {
+            "example": example_obj,
+            "input_data": example_obj.input_data,
+            "metadata": example_obj.metadata or {},
+            "config": config,
+            "example_index": example_index,
+        }
+        for name in _OUTPUT_METRIC_PARAM_NAMES:
+            keyword_values[name] = output
+        for name in _EXPECTED_METRIC_PARAM_NAMES:
+            keyword_values[name] = example_obj.expected_output
+        for name in _LLM_METRIC_PARAM_NAMES:
+            keyword_values[name] = llm_payload
+
+        kwargs: dict[str, Any] = {}
+        accepts_arbitrary_kwargs = False
+        for parameter in parameters:
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                accepts_arbitrary_kwargs = True
+                continue
+            if parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                continue
+            if parameter.name in keyword_values:
+                kwargs[parameter.name] = keyword_values[parameter.name]
+
+        if accepts_arbitrary_kwargs:
+            kwargs.setdefault("output", output)
+            kwargs.setdefault("expected", example_obj.expected_output)
+            kwargs.setdefault("llm_metrics", llm_payload)
+
+        return kwargs
+
     def _invoke_metric_function(
         self,
         metric_func: Callable[..., Any],
@@ -603,27 +665,44 @@ class LocalEvaluator(BaseEvaluator):
             Metric value or 0.0 on failure
         """
         try:
-            params = inspect.signature(metric_func).parameters.keys()
-            kwargs: dict[str, Any] = {}
+            signature = inspect.signature(metric_func)
+            parameters = list(signature.parameters.values())
+            positional_args = (output, example_obj.expected_output, llm_payload)
+            call_candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
-            if "output" in params or "actual" in params:
-                kwargs["output"] = output
-            if "expected" in params:
-                kwargs["expected"] = example_obj.expected_output
-            if "example" in params:
-                kwargs["example"] = example_obj
-            if "input_data" in params:
-                kwargs["input_data"] = example_obj.input_data
-            if "metadata" in params:
-                kwargs["metadata"] = example_obj.metadata or {}
-            if "config" in params:
-                kwargs["config"] = config
-            if "llm_metrics" in params:
-                kwargs["llm_metrics"] = llm_payload
-            if "example_index" in params:
-                kwargs["example_index"] = example_index
+            if any(
+                parameter.kind is inspect.Parameter.VAR_POSITIONAL
+                for parameter in parameters
+            ):
+                call_candidates.append((positional_args, {}))
 
-            return cast(float, metric_func(**kwargs))
+            kwargs = self._build_metric_keyword_arguments(
+                parameters, output, example_obj, config, llm_payload, example_index
+            )
+            if kwargs:
+                call_candidates.append(((), kwargs))
+
+            call_candidates.extend(
+                [
+                    (positional_args, {}),
+                    (positional_args[:2], {}),
+                    (positional_args[:1], {}),
+                    ((), {}),
+                ]
+            )
+
+            bind_error: TypeError | None = None
+            for args, candidate_kwargs in call_candidates:
+                try:
+                    signature.bind(*args, **candidate_kwargs)
+                except TypeError as exc:
+                    bind_error = exc
+                    continue
+                return cast(float, metric_func(*args, **candidate_kwargs))
+
+            if bind_error is not None:
+                raise bind_error
+            return cast(float, metric_func(output, example_obj.expected_output))
         except Exception as exc:
             example_id = (
                 example_obj.metadata.get("example_id", f"example_{example_index}")
@@ -966,6 +1045,28 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             ExampleMetrics for this output
         """
+        # Per-example user metrics: prefer the carrier the boundary already
+        # attached to the ExampleResult (detailed mode). When the carrier is
+        # present the output was ALREADY unpacked upstream, so re-unpacking here
+        # would double-unpack a nested matching tuple — e.g. an output of
+        # ``("inner", {"x": 1.0})`` would be split again into ``"inner"`` and a
+        # spurious ``{"x": 1.0}``. We therefore unpack HERE only when the
+        # carrier is absent (the genuinely non-detailed lane, where ``outputs``
+        # still holds the raw tuple). Any non-matching shape is left untouched.
+        carrier = None
+        if (
+            example_results
+            and index < len(example_results)
+            and example_results[index] is not None
+            and getattr(example_results[index], "user_metrics", None) is not None
+        ):
+            carrier = example_results[index]
+
+        if carrier is not None:
+            user_metrics = carrier.user_metrics
+        else:
+            output, user_metrics = self._unpack_user_metrics(output)
+
         # Extract LLM metrics
         example_metric = self._extract_llm_metrics_for_output(
             output, index, config, dataset, all_captured_responses
@@ -989,6 +1090,12 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_value = self._calculate_example_accuracy(actual_value, expected_output)
         if accuracy_value is not None:
             example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
+
+        # Merge per-example user metrics into custom_metrics, never overriding
+        # an evaluator-computed key (e.g. accuracy stays the computed value).
+        self._merge_user_metrics(
+            example_metric.custom_metrics, user_metrics, context="local lane"
+        )
 
         # Transfer metrics from example_results if available
         if example_results and index < len(example_results):
@@ -1325,11 +1432,26 @@ class LocalEvaluator(BaseEvaluator):
             custom_aggregated = self._compute_aggregated_custom_metrics(example_results)
             aggregated_metrics.update(custom_aggregated)
 
-        # Add comprehensive metrics from tracker using helper
-        comprehensive_metrics = metrics_tracker.format_for_backend()
+        # Add comprehensive metrics from tracker using helper. Thread the
+        # evaluator's runtime-only computable names (registry + RAGAS) so a
+        # user tuple key cannot overwrite an evaluator-computed value during the
+        # tracker's user-metric aggregation pass.
+        comprehensive_metrics = metrics_tracker.format_for_backend(
+            extra_reserved=self._evaluator_computable_metric_names()
+        )
         self._merge_comprehensive_metrics(aggregated_metrics, comprehensive_metrics)
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
+
+        # Authoritative cap on the FINAL trial metrics: user keys (arriving via
+        # the per-example custom_metrics -> comprehensive_metrics merge above)
+        # must not push the union past the MeasuresDict ceiling. Only user keys
+        # are dropped; reserved evaluator keys are never sacrificed.
+        enforce_user_metric_ceiling(
+            aggregated_metrics,
+            context="local trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
 
         # Generate summary_stats for all modes except CLOUD (needed for insights)
         summary_stats = None

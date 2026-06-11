@@ -16,12 +16,16 @@ Example output::
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from traigent.core.result import OptimizationResult
+
+BEST_METRIC_REL_TOL = 1e-9
+BEST_METRIC_ABS_TOL = 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +83,36 @@ def _format_metric_value(metric: str, val: float) -> str:
     return f"{val:.1%}"
 
 
+def _coerce_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _example_success_counts(trial: Any) -> tuple[int, int] | None:
+    metadata = getattr(trial, "metadata", {}) or {}
+    successful = _coerce_int(metadata.get("successful_examples"))
+    attempted = _coerce_int(metadata.get("examples_attempted"))
+    if attempted is None:
+        evaluation_result = metadata.get("evaluation_result")
+        attempted = _coerce_int(getattr(evaluation_result, "total_examples", None))
+    if successful is None or attempted is None:
+        return None
+    return successful, attempted
+
+
 def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
     """Return [(name, orientation)] from an objectives definition."""
     if hasattr(objectives, "objectives"):
@@ -99,38 +133,91 @@ def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
 
 
 def _find_best_per_objective(
-    trials: list, metric_info: list[tuple[str, str]]
-) -> dict[str, int]:
-    """Return {metric_name: best_trial_index}."""
-    best_indices: dict[str, int] = {}
+    trials: list,
+    metric_info: list[tuple[str, str]],
+    metric_overrides: dict[str, list[float]] | None = None,
+) -> dict[str, set[int]]:
+    """Return {metric_name: {best_trial_indices}} for all tied bests."""
+    best_indices: dict[str, set[int]] = {}
     for metric_name, orientation in metric_info:
-        best_idx = 0
-        best_val = getattr(trials[0], "metrics", {}).get(metric_name, 0)
+        best_set: set[int] = set()
+        best_val: float | None = None
         is_minimize = orientation == "minimize"
-        for i, trial in enumerate(trials[1:], 1):
-            val = getattr(trial, "metrics", {}).get(metric_name, 0)
+        for i, trial in enumerate(trials):
+            if not _trial_is_best_candidate(trial):
+                continue
+            val = _coerce_float(
+                _get_metric_value(trial, metric_name, i, metric_overrides)
+            )
+            if val is None:
+                continue
+            if best_val is None:
+                best_val = val
+                best_set = {i}
+                continue
+            if math.isclose(
+                val,
+                best_val,
+                rel_tol=BEST_METRIC_REL_TOL,
+                abs_tol=BEST_METRIC_ABS_TOL,
+            ):
+                best_set.add(i)
+                continue
             if (val < best_val) if is_minimize else (val > best_val):
                 best_val = val
-                best_idx = i
-        best_indices[metric_name] = best_idx
+                best_set = {i}
+        best_indices[metric_name] = best_set
     return best_indices
 
 
-def _find_best_trial(trials: list, metric_names: list[str]) -> Any:
-    """Find the best trial by weighted score or accuracy."""
-    best_trial = trials[0]
-    for trial in trials:
-        score = getattr(trial, "weighted_score", None)
-        if score is not None:
-            best_score = getattr(best_trial, "weighted_score", float("-inf"))
-            if best_score < score:
-                best_trial = trial
-        elif metric_names and "accuracy" in metric_names:
-            trial_acc = getattr(trial, "metrics", {}).get("accuracy", 0)
-            best_acc = getattr(best_trial, "metrics", {}).get("accuracy", 0)
-            if trial_acc > best_acc:
-                best_trial = trial
-    return best_trial
+def _get_metric_value(
+    trial: Any,
+    metric_name: str,
+    trial_index: int,
+    metric_overrides: dict[str, list[float]] | None = None,
+) -> Any:
+    if metric_overrides and metric_name in metric_overrides:
+        override_values = metric_overrides[metric_name]
+        if trial_index < len(override_values):
+            return override_values[trial_index]
+    return getattr(trial, "metrics", {}).get(metric_name)
+
+
+def _find_best_trial(
+    trials: list,
+    metric_names: list[str],
+    weighted_scores: list[tuple[Any, float]] | None = None,
+    metric_info: list[tuple[str, str]] | None = None,
+) -> Any:
+    """Find the best trial by weighted scores or the primary displayed metric."""
+    if weighted_scores:
+        return max(weighted_scores, key=lambda item: item[1])[0]
+
+    eligible_trials = [trial for trial in trials if _trial_is_best_candidate(trial)]
+    if not eligible_trials:
+        return None
+
+    orientation_by_metric = dict(metric_info or [])
+    primary_metric = (
+        "accuracy"
+        if "accuracy" in metric_names
+        else (metric_names[0] if metric_names else None)
+    )
+    if primary_metric is None:
+        return eligible_trials[0]
+
+    is_minimize = orientation_by_metric.get(primary_metric) == "minimize"
+    chooser = min if is_minimize else max
+    missing = float("inf") if is_minimize else float("-inf")
+
+    def primary_score(trial: Any) -> float:
+        value = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
+        return missing if value is None else value
+
+    return chooser(
+        eligible_trials,
+        key=primary_score,
+    )
 
 
 def _has_positive_quality_metric(trial: Any) -> bool:
@@ -153,6 +240,93 @@ def _has_positive_quality_metric(trial: Any) -> bool:
     return False
 
 
+def _trial_is_best_candidate(trial: Any) -> bool:
+    if not getattr(trial, "is_successful", False):
+        return False
+    counts = _example_success_counts(trial)
+    if counts is None:
+        return True
+    successful, _attempted = counts
+    return successful > 0
+
+
+def _trial_identity_index(trials: list, target_trial: Any) -> int | None:
+    if target_trial is None:
+        return None
+    for index, trial in enumerate(trials):
+        if trial is target_trial:
+            return index
+    target_id = getattr(target_trial, "trial_id", None)
+    if target_id is None:
+        return None
+    for index, trial in enumerate(trials):
+        if getattr(trial, "trial_id", None) == target_id:
+            return index
+    return None
+
+
+def _find_trial_index_by_id(trials: list, trial_id: Any) -> int | None:
+    if trial_id is None:
+        return None
+    for index, trial in enumerate(trials):
+        if getattr(trial, "trial_id", None) == trial_id:
+            return index
+    return None
+
+
+def _find_best_trial_index(
+    results: OptimizationResult,
+    trials: list,
+    metric_info: list[tuple[str, str]],
+    objectives: Any,
+) -> int | None:
+    metric_names = [name for name, _orientation in metric_info]
+    metadata = getattr(results, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    best_trial_id = metadata.get("best_trial_id") or getattr(
+        results, "best_trial_id", None
+    )
+    best_index = _find_trial_index_by_id(trials, best_trial_id)
+    if best_index is not None:
+        return best_index
+
+    try:
+        weighted = results.calculate_weighted_scores(objective_schema=objectives)
+        weighted_scores = weighted.get("weighted_scores") or []
+        best_trial = _find_best_trial(
+            trials, metric_names, weighted_scores, metric_info
+        )
+        best_index = _trial_identity_index(trials, best_trial)
+        if best_index is not None:
+            return best_index
+    except Exception:
+        pass
+
+    best_trial = _find_best_trial(trials, metric_names, metric_info=metric_info)
+    best_index = _trial_identity_index(trials, best_trial)
+    if best_index is not None:
+        return best_index
+
+    best_config = getattr(results, "best_config", None)
+    best_score = _coerce_float(getattr(results, "best_score", None))
+    primary_metric = metric_names[0] if metric_names else None
+    for index, trial in enumerate(trials):
+        if getattr(trial, "config", {}) != best_config:
+            continue
+        if best_score is None or primary_metric is None:
+            return index
+        trial_score = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
+        if trial_score is not None and math.isclose(
+            trial_score,
+            best_score,
+            rel_tol=BEST_METRIC_REL_TOL,
+            abs_tol=BEST_METRIC_ABS_TOL,
+        ):
+            return index
+    return None
+
+
 def _trials_all_failed(trials: list) -> bool:
     """True iff every completed trial explicitly recorded zero successful examples.
 
@@ -160,16 +334,12 @@ def _trials_all_failed(trials: list) -> bool:
     because no winner can be honestly named. When older/external evaluators do
     not report ``metadata["successful_examples"]``, fall back to the completed
     trial status so honest 0.0 quality scores and cost-only runs remain rankable.
-    If the table is displaying positive quality metrics, treat that as scored
-    evidence too; otherwise mock/demo runs can show accuracy values and then
-    contradict themselves with a failed-trials banner.
+    Explicit zero-success metadata is authoritative even if a stale or mocked
+    metric payload also contains a positive quality score.
     """
     for trial in trials:
         if not getattr(trial, "is_successful", False):
             continue
-
-        if _has_positive_quality_metric(trial):
-            return False
 
         metadata = getattr(trial, "metadata", {}) or {}
         successful = metadata.get("successful_examples")
@@ -201,6 +371,9 @@ def print_results_table(
     results: OptimizationResult,
     config_space: dict[str, list[Any]],
     objectives: Any,
+    *,
+    mode_label: str | None = None,
+    metric_overrides: dict[str, list[float]] | None = None,
 ) -> None:
     """Print a rich trial-results table to stdout.
 
@@ -208,6 +381,8 @@ def print_results_table(
         results: The :class:`OptimizationResult` returned by ``func.optimize()``.
         config_space: Configuration space dict (param name → list of values).
         objectives: Objectives list (e.g. ``["accuracy"]``) or ``ObjectiveSchema``.
+        mode_label: Optional label rendered in the table title, e.g. ``"MOCK"``.
+        metric_overrides: Optional per-metric display values by trial index.
     """
     trials = getattr(results, "trials", [])
     if not trials:
@@ -225,17 +400,19 @@ def print_results_table(
     param_names = list(config_space.keys())
 
     # Best-per-objective indices
-    best_per_objective = _find_best_per_objective(trials, metric_info)
+    best_per_objective = _find_best_per_objective(
+        trials,
+        metric_info,
+        metric_overrides,
+    )
 
-    # Overall best config (weighted scoring when available)
-    try:
-        weighted = results.calculate_weighted_scores(objective_schema=objectives)
-        best_config = weighted.get("best_weighted_config", {})
-    except Exception:
-        best_config = getattr(_find_best_trial(trials, metric_names), "config", {})
+    # Overall best trial identity, from optimizer selection metadata when present.
+    best_trial_index = _find_best_trial_index(results, trials, metric_info, objectives)
 
     # When every trial produced zero successful examples, refuse to crown a winner.
     all_failed = _trials_all_failed(trials)
+    example_counts = [_example_success_counts(trial) for trial in trials]
+    show_examples = any(count is not None for count in example_counts)
 
     # Column widths
     col_widths: dict[str, int] = {"#": 4}
@@ -247,12 +424,26 @@ def print_results_table(
         col_widths[param] = max(len(param), max_len) + 1
     for metric in metric_names:
         max_len = max(
-            len(_format_metric_value(metric, getattr(t, "metrics", {}).get(metric, 0)))
-            for t in trials
+            len(
+                _format_metric_value(
+                    metric,
+                    _coerce_float(_get_metric_value(t, metric, i, metric_overrides))
+                    or 0.0,
+                )
+            )
+            for i, t in enumerate(trials)
         )
         col_widths[metric] = max(len(metric), max_len) + 1
+    if show_examples:
+        max_len = max(
+            len(f"{count[0]}/{count[1]}") if count is not None else 1
+            for count in example_counts
+        )
+        col_widths["examples"] = max(len("examples"), max_len) + 1
 
-    all_cols = ["#"] + param_names + metric_names
+    all_cols = (
+        ["#"] + param_names + metric_names + (["examples"] if show_examples else [])
+    )
     total_width = sum(col_widths[c] for c in all_cols) + len(all_cols) * 3 - 1
 
     # Box-drawing characters
@@ -261,7 +452,8 @@ def print_results_table(
     BT, LT, RT, XT = "┴", "├", "┤", "┼"
 
     # Title bar
-    title = f" Trial Results ({len(trials)} trials) "
+    label_prefix = f"{mode_label.strip()} - " if mode_label else ""
+    title = f" Trial Results ({label_prefix}{len(trials)} trials) "
     padding = (total_width - len(title)) // 2
 
     print()
@@ -278,6 +470,10 @@ def print_results_table(
     header_parts.extend(
         f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names
     )
+    if show_examples:
+        header_parts.append(
+            f"{C.YELLOW}{'examples':^{col_widths['examples']}}{C.RESET}"
+        )
     print(f"{V} " + f" {V} ".join(header_parts) + f" {V}")
 
     # Separator
@@ -286,8 +482,7 @@ def print_results_table(
     # Data rows
     for i, trial in enumerate(trials):
         config = getattr(trial, "config", {})
-        metrics = getattr(trial, "metrics", {})
-        is_overall_best = config == best_config and not all_failed
+        is_overall_best = i == best_trial_index and not all_failed
 
         prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
         row_parts = [f"{prefix}{i + 1:>{col_widths['#'] - 1}}"]
@@ -297,13 +492,19 @@ def print_results_table(
             row_parts.append(f"{val:^{col_widths[param]}}")
 
         for metric in metric_names:
-            metric_val = float(metrics.get(metric, 0))
+            raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
+            metric_val = _coerce_float(raw_metric_val) or 0.0
             formatted = _format_metric_value(metric, metric_val)
-            if not all_failed and best_per_objective.get(metric) == i:
+            if not all_failed and i in best_per_objective.get(metric, set()):
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
             else:
                 cell = f"{formatted:^{col_widths[metric]}}"
             row_parts.append(cell)
+
+        if show_examples:
+            counts = example_counts[i]
+            formatted_counts = f"{counts[0]}/{counts[1]}" if counts is not None else "?"
+            row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
 
         print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 

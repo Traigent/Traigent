@@ -1249,6 +1249,12 @@ def _resolve_execution_mode_enum(
     privacy_enabled: bool | None,
 ) -> tuple[ExecutionMode, bool | None]:
     """Resolve execution mode enum against the public support contract."""
+    raw_execution_mode = (
+        execution_mode.value
+        if isinstance(execution_mode, ExecutionMode)
+        else str(execution_mode)
+    )
+    requested_privacy_alias = raw_execution_mode.strip().lower() == "privacy"
     try:
         requested_mode = resolve_execution_mode(execution_mode)
         execution_mode_enum = validate_execution_mode(requested_mode)
@@ -1257,7 +1263,7 @@ def _resolve_execution_mode_enum(
     except (TypeError, ValueError) as exc:
         raise ConfigurationError(str(exc)) from None
 
-    if requested_mode is ExecutionMode.PRIVACY:
+    if requested_privacy_alias:
         logger.warning(
             "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
             "with privacy_enabled=True. Mapping automatically."

@@ -14,7 +14,9 @@ from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudRemoteExecutionUnavailableError,
     CloudServiceError,
+    SessionContractError,
 )
+from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentExecutionResponse,
@@ -27,6 +29,10 @@ from traigent.cloud.models import (
     TrialResultSubmission,
 )
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import (
+    SessionCreationFailureDetail,
+    SessionCreationHTTPError,
+)
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
@@ -72,6 +78,23 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 logger = get_logger(__name__)
+
+
+def _typed_configuration_space(space: Any) -> Any:
+    """Normalize the decorator's SHORTHAND configuration space to the typed
+    contract (live composites-E2E finding): a bare list/tuple of choices
+    becomes {"type": "categorical", "choices": [...]}; entries already
+    carrying a "type" pass through unchanged; anything else passes through
+    for the backend to reject LOUDLY (never silently guessed)."""
+    if not isinstance(space, dict):
+        return space
+    normalized: dict[str, Any] = {}
+    for name, entry in space.items():
+        if isinstance(entry, (list, tuple)):
+            normalized[name] = {"type": "categorical", "choices": list(entry)}
+        else:
+            normalized[name] = entry
+    return normalized
 
 
 class ApiOperations:
@@ -239,9 +262,37 @@ class ApiOperations:
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
-            return await self._post_session_creation(
-                session_payload, headers, connector
-            )
+            try:
+                return await self._post_session_creation(
+                    session_payload, headers, connector
+                )
+            except CloudServiceError:
+                # auto-contract fallback: a failed TYPED create may retry the
+                # legacy shape ONCE — and only for NON-governed sessions
+                # (governed sessions must fail loudly; the legacy contract
+                # cannot carry strict mode and silently degrading would
+                # launder it — RFC 0001 P7).
+                if self._session_contract() != "auto" or self._is_governed_request(
+                    session_request
+                ):
+                    raise
+                logger.warning(
+                    "Typed session create failed; retrying once with the "
+                    "legacy contract (non-governed session, "
+                    "TRAIGENT_SESSION_CONTRACT=auto)"
+                )
+                legacy_payload = self._build_legacy_session_payload(
+                    session_request, max_trials_value
+                )
+                return await self._post_session_creation(
+                    legacy_payload, headers, connector
+                )
+        except SessionContractError:
+            # Review round 3: contract failures must reach the caller AS
+            # THEMSELVES — the generic wrap below would demote them to a
+            # plain CloudServiceError and the local-fallback layer would
+            # absorb them.
+            raise
         except aiohttp.ClientConnectorError as e:
             self._handle_connector_error(e)
         except aiohttp.ClientError as e:
@@ -259,11 +310,103 @@ class ApiOperations:
             return 10
         return value
 
+    @staticmethod
+    def _session_contract() -> str:
+        """Resolve the session-create contract (TRAIGENT_SESSION_CONTRACT).
+
+        auto (default): typed create; for NON-governed sessions a failed
+        typed create may fall back to the legacy shape once.
+        typed: typed create only — failures raise.
+        legacy: legacy shape — REFUSED for governed/strict sessions
+        (falling back would silently launder strict mode; RFC 0001 P7).
+        """
+        import os
+
+        contract = os.getenv("TRAIGENT_SESSION_CONTRACT", "auto").strip().lower()
+        if contract not in {"auto", "typed", "legacy"}:
+            raise SessionContractError(
+                "TRAIGENT_SESSION_CONTRACT must be one of auto|typed|legacy; "
+                f"got {contract!r}"
+            )
+        return contract
+
+    @staticmethod
+    def _is_governed_request(session_request: SessionCreationRequest) -> bool:
+        """A session is governed when it declares a promotion policy or any
+        TVL governance — governed sessions must NEVER take the legacy path
+        (the legacy contract cannot carry them; dropping them silently is
+        the Phase 7 laundering bug all over again)."""
+        return bool(session_request.promotion_policy or session_request.tvl_governance)
+
     def _build_session_payload(
         self, session_request: SessionCreationRequest, max_trials: int
     ) -> dict[str, Any]:
-        """Build the payload sent to the cloud session creation endpoint."""
+        """Build the payload sent to the cloud session creation endpoint.
 
+        Contract-gated (Phase 8): the TYPED shape is the default — it is the
+        only shape the backend's governed path accepts (promotion_policy,
+        tvl_governance, experiment records for FE hydration). The legacy
+        shape survives behind TRAIGENT_SESSION_CONTRACT=legacy for
+        non-governed compatibility only.
+        """
+        contract = self._session_contract()
+        if contract == "legacy":
+            if self._is_governed_request(session_request):
+                raise SessionContractError(
+                    "strict/governed sessions require the typed session "
+                    "contract; TRAIGENT_SESSION_CONTRACT=legacy cannot carry "
+                    "promotion_policy/tvl_governance (refusing to launder "
+                    "strict mode)"
+                )
+            return self._build_legacy_session_payload(session_request, max_trials)
+        return self._build_typed_session_payload(session_request, max_trials)
+
+    def _build_typed_session_payload(
+        self, session_request: SessionCreationRequest, max_trials: int
+    ) -> dict[str, Any]:
+        """The typed interactive-session contract (TraigentSchema sdk_tuning):
+        function_name + configuration_space + objectives at top level select
+        the backend's typed path, which preserves governance and creates the
+        experiment records the FE hydrates."""
+        metadata = dict(session_request.metadata or {})
+        evaluation_set = metadata.get("evaluation_set", "default")
+        dataset_metadata = dict(session_request.dataset_metadata or {})
+        # The typed path requires a positive dataset size.
+        size = dataset_metadata.get("size")
+        if not isinstance(size, int) or size <= 0:
+            dataset_metadata["size"] = 1
+
+        payload: dict[str, Any] = {
+            "function_name": session_request.function_name,
+            "configuration_space": _typed_configuration_space(
+                session_request.configuration_space
+            ),
+            "objectives": list(session_request.objectives or []),
+            "dataset_metadata": dataset_metadata,
+            "max_trials": max_trials,
+            "metadata": {
+                "function_name": session_request.function_name,
+                "evaluation_set": evaluation_set,
+                **metadata,
+            },
+        }
+        # CHOKE POINT (review round 2): the allowlist serializer runs on the
+        # actual request body, not only on the orchestrator path — a direct
+        # SessionCreationRequest caller must not be able to serialize
+        # unknown/value-shaped policy data (RFC 0001 P8 content freedom).
+        wire_policy = promotion_policy_to_wire(session_request.promotion_policy)
+        if wire_policy:
+            payload["promotion_policy"] = wire_policy
+        wire_governance = tvl_governance_to_wire(session_request.tvl_governance)
+        if wire_governance:
+            payload["tvl_governance"] = wire_governance
+        return payload
+
+    def _build_legacy_session_payload(
+        self, session_request: SessionCreationRequest, max_trials: int
+    ) -> dict[str, Any]:
+        """The pre-Phase-8 legacy shape (problem_statement/search_space) —
+        non-governed compatibility only."""
         metadata = session_request.metadata or {}
         evaluation_set = metadata.get("evaluation_set", "default")
 
@@ -347,16 +490,28 @@ class ApiOperations:
         All logging is DEBUG — user-facing warnings are emitted by
         ``BackendSessionManager.handle_session_creation_result()``.
         """
+        detail = SessionCreationFailureDetail.from_http_response(status_code, error_msg)
+        structured_cause = SessionCreationHTTPError(detail)
         if status_code in (401, 403):
             logger.debug("Backend auth failed: %s", status_code)
-            raise AuthenticationError(f"Authentication failed ({status_code})")
+            auth_exc = AuthenticationError(
+                f"Authentication failed ({status_code}): {detail.one_line_summary()}"
+            )
+            cast(Any, auth_exc).session_creation_failure = detail
+            raise auth_exc from structured_cause
 
         if status_code in (500, 502, 503, 504):
             logger.debug("Backend HTTP error: %s", status_code)
-            raise CloudServiceError(f"Backend HTTP {status_code}")
+            service_exc = CloudServiceError(f"Backend HTTP {status_code}")
+            cast(Any, service_exc).session_creation_failure = detail
+            raise service_exc from structured_cause
 
         logger.debug("Backend session error: %s - %s", status_code, error_msg[:200])
-        raise CloudServiceError(f"Session creation failed: HTTP {status_code}")
+        service_exc = CloudServiceError(
+            f"Session creation failed: HTTP {status_code}: {detail.one_line_summary()}"
+        )
+        cast(Any, service_exc).session_creation_failure = detail
+        raise service_exc from structured_cause
 
     def _handle_connector_error(self, error: aiohttp.ClientConnectorError) -> None:
         """Handle aiohttp connector errors — DEBUG only."""

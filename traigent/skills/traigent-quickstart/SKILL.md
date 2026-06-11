@@ -1,7 +1,7 @@
 ---
 name: traigent-quickstart
 description: "Install and set up the Traigent SDK for LLM optimization. Use when the user wants to install traigent, set up their first optimization, create an eval dataset, or get started with @traigent.optimize. Covers pip install, environment variables, mock mode, and running a first optimization."
-license: Apache-2.0
+license: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
 metadata:
   author: Traigent
   version: "1.0"
@@ -22,15 +22,18 @@ Use this skill when:
 
 ## Installation
 
-### Basic Install
+### Recommended Install
 
 ```bash
-pip install traigent
+pip install "traigent[recommended]"
 ```
 
 ### With Optional Extras
 
 ```bash
+# Minimal base package
+pip install traigent
+
 # Framework integrations (LangChain, OpenAI, Anthropic, MLflow, W&B)
 pip install 'traigent[integrations]'
 
@@ -39,9 +42,6 @@ pip install 'traigent[analytics]'
 
 # All optional features
 pip install 'traigent[all]'
-
-# Enterprise bundle (all production features)
-pip install 'traigent[enterprise]'
 ```
 
 See `references/installation-extras.md` for the full table of extras and their contents.
@@ -61,7 +61,7 @@ export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_OFFLINE_MODE=true
 ```
 
-- `TRAIGENT_MOCK_LLM=true` -- Mocks all LLM API calls so you do not need provider API keys or incur costs.
+- `TRAIGENT_MOCK_LLM=true` -- Mocks supported LLM calls made through Traigent's integration/interceptor path so local dry-runs do not need provider API keys or incur provider costs.
 - `TRAIGENT_OFFLINE_MODE=true` -- Skips backend communication so you do not need a running Traigent backend.
 
 ### Using a .env File

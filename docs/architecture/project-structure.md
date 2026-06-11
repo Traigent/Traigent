@@ -13,7 +13,6 @@ Traigent/
 ├── traigent/                  # Core SDK source code
 ├── tests/                     # Test suite
 ├── examples/                  # Usage examples and demo runners
-├── walkthrough/               # Interactive tutorials with datasets
 ├── docs/                      # Documentation (this folder)
 ├── tools/                     # Architecture analysis and dev utilities
 ├── scripts/                   # Utility and automation scripts
@@ -38,8 +37,8 @@ Core SDK source code, including:
 - `core/` orchestration and optimized function
 - `optimizers/` algorithms (grid/random/optuna/interactive)
 - `evaluators/` dataset and evaluation
-- `integrations/` framework adapters (LangChain/OpenAI/Anthropic)
-- `cloud/` cloud client models (experimental)
+- `integrations/` framework adapters (OpenAI, Anthropic, LangChain, Bedrock, Azure, Gemini, Cohere, HuggingFace, LiteLLM, LlamaIndex, Mistral, PydanticAI, vector stores, and observability)
+- `cloud/` hybrid/backend auth and sync clients; remote cloud execution remains reserved for future service-backed runs
 - `storage/`, `utils/`, `visualization/`, `tvl/`, etc.
 
 ### `/tests/`
@@ -58,9 +57,6 @@ Documentation content:
 ### `/examples/`
 Usage examples, datasets, and the browser gallery assets (`examples/gallery/`).
 
-### `/walkthrough/`
-Interactive step-by-step tutorials with datasets.
-
 ### `/tools/`
 Architecture analysis (`tools/architecture/`) and environment utilities.
 CI workflow dependency via `.github/workflows/architecture-analysis.yml`.
@@ -72,7 +68,8 @@ Helper scripts (e.g., launchers, verification, utilities).
 Optional plugin packages: analytics, tracing, OPAL, tuned-variables, UI.
 
 ### `/requirements/`
-Dependency sets by feature. See `requirements/README.md` for install guidance.
+Legacy dependency mirrors and supporting guides. `pyproject.toml` extras are
+the canonical install surface for current package builds.
 
 ## File Organization Principles
 

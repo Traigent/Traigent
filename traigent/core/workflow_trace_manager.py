@@ -99,6 +99,39 @@ class WorkflowTraceManager:
             with self._lock:
                 self._collected_spans.append(span_data)
 
+    def rebind_configuration_run_id(
+        self,
+        previous_configuration_run_id: str | None,
+        backend_configuration_run_id: str | None,
+    ) -> int:
+        """Rebind already-collected spans to the backend-minted trial id.
+
+        Trial execution collects spans before backend result submission can
+        acquire the backend configuration_run/trial id. If the backend rebinds
+        the TrialResult to its minted id, spans must follow that id or trace
+        ingestion will reference a non-existent ConfigurationRun and 404.
+
+        Returns:
+            Number of collected spans updated.
+        """
+        if (
+            not previous_configuration_run_id
+            or not backend_configuration_run_id
+            or previous_configuration_run_id == backend_configuration_run_id
+        ):
+            return 0
+
+        updated = 0
+        with self._lock:
+            for span in self._collected_spans:
+                if (
+                    getattr(span, "configuration_run_id", None)
+                    == previous_configuration_run_id
+                ):
+                    span.configuration_run_id = backend_configuration_run_id
+                    updated += 1
+        return updated
+
     def register_node(
         self,
         node_id: str,

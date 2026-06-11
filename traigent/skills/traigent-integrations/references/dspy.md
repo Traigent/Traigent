@@ -139,6 +139,7 @@ import dspy
         "temperature": [0.0, 0.3, 0.7],
     },
     objectives=["accuracy"],
+    eval_dataset="qa_eval.jsonl",
     max_trials=9,
 )
 def optimized_qa(question):
@@ -154,14 +155,14 @@ def optimized_qa(question):
     return result.answer
 
 # Traigent finds the best model + temperature
-results = optimized_qa.optimize(dataset="qa_eval.jsonl")
+results = optimized_qa.optimize()
 ```
 
 For a two-stage approach (Traigent model optimization, then DSPy prompt optimization):
 
 ```python
 # Stage 1: Find the best model with Traigent
-model_results = optimized_qa.optimize(dataset="qa_eval.jsonl")
+model_results = optimized_qa.optimize()
 best_model = model_results.best_config["model"]
 best_temp = model_results.best_config["temperature"]
 

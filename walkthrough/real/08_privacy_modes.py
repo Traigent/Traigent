@@ -22,11 +22,11 @@ maybe_run_mock_example(__file__)
 
 from langchain_openai import ChatOpenAI
 from utils.helpers import (
+    build_results_table_callback,
     configure_logging,
     print_cost_estimate,
     print_estimated_time,
     print_optimization_config,
-    print_results_table,
 )
 from utils.scoring import token_match_score
 
@@ -98,10 +98,9 @@ async def main() -> None:
         algorithm="grid",
         max_trials=4,
         show_progress=True,
+        callbacks=[build_results_table_callback(is_mock=False, show_progress=True)],
         random_seed=42,
     )
-
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")

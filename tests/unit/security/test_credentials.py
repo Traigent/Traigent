@@ -1,6 +1,7 @@
 """Comprehensive unit tests for secure credential management."""
 
 import json
+import logging
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -138,6 +139,54 @@ class TestEnhancedCredentialStore:
             storage_path=str(Path(temp_dir) / "creds"),
         )
         assert store is not None
+
+    def test_ignored_legacy_master_without_store_logs_info_not_warning(
+        self, tmp_path, caplog
+    ):
+        """A stale legacy key alone must not warn during local/mock probes."""
+        storage_path = tmp_path / "secure_credentials.enc"
+        master_key_path = tmp_path / EnhancedCredentialStore.MASTER_PASSWORD_FILENAME
+        master_key_path.write_text("legacy-master", encoding="utf-8")
+
+        with (
+            caplog.at_level(logging.INFO, logger="traigent.security.credentials"),
+            pytest.raises(AuthenticationError, match="master secret is required"),
+        ):
+            EnhancedCredentialStore(storage_path=storage_path, use_env_vars=False)
+
+        records = [
+            record
+            for record in caplog.records
+            if "Ignoring legacy local master secret file" in record.message
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.INFO
+
+    def test_ignored_legacy_master_with_store_warns_once(self, tmp_path, caplog):
+        """An actual legacy vault migration warning remains actionable but deduped."""
+        credentials_module._IGNORED_LEGACY_MASTER_SECRET_WARNING_PATHS.clear()
+        storage_path = tmp_path / "secure_credentials.enc"
+        storage_path.write_bytes(b"encrypted-store-placeholder")
+        master_key_path = tmp_path / EnhancedCredentialStore.MASTER_PASSWORD_FILENAME
+        master_key_path.write_text("legacy-master", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="traigent.security.credentials"):
+            for _ in range(2):
+                with pytest.raises(
+                    AuthenticationError, match="master secret is required"
+                ):
+                    EnhancedCredentialStore(
+                        storage_path=storage_path,
+                        use_env_vars=False,
+                    )
+
+        records = [
+            record
+            for record in caplog.records
+            if "Ignoring legacy local master secret file" in record.message
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
 
     def test_set_and_get_credential(self, store):
         """Test setting and getting a credential."""

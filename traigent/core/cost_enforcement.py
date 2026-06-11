@@ -52,6 +52,21 @@ DEFAULT_COST_LIMIT_USD = 2.0
 EMA_COLD_START_WARNING_TRIALS = 5
 
 
+def normalize_cost_approved(value: object) -> bool:
+    """Return True only for the runtime parameter value ``True``."""
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    logger.warning(
+        "Ignoring non-boolean cost_approved=%r (type: %s); cost approval "
+        "requires bool True.",
+        value,
+        type(value).__name__,
+    )
+    return False
+
+
 class CostTrackingRequiredError(Exception):
     """Raised when cost tracking fails but strict mode is enabled."""
 
@@ -121,6 +136,70 @@ class CostEnforcerConfig:
     warning_threshold: float = 0.5
     fallback_trial_limit: int = 10
     estimated_cost_per_trial: float = 0.05  # $0.05 default estimate
+
+
+def _get_approval_token_path() -> Path:
+    """Get XDG-compliant token path."""
+    xdg_config = os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    return Path(xdg_config) / "traigent" / "cost_approval.token"
+
+
+def _check_approval_token_path(
+    token_path: Path,
+    *,
+    config: CostEnforcerConfig | None = None,
+) -> bool:
+    """Check for a valid XDG approval token file.
+
+    Token format:
+        - "approved" - approve with default limit
+        - "approved:10.0" - approve with custom limit
+
+    Args:
+        token_path: Approval token path to check.
+        config: Optional cost config to update when the token raises the limit.
+
+    Returns:
+        True if valid approval token found.
+    """
+    if not token_path.exists():
+        return False
+
+    try:
+        content = token_path.read_text().strip()
+        if content.startswith("approved"):
+            if ":" in content and config is not None:
+                try:
+                    token_limit = float(content.split(":")[1])
+                    if token_limit > 0:
+                        config.limit = max(config.limit, token_limit)
+                        logger.debug(f"Token limit: ${token_limit:.2f}")
+                except (ValueError, IndexError):
+                    logger.warning(f"Invalid token format: {content}")
+            return True
+    except OSError as e:
+        logger.warning(f"Failed to read approval token: {e}")
+
+    return False
+
+
+def is_cost_preapproved(
+    config_approved: bool = False,
+    *,
+    token_path: Path | None = None,
+    config: CostEnforcerConfig | None = None,
+) -> bool:
+    """Return whether the user has pre-approved cost-sensitive execution."""
+    if config_approved:
+        return True
+
+    if os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true":
+        return True
+
+    return _check_approval_token_path(
+        token_path if token_path is not None else _get_approval_token_path(),
+        config=config,
+    )
 
 
 @dataclass
@@ -344,8 +423,7 @@ class CostEnforcer:
 
     def _get_approval_token_path(self) -> Path:
         """Get XDG-compliant token path."""
-        xdg_config = os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-        return Path(xdg_config) / "traigent" / "cost_approval.token"
+        return _get_approval_token_path()
 
     @property
     def accumulated_cost(self) -> float:
@@ -382,17 +460,12 @@ class CostEnforcer:
         Returns:
             True if approved to proceed, False if user declined or non-interactive abort.
         """
-        if self.config.approved:
-            logger.info(
-                f"Cost pre-approved via TRAIGENT_COST_APPROVED "
-                f"(limit: ${self.config.limit:.2f})"
-            )
-            return True
-
-        if self._check_approval_token():
-            logger.info(
-                f"Cost approved via token file (limit: ${self.config.limit:.2f})"
-            )
+        if is_cost_preapproved(
+            self.config.approved,
+            token_path=self._approval_token_path,
+            config=self.config,
+        ):
+            logger.info("Cost pre-approved (limit: $%.2f)", self.config.limit)
             return True
 
         if estimated_cost <= self.config.limit:
@@ -413,25 +486,7 @@ class CostEnforcer:
         Returns:
             True if valid approval token found.
         """
-        if not self._approval_token_path.exists():
-            return False
-
-        try:
-            content = self._approval_token_path.read_text().strip()
-            if content.startswith("approved"):
-                if ":" in content:
-                    try:
-                        token_limit = float(content.split(":")[1])
-                        if token_limit > 0:
-                            self.config.limit = max(self.config.limit, token_limit)
-                            logger.debug(f"Token limit: ${token_limit:.2f}")
-                    except (ValueError, IndexError):
-                        logger.warning(f"Invalid token format: {content}")
-                return True
-        except OSError as e:
-            logger.warning(f"Failed to read approval token: {e}")
-
-        return False
+        return _check_approval_token_path(self._approval_token_path, config=self.config)
 
     def _request_user_approval(self, estimated: float) -> bool:
         """Interactive approval prompt. Fail-safe: abort if non-interactive.
@@ -445,9 +500,14 @@ class CostEnforcer:
         # Check if stdin is a TTY (interactive terminal)
         if not sys.stdin.isatty():
             print(
-                f"\nTraigent: Estimated cost ${estimated:.2f} exceeds limit "
-                f"${self.config.limit:.2f}.\n"
-                f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT.\n",
+                "\nTraigent: Rough conservative upper-bound cost estimate "
+                f"${estimated:.2f} exceeds limit ${self.config.limit:.2f}.\n"
+                "Pre-run estimates use fixed token assumptions and conservative "
+                "fallback pricing when model pricing is unavailable.\n"
+                "To proceed, raise TRAIGENT_RUN_COST_LIMIT, approve after review "
+                "with TRAIGENT_COST_APPROVED=true, or calibrate private/unpriced "
+                "model rates with TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON.\n",
                 file=sys.stderr,
             )
             logger.warning(
@@ -464,12 +524,14 @@ class CostEnforcer:
 Traigent Cost Warning
 ================================================================================
 
-Estimated optimization cost: ${estimated:.2f} USD
+Rough conservative upper-bound cost estimate: ${estimated:.2f} USD
 Your current cost limit:     ${self.config.limit:.2f} USD
 
 NOTE: This is an ESTIMATE based on maximum context. Actual billing is
       determined solely by your LLM provider.
 NOTE: Traigent limits are best-effort local guardrails, not provider billing caps.
+NOTE: If model pricing is private or unavailable, calibrate rates with
+      TRAIGENT_CUSTOM_MODEL_PRICING_FILE or TRAIGENT_CUSTOM_MODEL_PRICING_JSON.
 
 Options:
   [y] Approve and continue with current limit
@@ -482,7 +544,8 @@ Options:
         )
 
         try:
-            choice = input("Enter choice [y/n/r]: ").strip().lower()
+            print("Enter choice [y/n/r]: ", end="", file=sys.stderr, flush=True)
+            choice = input().strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\nAborted.", file=sys.stderr)
             logger.info("User aborted via EOF/interrupt")
@@ -1212,6 +1275,8 @@ __all__ = [
     "CostLimitExceeded",
     "CostStatus",
     "CostTrackingRequiredError",
+    "is_cost_preapproved",
+    "normalize_cost_approved",
     "OptimizationAborted",
     "Permit",
 ]

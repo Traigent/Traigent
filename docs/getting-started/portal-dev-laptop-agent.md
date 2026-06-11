@@ -9,7 +9,6 @@ Use the API host, not the portal host:
 ```bash
 export TRAIGENT_BACKEND_URL=https://api-dev.traigent.ai
 export TRAIGENT_API_URL=https://api-dev.traigent.ai
-export TRAIGENT_CLOUD_API_URL=https://api-dev.traigent.ai
 ```
 
 `portal-dev.traigent.ai` is the browser application. SDK and agent code should call

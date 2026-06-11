@@ -42,6 +42,16 @@ _CATALOG_ENTRY_KINDS = {
     "code_gen.fewshot_k.v1": "cardinality",
     "code_gen.candidate_count.v1": "cardinality",
     "code_gen.repair_policy.v1": "topology",
+    "code_gen.repo_context_strategy.v1": "policy",
+    "code_gen.file_view_window.v1": "value",
+    "code_gen.edit_granularity.v1": "policy",
+    "code_gen.test_selection_strategy.v1": "policy",
+    "code_gen.patch_review_mode.v1": "policy",
+    "rag.context_selection_policy.v1": "policy",
+    "rag.context_order.v1": "policy",
+    "rag.summary_style.v1": "policy",
+    "rag.compression_ratio.v1": "value",
+    "rag.citation_policy.v1": "policy",
 }
 
 
@@ -379,7 +389,7 @@ class TestTVarCatalog:
     def test_catalog_loads_and_validates_all_ready_made_entries(self) -> None:
         entries = load_catalog()
 
-        assert len(entries) == 8
+        assert len(entries) == 18
         assert {entry["entry_id"] for entry in entries} == set(_CATALOG_ENTRY_KINDS)
         for entry in entries:
             assert entry["kind"] == _CATALOG_ENTRY_KINDS[entry["entry_id"]]
@@ -406,11 +416,18 @@ class TestTVarCatalog:
 
     def test_catalog_filters_by_agent_type(self) -> None:
         assert [entry["entry_id"] for entry in catalog_entries("rag")] == [
-            "rag.retrieval_k.v1"
+            "rag.retrieval_k.v1",
+            "rag.context_selection_policy.v1",
+            "rag.context_order.v1",
+            "rag.summary_style.v1",
+            "rag.compression_ratio.v1",
+            "rag.citation_policy.v1",
         ]
-        assert {entry["entry_id"] for entry in catalog_entries("code_gen")} == (
-            set(_CATALOG_ENTRY_KINDS) - {"rag.retrieval_k.v1"}
-        )
+        assert {entry["entry_id"] for entry in catalog_entries("code_gen")} == {
+            entry_id
+            for entry_id in _CATALOG_ENTRY_KINDS
+            if entry_id.startswith("code_gen.")
+        }
 
     def test_entry_to_recommendation_round_trips_catalog_fields(self) -> None:
         entry = next(

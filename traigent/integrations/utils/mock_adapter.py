@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
+from traigent.utils.logging import configure_litellm_logging
+
 logger = logging.getLogger(__name__)
 
 # Default mock delay in milliseconds (0 = no delay)
@@ -305,6 +307,7 @@ class MockAdapter:
     def _build_litellm_mock(cls, data: MockResponse) -> Any:
         """Build a LiteLLM ModelResponse-like mock response."""
         try:
+            import litellm
             from litellm import ModelResponse
         except Exception as exc:  # pragma: no cover - exercised only without litellm
             logger.debug("LiteLLM ModelResponse unavailable, using fallback: %s", exc)
@@ -330,6 +333,7 @@ class MockAdapter:
                 ),
             )
 
+        configure_litellm_logging(litellm_module=litellm)
         return ModelResponse(
             id=data.response_id,
             model=data.model,

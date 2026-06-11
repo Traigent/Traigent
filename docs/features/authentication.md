@@ -168,7 +168,7 @@ credentials resolved by the provider SDKs on the local machine. They are not
 Traigent API keys and are not sent to Traigent backend endpoints.
 
 For the full boundary, including Bedrock and telemetry/content logging, see
-the [Credential & data trust model](../../SECURITY.md#credential--data-trust-model)
+the [Credential & data trust model](../security/trust_model.md)
 and the [telemetry documentation](../api-reference/telemetry.md).
 
 ## Priority Order
@@ -224,9 +224,9 @@ import traigent
     evaluation={"eval_dataset": "data.jsonl"},
     configuration_space={"model": ["gpt-4", "gpt-3.5-turbo"]}
 )
-def my_function(input_text: str, **config):
-    # Your function here
-    return result
+def my_function(input_text: str) -> str:
+    config = traigent.get_config()
+    return f"{config['model']}: {input_text}"
 
 # Optimization automatically uses authenticated backend
 results = asyncio.run(my_function.optimize())

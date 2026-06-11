@@ -22,22 +22,163 @@ from traigent.config.types import TraigentConfig
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
-from traigent.config.backend_config import SIGNUP_URL, get_no_credentials_hint
+from traigent.config.backend_config import get_no_credentials_hint
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
 from traigent.core.session_types import (
+    SessionCreationFailureClassification,
+    SessionCreationFailureDetail,
     SessionCreationFailureReason,
     SessionCreationResult,
 )
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.env_config import is_backend_offline
+from traigent.utils.env_config import is_backend_offline, is_untracked_fallback_allowed
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_WARNING_RULE = "=" * 72
+
+
+def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in value for needle in needles)
+
+
+def _classify_session_creation_failure(
+    reason: SessionCreationFailureReason,
+    detail: SessionCreationFailureDetail | None,
+) -> SessionCreationFailureClassification:
+    if reason == SessionCreationFailureReason.SESSION_FAILED:
+        if detail and detail.status_code and 400 <= detail.status_code < 500:
+            return SessionCreationFailureClassification.UNKNOWN
+        return SessionCreationFailureClassification.BACKEND_UNREACHABLE
+
+    if reason == SessionCreationFailureReason.NO_API_KEY:
+        return SessionCreationFailureClassification.KEY_NOT_FOUND
+
+    if detail and detail.missing_permissions:
+        return SessionCreationFailureClassification.MISSING_PERMISSION
+
+    text = " ".join(
+        part
+        for part in (
+            detail.error_code if detail else None,
+            detail.message if detail else None,
+            detail.raw_body if detail else None,
+        )
+        if part
+    ).lower()
+
+    if _contains_any(text, ("key_not_found", "api_key_not_found", "key not found")):
+        return SessionCreationFailureClassification.KEY_NOT_FOUND
+    if _contains_any(
+        text,
+        (
+            "invalid",
+            "revoked",
+            "expired",
+            "rejected",
+            "unauthorized",
+            "authentication",
+        ),
+    ):
+        return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
+    if detail and detail.status_code == 401:
+        return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
+
+    return SessionCreationFailureClassification.UNKNOWN
+
+
+def _format_raw_reason(result: SessionCreationResult) -> str | None:
+    detail = result.failure_response
+    raw_reason = result.failure_detail
+    if detail and detail.raw_body:
+        raw_reason = detail.raw_body
+    if not raw_reason:
+        return None
+    return raw_reason.replace("\n", "\\n")[:500]
+
+
+def _backend_disabled_label(reason: SessionCreationFailureReason | None) -> str:
+    """Return a log-safe, non-secret label for disabled backend tracking."""
+
+    if reason == SessionCreationFailureReason.AUTH:
+        return "authentication-failed"
+    if reason == SessionCreationFailureReason.NO_API_KEY:
+        return "credentials-unavailable"
+    if reason == SessionCreationFailureReason.SESSION_FAILED:
+        return "session-create-failed"
+    return "unknown"
+
+
+def _format_untracked_warning_block(
+    result: SessionCreationResult,
+    classification: SessionCreationFailureClassification,
+    *,
+    aborting: bool,
+) -> str:
+    detail = result.failure_response
+    lines = [
+        _WARNING_RULE,
+        "TRAIGENT BACKEND TRACKING UNAVAILABLE",
+        "This run will NOT be tracked in the portal.",
+        f"Classification: {classification.value}",
+    ]
+
+    if detail and detail.status_code is not None:
+        lines.append(f"HTTP status: {detail.status_code}")
+    if detail and detail.error_code:
+        lines.append(f"Backend error_code: {detail.error_code}")
+    if detail and detail.message:
+        lines.append(f"Backend message: {detail.message}")
+    if detail and detail.missing_permissions:
+        permissions = ", ".join(f"`{p}`" for p in detail.missing_permissions)
+        lines.append(f"Missing permissions: {permissions}")
+
+    raw_reason = _format_raw_reason(result)
+    if raw_reason:
+        lines.append(f"Raw reason: {raw_reason}")
+
+    if classification == SessionCreationFailureClassification.MISSING_PERMISSION:
+        lines.append(
+            "Remedy: grant the missing permission(s) to the API key, or if the "
+            "key should already have them, verify the backend deployment and "
+            "permission middleware that returned this structured response."
+        )
+    elif classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY:
+        lines.append(
+            "Remedy: re-authenticate with `traigent auth login` or provide a "
+            "valid, non-revoked API key."
+        )
+    elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
+        lines.append(
+            "Remedy: configure a valid Traigent API key or run `traigent auth login`."
+        )
+    elif classification == SessionCreationFailureClassification.BACKEND_UNREACHABLE:
+        lines.append(
+            "Remedy: check TRAIGENT_BACKEND_URL/network connectivity or retry later."
+        )
+    else:
+        lines.append(
+            "Remedy: inspect the raw backend response above; retry with "
+            "TRAIGENT_LOG_LEVEL=DEBUG for more diagnostics."
+        )
+
+    if aborting:
+        lines.append(
+            "Aborting before trials or LLM calls. To knowingly proceed local-only, "
+            "set TRAIGENT_ALLOW_UNTRACKED=1."
+        )
+    else:
+        lines.append("Continuing local-only; results will be saved on this machine.")
+
+    lines.append(_WARNING_RULE)
+    return "\n".join(lines)
 
 
 class BackendSessionManager:
@@ -92,6 +233,14 @@ class BackendSessionManager:
         # trip "already started" errors on the backend side.
         self._started_trials: set[tuple[str, str]] = set()
 
+        # Tracks (session_id, backend_trial_id) pairs the backend MINTED and
+        # ACCEPTED a result for. The certified-selection report binds the
+        # winner to its backend trial id, so the report builder consults this
+        # set: an incumbent whose id is absent here is unbindable and the
+        # report is withheld (Rule 1/2: never attest a winner the backend
+        # never acknowledged).
+        self._acknowledged_trials: set[tuple[str, str]] = set()
+
     @property
     def backend_tracking_enabled(self) -> bool:
         """Whether remote backend tracking is active for this run."""
@@ -123,23 +272,32 @@ class BackendSessionManager:
             if not was_enabled:
                 return str(result.session_id)
 
+            classification = _classify_session_creation_failure(
+                reason, result.failure_response
+            )
             if reason == SessionCreationFailureReason.AUTH:
-                logger.warning(
-                    "Backend authentication failed — results will be saved locally only. "
-                    "Run 'traigent auth login' or get a new key at %s",
-                    SIGNUP_URL,
+                allow_untracked = is_untracked_fallback_allowed()
+                warning = _format_untracked_warning_block(
+                    result,
+                    classification,
+                    aborting=not allow_untracked,
                 )
+                if not allow_untracked:
+                    raise ConfigurationError(warning)
+                logger.warning("%s", warning)
             elif reason == SessionCreationFailureReason.NO_API_KEY:
-                logger.warning(
+                logger.info(
                     "No API key found — results saved locally only. %s",
                     get_no_credentials_hint(),
                 )
             else:
-                detail = result.failure_detail or "unknown"
                 logger.warning(
-                    "Backend tracking unavailable — results will be saved locally only. "
-                    "reason=%s",
-                    detail[:200],
+                    "%s",
+                    _format_untracked_warning_block(
+                        result,
+                        classification,
+                        aborting=False,
+                    ),
                 )
         else:
             logger.info("Created backend session: %s", result.session_id)
@@ -329,6 +487,9 @@ class BackendSessionManager:
         start_time: float,
         max_total_examples: int | None = None,
         agent_configuration: AgentConfiguration | None = None,
+        objectives: list[Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        tvl_governance: dict[str, Any] | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -397,6 +558,9 @@ class BackendSessionManager:
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,
+                objectives=objectives,
+                promotion_policy=promotion_policy,
+                tvl_governance=tvl_governance,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(result)
@@ -465,13 +629,6 @@ class BackendSessionManager:
         if not self._backend_client or not session_id:
             return False
 
-        if not self._backend_tracking_enabled:
-            logger.debug(
-                "Skipping trial submission (backend disabled: %s)",
-                self._backend_disabled_reason,
-            )
-            return False
-
         _ = content_scores
 
         primary_objective = (
@@ -489,6 +646,23 @@ class BackendSessionManager:
         if self._strategy_preset_metadata is not None:
             trial_metadata["strategy_preset"] = dict(self._strategy_preset_metadata)
 
+        self._persist_trial_locally(
+            session_id=session_id,
+            trial_result=trial_result,
+            score=score,
+            metadata=trial_metadata,
+        )
+
+        if not self._backend_tracking_enabled:
+            backend_disabled_label = _backend_disabled_label(
+                self._backend_disabled_reason
+            )
+            logger.debug(
+                "Skipping trial submission (backend disabled: %s)",
+                backend_disabled_label,
+            )
+            return False
+
         await self._log_trial_to_backend(
             session_id=session_id,
             trial_result=trial_result,
@@ -498,19 +672,17 @@ class BackendSessionManager:
 
         return True
 
-    async def _log_trial_to_backend(
+    def _persist_trial_locally(
         self,
+        *,
         session_id: str,
         trial_result: TrialResult,
         score: float | None,
         metadata: dict[str, Any],
     ) -> None:
-        """Persist trial outcome locally and submit metrics to backend when possible."""
+        """Record local analytics before any remote backend breaker can short-circuit."""
 
         if not self._backend_client or not session_id:
-            return
-
-        if not self._backend_tracking_enabled:
             return
 
         sanitized_score = float(score) if score is not None else None
@@ -518,7 +690,6 @@ class BackendSessionManager:
         if score is None:
             metadata_payload["primary_objective_missing"] = True
 
-        # Always record locally so analytics remain available even without backend.
         try:
             self._backend_client.submit_result(
                 session_id=session_id,
@@ -533,6 +704,76 @@ class BackendSessionManager:
                 trial_result.trial_id,
                 exc,
             )
+
+    def is_trial_backend_acknowledged(self, session_id: str, trial_id: str) -> bool:
+        """Whether the backend minted+accepted a result for ``trial_id``.
+
+        The certified-selection report builder consults this to fail closed:
+        an incumbent whose backend slot was never acknowledged cannot be bound
+        to a server record, so no report is sent for it.
+        """
+        return (session_id, trial_id) in self._acknowledged_trials
+
+    async def _acquire_backend_trial_id(
+        self, session_id: str, trial_result: TrialResult
+    ) -> str | None:
+        """Acquire (once per started trial) a backend-minted trial id.
+
+        Reuses a previously acquired backend id for the same client trial so
+        retries of submit_trial don't burn extra slots. Returns ``None`` when
+        the backend declined to mint a slot (offline / transport / non-2xx),
+        in which case the caller fails closed.
+        """
+        client = self._backend_client
+        if client is None:
+            return None
+
+        client_trial_id = str(trial_result.trial_id)
+        # If this trial already mapped to an acknowledged backend id, reuse it.
+        for sid, bid in self._started_trials:
+            if sid == session_id and bid == client_trial_id:
+                # client_trial_id already IS a backend id from a prior pass.
+                return client_trial_id
+
+        requester = getattr(client, "request_trial_slot", None)
+        if not callable(requester):
+            return None
+        try:
+            slot = requester(session_id)
+            backend_trial_id = await slot if inspect.isawaitable(slot) else slot
+        except Exception as exc:
+            logger.debug(
+                "Backend trial-slot request failed for session %s trial %s: %s",
+                session_id,
+                client_trial_id,
+                exc,
+            )
+            return None
+
+        if isinstance(backend_trial_id, str) and backend_trial_id:
+            self._started_trials.add((session_id, backend_trial_id))
+            return backend_trial_id
+        return None
+
+    async def _log_trial_to_backend(
+        self,
+        session_id: str,
+        trial_result: TrialResult,
+        score: float | None,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Submit trial metrics to backend when possible."""
+
+        if not self._backend_client or not session_id:
+            return
+
+        if not self._backend_tracking_enabled:
+            return
+
+        sanitized_score = float(score) if score is not None else None
+        metadata_payload = dict(metadata)
+        if score is None:
+            metadata_payload["primary_objective_missing"] = True
 
         # Skip remote submission when no API key is configured (offline/local only).
         auth_manager = getattr(self._backend_client, "auth_manager", None)
@@ -620,33 +861,45 @@ class BackendSessionManager:
         status = status_mapping.get(trial_result.status, "FAILED")
 
         try:
-            trial_key = (session_id, trial_result.trial_id)
-            if trial_key not in self._started_trials:
-                try:
-                    start_call = self._backend_client.register_trial_start(
-                        session_id=session_id,
-                        trial_id=trial_result.trial_id,
-                        config=trial_result.config,
-                    )
-                    start_ok: Any = (
-                        await start_call
-                        if inspect.isawaitable(start_call)
-                        else start_call
-                    )
-                    if start_ok:
-                        self._started_trials.add(trial_key)
-                except Exception as exc:
-                    logger.debug(
-                        "Trial start registration failed for session %s trial %s: %s",
-                        session_id,
-                        trial_result.trial_id,
-                        exc,
-                    )
+            # The backend binds a result to a session by the configuration_run
+            # id IT minted (via next-trial). A client-hashed id 404s with
+            # "Trial ... not found in session". So acquire a backend slot and
+            # rebind this trial to it BEFORE submitting. The optimizer still
+            # owns the config; the slot is purely the backend's trial handle.
+            backend_trial_id = await self._acquire_backend_trial_id(
+                session_id, trial_result
+            )
+            if backend_trial_id is None:
+                # Fail closed: no acknowledged backend slot ⇒ NO submission and
+                # NO acknowledgment. The certified-selection report will then
+                # withhold for this incumbent (never attest an unbound winner).
+                logger.warning(
+                    "No backend trial slot acquired for session %s "
+                    "(client trial %s); skipping submission (fail closed)",
+                    session_id,
+                    trial_result.trial_id,
+                )
+                return
+            # Rebind in place: _best_trial_cached holds this same object, so the
+            # incumbent's trial_id becomes the backend id the report needs.
+            trial_result.trial_id = backend_trial_id
 
+            # P8 content-freedom (live-E2E finding): the resolved trial
+            # config carries injected CALIBRATED values; the wire submission
+            # carries ONLY the tuned search-space projection — a fitted
+            # calibrated value never rides to the backend (and the backend's
+            # create-time key-subset validation would reject it anyway,
+            # silently voiding the trial record).
+            tuned_keys = set(getattr(self._optimizer, "config_space", {}) or {})
+            wire_config = {
+                k: v
+                for k, v in (trial_result.config or {}).items()
+                if not tuned_keys or k in tuned_keys
+            }
             submitted_result = self._backend_client._submit_trial_result_via_session(
                 session_id=session_id,
-                trial_id=trial_result.trial_id,
-                config=trial_result.config,
+                trial_id=backend_trial_id,
+                config=wire_config,
                 metrics=metrics_payload,
                 status=status,
                 error_message=trial_result.error_message,
@@ -661,13 +914,16 @@ class BackendSessionManager:
             if not submitted:
                 logger.warning(
                     "Backend session endpoint rejected trial %s for session %s",
-                    trial_result.trial_id,
+                    backend_trial_id,
                     session_id,
                 )
             else:
+                # Record the acknowledged backend slot so the certified-selection
+                # report can verify this incumbent is bindable.
+                self._acknowledged_trials.add((session_id, backend_trial_id))
                 logger.info(
                     "Submitted trial %s for session %s (status=%s, metrics_keys=%s)",
-                    trial_result.trial_id,
+                    backend_trial_id,
                     session_id,
                     status,
                     sorted(metrics_payload.keys()),
@@ -698,9 +954,12 @@ class BackendSessionManager:
             return 0
 
         if not self._backend_tracking_enabled:
+            backend_disabled_label = _backend_disabled_label(
+                self._backend_disabled_reason
+            )
             logger.debug(
                 "Skipping weighted score updates (backend disabled: %s)",
-                self._backend_disabled_reason,
+                backend_disabled_label,
             )
             return 0
 
@@ -933,9 +1192,9 @@ class BackendSessionManager:
             result.metadata.get("statistical_significance") if result.metadata else None
         )
         if stat_sig:
-            summary_stats_with_aggregation["metadata"][
-                "statistical_significance"
-            ] = stat_sig
+            summary_stats_with_aggregation["metadata"]["statistical_significance"] = (
+                stat_sig
+            )
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])
@@ -977,6 +1236,7 @@ class BackendSessionManager:
         self,
         session_id: str | None,
         optimization_status: OptimizationStatus,
+        certified_selection: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Finalize backend session and return summary.
 
@@ -1000,14 +1260,22 @@ class BackendSessionManager:
             else "failed"
         )
 
+        # The certified report only accompanies a COMPLETED finalize — a
+        # failed run must never carry a certified winner.
+        report = certified_selection if final_status == "completed" else None
+
         if hasattr(self._backend_client, "finalize_session_sync"):
             result: dict[str, Any] | None = self._backend_client.finalize_session_sync(  # type: ignore[assignment]
-                session_id, final_status == "completed"
+                session_id,
+                final_status == "completed",
+                certified_selection=report,
             )
             return result
 
         result = self._backend_client.finalize_session(  # type: ignore[assignment]
-            session_id, final_status == "completed"
+            session_id,
+            final_status == "completed",
+            certified_selection=report,
         )
         return result
 

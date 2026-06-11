@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import CloudServiceError, SessionContractError
 from traigent.cloud.models import (
     OptimizationFinalizationResponse,
     OptimizationSession,
@@ -24,6 +24,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
 )
 from traigent.cloud.session_types import (
+    SessionCreationFailureDetail,
     SessionCreationFailureReason,
     SessionCreationResult,
 )
@@ -54,6 +55,15 @@ def _get_session_executor() -> concurrent.futures.ThreadPoolExecutor:
     if _SESSION_EXECUTOR is None:
         _SESSION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     return _SESSION_EXECUTOR
+
+
+def _get_session_creation_failure_detail(
+    exc: Exception,
+) -> SessionCreationFailureDetail | None:
+    detail = getattr(exc, "session_creation_failure", None)
+    if isinstance(detail, SessionCreationFailureDetail):
+        return detail
+    return None
 
 
 class SessionOperations:
@@ -247,6 +257,9 @@ class SessionOperations:
         search_space: dict[str, Any],
         optimization_goal: str = "maximize",
         metadata: dict[str, Any] | None = None,
+        objectives: list[Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        tvl_governance: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -268,10 +281,33 @@ class SessionOperations:
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
 
+        # Phase 8 (review round 2): the local-availability fallback is for
+        # NON-governed sessions only. A governed/strict session that cannot
+        # be created on the backend fails LOUD — quietly degrading to a
+        # local-only run would mask laundering refusals, contract
+        # misconfiguration, and old-BE typed rejection as success.
+        governed = bool(promotion_policy or tvl_governance)
+
+        def _must_fail_loud(exc: Exception) -> bool:
+            return governed or isinstance(exc, SessionContractError)
+
         async def _create_session_async() -> SessionCreationResult:
             # Preflight: check if API key exists before attempting any HTTP call
             has_key = self.client.auth_manager.has_api_key()
             if not has_key:
+                if governed:
+                    # ADJUDICATED (review round 3): no API key is an explicit
+                    # local-only configuration, not a cloud failure — strict
+                    # enforcement runs fully locally and no backend record
+                    # exists that could launder strict mode. Stay local, but
+                    # make the governance/no-cloud mismatch VISIBLE.
+                    logger.warning(
+                        "Governed session '%s' declared promotion_policy/"
+                        "tvl_governance but no API key is configured — "
+                        "running local-only (strict enforcement stays local; "
+                        "no backend session or certified record is created)",
+                        function_name,
+                    )
                 logger.debug(
                     "No API key configured — skipping backend session creation"
                 )
@@ -305,12 +341,18 @@ class SessionOperations:
             session_request = SessionCreationRequest(
                 function_name=function_name,
                 configuration_space=search_space,
-                objectives=[optimization_goal],
+                # Typed contract: objectives are METRIC names/objects. The
+                # legacy [optimization_goal] placeholder survives only as the
+                # fallback when the caller supplied none (legacy shape keeps
+                # reading objectives[0] as its optimization_goal).
+                objectives=list(objectives) if objectives else [optimization_goal],
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
                     "privacy_mode": True,
                 },
                 max_trials=max_trials_from_metadata,
+                promotion_policy=promotion_policy,
+                tvl_governance=tvl_governance,
                 optimization_strategy={"mode": "local_execution"},
                 user_id=None,  # Privacy preserving
                 billing_tier="privacy",
@@ -410,27 +452,43 @@ class SessionOperations:
 
             except AuthenticationError as e:
                 await self._reset_client_session("create_session auth_failure")
+                if _must_fail_loud(e):
+                    raise
                 logger.debug("Backend auth failed for '%s': %s", function_name, e)
+                failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
                 )
                 return SessionCreationResult.fallback(
                     session_id=fallback_id,
                     reason=SessionCreationFailureReason.AUTH,
-                    detail=str(e)[:200],
+                    detail=(
+                        failure_response.one_line_summary()
+                        if failure_response
+                        else str(e)[:200]
+                    ),
+                    failure_response=failure_response,
                 )
 
             except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
+                if _must_fail_loud(e):
+                    raise
                 logger.debug("Backend unavailable for '%s': %s", function_name, e)
+                failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
                 )
-                detail = str(e).split("\n", 1)[0][:200]
+                detail = (
+                    failure_response.one_line_summary()
+                    if failure_response
+                    else str(e).split("\n", 1)[0][:200]
+                )
                 return SessionCreationResult.fallback(
                     session_id=fallback_id,
                     reason=SessionCreationFailureReason.SESSION_FAILED,
                     detail=detail,
+                    failure_response=failure_response,
                 )
 
         # Run async method in sync context
@@ -457,40 +515,59 @@ class SessionOperations:
             raise  # User input errors must propagate
 
         except AuthenticationError as exc:
+            if _must_fail_loud(exc):
+                raise
             logger.debug(
                 "Backend auth failed for '%s': %s",
                 function_name,
                 exc,
             )
+            failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
                 function_name, search_space, optimization_goal, metadata
             )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
                 reason=SessionCreationFailureReason.AUTH,
-                detail=str(exc)[:200],
+                detail=(
+                    failure_response.one_line_summary()
+                    if failure_response
+                    else str(exc)[:200]
+                ),
+                failure_response=failure_response,
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
+            if _must_fail_loud(exc):
+                raise
             logger.debug(
                 "Error in create_session for function '%s': %s",
                 function_name,
                 exc,
             )
+            failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
                 function_name, search_space, optimization_goal, metadata
             )
-            detail = str(exc).split("\n", 1)[0][:200]
+            detail = (
+                failure_response.one_line_summary()
+                if failure_response
+                else str(exc).split("\n", 1)[0][:200]
+            )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
                 reason=SessionCreationFailureReason.SESSION_FAILED,
                 detail=detail,
+                failure_response=failure_response,
             )
 
         except Exception as exc:
             # Last-resort fallback for unexpected errors (e.g. from
             # session_bridge or event loop machinery).  Ensures SDK
-            # never crashes during session creation.
+            # never crashes during session creation — except for
+            # governed/contract failures, which must stay loud.
+            if _must_fail_loud(exc):
+                raise
             logger.debug(
                 "Unexpected error in create_session for function '%s': %s",
                 function_name,
@@ -690,7 +767,10 @@ class SessionOperations:
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def finalize_session(
-        self, session_id: str, include_full_history: bool = False
+        self,
+        session_id: str,
+        include_full_history: bool = False,
+        certified_selection: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
 
@@ -748,7 +828,9 @@ class SessionOperations:
         if mapping:
             try:
                 backend_payload = await self._finalize_session_via_api(
-                    session_id, mapping.experiment_run_id
+                    session_id,
+                    mapping.experiment_run_id,
+                    certified_selection=certified_selection,
                 )
             except CloudServiceError:
                 raise
@@ -900,7 +982,10 @@ class SessionOperations:
         return response
 
     async def _finalize_session_via_api(
-        self, session_id: str, experiment_run_id: str
+        self,
+        session_id: str,
+        experiment_run_id: str,
+        certified_selection: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
@@ -935,12 +1020,18 @@ class SessionOperations:
                 )
                 url = f"{api_base}/sessions/{session_id}/finalize"
 
+                finalize_body: dict[str, Any] = {
+                    "reason": "sdk_explicit_finalization",
+                    "experiment_run_id": experiment_run_id,
+                }
+                if certified_selection is not None:
+                    # Phase 8: the client-attested, content-free certified-
+                    # selection report — TOP-LEVEL key only (the backend
+                    # rejects metadata-tunneled reports).
+                    finalize_body["certified_selection"] = certified_selection
                 async with session.post(
                     url,
-                    json={
-                        "reason": "sdk_explicit_finalization",
-                        "experiment_run_id": experiment_run_id,
-                    },
+                    json=finalize_body,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as response:
@@ -1015,7 +1106,10 @@ class SessionOperations:
         return deleted
 
     def finalize_session_sync(
-        self, session_id: str, include_full_history: bool = False
+        self,
+        session_id: str,
+        include_full_history: bool = False,
+        certified_selection: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
         import concurrent.futures
@@ -1028,7 +1122,11 @@ class SessionOperations:
             asyncio.set_event_loop(new_loop)
             try:
                 return new_loop.run_until_complete(
-                    self.finalize_session(session_id, include_full_history)
+                    self.finalize_session(
+                        session_id,
+                        include_full_history,
+                        certified_selection=certified_selection,
+                    )
                 )
             finally:
                 new_loop.close()

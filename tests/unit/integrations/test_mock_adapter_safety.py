@@ -120,7 +120,7 @@ def test_activation_is_idempotent_and_logs_once(
     are no-ops and must NOT spam logs (Codex finding #2)."""
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="traigent.testing"):
+    with caplog.at_level(logging.INFO, logger="traigent.testing"):
         traigent_testing.enable_mock_mode_for_quickstart()
         traigent_testing.enable_mock_mode_for_quickstart()
         traigent_testing.enable_mock_mode_for_quickstart()
@@ -131,6 +131,18 @@ def test_activation_is_idempotent_and_logs_once(
     assert len(activation_warns) == 1, (
         f"Expected exactly one mandatory activation WARN, got "
         f"{len(activation_warns)} — log spam will hide the signal"
+    )
+    scope_notes = [
+        r
+        for r in caplog.records
+        if "mock interception scope" in r.getMessage()
+        and "LiteLLM and LangChain calls are mocked" in r.getMessage()
+        and "openai.chat.completions.create" in r.getMessage()
+        and "anthropic.messages.create" in r.getMessage()
+    ]
+    assert len(scope_notes) == 1, (
+        f"Expected exactly one mock interception scope INFO note, got "
+        f"{len(scope_notes)}"
     )
 
 

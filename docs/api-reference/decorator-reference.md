@@ -36,6 +36,7 @@ def optimize(
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
+    safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
 
     # TVL integration
     tvl_spec: str | Path | None = None,
@@ -45,8 +46,32 @@ def optimize(
     # Grouped option bundles (preferred)
     evaluation: EvaluationOptions | dict[str, Any] | None = None,
     injection: InjectionOptions | dict[str, Any] | None = None,
+    effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
+    strategy: str | None = None,
+    strategy_params: Mapping[str, Any] | None = None,
+
+    # Multi-agent configuration
+    agents: dict[str, AgentDefinition] | None = None,
+    agent_prefixes: list[str] | None = None,
+    agent_measures: dict[str, list[str]] | None = None,
+    global_measures: list[str] | None = None,
+
+    # Config persistence
+    auto_load_best: bool = False,
+    load_from: str | None = None,
+    config_id: str | None = None,
+    best_config_source: str = "off",
+    best_config_strict: bool = False,
+    best_config_cache_dir: str | None = None,
+    best_config_cache_ttl_seconds: int = 24 * 60 * 60,
+    best_config_stale_ok_ttl_seconds: int | None = None,
+    enable_auto_load_dev_logs: bool | None = None,
+
+    # Guided generation
+    prompt_rewrite: dict[str, Any] | None = None,
+    grow_dataset: dict[str, Any] | None = None,
 
     # Legacy compatibility
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
@@ -424,7 +449,8 @@ def my_function(prompt: str) -> str:
     ...
 ```
 
-Complete Example: See [06_custom_evaluator.py](../../walkthrough/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation.
+Complete example: see the repository's custom evaluator walkthrough for a full
+LLM-as-Judge implementation.
 
 #### `injection`
 
@@ -436,7 +462,7 @@ from traigent.api.decorators import InjectionOptions
 
 @traigent.optimize(
     injection=InjectionOptions(
-        injection_mode="context",  # or "parameter", "attribute", "seamless"
+        injection_mode="context",  # or "parameter", "seamless"
         config_param="config",  # required when injection_mode="parameter"
         auto_override_frameworks=True,
         framework_targets=["OpenAI", "Anthropic"],
@@ -447,7 +473,7 @@ from traigent.api.decorators import InjectionOptions
 
 **InjectionOptions Fields**:
 
-- `injection_mode`: How to inject config ("context", "parameter", "attribute", "seamless")
+- `injection_mode`: How to inject config ("context", "parameter", "seamless")
 - `config_param`: Parameter name when using "parameter" mode
 - `auto_override_frameworks`: Auto-detect framework classes
 - `framework_targets`: Explicit list of framework classes
@@ -470,6 +496,8 @@ from traigent.config.parallel import ParallelConfig
         privacy_enabled=False,
         max_total_examples=1000,
         samples_include_pruned=True,
+        reps_per_trial=1,
+        reps_aggregation="mean",
     ),
     ...
 )
@@ -477,13 +505,17 @@ from traigent.config.parallel import ParallelConfig
 
 **ExecutionOptions Fields**:
 
-- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "cloud" is reserved for future remote execution.
+- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "hybrid_api" for external API-backed trial execution; "privacy" as a legacy alias for "hybrid" with privacy enabled; "cloud" is reserved for future remote execution and fails closed.
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
 - `parallel_config`: Concurrency configuration
 - `privacy_enabled`: Redact sensitive data
 - `max_total_examples`: Global sample budget
 - `samples_include_pruned`: Count pruned trials in budget
+- `reps_per_trial`: Repetitions per configuration. OSS SDK accepts only `1`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
+- `reps_aggregation`: Repetition aggregation method. OSS SDK accepts only `"mean"`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
+- `hybrid_api_endpoint`, `tunable_id`, `hybrid_api_transport`, `hybrid_api_transport_type`, `hybrid_api_batch_size`, `hybrid_api_batch_parallelism`, `hybrid_api_keep_alive`, `hybrid_api_heartbeat_interval`, `hybrid_api_timeout`, `hybrid_api_auth_header`, `hybrid_api_auto_discover_tvars`: Hybrid API execution controls.
+- `cloud_fallback_policy`: Legacy/future cloud fallback behavior. It does not enable `execution_mode="cloud"` in 0.12.0.
 
 #### `mock`
 
@@ -529,21 +561,27 @@ The `**runtime_overrides` parameter accepts additional settings:
 ```python
 @traigent.optimize(
     algorithm="optuna",  # "grid", "random", "bayesian", "optuna"
-    max_trials=50,
-    timeout=3600,  # seconds
     ...
 )
+```
+
+Run controls such as `max_trials` and `timeout` are passed to `.optimize()`:
+
+```python
+result = await my_agent.optimize(max_trials=50, timeout=3600)
 ```
 
 **Cost Controls**:
 
 ```python
-@traigent.optimize(
+result = await my_agent.optimize(
     cost_limit=5.00,  # USD
-    cost_approved=False,  # Prompt for approval
-    ...
+    cost_approved=False,  # Real bool only; strings do not approve
 )
 ```
+
+Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not
+approve.
 
 **Metric-Limit Controls**:
 
@@ -665,4 +703,4 @@ def my_agent(query: str) -> str:
 - [Execution Modes Guide](../guides/execution-modes.md) - Execution mode details
 - [Thread Pool Examples](./thread-pool-examples.md) - Context propagation with threads
 - [Telemetry Documentation](./telemetry.md) - Data collection and privacy
-- [Custom Evaluator Example](../../walkthrough/real/06_custom_evaluator.py) - LLM-as-Judge implementation
+- Custom evaluator walkthrough in the repository examples - LLM-as-Judge implementation
