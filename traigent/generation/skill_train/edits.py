@@ -22,6 +22,7 @@ logger = get_logger(__name__)
 MAX_DOC_CHARS = 16000
 EditStatus = Literal[
     "applied",
+    "rejected_gate",
     "skipped_target_not_found",
     "skipped_protected_region",
     "skipped_invalid",
@@ -29,7 +30,7 @@ EditStatus = Literal[
 ]
 
 _OPS = {"append", "insert_after", "replace", "delete"}
-_SOURCE_TYPES = {"failure", "success", "human"}
+_SOURCE_TYPES = {"failure", "success", "human", "slow_update"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +40,7 @@ class EditOp:
     content: str | None
     rationale: str
     support_count: int = 1
-    source_type: Literal["failure", "success", "human"] = "failure"
+    source_type: Literal["failure", "success", "human", "slow_update"] = "failure"
 
     def __post_init__(self) -> None:
         if self.op not in _OPS:

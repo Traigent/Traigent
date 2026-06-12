@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import random
 import time
 from collections.abc import Callable, Sequence
@@ -15,8 +16,16 @@ from traigent.generation.options import SkillTrainOptions
 from traigent.utils.logging import get_logger
 
 from .artifacts import write_artifacts
+from .buffer import RejectedEditBuffer
 from .document import SkillDocument
 from .edits import EditApplyRecord, EditOp, apply_edits
+from .schedule import edit_budget_for_step
+from .slow_update import (
+    apply_slow_update,
+    build_slow_update_probe,
+    categorize_slow_update_rollouts,
+    extract_slow_update_content,
+)
 from .splits import split_dataset
 from .trainer_result import SkillTrainResult
 
@@ -44,6 +53,8 @@ class ReflectorLike(Protocol):
         rollouts: list[RolloutRecord],
         polarity: Literal["failure", "success"],
         max_edits: int,
+        rejected_digest: str | None = None,
+        meta_skill: str | None = None,
     ) -> list[EditOp]: ...
 
     def merge(
@@ -51,7 +62,24 @@ class ReflectorLike(Protocol):
         failure_edits: list[EditOp],
         success_edits: list[EditOp],
         max_edits: int,
+        rejected_digest: str | None = None,
+        meta_skill: str | None = None,
     ) -> list[EditOp]: ...
+
+    def slow_update(
+        self,
+        prev_doc: SkillDocument,
+        cur_doc: SkillDocument,
+        categorized: object,
+        prior_guidance: str,
+    ) -> str: ...
+
+    def meta_skill(
+        self,
+        accept_history: list[dict[str, object]],
+        reject_history: list[dict[str, object]],
+        prior_meta: str,
+    ) -> str: ...
 
 
 class SkillTrainer:
@@ -73,6 +101,17 @@ class SkillTrainer:
         self._optimizer_calls = 0
         self._gate_evaluations = 0
         self._stop_reason: str | None = None
+        self._rejected_buffer = (
+            RejectedEditBuffer(
+                self._options.rejected_buffer_max,
+                persist_across_epochs=False,
+            )
+            if self._options.rejected_buffer
+            else None
+        )
+        self._meta_skill = ""
+        self._accept_history: list[dict[str, object]] = []
+        self._reject_history: list[dict[str, object]] = []
 
     def run(self, initial_document: str | SkillDocument) -> SkillTrainResult:
         options = self._options
@@ -82,6 +121,14 @@ class SkillTrainer:
             options.test_split,
             options.split_seed,
         )
+        slow_probe = (
+            build_slow_update_probe(
+                train, options.slow_update_probe_size, options.split_seed
+            )
+            if options.slow_update
+            else None
+        )
+        total_steps = options.epochs * options.steps_per_epoch
         current = (
             initial_document
             if isinstance(initial_document, SkillDocument)
@@ -101,8 +148,11 @@ class SkillTrainer:
                 "decision": "baseline",
             }
         ]
+        previous_epoch_best: SkillDocument | None = None
 
         for epoch in range(options.epochs):
+            if self._rejected_buffer is not None:
+                self._rejected_buffer.clear_epoch()
             rng = random.Random(options.split_seed + epoch)
             epoch_summary: dict[str, Any] = {
                 "epoch": epoch,
@@ -114,15 +164,22 @@ class SkillTrainer:
                 if self._stop_reason is not None:
                     break
 
+                budget = edit_budget_for_step(
+                    edit_budget=options.edit_budget,
+                    edit_budget_floor=options.edit_budget_floor,
+                    schedule=options.edit_budget_schedule,
+                    step_index=epoch * options.steps_per_epoch + step,
+                    total_steps=total_steps,
+                )
                 batch = self._sample_batch(train, rng, epoch, step)
                 _, rollouts = self._evaluate_cached(current, batch)
                 failures, successes = self._partition_rollouts(rollouts)
 
                 failure_edits = self._analyze_batches(
-                    current, failures, "failure", options.edit_budget
+                    current, failures, "failure", budget
                 )
                 success_edits = self._analyze_batches(
-                    current, successes, "success", options.edit_budget
+                    current, successes, "success", budget
                 )
                 if self._stop_reason is not None:
                     break
@@ -131,7 +188,7 @@ class SkillTrainer:
                 merged = self._merge_edits(
                     failure_edits=deduped["failure"],
                     success_edits=deduped["success"],
-                    max_edits=options.edit_budget,
+                    max_edits=budget,
                 )
                 if self._stop_reason is not None:
                     break
@@ -143,7 +200,7 @@ class SkillTrainer:
                         -op.support_count,
                         op.edit_id,
                     ),
-                )[: options.edit_budget]
+                )[:budget]
                 candidate_text, records = apply_edits(current.text, ranked)
                 for record in records:
                     record.epoch = epoch
@@ -168,6 +225,9 @@ class SkillTrainer:
                 for record in records:
                     record.selection_score_after = candidate_score
 
+                selection_delta = self._selection_delta(
+                    candidate_score, current_selection_score
+                )
                 accepted = self._is_improvement(
                     candidate_score, current_selection_score
                 )
@@ -191,13 +251,38 @@ class SkillTrainer:
                     current_selection_score = candidate_score
                     accepted_edits.extend(applied)
                     epoch_summary["accepted"] += 1
+                    self._record_history(
+                        self._accept_history, applied, selection_delta, epoch, step
+                    )
                 else:
                     epoch_summary["rejected"] += 1
+                    self._record_gate_rejection(applied, selection_delta, epoch, step)
 
+            if (
+                self._stop_reason is None
+                and previous_epoch_best is not None
+                and slow_probe is not None
+                and epoch >= 1
+            ):
+                current, current_selection_score = self._maybe_apply_slow_update(
+                    previous_epoch_best=previous_epoch_best,
+                    current=current,
+                    current_selection_score=current_selection_score,
+                    slow_probe=slow_probe,
+                    selection=selection,
+                    epoch=epoch,
+                    accepted_edits=accepted_edits,
+                    all_edit_records=all_edit_records,
+                    history=history,
+                    epoch_summary=epoch_summary,
+                )
+            if self._stop_reason is None:
+                self._update_meta_skill(epoch_summary)
             if self._stop_reason is not None:
                 epoch_summary["stop_reason"] = self._stop_reason
             logger.info("Skill train epoch summary: %s", epoch_summary)
             epoch_summaries.append(epoch_summary)
+            previous_epoch_best = current
             if self._stop_reason is not None:
                 break
 
@@ -217,6 +302,11 @@ class SkillTrainer:
             all_edit_records=all_edit_records,
             epoch_summaries=epoch_summaries,
             artifacts_dir=None,
+            summary={
+                "meta_skill": self._meta_skill,
+                "accept_history": self._accept_history,
+                "reject_history": self._reject_history,
+            },
         )
 
         initial_doc = (
@@ -251,6 +341,11 @@ class SkillTrainer:
         if self._options.higher_is_better:
             return candidate > current
         return candidate < current
+
+    def _selection_delta(self, candidate: float, current: float) -> float:
+        if self._options.higher_is_better:
+            return candidate - current
+        return current - candidate
 
     def _sample_batch(
         self, train: Dataset, rng: random.Random, epoch: int, step: int
@@ -307,7 +402,14 @@ class SkillTrainer:
             if not batch:
                 continue
             self._optimizer_calls += 1
-            edits.extend(self._reflector.analyze(document, batch, polarity, max_edits))
+            edits.extend(
+                self._call_analyze(
+                    document,
+                    batch,
+                    polarity,
+                    max_edits,
+                )
+            )
         return edits
 
     def _merge_edits(
@@ -322,7 +424,207 @@ class SkillTrainer:
         if self._optimizer_limit_reached():
             return []
         self._optimizer_calls += 1
-        return self._reflector.merge(failure_edits, success_edits, max_edits)
+        return self._call_merge(failure_edits, success_edits, max_edits)
+
+    def _maybe_apply_slow_update(
+        self,
+        *,
+        previous_epoch_best: SkillDocument,
+        current: SkillDocument,
+        current_selection_score: float,
+        slow_probe: Dataset,
+        selection: Dataset,
+        epoch: int,
+        accepted_edits: list[EditApplyRecord],
+        all_edit_records: list[EditApplyRecord],
+        history: list[dict[str, Any]],
+        epoch_summary: dict[str, Any],
+    ) -> tuple[SkillDocument, float]:
+        if self._gate_limit_reached(epoch_summary):
+            epoch_summary["slow_update"] = "skipped_gate_limit"
+            return current, current_selection_score
+        if self._optimizer_limit_reached():
+            epoch_summary["slow_update"] = "skipped_optimizer_limit"
+            return current, current_selection_score
+
+        _, previous_rollouts = self._evaluate_cached(previous_epoch_best, slow_probe)
+        _, current_rollouts = self._evaluate_cached(current, slow_probe)
+        categorized = categorize_slow_update_rollouts(
+            self._mark_rollout_failures(previous_rollouts),
+            self._mark_rollout_failures(current_rollouts),
+        )
+        prior_guidance = extract_slow_update_content(current.text)
+
+        slow_update_method = getattr(self._reflector, "slow_update", None)
+        if not callable(slow_update_method):
+            epoch_summary["slow_update"] = "skipped_reflector_unsupported"
+            return current, current_selection_score
+
+        self._optimizer_calls += 1
+        guidance = slow_update_method(
+            previous_epoch_best,
+            current,
+            categorized,
+            prior_guidance,
+        )
+        if not isinstance(guidance, str) or not guidance.strip():
+            epoch_summary["slow_update"] = "skipped_empty"
+            return current, current_selection_score
+
+        candidate_text, record = apply_slow_update(
+            current.text,
+            guidance,
+            epoch=epoch,
+            step=self._options.steps_per_epoch,
+        )
+        record.selection_score_before = current_selection_score
+        all_edit_records.append(record)
+
+        candidate = SkillDocument(
+            candidate_text,
+            version=current.version + 1,
+            parent_hash=current.doc_hash,
+        )
+        candidate_score, _ = self._evaluate_cached(candidate, selection)
+        self._gate_evaluations += 1
+        record.selection_score_after = candidate_score
+        selection_delta = self._selection_delta(
+            candidate_score, current_selection_score
+        )
+        accepted = self._is_improvement(candidate_score, current_selection_score)
+        decision = "accepted" if accepted else "rejected"
+        history.append(
+            {
+                "doc_hash": candidate.doc_hash,
+                "split": selection.name,
+                "score": candidate_score,
+                "decision": f"slow_update_{decision}",
+            }
+        )
+        if accepted:
+            accepted_edits.append(record)
+            epoch_summary["slow_update"] = "accepted"
+            self._record_history(
+                self._accept_history, [record], selection_delta, epoch, record.step
+            )
+            return candidate, candidate_score
+
+        record.status = "rejected_gate"
+        epoch_summary["slow_update"] = "rejected_gate"
+        self._record_gate_rejection(
+            [record],
+            selection_delta,
+            epoch,
+            record.step,
+        )
+        return current, current_selection_score
+
+    def _update_meta_skill(self, epoch_summary: dict[str, Any]) -> None:
+        if not self._options.meta_skill:
+            return
+        meta_method = getattr(self._reflector, "meta_skill", None)
+        if not callable(meta_method):
+            epoch_summary["meta_skill"] = "skipped_reflector_unsupported"
+            return
+        if self._optimizer_limit_reached():
+            epoch_summary["meta_skill"] = "skipped_optimizer_limit"
+            return
+
+        self._optimizer_calls += 1
+        content = meta_method(
+            self._accept_history,
+            self._reject_history,
+            self._meta_skill,
+        )
+        if isinstance(content, str) and content.strip():
+            self._meta_skill = content.strip()
+            epoch_summary["meta_skill"] = "updated"
+        else:
+            epoch_summary["meta_skill"] = "skipped_empty"
+
+    def _mark_rollout_failures(
+        self, rollouts: Sequence[RolloutRecord]
+    ) -> list[RolloutRecord]:
+        return [
+            replace(rollout, is_failure=self._is_rollout_failure(rollout))
+            for rollout in rollouts
+        ]
+
+    def _record_gate_rejection(
+        self,
+        records: list[EditApplyRecord],
+        selection_delta: float,
+        epoch: int,
+        step: int,
+    ) -> None:
+        edits = [record.edit for record in records]
+        if self._rejected_buffer is not None:
+            self._rejected_buffer.record(
+                edits,
+                selection_delta=selection_delta,
+                epoch=epoch,
+                step=step,
+            )
+        self._record_history(
+            self._reject_history, records, selection_delta, epoch, step
+        )
+
+    @staticmethod
+    def _record_history(
+        target: list[dict[str, object]],
+        records: list[EditApplyRecord],
+        selection_delta: float,
+        epoch: int,
+        step: int,
+    ) -> None:
+        for record in records:
+            target.append(
+                {
+                    "edit_id": record.edit.edit_id,
+                    "op": record.edit.op,
+                    "source_type": record.edit.source_type,
+                    "rationale": record.edit.rationale,
+                    "selection_delta": selection_delta,
+                    "epoch": epoch,
+                    "step": step,
+                    "status": record.status,
+                }
+            )
+
+    def _rejected_digest(self) -> str | None:
+        if self._rejected_buffer is None:
+            return None
+        digest = self._rejected_buffer.digest()
+        return digest or None
+
+    def _call_analyze(
+        self,
+        document: SkillDocument,
+        batch: list[RolloutRecord],
+        polarity: Literal["failure", "success"],
+        max_edits: int,
+    ) -> list[EditOp]:
+        kwargs = self._prompt_context_kwargs(self._reflector.analyze)
+        return self._reflector.analyze(document, batch, polarity, max_edits, **kwargs)
+
+    def _call_merge(
+        self,
+        failure_edits: list[EditOp],
+        success_edits: list[EditOp],
+        max_edits: int,
+    ) -> list[EditOp]:
+        kwargs = self._prompt_context_kwargs(self._reflector.merge)
+        return self._reflector.merge(failure_edits, success_edits, max_edits, **kwargs)
+
+    def _prompt_context_kwargs(self, method: Callable[..., Any]) -> dict[str, str]:
+        kwargs: dict[str, str] = {}
+        if _method_accepts_kwarg(method, "rejected_digest"):
+            digest = self._rejected_digest()
+            if digest:
+                kwargs["rejected_digest"] = digest
+        if _method_accepts_kwarg(method, "meta_skill") and self._meta_skill:
+            kwargs["meta_skill"] = self._meta_skill
+        return kwargs
 
     def _optimizer_limit_reached(self) -> bool:
         limit = self._options.max_optimizer_calls
@@ -374,6 +676,17 @@ def _resolve_metric_name(metrics: dict[str, float]) -> str | None:
     if metrics:
         return sorted(metrics)[0]
     return None
+
+
+def _method_accepts_kwarg(method: Callable[..., Any], name: str) -> bool:
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return True
+    return name in signature.parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
 
 
 __all__ = ["RolloutRecord", "SkillTrainer", "SkillTrainResult"]

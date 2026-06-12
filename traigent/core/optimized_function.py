@@ -2638,6 +2638,7 @@ Remediation:
         )
         result = trainer.run(document)
         result.summary = {
+            **result.summary,
             "doc_param": resolved_doc_param,
             "evaluation_basis": result.evaluation_basis,
         }
@@ -2665,19 +2666,14 @@ Remediation:
         *,
         explicit: str | None,
     ) -> str:
+        from traigent.api.parameter_ranges import TextDocument
+
         if explicit:
             return explicit
 
         candidates: list[str] = []
         for name, value in config_space.items():
-            values = getattr(value, "values", None)
-            if values is not None and all(isinstance(item, str) for item in values):
-                candidates.append(name)
-            elif (
-                isinstance(value, (list, tuple))
-                and value
-                and all(isinstance(item, str) for item in value)
-            ):
+            if isinstance(value, TextDocument):
                 candidates.append(name)
 
         if len(candidates) == 1:
@@ -2685,10 +2681,10 @@ Remediation:
         if not candidates:
             raise ValueError(
                 "train_skill requires doc_param because the config space has no "
-                "string Choices parameter to train."
+                "TextDocument parameter to train."
             )
         raise ValueError(
-            "train_skill requires doc_param because multiple string Choices "
+            "train_skill requires doc_param because multiple TextDocument "
             f"parameters could hold the document: {sorted(candidates)}"
         )
 

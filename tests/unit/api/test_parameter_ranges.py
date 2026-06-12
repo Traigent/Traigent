@@ -17,6 +17,7 @@ from traigent.api.parameter_ranges import (
     LogRange,
     ParameterRange,
     Range,
+    TextDocument,
     is_float_range_config_dict,
     is_inline_param_definition,
     is_int_range_config_dict,
@@ -420,6 +421,34 @@ class TestChoices:
         """Test single value doesn't trigger type validation."""
         c = Choices([42])  # Single value, no type comparison needed
         assert len(c) == 1
+
+
+class TestTextDocument:
+    """Tests for trainable text-document sugar."""
+
+    def test_text_document_behaves_like_single_string_choice(self):
+        doc = TextDocument("base skill", name="doc")
+
+        assert isinstance(doc, Choices)
+        assert doc.values == ("base skill",)
+        assert doc.to_config_value() == ["base skill"]
+        assert normalize_config_value(doc) == ["base skill"]
+        assert is_parameter_range(doc)
+        assert doc.trainable is True
+        assert doc.get_default() is None
+
+    def test_text_document_auto_naming(self):
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+        doc = TextDocument("base skill")
+
+        returned_param = _process_param_entry("skill_doc", doc, result, defaults)
+
+        assert returned_param is not None
+        assert returned_param.name == "skill_doc"
+        assert result["skill_doc"] == ["base skill"]
 
 
 class TestIsParameterRange:

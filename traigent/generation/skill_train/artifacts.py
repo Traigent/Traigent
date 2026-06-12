@@ -31,6 +31,9 @@ def write_artifacts(
         json.dumps(report, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    meta_skill = result.summary.get("meta_skill", "")
+    if isinstance(meta_skill, str):
+        (path / "meta_skill.md").write_text(meta_skill, encoding="utf-8")
 
     with (path / "training_log.jsonl").open("w", encoding="utf-8") as handle:
         for entry in history:

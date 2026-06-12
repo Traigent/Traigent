@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -53,6 +55,13 @@ class SkillTrainOptions(BaseModel):
     steps_per_epoch: int = Field(1, ge=1, le=20)
     reflection_minibatch: int = Field(8, ge=2, le=32)
     edit_budget: int = Field(4, ge=1, le=16)
+    edit_budget_floor: int = Field(2, ge=1, le=16)
+    edit_budget_schedule: Literal["constant", "cosine"] = "cosine"
+    rejected_buffer: bool = True
+    rejected_buffer_max: int = Field(50, ge=0, le=500)
+    slow_update: bool = True
+    slow_update_probe_size: int = Field(20, ge=4, le=100)
+    meta_skill: bool = True
     selection_split: float = Field(0.2, gt=0.0, lt=0.9)
     test_split: float = Field(0.0, ge=0.0, lt=0.5)
     split_seed: int = 42

@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from traigent.api.parameter_ranges import Choices
+from traigent.api.decorators import optimize
+from traigent.api.parameter_ranges import Choices, TextDocument
 from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -326,3 +327,96 @@ def test_train_skill_bridge_extracts_example_results(
     )
 
     assert result.baseline_selection_score == 0.5
+
+
+def test_train_skill_auto_discovers_single_text_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fn(**kwargs: Any) -> str:
+        return "ok"
+
+    opt = OptimizedFunction(
+        func=fn,
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"doc": TextDocument("base")},
+    )
+
+    trial = TrialResult(
+        trial_id="t1",
+        config={"doc": "base"},
+        metrics={"accuracy": 0.5},
+        status=TrialStatus.COMPLETED,
+        duration=0.0,
+        timestamp=datetime.now(UTC),
+        metadata={
+            "example_results": [
+                _FakeExampleResult(
+                    "ex1", {"q": "x"}, "y", "z", {"accuracy": 0.0}, False
+                )
+            ]
+        },
+    )
+    opt_result = OptimizationResult(
+        trials=[trial],
+        best_config={"doc": "base"},
+        best_score=0.5,
+        optimization_id="o1",
+        duration=0.0,
+        convergence_info={},
+        status=TrialStatus.COMPLETED,  # type: ignore[arg-type]
+        objectives=["accuracy"],
+        algorithm="fake",
+        timestamp=datetime.now(UTC),
+    )
+
+    def fake_optimize_sync(**kwargs: Any) -> OptimizationResult:
+        return opt_result
+
+    monkeypatch.setattr(opt, "optimize_sync", fake_optimize_sync)
+
+    result = opt.train_skill(
+        document="base",
+        optimizer_llm=lambda prompt: json.dumps({"edits": []}),
+        skill_train={
+            "epochs": 1,
+            "rollout_batch": 4,
+            "selection_split": 0.2,
+            "meta_skill": False,
+        },
+    )
+
+    assert result.summary["doc_param"] == "doc"
+
+
+def test_train_skill_text_document_auto_discovery_ambiguity_error() -> None:
+    def fn(**kwargs: Any) -> str:
+        return "ok"
+
+    opt = OptimizedFunction(
+        func=fn,
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={
+            "first": TextDocument("base"),
+            "second": TextDocument("other"),
+        },
+    )
+
+    with pytest.raises(ValueError, match="multiple TextDocument"):
+        opt.train_skill(
+            document="base",
+            optimizer_llm=lambda prompt: json.dumps({"edits": []}),
+        )
+
+
+def test_optimize_decorator_preserves_text_document_marker() -> None:
+    @optimize(
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"doc": TextDocument("base")},
+    )
+    def fn(**kwargs: Any) -> str:
+        return "ok"
+
+    assert isinstance(fn.configuration_space["doc"], TextDocument)
