@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from traigent.evaluators.base import Dataset
+from traigent.generation.validators import looks_like_injection
 
 from .document import (
     PROTECTED_END,
@@ -16,7 +17,7 @@ from .document import (
     _find_marker_spans,
     find_protected_regions,
 )
-from .edits import EditApplyRecord, EditOp
+from .edits import MAX_DOC_CHARS, EditApplyRecord, EditOp
 
 SlowUpdateCategory = Literal[
     "improved", "regressed", "persistent_failure", "stable_success"
@@ -121,6 +122,16 @@ def apply_slow_update(
             "append slow-update guidance region",
             source_type="slow_update",
         )
+        candidate = text + block
+        invalid_reason = _invalid_guidance_reason(guidance, candidate)
+        if invalid_reason is not None:
+            return text, _slow_update_record(
+                edit,
+                epoch=epoch,
+                step=step,
+                status="skipped_invalid",
+                reason=invalid_reason,
+            )
         record = EditApplyRecord(
             edit=edit,
             epoch=epoch,
@@ -130,7 +141,7 @@ def apply_slow_update(
             selection_score_after=None,
             reason="appended_slow_update_markers",
         )
-        return text + block, record
+        return candidate, record
 
     if len(slow_spans) > 1:
         raise ValueError("Multiple SLOW_UPDATE marker pairs are not supported")
@@ -142,14 +153,23 @@ def apply_slow_update(
         raise ValueError("SLOW_UPDATE region overlaps a PROTECTED region")
 
     replacement = f"\n{guidance}\n"
-    old_content = text[content_start:content_end]
+    candidate = text[:content_start] + replacement + text[content_end:]
     edit = EditOp(
         "replace",
-        old_content,
-        replacement,
+        text[start:end],
+        text[start:content_start] + replacement + text[content_end:end],
         "replace slow-update guidance region",
         source_type="slow_update",
     )
+    invalid_reason = _invalid_guidance_reason(guidance, candidate)
+    if invalid_reason is not None:
+        return text, _slow_update_record(
+            edit,
+            epoch=epoch,
+            step=step,
+            status="skipped_invalid",
+            reason=invalid_reason,
+        )
     record = EditApplyRecord(
         edit=edit,
         epoch=epoch,
@@ -158,7 +178,34 @@ def apply_slow_update(
         selection_score_before=None,
         selection_score_after=None,
     )
-    return text[:content_start] + replacement + text[content_end:], record
+    return candidate, record
+
+
+def _invalid_guidance_reason(guidance: str, candidate: str) -> str | None:
+    if looks_like_injection(guidance):
+        return "guidance looks like injection"
+    if len(candidate) > MAX_DOC_CHARS:
+        return f"MAX_DOC_CHARS {MAX_DOC_CHARS} exceeded"
+    return None
+
+
+def _slow_update_record(
+    edit: EditOp,
+    *,
+    epoch: int,
+    step: int,
+    status: Literal["applied", "skipped_invalid"],
+    reason: str | None = None,
+) -> EditApplyRecord:
+    return EditApplyRecord(
+        edit=edit,
+        epoch=epoch,
+        step=step,
+        status=status,
+        selection_score_before=None,
+        selection_score_after=None,
+        reason=reason,
+    )
 
 
 def _format_appended_block(text: str, guidance: str) -> str:

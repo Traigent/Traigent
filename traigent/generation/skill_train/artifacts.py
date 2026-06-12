@@ -5,6 +5,14 @@ Artifacts in this module are local files only. ``best_skill.md`` and
 quote training data, so they are derived-from-training-data artifacts.
 ``training_log.jsonl`` is intentionally restricted to document hashes, split
 names, scores, and decisions.
+
+Artifact writes are controlled by ``SkillTrainOptions.write_artifacts``. The
+trainer writes by default because ``train_skill`` is an explicit local training
+action; callers can set the option to ``False`` to suppress all filesystem
+writes while still receiving the full result object in memory. When the caller
+does not provide ``artifacts_dir``, the trainer roots generated artifact
+directories under the optimized function's local storage path when available,
+falling back to ``.traigent``.
 """
 
 from __future__ import annotations

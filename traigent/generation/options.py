@@ -77,7 +77,8 @@ class SkillTrainOptions(BaseModel):
         1.0,
         description=(
             "A rollout is treated as a failure when its success flag is false or "
-            "metrics[score_metric] is below this threshold."
+            "metrics[score_metric] is below this threshold for maximize metrics, "
+            "or above this threshold for minimize metrics."
         ),
     )
     higher_is_better: bool = Field(
@@ -88,7 +89,11 @@ class SkillTrainOptions(BaseModel):
         ),
     )
     optimizer_model: str | None = Field(
-        None, description="Hint reserved for the caller's optimizer LLM provider."
+        None,
+        description=(
+            "Advisory model hint for the caller's optimizer LLM provider; used only "
+            "when the supplied RewriteLLM complete() method accepts a model hint."
+        ),
     )
     privacy_mode: bool = Field(
         True,
@@ -98,6 +103,13 @@ class SkillTrainOptions(BaseModel):
     max_gate_evaluations: int | None = Field(None, ge=0)
     doc_param: str | None = None
     artifacts_dir: str | None = None
+    write_artifacts: bool = Field(
+        True,
+        description=(
+            "When True, write local skill-training artifacts. When False, no "
+            "best_skill.md, reports, logs, or artifact directories are written."
+        ),
+    )
 
 
 __all__ = ["PromptRewriteOptions", "DatasetGrowthOptions", "SkillTrainOptions"]

@@ -20,6 +20,7 @@ def test_skill_train_options_defaults() -> None:
     assert options.slow_update is True
     assert options.slow_update_probe_size == 20
     assert options.meta_skill is True
+    assert options.write_artifacts is True
 
 
 def test_skill_train_options_bounds() -> None:

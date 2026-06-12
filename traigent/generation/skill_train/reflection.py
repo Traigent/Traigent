@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Callable
 from dataclasses import replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from traigent.generation.llm_provider import RewriteLLM
 from traigent.generation.validators import extract_json_block
@@ -24,8 +26,9 @@ if TYPE_CHECKING:
 class Reflector:
     """Generate candidate edits through an already-resolved RewriteLLM."""
 
-    def __init__(self, llm: RewriteLLM) -> None:
+    def __init__(self, llm: RewriteLLM, model_hint: str | None = None) -> None:
         self._llm = llm
+        self._model_hint = model_hint
 
     def analyze(
         self,
@@ -44,7 +47,7 @@ class Reflector:
             rejected_digest=rejected_digest,
             meta_skill=meta_skill,
         )
-        raw = self._llm.complete(prompt)
+        raw = self._complete(prompt)
         ops = parse_edit_ops(raw)
         return [replace(op, source_type=polarity) for op in ops[:max_edits]]
 
@@ -63,7 +66,7 @@ class Reflector:
             rejected_digest=rejected_digest,
             meta_skill=meta_skill,
         )
-        raw = self._llm.complete(prompt)
+        raw = self._complete(prompt)
         return parse_edit_ops(raw)[:max_edits]
 
     def slow_update(
@@ -76,7 +79,7 @@ class Reflector:
         prompt = build_slow_update_prompt(
             prev_doc, cur_doc, categorized, prior_guidance
         )
-        raw = self._llm.complete(prompt)
+        raw = self._complete(prompt)
         return _extract_text_field(raw, "guidance_markdown")
 
     def meta_skill(
@@ -86,8 +89,18 @@ class Reflector:
         prior_meta: str,
     ) -> str:
         prompt = build_meta_skill_prompt(accept_history, reject_history, prior_meta)
-        raw = self._llm.complete(prompt)
+        raw = self._complete(prompt)
         return _extract_text_field(raw, "meta_skill_content")
+
+    def _complete(self, prompt: str) -> str:
+        complete = cast(Callable[..., str], self._llm.complete)
+        if not self._model_hint:
+            return complete(prompt)
+
+        hint_kwarg = _model_hint_kwarg(complete)
+        if hint_kwarg is None:
+            return complete(prompt)
+        return complete(prompt, **{hint_kwarg: self._model_hint})
 
 
 def _extract_text_field(raw: str, field: str) -> str:
@@ -96,6 +109,29 @@ def _extract_text_field(raw: str, field: str) -> str:
         return ""
     value = parsed.get(field)
     return value.strip() if isinstance(value, str) else ""
+
+
+def _model_hint_kwarg(method: Callable[..., Any]) -> str | None:
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return None
+
+    parameters = signature.parameters
+    for name in ("model", "rewrite_model", "optimizer_model"):
+        if name in parameters:
+            parameter = parameters[name]
+            if parameter.kind in (
+                inspect.Parameter.KEYWORD_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
+                return name
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return "model"
+    return None
 
 
 __all__ = ["Reflector"]

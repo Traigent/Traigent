@@ -14,6 +14,7 @@ from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.generation import SkillTrainOptions
+from traigent.generation.skill_train.document import SkillDocument
 from traigent.generation.skill_train.edits import EditOp
 from traigent.generation.skill_train.trainer import RolloutRecord, SkillTrainer
 
@@ -126,6 +127,7 @@ def test_accepts_strictly_better_selection_score() -> None:
     assert result.baseline_selection_score == 0.5
     assert result.best_selection_score == 0.7
     assert len(result.accepted_edits) == 1
+    assert result.all_edit_records[0].status == "applied"
     assert result.evaluation_basis == "selection_only"
 
 
@@ -152,6 +154,7 @@ def test_score_drop_rejects_and_reverts() -> None:
 
     assert result.best_document == "base"
     assert result.best_selection_score == 0.5
+    assert result.all_edit_records[0].status == "rejected_gate"
 
 
 def test_lower_score_accepted_when_higher_is_better_false() -> None:
@@ -165,6 +168,44 @@ def test_lower_score_accepted_when_higher_is_better_false() -> None:
 
     assert result.best_document == "lower"
     assert result.best_selection_score == 8.0
+
+
+def test_minimize_metric_failure_partition_uses_greater_than_threshold() -> None:
+    trainer, _ = _trainer(
+        scores={"base": 0.5},
+        edit=EditOp("append", None, "x", "x"),
+        options=_options(
+            higher_is_better=False,
+            score_metric="latency",
+            failure_threshold=10.0,
+        ),
+    )
+
+    failures, successes = trainer._partition_rollouts(
+        [
+            RolloutRecord(
+                "slow",
+                {},
+                None,
+                None,
+                {"latency": 12.0},
+                success=True,
+                is_failure=False,
+            ),
+            RolloutRecord(
+                "fast",
+                {},
+                None,
+                None,
+                {"latency": 8.0},
+                success=True,
+                is_failure=False,
+            ),
+        ]
+    )
+
+    assert [rollout.example_id for rollout in failures] == ["slow"]
+    assert [rollout.example_id for rollout in successes] == ["fast"]
 
 
 def test_empty_example_results_raise() -> None:
@@ -207,6 +248,40 @@ def test_score_cache_avoids_same_doc_selection_reevaluation() -> None:
     assert len(selection_calls) == 1
 
 
+def test_score_cache_uses_dataset_fingerprint_not_name() -> None:
+    first = Dataset(
+        examples=[EvaluationExample(input_data={"q": "first"}, expected_output="a")],
+        name="same",
+    )
+    second = Dataset(
+        examples=[EvaluationExample(input_data={"q": "second"}, expected_output="a")],
+        name="same",
+    )
+    calls: list[str] = []
+
+    def evaluate(
+        document_text: str, dataset: Dataset
+    ) -> tuple[float, list[RolloutRecord]]:
+        calls.append(str(dataset.examples[0].input_data["q"]))
+        score = 1.0 if dataset.examples[0].input_data["q"] == "first" else 2.0
+        return score, _rollouts(dataset)
+
+    trainer = SkillTrainer(
+        dataset=_dataset(),
+        evaluate_fn=evaluate,
+        reflector=_Reflector([]),
+        options=_options(),
+    )
+    document = SkillDocument("base")
+
+    first_score, _ = trainer._evaluate_cached(document, first)
+    second_score, _ = trainer._evaluate_cached(document, second)
+
+    assert first_score == 1.0
+    assert second_score == 2.0
+    assert calls == ["first", "second"]
+
+
 def test_artifacts_written_and_training_log_omits_private_content(tmp_path) -> None:
     artifacts_dir = tmp_path / "artifacts"
     trainer, _ = _trainer(
@@ -225,6 +300,23 @@ def test_artifacts_written_and_training_log_omits_private_content(tmp_path) -> N
     assert SENTINEL not in training_log
     assert "better" not in training_log
     assert (artifacts_dir / "best_skill.md").read_text() == "better"
+
+
+def test_write_artifacts_false_suppresses_all_filesystem_writes(tmp_path) -> None:
+    trainer, _ = _trainer(
+        scores={"base": 0.5, "better": 0.7},
+        edit=EditOp("replace", "base", "better", "improves"),
+        options=_options(
+            artifacts_dir=str(tmp_path / "artifacts"),
+            write_artifacts=False,
+        ),
+    )
+
+    result = trainer.run("base")
+
+    assert result.best_document == "better"
+    assert result.artifacts_dir is None
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_test_split_scored_once_after_loop() -> None:
@@ -250,6 +342,44 @@ class _FakeExampleResult:
     actual_output: str
     metrics: dict[str, float]
     success: bool
+
+
+def _optimization_result_for_dataset(
+    dataset: Dataset, score: float = 0.5
+) -> OptimizationResult:
+    trial = TrialResult(
+        trial_id="t1",
+        config={"doc": "base"},
+        metrics={"accuracy": score},
+        status=TrialStatus.COMPLETED,
+        duration=0.0,
+        timestamp=datetime.now(UTC),
+        metadata={
+            "example_results": [
+                _FakeExampleResult(
+                    str((example.metadata or {}).get("example_id", f"ex{i}")),
+                    example.input_data,
+                    str(example.expected_output),
+                    "actual",
+                    {"accuracy": 0.0},
+                    False,
+                )
+                for i, example in enumerate(dataset.examples)
+            ]
+        },
+    )
+    return OptimizationResult(
+        trials=[trial],
+        best_config={"doc": "base"},
+        best_score=score,
+        optimization_id="o1",
+        duration=0.0,
+        convergence_info={},
+        status=TrialStatus.COMPLETED,  # type: ignore[arg-type]
+        objectives=["accuracy"],
+        algorithm="fake",
+        timestamp=datetime.now(UTC),
+    )
 
 
 def test_train_skill_preflight_rejects_unpinned_non_doc_param() -> None:
@@ -327,6 +457,101 @@ def test_train_skill_bridge_extracts_example_results(
     )
 
     assert result.baseline_selection_score == 0.5
+
+
+def test_train_skill_honors_explicit_selection_and_test_datasets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fn(**kwargs: Any) -> str:
+        return "ok"
+
+    base = Dataset(
+        examples=[
+            EvaluationExample(
+                input_data={"q": f"q{i}"},
+                expected_output=f"a{i}",
+                metadata={"example_id": f"e{i}"},
+            )
+            for i in range(12)
+        ],
+        name="skillset",
+    )
+    selection = Dataset(examples=base.examples[:2], name="explicit_selection")
+    test = Dataset(examples=base.examples[2:4], name="explicit_test")
+    opt = OptimizedFunction(
+        func=fn,
+        eval_dataset=base,
+        objectives=["accuracy"],
+        configuration_space={"doc": Choices(["base"])},
+    )
+    seen_datasets: list[str] = []
+
+    def fake_optimize_sync(**kwargs: Any) -> OptimizationResult:
+        dataset = opt._load_dataset()
+        seen_datasets.append(dataset.name)
+        return _optimization_result_for_dataset(dataset)
+
+    monkeypatch.setattr(opt, "optimize_sync", fake_optimize_sync)
+
+    result = opt.train_skill(
+        document="base",
+        doc_param="doc",
+        optimizer_llm=lambda prompt: json.dumps({"edits": []}),
+        selection_dataset=selection,
+        test_dataset=test,
+        skill_train={
+            "epochs": 1,
+            "rollout_batch": 4,
+            "selection_split": 0.8,
+            "test_split": 0.4,
+            "meta_skill": False,
+            "write_artifacts": False,
+        },
+    )
+
+    assert result.evaluation_basis == "held_out_test"
+    assert "explicit_selection" in seen_datasets
+    assert "explicit_test" in seen_datasets
+    assert "skillset__selection" not in seen_datasets
+    assert "skillset__test" not in seen_datasets
+
+
+def test_train_skill_default_artifacts_root_uses_local_storage_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    def fn(**kwargs: Any) -> str:
+        return "ok"
+
+    storage = tmp_path / "storage"
+    opt = OptimizedFunction(
+        func=fn,
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"doc": Choices(["base"])},
+        local_storage_path=str(storage),
+    )
+
+    def fake_optimize_sync(**kwargs: Any) -> OptimizationResult:
+        return _optimization_result_for_dataset(opt._load_dataset())
+
+    monkeypatch.setattr(opt, "optimize_sync", fake_optimize_sync)
+
+    result = opt.train_skill(
+        document="base",
+        doc_param="doc",
+        optimizer_llm=lambda prompt: json.dumps({"edits": []}),
+        skill_train={
+            "epochs": 1,
+            "rollout_batch": 4,
+            "selection_split": 0.2,
+            "meta_skill": False,
+        },
+    )
+
+    assert result.artifacts_dir is not None
+    assert result.artifacts_dir.startswith(str(storage / "skill_train"))
+    assert (storage / "skill_train").is_dir()
 
 
 def test_train_skill_auto_discovers_single_text_document(

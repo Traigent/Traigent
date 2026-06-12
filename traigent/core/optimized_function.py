@@ -2577,6 +2577,8 @@ Remediation:
         optimizer_llm: Any = None,
         skill_train: Any = None,
         doc_param: str | None = None,
+        selection_dataset: Dataset | None = None,
+        test_dataset: Dataset | None = None,
         **fixed_config: Any,
     ) -> Any:
         """Train a local text skill document behind a strict selection gate."""
@@ -2601,7 +2603,7 @@ Remediation:
             skill_train if skill_train is not None else self.skill_train_options
         )
         llm = resolve_rewrite_llm(optimizer_llm)
-        reflector = Reflector(llm)
+        reflector = Reflector(llm, model_hint=options.optimizer_model)
         config_space = dict(self.configuration_space or {})
         resolved_doc_param = self._resolve_skill_doc_param(
             config_space, explicit=doc_param or options.doc_param
@@ -2635,6 +2637,9 @@ Remediation:
             evaluate_fn=_evaluate_document,
             reflector=reflector,
             options=options,
+            selection_dataset=selection_dataset,
+            test_dataset=test_dataset,
+            artifacts_root=self.local_storage_path,
         )
         result = trainer.run(document)
         result.summary = {

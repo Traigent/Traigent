@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import random
 import time
 from collections.abc import Callable, Sequence
@@ -92,11 +93,17 @@ class SkillTrainer:
         evaluate_fn: EvaluateFn,
         reflector: ReflectorLike,
         options: SkillTrainOptions | None = None,
+        selection_dataset: Dataset | None = None,
+        test_dataset: Dataset | None = None,
+        artifacts_root: str | Path | None = None,
     ) -> None:
         self._dataset = dataset
         self._evaluate_fn = evaluate_fn
         self._reflector = reflector
         self._options = options or SkillTrainOptions()
+        self._selection_dataset = selection_dataset
+        self._test_dataset = test_dataset
+        self._artifacts_root = Path(artifacts_root) if artifacts_root else None
         self._score_cache: dict[tuple[str, str], tuple[float, list[RolloutRecord]]] = {}
         self._optimizer_calls = 0
         self._gate_evaluations = 0
@@ -115,12 +122,7 @@ class SkillTrainer:
 
     def run(self, initial_document: str | SkillDocument) -> SkillTrainResult:
         options = self._options
-        train, selection, test = split_dataset(
-            self._dataset,
-            options.selection_split,
-            options.test_split,
-            options.split_seed,
-        )
+        train, selection, test = self._resolve_datasets()
         slow_probe = (
             build_slow_update_probe(
                 train, options.slow_update_probe_size, options.split_seed
@@ -255,6 +257,8 @@ class SkillTrainer:
                         self._accept_history, applied, selection_delta, epoch, step
                     )
                 else:
+                    for record in applied:
+                        record.status = "rejected_gate"
                     epoch_summary["rejected"] += 1
                     self._record_gate_rejection(applied, selection_delta, epoch, step)
 
@@ -314,15 +318,65 @@ class SkillTrainer:
             if isinstance(initial_document, SkillDocument)
             else SkillDocument(initial_document)
         )
-        artifacts_dir = self._artifact_dir(initial_doc, options)
-        if artifacts_dir is not None:
+        artifacts_dir = self._artifact_dir(
+            initial_doc,
+            options,
+            artifacts_root=self._artifacts_root,
+        )
+        if options.write_artifacts and artifacts_dir is not None:
+            logger.info(
+                "Skill train artifacts will be written to %s; artifacts may contain "
+                "training-data-derived content.",
+                artifacts_dir,
+            )
             result.artifacts_dir = write_artifacts(artifacts_dir, result, history)
         return result
+
+    def _resolve_datasets(self) -> tuple[Dataset, Dataset, Dataset | None]:
+        options = self._options
+        if self._selection_dataset is None and self._test_dataset is None:
+            return split_dataset(
+                self._dataset,
+                options.selection_split,
+                options.test_split,
+                options.split_seed,
+            )
+
+        if self._selection_dataset is None:
+            held_out_ids = set(_dataset_example_ids(self._test_dataset))
+            split_source = _dataset_without_ids(
+                self._dataset,
+                held_out_ids,
+                f"{self._dataset.name or 'dataset'}__train_selection_source",
+            )
+            train, selection, _ = split_dataset(
+                split_source,
+                options.selection_split,
+                0.0,
+                options.split_seed,
+            )
+            return train, selection, self._test_dataset
+
+        selection = self._selection_dataset
+        held_out_ids = {
+            *_dataset_example_ids(selection),
+            *_dataset_example_ids(self._test_dataset),
+        }
+        train = _dataset_without_ids(
+            self._dataset,
+            held_out_ids,
+            f"{self._dataset.name or 'dataset'}__train",
+        )
+        if not train.examples:
+            raise ValueError(
+                "explicit skill training splits leave no training examples"
+            )
+        return train, selection, self._test_dataset
 
     def _evaluate_cached(
         self, document: SkillDocument, dataset: Dataset
     ) -> tuple[float, list[RolloutRecord]]:
-        key = (document.doc_hash, dataset.name)
+        key = (document.doc_hash, _dataset_fingerprint(dataset))
         cached = self._score_cache.get(key)
         if cached is not None:
             return cached
@@ -383,7 +437,9 @@ class SkillTrainer:
             metric = _resolve_metric_name(rollout.metrics)
         value = rollout.metrics.get(metric) if metric else None
         if isinstance(value, (int, float)):
-            return bool(float(value) < float(self._options.failure_threshold))
+            if self._options.higher_is_better:
+                return bool(float(value) < float(self._options.failure_threshold))
+            return bool(float(value) > float(self._options.failure_threshold))
         return False
 
     def _analyze_batches(
@@ -479,6 +535,9 @@ class SkillTrainer:
         )
         record.selection_score_before = current_selection_score
         all_edit_records.append(record)
+        if record.status != "applied":
+            epoch_summary["slow_update"] = record.status
+            return current, current_selection_score
 
         candidate = SkillDocument(
             candidate_text,
@@ -660,13 +719,17 @@ class SkillTrainer:
 
     @staticmethod
     def _artifact_dir(
-        initial_document: SkillDocument, options: SkillTrainOptions
+        initial_document: SkillDocument,
+        options: SkillTrainOptions,
+        *,
+        artifacts_root: Path | None = None,
     ) -> str | None:
         if options.artifacts_dir:
             return str(options.artifacts_dir)
         run_basis = f"{initial_document.doc_hash}:{options.split_seed}:{time.time()}"
         run_id = hashlib.sha256(run_basis.encode("utf-8")).hexdigest()[:12]
-        return str(Path(".traigent") / "skill_train" / run_id)
+        root = artifacts_root if artifacts_root is not None else Path(".traigent")
+        return str(root / "skill_train" / run_id)
 
 
 def _resolve_metric_name(metrics: dict[str, float]) -> str | None:
@@ -676,6 +739,57 @@ def _resolve_metric_name(metrics: dict[str, float]) -> str | None:
     if metrics:
         return sorted(metrics)[0]
     return None
+
+
+def _dataset_fingerprint(dataset: Dataset) -> str:
+    payload = json.dumps(
+        _dataset_example_ids(dataset),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _dataset_example_ids(dataset: Dataset | None) -> list[str]:
+    if dataset is None:
+        return []
+    return [_dataset_example_id(example) for example in dataset.examples]
+
+
+def _dataset_example_id(example: Any) -> str:
+    metadata = dict(getattr(example, "metadata", {}) or {})
+    explicit = metadata.get("example_id")
+    if explicit not in (None, ""):
+        return str(explicit)
+
+    metadata.pop("example_id", None)
+    payload = json.dumps(
+        {
+            "input_data": getattr(example, "input_data", None),
+            "expected_output": getattr(example, "expected_output", None),
+            "metadata": metadata,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _dataset_without_ids(
+    dataset: Dataset, excluded_ids: set[str], name: str
+) -> Dataset:
+    return Dataset(
+        examples=[
+            example
+            for example in dataset.examples
+            if _dataset_example_id(example) not in excluded_ids
+        ],
+        name=name,
+        description=dataset.description,
+        metadata=dict(dataset.metadata or {}),
+    )
 
 
 def _method_accepts_kwarg(method: Callable[..., Any], name: str) -> bool:

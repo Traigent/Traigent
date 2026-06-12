@@ -18,6 +18,8 @@ from traigent.generation.llm_provider import (
 )
 from traigent.generation.models import GuidanceAction
 from traigent.generation.prompt_rewriter import PromptRewriter, merge_prompt_candidates
+from traigent.generation.skill_train.document import SkillDocument
+from traigent.generation.skill_train.reflection import Reflector
 from traigent.generation.validators import (
     clean_prompt_candidates,
     dedupe_example_keys,
@@ -36,6 +38,7 @@ class _FakeLLM:
 
 
 # --- llm_provider duck-typing + resolution ---------------------------------
+
 
 def test_callback_rejects_non_callable() -> None:
     with pytest.raises(GenerationProviderError):
@@ -77,6 +80,22 @@ def test_resolve_rejects_object_without_known_methods() -> None:
         resolve_rewrite_llm(Useless())
 
 
+def test_reflector_passes_optimizer_model_hint_when_supported() -> None:
+    class HintLLM:
+        def __init__(self) -> None:
+            self.models: list[str | None] = []
+
+        def complete(self, prompt: str, model: str | None = None) -> str:  # noqa: ARG002
+            self.models.append(model)
+            return '{"edits": []}'
+
+    llm = HintLLM()
+    reflector = Reflector(llm, model_hint="optimizer-x")
+
+    assert reflector.analyze(SkillDocument("body"), [], "failure", 1) == []
+    assert llm.models == ["optimizer-x"]
+
+
 def test_duck_adapter_rejects_non_str_return() -> None:
     # No `complete` method -> not a RewriteLLM protocol match -> wrapped in the
     # duck-typed adapter (via `generate`), which enforces the str return.
@@ -90,6 +109,7 @@ def test_duck_adapter_rejects_non_str_return() -> None:
 
 
 # --- validators --------------------------------------------------------------
+
 
 def test_extract_json_fenced_and_bare_and_garbage() -> None:
     assert extract_json_block('```json\n["a","b"]\n```') == ["a", "b"]
@@ -128,6 +148,7 @@ def test_clean_prompt_candidates_drops_oversized_and_blank() -> None:
 
 # --- prompt_rewriter ---------------------------------------------------------
 
+
 def test_rewrite_newline_fallback_when_not_json() -> None:
     llm = _FakeLLM("- candidate one\n* candidate two\n  candidate three")
     out = PromptRewriter(llm).rewrite(current_variants=["base"])
@@ -137,11 +158,16 @@ def test_rewrite_newline_fallback_when_not_json() -> None:
 def test_merge_from_list_none_and_scalar() -> None:
     assert list(merge_prompt_candidates({"p": ["a"]}, "p", ["b"]).values) == ["a", "b"]
     assert list(merge_prompt_candidates({}, "p", ["x"]).values) == ["x"]
-    assert list(merge_prompt_candidates({"p": "solo"}, "p", ["y"]).values) == ["solo", "y"]
+    assert list(merge_prompt_candidates({"p": "solo"}, "p", ["y"]).values) == [
+        "solo",
+        "y",
+    ]
 
 
 def test_merge_preserves_default_and_raises_when_empty() -> None:
-    merged = merge_prompt_candidates({"p": Choices(["a", "b"], default="a")}, "p", ["c"])
+    merged = merge_prompt_candidates(
+        {"p": Choices(["a", "b"], default="a")}, "p", ["c"]
+    )
     assert merged.default == "a"
     with pytest.raises(ValueError, match="no values"):
         merge_prompt_candidates({"p": [1, 2]}, "p", [3])  # all non-str -> empty
