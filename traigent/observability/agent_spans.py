@@ -207,4 +207,4 @@ def add_agent_span(
         )
         workflow_trace_manager.collect_span(span)
     except Exception:
-        logger.debug("Failed to collect agent workflow span", exc_info=True)
+        logger.warning("Failed to collect agent workflow span", exc_info=True)

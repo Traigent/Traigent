@@ -467,7 +467,7 @@ def is_backend_offline() -> bool:
     See also:
         - is_mock_llm(): Check if LLM API calls should be mocked
     """
-    return get_env_var("TRAIGENT_OFFLINE_MODE", "false").lower() == "true"
+    return _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false"))
 
 
 def is_untracked_fallback_allowed() -> bool:

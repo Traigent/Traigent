@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from traigent._version import get_version
 from traigent.config import TraigentConfig
 from traigent.utils.local_analytics import LocalAnalytics
 
@@ -51,7 +52,7 @@ async def test_analytics_submission():
         "avg_improvement_percent": 25.5,
         "sessions_last_30_days": 5,
         "days_since_first_use": 7,
-        "sdk_version": "1.1.0",
+        "sdk_version": get_version(),
         "execution_mode": "edge_analytics",
         "timestamp": datetime.now().isoformat(),
         "anonymous_user_id": "test-user-123",
@@ -162,9 +163,8 @@ async def test_analytics_submission():
 
     assert incentive_data is not None, "Failed to generate cloud incentive data"
     assert "usage_summary" in incentive_data, "Missing usage_summary in incentive data"
-    assert (
-        "cloud_benefits" in incentive_data
-    ), "Missing cloud_benefits in incentive data"
+    has_cloud_benefits = "cloud_benefits" in incentive_data
+    assert has_cloud_benefits, "Missing cloud_benefits in incentive data"
 
     logger.info("✅ Cloud incentive data generated:")
     logger.info(
@@ -220,9 +220,10 @@ async def test_privacy_mode():
 
     # At least some basic aggregated fields should be present or empty if no sessions exist
     if stats:  # Only check if there are stats
-        assert (
+        has_session_statistics = (
             "total_sessions" in stats or "completed_sessions" in stats
-        ), "No basic session statistics found"
+        )
+        assert has_session_statistics, "No basic session statistics found"
         logger.info("✅ Basic session statistics found when data exists")
     else:
         logger.info("✅ No stats returned when no sessions exist (expected behavior)")

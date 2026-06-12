@@ -136,6 +136,21 @@ def test_add_agent_span_outside_trial_is_debug_noop(
     assert "no active optimization trial context" in caplog.text
 
 
+def test_add_agent_span_collection_failure_logs_warning(caplog: Any) -> None:
+    manager = _manager()
+
+    def fail_collect(_: Any) -> None:
+        raise RuntimeError("collector down")
+
+    manager.collect_span = fail_collect  # type: ignore[method-assign]
+
+    with _active_trial(manager), caplog.at_level(logging.WARNING):
+        add_agent_span("planner", input_tokens=1)
+
+    assert "Failed to collect agent workflow span" in caplog.text
+    assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
 def test_add_agent_span_drops_text_metadata() -> None:
     manager = _manager()
 
