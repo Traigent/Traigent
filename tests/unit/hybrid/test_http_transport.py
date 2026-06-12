@@ -666,17 +666,44 @@ class TestHTTPTransportAdditionalMethods:
     async def test_capabilities_fallback_on_error(
         self, transport: HTTPTransport
     ) -> None:
-        """Test capabilities returns defaults on error."""
+        """Test capabilities returns defaults when the endpoint is absent."""
         with patch.object(
             transport,
             "_request",
             new_callable=AsyncMock,
-            side_effect=TransportError("Connection failed"),
+            side_effect=TransportError("Not found", status_code=404),
         ):
             caps = await transport.capabilities()
 
         assert caps.version == "1.0"
         assert caps.supports_evaluate is False  # Safe default
+
+    @pytest.mark.asyncio
+    async def test_capabilities_transient_error_is_not_cached(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Transient capabilities failures should not cache safe defaults."""
+        response = {
+            "version": "1.0",
+            "supports_evaluate": True,
+            "supports_keep_alive": False,
+        }
+        request = AsyncMock(
+            side_effect=[
+                TransportServerError("service unavailable", status_code=503),
+                response,
+            ]
+        )
+
+        with patch.object(transport, "_request", request):
+            with pytest.raises(TransportServerError):
+                await transport.capabilities()
+
+            caps = await transport.capabilities()
+
+        assert caps.supports_evaluate is True
+        assert transport._capabilities is caps
+        assert request.await_count == 2
 
     @pytest.mark.asyncio
     async def test_discover_config_space(self, transport: HTTPTransport) -> None:
