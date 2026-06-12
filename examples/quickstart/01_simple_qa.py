@@ -41,6 +41,43 @@ DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "quickstart" / "qa_samples.jsonl"
 )
 
+MOCK_QA_ANSWERS = [
+    ("What is the capital of France?", "Paris"),
+    ("What is 2 + 2?", "4"),
+    ("Who wrote Romeo and Juliet?", "William Shakespeare"),
+    ("What is the largest planet in our solar system?", "Jupiter"),
+    ("What year did World War II end?", "1945"),
+    ("What is the chemical symbol for water?", "H2O"),
+    ("Who painted the Mona Lisa?", "Leonardo da Vinci"),
+    ("What is the speed of light?", "299,792,458 meters per second"),
+]
+
+
+def _config_value(config, key: str, default):
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def _mock_answer_for_config(question: str, config) -> str:
+    model = str(_config_value(config, "model", "gpt-3.5-turbo"))
+    temperature = float(_config_value(config, "temperature", 0.5) or 0.5)
+
+    answer_limit = {
+        "gpt-3.5-turbo": 3,
+        "gpt-4o-mini": 5,
+        "gpt-4o": len(MOCK_QA_ANSWERS),
+    }.get(model, 3)
+
+    if temperature <= 0.2:
+        answer_limit += 1
+    elif temperature >= 0.8:
+        answer_limit -= 2
+    answer_limit = max(1, min(len(MOCK_QA_ANSWERS), answer_limit))
+
+    mock_answers = dict(MOCK_QA_ANSWERS[:answer_limit])
+    return mock_answers.get(question, "I don't know")
+
 
 # Valid model names: https://models.litellm.ai/
 @traigent.optimize(
@@ -60,12 +97,7 @@ def simple_qa_agent(question: str) -> str:
     With real API keys, it calls the actual LLM.
     """
     if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        mock_answers = {
-            "What is the capital of France?": "Paris",
-            "What is 2 + 2?": "4",
-            "Who wrote Romeo and Juliet?": "William Shakespeare",
-        }
-        return mock_answers.get(question, "I don't know")
+        return _mock_answer_for_config(question, traigent.get_config())
 
     from langchain_openai import ChatOpenAI
 

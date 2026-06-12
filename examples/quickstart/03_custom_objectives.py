@@ -14,8 +14,9 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure mock mode for testing without API keys
-os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+# Enable mock mode only when no API key is available
+if not os.environ.get("OPENAI_API_KEY"):
+    os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Set results folder to local directory
 os.environ.setdefault(
@@ -43,6 +44,49 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "quickstart" / "qa_samples.jsonl"
 )
+
+MOCK_QA_ANSWERS = [
+    ("What is the capital of France?", "Paris"),
+    ("What is 2 + 2?", "4"),
+    ("Who wrote Romeo and Juliet?", "William Shakespeare"),
+    ("What is the largest planet in our solar system?", "Jupiter"),
+    ("What year did World War II end?", "1945"),
+    ("What is the chemical symbol for water?", "H2O"),
+    ("Who painted the Mona Lisa?", "Leonardo da Vinci"),
+    ("What is the speed of light?", "299,792,458 meters per second"),
+]
+
+
+def _config_value(config, key: str, default):
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def _mock_answer_for_config(question: str, config) -> str:
+    model = str(_config_value(config, "model", "gpt-3.5-turbo"))
+    temperature = float(_config_value(config, "temperature", 0.5) or 0.5)
+    top_p = float(_config_value(config, "top_p", 0.7) or 0.7)
+
+    answer_limit = {
+        "gpt-3.5-turbo": 3,
+        "gpt-4o-mini": 5,
+    }.get(model, 3)
+
+    if temperature <= 0.3:
+        answer_limit += 1
+    elif temperature >= 0.75:
+        answer_limit -= 2
+
+    if top_p >= 0.7:
+        answer_limit += 1
+    elif top_p < 0.3:
+        answer_limit -= 1
+
+    answer_limit = max(1, min(len(MOCK_QA_ANSWERS), answer_limit))
+    mock_answers = dict(MOCK_QA_ANSWERS[:answer_limit])
+    return mock_answers.get(question, "I don't know")
+
 
 # Define custom objectives with explicit weights and orientations
 custom_objectives = ObjectiveSchema.from_objectives(
@@ -74,13 +118,7 @@ def weighted_agent(question: str) -> str:
     - Continuous parameter spaces (temperature, top_p)
     - Mixed configuration space (continuous + categorical)
     """
-    # Mock response for demo
-    mock_answers = {
-        "What is the capital of France?": "Paris",
-        "What is 2 + 2?": "4",
-        "Who wrote Romeo and Juliet?": "William Shakespeare",
-    }
-    return mock_answers.get(question, "I don't know")
+    return _mock_answer_for_config(question, traigent.get_config())
 
 
 async def main():
