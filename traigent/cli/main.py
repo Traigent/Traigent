@@ -43,6 +43,7 @@ from traigent.utils.secure_path import (
     safe_open,
     safe_write_text,
     validate_path,
+    validate_user_path,
 )
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
@@ -83,6 +84,25 @@ def _resolve_workspace_path(
         raise click.ClickException(
             f"{description} must reside within the Traigent workspace ({WORKSPACE_ROOT})"
         ) from exc
+
+
+def _resolve_user_cli_path(
+    path: Path,
+    description: str,
+    *,
+    must_exist: bool = False,
+    for_write: bool = False,
+) -> Path:
+    """Resolve a user-supplied CLI path relative to the caller's CWD."""
+    try:
+        resolved = validate_user_path(path.expanduser(), for_write=for_write)
+        if must_exist and not resolved.exists():
+            raise FileNotFoundError(f"Path does not exist: {resolved}")
+        return resolved
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"{description} does not exist: {exc}") from exc
+    except (PathTraversalError, ValueError) as exc:
+        raise click.ClickException(f"{description} is not allowed: {exc}") from exc
 
 
 def _print_optimization_header(
@@ -256,10 +276,14 @@ def _load_user_module(file_path_obj: Path) -> Any | None:
 
 def _resolve_output_dir(output_dir: str) -> Path:
     """Resolve and validate the output directory path."""
-    output_dir_candidate = Path(output_dir)
-    if not output_dir_candidate.is_absolute():
-        output_dir_candidate = WORKSPACE_ROOT / output_dir_candidate
-    return _resolve_workspace_path(output_dir_candidate, "Output directory")
+    resolved = _resolve_user_cli_path(
+        Path(output_dir),
+        "Output directory",
+        for_write=True,
+    )
+    if resolved.exists() and not resolved.is_dir():
+        raise click.ClickException(f"Output directory is not a directory: {resolved}")
+    return resolved
 
 
 def _parse_comma_separated_list(value: str | None) -> list[str] | None:
@@ -1064,7 +1088,7 @@ def optimize(
     )
 
     # Resolve paths
-    file_path_obj = _resolve_workspace_path(
+    file_path_obj = _resolve_user_cli_path(
         Path(file_path), "File path", must_exist=True
     )
     output_dir_resolved = _resolve_output_dir(output_dir)
@@ -1136,7 +1160,17 @@ def optimize(
     help="Objectives to validate (e.g., accuracy, latency)",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed validation output")
-def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> None:
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit nonzero when dataset or objective validation fails",
+)
+def validate(
+    dataset_path: str,
+    objectives: tuple[str, ...],
+    verbose: bool,
+    strict: bool,
+) -> None:
     """Validate dataset format and optimization configuration."""
     console.print(f"\n[bold blue]Validating Dataset: {dataset_path}[/bold blue]\n")
 
@@ -1158,6 +1192,8 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
             "\n[yellow]Hint:[/yellow] Dataset paths must reside under the current "
             "working directory or the path specified by TRAIGENT_DATASET_ROOT."
         )
+        if strict:
+            raise click.ClickException("Dataset validation failed") from e
         return
 
     # Step 2: Validate dataset content format
@@ -1171,6 +1207,8 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
     if verbose or not path_result.is_valid:
         console.print(path_result.get_feedback())
 
+    has_failure = not path_result.is_valid
+
     # Validate objectives if provided
     if objectives:
         obj_result = Validators.validate_objectives(list(objectives))
@@ -1180,6 +1218,10 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
         else:
             console.print("❌ [red]Objectives validation failed[/red]")
             console.print(obj_result.get_feedback())
+            has_failure = True
+
+    if strict and has_failure:
+        raise click.ClickException("Dataset validation failed")
 
 
 @cli.command(name="report-example-map")
@@ -2038,12 +2080,14 @@ def validate_config(config_file: str) -> None:
     console.print(f"\n[bold blue]Validating Configuration: {config_file}[/bold blue]\n")
 
     try:
-        config_path = _resolve_workspace_path(
+        config_path = _resolve_user_cli_path(
             Path(config_file),
             "Config file",
             must_exist=True,
         )
-        with safe_open(config_path, WORKSPACE_ROOT, mode="r", encoding="utf-8") as f:
+        with safe_open(
+            config_path, config_path.parent, mode="r", encoding="utf-8"
+        ) as f:
             config = json.load(f)
 
         # Extract configuration components
@@ -2094,9 +2138,10 @@ def generate(template: str, output: str) -> None:
 
     template_code = templates[template]
 
-    output_path = _resolve_workspace_path(
+    output_path = _resolve_user_cli_path(
         Path(output),
         "Output file",
+        for_write=True,
     )
 
     # Check if file already exists
@@ -2106,7 +2151,8 @@ def generate(template: str, output: str) -> None:
             return
 
     # Write template to file
-    safe_write_text(output_path, template_code, WORKSPACE_ROOT, encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_write_text(output_path, template_code, output_path.parent, encoding="utf-8")
 
     console.print(f"✅ [green]Template generated: {output}[/green]")
 
