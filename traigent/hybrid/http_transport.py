@@ -295,7 +295,9 @@ class HTTPTransport:
                 self._capabilities.supports_keep_alive,
             )
             return self._capabilities
-        except TransportError:
+        except TransportError as exc:
+            if exc.status_code != 404:
+                raise
             # Missing capabilities must not claim support for optional endpoints.
             logger.warning("Capabilities endpoint not available, using safe defaults")
             self._capabilities = ServiceCapabilities(version="1.0")

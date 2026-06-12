@@ -17,7 +17,7 @@ Tests cover:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,7 +32,11 @@ from traigent.hybrid.protocol import (
     HybridExecuteResponse,
     ServiceCapabilities,
 )
-from traigent.hybrid.transport import TransportError
+from traigent.hybrid.transport import (
+    TransportError,
+    TransportRateLimitError,
+    TransportServerError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
@@ -58,22 +62,25 @@ def _make_dataset(examples: list[dict[str, Any]] | None = None) -> Dataset:
 
 def _make_execute_response(
     *,
+    status: Literal["completed", "partial", "failed"] = "completed",
     outputs: list[dict[str, Any]] | None = None,
     operational_metrics: dict[str, float] | None = None,
     quality_metrics: dict[str, float] | None = None,
     session_id: str | None = None,
     execution_id: str = "exec-1",
+    error: dict[str, Any] | None = None,
 ) -> HybridExecuteResponse:
     """Create a mock HybridExecuteResponse."""
     return HybridExecuteResponse(
         request_id="req-1",
         execution_id=execution_id,
-        status="completed",
+        status=status,
         outputs=outputs or [],
         operational_metrics=operational_metrics
         or {"cost_usd": 0.01, "latency_ms": 100.0},
         quality_metrics=quality_metrics,
         session_id=session_id,
+        error=error,
     )
 
 
@@ -343,6 +350,31 @@ class TestGetCapabilities:
         caps2 = await evaluator._get_capabilities()
         assert caps2 is caps
         assert mock_transport.capabilities.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_transient_capabilities_error_retries_before_caching(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """A transient handshake failure must not cache degraded capabilities."""
+        recovered = _default_capabilities(supports_evaluate=True)
+        mock_transport.capabilities = AsyncMock(
+            side_effect=[
+                TransportServerError("service unavailable", status_code=503),
+                recovered,
+            ]
+        )
+        evaluator = HybridAPIEvaluator(transport=mock_transport, keep_alive=False)
+
+        with patch("traigent.utils.retry.asyncio.sleep", new_callable=AsyncMock):
+            caps = await evaluator._get_capabilities()
+
+        assert caps is recovered
+        assert caps.supports_evaluate is True
+        assert mock_transport.capabilities.await_count == 2
+
+        caps2 = await evaluator._get_capabilities()
+        assert caps2 is recovered
+        assert mock_transport.capabilities.await_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1253,6 +1285,113 @@ class TestExecuteBatch:
         assert results[1].expected_output == "a2"
 
     @pytest.mark.asyncio
+    async def test_failed_execute_status_marks_all_examples_failed(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """A top-level failed execute response is not scored as success."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+        )
+        ev._benchmark_id = "test-bench"
+        mock_transport.execute = AsyncMock(
+            return_value=_make_execute_response(
+                status="failed",
+                outputs=[],
+                error={"code": "agent_error", "message": "upstream crashed"},
+            )
+        )
+        caps = _default_capabilities(supports_evaluate=False)
+
+        dataset = _make_dataset(
+            [
+                {"input_data": {"q": "1"}, "expected_output": "a1"},
+                {"input_data": {"q": "2"}, "expected_output": "a2"},
+            ]
+        )
+        batch = list(dataset)
+
+        results = await ev._execute_batch(mock_transport, caps, {}, batch)
+
+        assert [r.success for r in results] == [False, False]
+        assert all("agent_error: upstream crashed" == r.error for r in results)
+        assert all(r.cost_usd == 0.0 for r in results)
+        mock_transport.evaluate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_partial_execute_missing_outputs_are_failed(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Partial execute responses do not treat omitted outputs as success."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+        )
+        ev._benchmark_id = "test-bench"
+        mock_transport.execute = AsyncMock(
+            return_value=_make_execute_response(
+                status="partial",
+                outputs=[{"example_id": "ex_0", "output": "ok"}],
+                operational_metrics={"cost_usd": 0.02, "latency_ms": 25.0},
+            )
+        )
+        caps = _default_capabilities(supports_evaluate=False)
+
+        dataset = _make_dataset(
+            [
+                {"input_data": {"q": "1"}, "expected_output": "a1"},
+                {"input_data": {"q": "2"}, "expected_output": "a2"},
+            ]
+        )
+        batch = list(dataset)
+
+        results = await ev._execute_batch(mock_transport, caps, {}, batch)
+
+        assert len(results) == 2
+        assert results[0].success is True
+        assert results[0].actual_output == "ok"
+        assert results[1].success is False
+        assert "did not include output" in str(results[1].error)
+        assert results[1].cost_usd == 0.0
+
+    @pytest.mark.asyncio
+    async def test_execute_rate_limit_retries_before_error_rows(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """A 429 execute response is retried with Retry-After before scoring."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+        )
+        ev._benchmark_id = "test-bench"
+        mock_transport.execute = AsyncMock(
+            side_effect=[
+                TransportRateLimitError("limited", retry_after=0.01),
+                _make_execute_response(
+                    outputs=[{"example_id": "ex_0", "output": "recovered"}],
+                ),
+            ]
+        )
+        caps = _default_capabilities(supports_evaluate=False)
+
+        dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
+        batch = list(dataset)
+
+        with patch(
+            "traigent.utils.retry.asyncio.sleep", new_callable=AsyncMock
+        ) as wait:
+            results = await ev._execute_batch(mock_transport, caps, {}, batch)
+
+        assert len(results) == 1
+        assert results[0].success is True
+        assert results[0].actual_output == "recovered"
+        assert mock_transport.execute.await_count == 2
+        wait.assert_awaited_once_with(0.01)
+
+    @pytest.mark.asyncio
     async def test_session_id_updated_from_response(
         self, mock_transport: MagicMock
     ) -> None:
@@ -1352,9 +1491,7 @@ class TestExecuteBatch:
         mock_transport.execute = AsyncMock(return_value=exec_response)
         caps = _default_capabilities(supports_evaluate=False)
 
-        example = EvaluationExample(
-            input_data={"input_id": "consultant-fridge"}
-        )
+        example = EvaluationExample(input_data={"input_id": "consultant-fridge"})
         dataset = Dataset(examples=[example], name="test")
         batch = list(dataset)
 
@@ -1362,9 +1499,7 @@ class TestExecuteBatch:
         assert results[0].example_id == "consultant-fridge"
 
     @pytest.mark.asyncio
-    async def test_two_phase_input_id_matching(
-        self, mock_transport: MagicMock
-    ) -> None:
+    async def test_two_phase_input_id_matching(self, mock_transport: MagicMock) -> None:
         """Two-phase mode matches evaluate results keyed by input_id."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
@@ -1373,7 +1508,11 @@ class TestExecuteBatch:
         )
         exec_response = _make_execute_response(
             outputs=[
-                {"input_id": "consultant-fridge", "output": "result_0", "output_id": "out_0"},
+                {
+                    "input_id": "consultant-fridge",
+                    "output": "result_0",
+                    "output_id": "out_0",
+                },
             ],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 100.0},
         )
@@ -1390,7 +1529,12 @@ class TestExecuteBatch:
         )
         dataset = Dataset(examples=[example], name="test")
         batch = list(dataset)
-        inputs = [{"example_id": "consultant-fridge", "data": {"input_id": "consultant-fridge"}}]
+        inputs = [
+            {
+                "example_id": "consultant-fridge",
+                "data": {"input_id": "consultant-fridge"},
+            }
+        ]
 
         results = await ev._evaluate_outputs(
             mock_transport, {}, batch, inputs, exec_response
@@ -1611,7 +1755,7 @@ class TestProcessCombinedResponse:
         assert results[1].expected_output == "6"  # From dataset
 
     def test_combined_no_matching_output(self, mock_transport: MagicMock) -> None:
-        """When output example_id doesn't match, output is None."""
+        """When output example_id doesn't match, the example is failed."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
             tunable_id="cap",
@@ -1631,6 +1775,8 @@ class TestProcessCombinedResponse:
         assert len(results) == 1
         assert results[0].actual_output is None
         assert results[0].metrics == {}
+        assert results[0].success is False
+        assert "did not include output" in str(results[0].error)
 
 
 # ---------------------------------------------------------------------------
