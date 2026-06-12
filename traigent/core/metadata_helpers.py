@@ -438,17 +438,17 @@ def _add_execution_time_metrics(
 ) -> None:
     """Add explicit and legacy timing metrics for compatibility.
 
-    `execution_time` on example results is tracked internally in seconds. The
-    canonical optimization payload key is `response_time_ms`, but the legacy
-    `response_time` key remains for one compatibility window.
+    ``execution_time`` on example results is tracked internally in seconds. Its
+    canonical optimization payload key is ``execution_time_ms``. The legacy
+    ``response_time`` seconds key remains for one compatibility window.
     """
     execution_time = _example_field(example_result, "execution_time")
     if execution_time is None or not isinstance(execution_time, (int, float)):
         return
 
-    response_time_seconds = float(execution_time)
-    metrics_dict["response_time_ms"] = response_time_seconds * 1000.0
-    metrics_dict["response_time"] = response_time_seconds
+    execution_time_seconds = float(execution_time)
+    metrics_dict.setdefault("execution_time_ms", execution_time_seconds * 1000.0)
+    metrics_dict["response_time"] = execution_time_seconds
 
 
 def _is_measure_metric_value(value: Any) -> bool:
@@ -600,7 +600,8 @@ def _build_measures_privacy(
         }
 
     Only includes in metrics:
-    - Score, explicit response_time_ms, legacy response_time, tokens, and cost metrics
+    - Score, explicit response_time_ms, execution_time_ms, legacy response_time,
+      tokens, and cost metrics
 
     Args:
         example_results: List of example evaluation results

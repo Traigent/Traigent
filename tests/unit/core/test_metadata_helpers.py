@@ -441,7 +441,9 @@ class TestBuildMeasuresFull:
         assert len(full) == 1
         assert full[0]["metrics"]["accuracy"] == 1.0
         assert full[0]["metrics"]["score"] == 1.0
-        assert full[0]["metrics"]["response_time_ms"] == 10.0
+        assert full[0]["metrics"]["execution_time_ms"] == 10.0
+        assert full[0]["metrics"]["response_time"] == 0.01
+        assert "response_time_ms" not in full[0]["metrics"]
 
         sanitized = _build_measures_privacy([payload], "accuracy")
         assert len(sanitized) == 1
@@ -520,10 +522,11 @@ class TestBuildMeasuresFull:
 
         measures = _build_measures_full([example_result], "accuracy")
 
-        assert "response_time_ms" in measures[0]["metrics"]
-        assert measures[0]["metrics"]["response_time_ms"] == 1500.0
+        assert "execution_time_ms" in measures[0]["metrics"]
+        assert measures[0]["metrics"]["execution_time_ms"] == 1500.0
         assert "response_time" in measures[0]["metrics"]
         assert measures[0]["metrics"]["response_time"] == 1.5
+        assert "response_time_ms" not in measures[0]["metrics"]
 
     def test_multiple_examples(self, example_result):
         """Test building measures for multiple examples."""
@@ -580,16 +583,17 @@ class TestBuildMeasuresPrivacy:
         assert len(measures) == 1
         assert measures[0]["metrics"]["score"] == 0.9
 
-    def test_include_response_time(self, example_result):
+    def test_include_execution_time(self, example_result):
         """Test privacy mode includes explicit and legacy timing keys."""
         example_result.execution_time = 1.5
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
-        assert "response_time_ms" in measures[0]["metrics"]
-        assert measures[0]["metrics"]["response_time_ms"] == 1500.0
+        assert "execution_time_ms" in measures[0]["metrics"]
+        assert measures[0]["metrics"]["execution_time_ms"] == 1500.0
         assert "response_time" in measures[0]["metrics"]
         assert measures[0]["metrics"]["response_time"] == 1.5
+        assert "response_time_ms" not in measures[0]["metrics"]
 
     def test_include_token_metrics(self, example_result):
         """Test token metrics are included in privacy mode metrics."""
