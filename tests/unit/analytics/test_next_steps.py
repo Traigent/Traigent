@@ -222,3 +222,26 @@ class TestGetNextSteps:
 
         with pytest.raises(ValueError, match="missing required key"):
             await client.get_next_steps("run_123")
+
+    @pytest.mark.parametrize("missing_key", ["summary", "experiment_run_id"])
+    async def test_get_next_steps_requires_full_contract_keys(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        missing_key: str,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        malformed = dict(valid_next_steps_payload)
+        malformed.pop(missing_key)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = malformed
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(ValueError, match="missing required key"):
+            await client.get_next_steps("run_123")

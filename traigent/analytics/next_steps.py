@@ -37,7 +37,13 @@ except ImportError:
     httpx = None  # type: ignore
 
 
-_REQUIRED_RESPONSE_KEYS = {"schema_version", "caveat", "next_steps"}
+_REQUIRED_RESPONSE_KEYS = {
+    "schema_version",
+    "experiment_run_id",
+    "caveat",
+    "summary",
+    "next_steps",
+}  # matches the contract's required set (next_steps_schema.json)
 
 
 class NextStepsClient:
