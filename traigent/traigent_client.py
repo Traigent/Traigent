@@ -460,14 +460,7 @@ class TraigentClient:
         adapter = LocalExecutionAdapter(self.agent_builder)
 
         if max_trials is not None and max_trials <= 0:
-            logger.info("Edge Analytics optimization skipped due to max_trials<=0")
-            return {
-                "execution_mode": ExecutionMode.EDGE_ANALYTICS.value,
-                "best_configuration": None,
-                "all_results": [],
-                "completed_trials": 0,
-                "status": "no_trials",
-            }
+            raise ValueError("max_trials must be a positive integer")
 
         optimizer = self._create_local_optimizer(
             configuration_space,

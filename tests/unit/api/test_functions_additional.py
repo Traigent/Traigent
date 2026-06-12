@@ -119,7 +119,6 @@ class TestConfigureObjectives:
                 "traigent.core.objectives.schema_to_objective_names"
             ) as mock_schema_to_names,
         ):
-
             mock_schema = Mock()
             mock_normalize.return_value = mock_schema
             mock_schema_to_names.return_value = ["obj1", "obj2"]
@@ -568,10 +567,10 @@ class TestOverrideConfig:
 
     def test_override_config_max_trials_invalid(self):
         """Test override_config with invalid max_trials."""
-        result = override_config(max_trials=0)
-        assert result["max_trials"] == 0
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
+            override_config(max_trials=0)
 
-        with pytest.raises(ValueError, match="max_trials must be non-negative"):
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
             override_config(max_trials=-5)
 
     def test_override_config_timeout_valid(self):

@@ -156,6 +156,45 @@ def test_minimization_objective_is_respected():
     assert result.best_score == pytest.approx(0.1)
 
 
+def test_banded_primary_objective_selects_closest_single_trial():
+    trials = [
+        FakeTrial(metrics={"latency_ms": 100.0}, config={"model": "too-fast"}),
+        FakeTrial(metrics={"latency_ms": 500.0}, config={"model": "center"}),
+        FakeTrial(metrics={"latency_ms": 900.0}, config={"model": "too-slow"}),
+    ]
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective="latency_ms",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+        band_target=500.0,
+    )
+
+    assert result.best_config == {"model": "center"}
+    assert result.best_score == pytest.approx(500.0)
+
+
+def test_banded_primary_objective_selects_closest_aggregated_config():
+    trials = [
+        FakeTrial(metrics={"accuracy": 0.95}, config={"model": "high"}),
+        FakeTrial(metrics={"accuracy": 0.70}, config={"model": "center"}),
+        FakeTrial(metrics={"accuracy": 0.69}, config={"model": "center"}),
+        FakeTrial(metrics={"accuracy": 0.50}, config={"model": "low"}),
+    ]
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=True,
+        band_target=0.70,
+    )
+
+    assert result.best_config == {"model": "center"}
+    assert result.best_score == pytest.approx(0.695)
+
+
 def test_aggregated_selection_computes_means_and_metadata():
     trials = [
         FakeTrial(
@@ -362,11 +401,9 @@ class TestSelectBestConfigurationWithTieBreakers:
             band_target=0.90,
         )
 
-        # Without band_target, A would win (0.95 is max)
-        # With band_target=0.90, C (0.89) is closest
-        # But since scores aren't equal, tie-breaker shouldn't apply
-        # The max score is 0.95 (model A), so only A is in tied_trials
-        assert result.best_config["model"] == "A"
+        # Banded primary objectives rank by distance from the band target, so
+        # C (0.89) beats the raw max A (0.95).
+        assert result.best_config["model"] == "C"
 
     def test_tie_breaker_all_equal_scores_with_band(self) -> None:
         """When all trials have same primary score, band_target helps pick."""

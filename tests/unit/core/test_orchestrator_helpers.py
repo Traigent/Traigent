@@ -86,16 +86,15 @@ class TestValidateConstructorArguments:
         )
         assert result is None
 
-    def test_zero_max_trials_allowed(self):
-        """Test that zero max_trials is allowed (no trials)."""
+    def test_zero_max_trials_rejected(self):
+        """Test that zero max_trials is rejected."""
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        # Should not raise any exception - returns None on success
-        result = validate_constructor_arguments(
-            optimizer, evaluator, max_trials=0, timeout=None
-        )
-        assert result is None
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
+            validate_constructor_arguments(
+                optimizer, evaluator, max_trials=0, timeout=None
+            )
 
     def test_invalid_optimizer_type(self):
         """Test that invalid optimizer type raises TypeError."""
@@ -158,7 +157,7 @@ class TestValidateConstructorArguments:
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        with pytest.raises(ValueError, match="max_trials must be non-negative"):
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
             validate_constructor_arguments(
                 optimizer=optimizer,
                 evaluator=evaluator,
@@ -449,7 +448,7 @@ class TestModuleValidateConstructorArguments:
 
     def test_negative_max_trials_raises_value_error(self):
         """Test that negative max_trials raises ValueError."""
-        with pytest.raises(ValueError, match="max_trials must be non-negative"):
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
             validate_constructor_arguments(
                 MockOptimizer(), MockEvaluator(), max_trials=-1
             )

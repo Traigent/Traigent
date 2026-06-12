@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -210,10 +210,10 @@ class ExecutionOptions(BaseModel):
     tunable_id: str | None = None
     hybrid_api_transport: Any | None = None
     hybrid_api_transport_type: str = "auto"
-    hybrid_api_batch_size: int = 1
-    hybrid_api_batch_parallelism: int = 1
+    hybrid_api_batch_size: int = Field(default=1, ge=1)
+    hybrid_api_batch_parallelism: int = Field(default=1, ge=1)
     hybrid_api_keep_alive: bool = True
-    hybrid_api_heartbeat_interval: float = 30.0
+    hybrid_api_heartbeat_interval: float = Field(default=30.0, gt=0)
     hybrid_api_timeout: float | None = None
     hybrid_api_auth_header: str | None = None
     hybrid_api_auto_discover_tvars: bool = False
@@ -1532,6 +1532,58 @@ def _normalize_config_space_and_defaults(
     return normalized_space, default_config, constraints
 
 
+def _constraints_for_satisfiability(constraints: list[Any] | None) -> list[Any]:
+    """Return structural constraints that the satisfiability checker can evaluate."""
+    if not constraints:
+        return []
+
+    from traigent.api.constraints import BoolExpr, Constraint
+
+    satisfiability_constraints: list[Constraint] = []
+    for constraint in constraints:
+        if isinstance(constraint, Constraint):
+            satisfiability_constraints.append(constraint)
+        elif isinstance(constraint, BoolExpr):
+            satisfiability_constraints.append(Constraint(expr=constraint))
+    return satisfiability_constraints
+
+
+def _validate_constraint_satisfiability(
+    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
+    inline_params: dict[str, Any],
+    constraints: list[Any] | None,
+) -> None:
+    """Fail fast when structural constraints make a finite space impossible."""
+    satisfiability_constraints = _constraints_for_satisfiability(constraints)
+    if not satisfiability_constraints:
+        return
+
+    from traigent.api.config_space import ConfigSpace
+    from traigent.api.validation_protocol import SatStatus
+
+    if isinstance(raw_configuration_space, ConfigSpace):
+        tvars = dict(raw_configuration_space.tvars)
+        if inline_params:
+            tvars.update(
+                ConfigSpace.from_decorator_args(inline_params=inline_params).tvars
+            )
+        space = ConfigSpace(tvars=tvars, constraints=tuple(satisfiability_constraints))
+    else:
+        space = ConfigSpace.from_decorator_args(
+            configuration_space=raw_configuration_space,
+            inline_params=inline_params,
+            constraints=satisfiability_constraints,
+        )
+
+    if not space.tvars:
+        return
+
+    result = space.check_satisfiability()
+    if result.status == SatStatus.UNSAT:
+        detail = result.message or "no valid configuration satisfies all constraints"
+        raise ValueError(f"constraints are unsatisfiable: {detail}")
+
+
 def _restore_text_document_markers(
     normalized_space: dict[str, Any],
     raw_configuration_space: dict[str, Any] | ConfigSpace | None,
@@ -2057,6 +2109,8 @@ def optimize(  # NOSONAR(S107)
         config_space_var_names,
     )
 
+    raw_configuration_space = configuration_space
+
     # Normalize configuration_space and merge defaults
     configuration_space, default_config, constraints = (
         _normalize_config_space_and_defaults(
@@ -2066,6 +2120,11 @@ def optimize(  # NOSONAR(S107)
             config_space_constraints,
             constraints,
         )
+    )
+    _validate_constraint_satisfiability(
+        raw_configuration_space,
+        inline_params,
+        constraints,
     )
 
     # Note: Constraint normalization is deferred until after TVL artifact application
@@ -2122,6 +2181,8 @@ def optimize(  # NOSONAR(S107)
     algorithm_value = combined_settings["algorithm"]
     # Optimizer limits
     max_trials_value = combined_settings["max_trials"]
+    if max_trials_value is not None and max_trials_value <= 0:
+        raise ValueError("max_trials must be a positive integer")
     # Tuned variable auto-detection
     auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
     auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
