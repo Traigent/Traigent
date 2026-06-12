@@ -100,6 +100,7 @@ class MockEvaluator(BaseEvaluator):
     """Mock evaluator for testing."""
 
     def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.evaluation_count = 0
         self.should_fail = False
         self.evaluation_delay = 0.0
@@ -424,40 +425,19 @@ class TestOptimizationOrchestrator:
         assert orchestrator._successful_trials == 2
         assert orchestrator._failed_trials == 0
 
-    @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
-    async def test_optimize_zero_max_trials_short_circuits(
+    def test_zero_max_trials_rejected_at_construction(
         self,
         mock_optimizer,
         mock_evaluator,
-        sample_dataset,
-        mock_function,
     ):
-        """Ensure max_trials=0 exits without executing trials."""
-        mock_optimizer.set_max_suggestions(5)
-
-        with patch(
-            "traigent.cloud.backend_client.BackendIntegratedClient"
-        ) as mock_backend:
-            mock_client = MagicMock()
-            mock_client.create_session.return_value = "session-zero"
-            mock_backend.return_value = mock_client
-
-            orchestrator = OptimizationOrchestrator(
+        """max_trials=0 fails fast instead of creating an empty run."""
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
+            OptimizationOrchestrator(
                 optimizer=mock_optimizer,
                 evaluator=mock_evaluator,
                 max_trials=0,
                 timeout=5.0,
             )
-            orchestrator.backend_client = mock_client
-
-            result = await orchestrator.optimize(mock_function, sample_dataset)
-
-        assert result.status == OptimizationStatus.COMPLETED
-        assert len(result.trials) == 0
-        assert orchestrator._successful_trials == 0
-        assert orchestrator._failed_trials == 0
-        assert orchestrator._stop_reason == "max_trials_reached"
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
@@ -1057,12 +1037,10 @@ class TestOptimizationOrchestrator:
         # Should timeout within reasonable bounds (generous tolerance for CI)
         # The key assertion is that we stopped reasonably close to timeout,
         # not that we hit it exactly
-        assert (
-            actual_duration < timeout_duration + 1.0
-        ), f"Timeout took too long: {actual_duration:.2f}s (expected ~{timeout_duration}s)"
-        assert (
-            actual_duration >= timeout_duration * 0.5
-        ), f"Finished too quickly: {actual_duration:.2f}s (expected ~{timeout_duration}s)"
+        timeout_message = f"Timeout took too long: {actual_duration:.2f}s (expected ~{timeout_duration}s)"
+        too_fast_message = f"Finished too quickly: {actual_duration:.2f}s (expected ~{timeout_duration}s)"
+        assert actual_duration < timeout_duration + 1.0, timeout_message
+        assert actual_duration >= timeout_duration * 0.5, too_fast_message
         assert result.status == OptimizationStatus.CANCELLED
 
     # Performance Tests
@@ -1086,6 +1064,7 @@ class TestOptimizationOrchestrator:
         orchestrator.max_trials = 50
         orchestrator.optimizer.set_max_suggestions(50)
         orchestrator.evaluator.set_evaluation_delay(0.01)  # Fast evaluation
+        orchestrator.cost_enforcer.config.fallback_trial_limit = 50
 
         result = await orchestrator.optimize(mock_function, sample_dataset)
 
@@ -2299,12 +2278,12 @@ class TestOrchestratorCodeQuality:
         status_count = content.count("def status(self)")
         optimization_id_count = content.count("def optimization_id(self)")
 
-        assert (
-            status_count == 1
-        ), f"Found {status_count} status property definitions, expected 1"
-        assert (
-            optimization_id_count == 1
-        ), f"Found {optimization_id_count} optimization_id definitions, expected 1"
+        status_message = f"Found {status_count} status property definitions, expected 1"
+        optimization_id_message = (
+            f"Found {optimization_id_count} optimization_id definitions, expected 1"
+        )
+        assert status_count == 1, status_message
+        assert optimization_id_count == 1, optimization_id_message
 
 
 def test_allocate_parallel_ceilings_distribution():
@@ -2377,9 +2356,9 @@ class TestCostEstimation:
             f"Expected estimate > {clipped_to_dataset} (using full budget), got {estimate}. "
             "Cost estimate may be incorrectly clipping to dataset size."
         )
-        assert estimate == pytest.approx(
-            expected_full_budget, rel=0.1
-        ), f"Expected estimate ~{expected_full_budget}, got {estimate}"
+        estimate_message = f"Expected estimate ~{expected_full_budget}, got {estimate}"
+        estimate_approx = pytest.approx(expected_full_budget, rel=0.1)
+        assert estimate == estimate_approx, estimate_message
 
     def test_cost_estimate_without_budget_uses_dataset_size(
         self,

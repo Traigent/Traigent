@@ -412,14 +412,22 @@ def _select_best_single_trial(
             reason_code=NO_RANKING_ELIGIBLE_TRIALS,
         )
 
-    best_score = chooser(score for _, score in scored_trials)
+    if band_target is not None:
+        best_deviation = min(abs(score - band_target) for _, score in scored_trials)
+        tied_trials = [
+            trial
+            for trial, score in scored_trials
+            if _primary_scores_tied(abs(score - band_target), best_deviation)
+        ]
+    else:
+        best_score = chooser(score for _, score in scored_trials)
 
-    # Find all trials within the conservative primary-score tie tolerance.
-    tied_trials = [
-        trial
-        for trial, score in scored_trials
-        if _primary_scores_tied(score, best_score)
-    ]
+        # Find all trials within the conservative primary-score tie tolerance.
+        tied_trials = [
+            trial
+            for trial, score in scored_trials
+            if _primary_scores_tied(score, best_score)
+        ]
 
     # Apply tie-breaker if there are ties.
     if len(tied_trials) > 1:
@@ -579,18 +587,29 @@ def _select_best_aggregated(
             },
             reason_code=NO_RANKING_ELIGIBLE_TRIALS,
         )
-    best_score_val = min(all_scores) if minimization else max(all_scores)
-
-    # Find all entries within the conservative primary-score tie tolerance.
-    tied_entries = [
-        entry
-        for entry in aggregated.values()
-        if _primary_scores_tied(
-            score_value := score(entry),
-            best_score_val,
+    if band_target is not None:
+        best_deviation = min(
+            abs(score_value - band_target) for score_value in all_scores
         )
-        and score_value not in (float("inf"), float("-inf"))
-    ]
+        tied_entries = [
+            entry
+            for entry in aggregated.values()
+            if (score_value := score(entry)) not in (float("inf"), float("-inf"))
+            and _primary_scores_tied(abs(score_value - band_target), best_deviation)
+        ]
+    else:
+        best_score_val = min(all_scores) if minimization else max(all_scores)
+
+        # Find all entries within the conservative primary-score tie tolerance.
+        tied_entries = [
+            entry
+            for entry in aggregated.values()
+            if _primary_scores_tied(
+                score_value := score(entry),
+                best_score_val,
+            )
+            and score_value not in (float("inf"), float("-inf"))
+        ]
 
     # Apply tie-breaking for aggregated entries
     if len(tied_entries) > 1:

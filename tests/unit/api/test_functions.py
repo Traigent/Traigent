@@ -272,10 +272,10 @@ class TestOverrideConfig:
 
     def test_override_config_invalid_max_trials(self):
         """Test invalid max trials."""
-        result = override_config(max_trials=0)
-        assert result == {"max_trials": 0}
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
+            override_config(max_trials=0)
 
-        with pytest.raises(ValueError, match="max_trials must be non-negative"):
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
             override_config(max_trials=-10)
 
     def test_override_config_timeout(self):
@@ -454,7 +454,9 @@ class TestGetAvailableStrategies:
 
         assert strategies["optuna_tpe"]["name"] == "Optuna TPE Optimization"
         assert strategies["nsga2"]["name"] == "Optuna NSGA-II Optimization"
-        assert strategies["optuna_grid"]["description"] != "Custom optimization algorithm"
+        assert (
+            strategies["optuna_grid"]["description"] != "Custom optimization algorithm"
+        )
         assert "max_trials" in strategies["optuna_tpe"]["parameters"]
 
     @patch("traigent.api.functions.list_optimizers")

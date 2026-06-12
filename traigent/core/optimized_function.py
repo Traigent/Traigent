@@ -866,9 +866,8 @@ class OptimizedFunction:
         if not callable(self.func):
             raise TypeError("func must be callable") from None
 
-        # Validate max_trials and timeout for negative values
-        if self.max_trials < 0:
-            raise ValueError("max_trials must be non-negative")
+        if self.max_trials is not None and self.max_trials <= 0:
+            raise ValueError("max_trials must be a positive integer")
 
         if self.timeout is not None and self.timeout < 0:
             raise ValueError("timeout must be non-negative")
@@ -2274,10 +2273,6 @@ Remediation:
         # Initialize cloud client if not already done
         if self._cloud_client is None:
             self._cloud_client = TraigentCloudClient(enable_fallback=False)
-
-        if max_trials is not None and max_trials <= 0:
-            logger.info("Cloud optimization skipped due to max_trials=0.")
-            return self._build_empty_result("cloud_service")
 
         async with self._cloud_client as client:
             # Extract configuration_space from kwargs if provided

@@ -6,6 +6,8 @@ to ensure all constraint methods work correctly for all ParameterRange types.
 
 from __future__ import annotations
 
+import pytest
+
 from traigent.api.constraints import Condition
 from traigent.api.parameter_ranges import Choices, IntRange, LogRange, Range
 
@@ -108,6 +110,24 @@ class TestNumericConstraintBuilders:
         assert cond.evaluate(0.5) is True
         assert cond.evaluate(0.0) is False
 
+    def test_range_rejects_out_of_domain_comparison(self) -> None:
+        temp = Range(0.0, 2.0, name="temperature")
+
+        with pytest.raises(ValueError, match="temperature.*outside.*domain"):
+            temp.equals(2.5)
+
+    def test_range_rejects_empty_membership(self) -> None:
+        temp = Range(0.0, 2.0, name="temperature")
+
+        with pytest.raises(ValueError, match="temperature.*cannot be empty"):
+            temp.is_in([])
+
+    def test_range_rejects_non_overlapping_in_range(self) -> None:
+        temp = Range(0.0, 2.0, name="temperature")
+
+        with pytest.raises(ValueError, match="temperature.*does not overlap"):
+            temp.in_range(3.0, 4.0)
+
     # =========================================================================
     # IntRange Tests
     # =========================================================================
@@ -199,6 +219,12 @@ class TestNumericConstraintBuilders:
         assert cond.operator == "not_in"
         assert cond.evaluate(512) is True
         assert cond.evaluate(256) is False
+
+    def test_int_range_rejects_out_of_domain_membership(self) -> None:
+        tokens = IntRange(100, 4096, name="max_tokens")
+
+        with pytest.raises(ValueError, match="max_tokens.*outside.*domain"):
+            tokens.not_in([64])
 
     # =========================================================================
     # LogRange Tests
@@ -333,6 +359,24 @@ class TestCategoricalConstraintBuilders:
         assert cond.operator == "not_in"
         assert cond.evaluate("gpt-4") is True
         assert cond.evaluate("claude") is False
+
+    def test_choices_rejects_out_of_domain_value(self) -> None:
+        model = Choices(["gpt-4", "gpt-3.5", "claude"], name="model")
+
+        with pytest.raises(ValueError, match="model.*outside.*choices"):
+            model.equals("gpt-four")
+
+    def test_choices_rejects_empty_membership(self) -> None:
+        model = Choices(["gpt-4", "gpt-3.5", "claude"], name="model")
+
+        with pytest.raises(ValueError, match="model.*cannot be empty"):
+            model.is_in([])
+
+    def test_choices_rejects_out_of_domain_membership(self) -> None:
+        model = Choices(["gpt-4", "gpt-3.5", "claude"], name="model")
+
+        with pytest.raises(ValueError, match="model.*outside.*choices"):
+            model.not_in(["gpt-four"])
 
     def test_choices_with_boolean_values(self) -> None:
         """Test Choices constraint methods with boolean values."""

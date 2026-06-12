@@ -168,7 +168,7 @@ class TestOptimizedFunctionInitialization:
 
     def test_negative_num_trials(self, simple_function, sample_config_space):
         """Test error with negative max_trials."""
-        with pytest.raises(ValueError, match="max_trials must be non-negative"):
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
             OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,

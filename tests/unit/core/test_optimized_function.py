@@ -572,10 +572,10 @@ class TestOptimizedFunction:
                 assert call_args[1]["dataset"] == sample_dataset
 
     @pytest.mark.asyncio
-    async def test_optimize_zero_max_trials_short_circuits(
+    async def test_optimize_zero_max_trials_rejected(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Ensure optimize() respects max_trials=0 without executing trials."""
+        """Ensure optimize(max_trials=0) fails fast before executing trials."""
         opt_func = OptimizedFunction(
             func=mock_function,
             config_space=sample_config_space,
@@ -583,41 +583,8 @@ class TestOptimizedFunction:
             eval_dataset=sample_dataset,
         )
 
-        with (
-            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
-            patch(
-                "traigent.core.optimized_function.OptimizationOrchestrator"
-            ) as mock_orchestrator_class,
-        ):
-            mock_optimizer = Mock()
-            mock_get_optimizer.return_value = mock_optimizer
-
-            mock_orchestrator = Mock()
-            mock_orchestrator_class.return_value = mock_orchestrator
-
-            from datetime import datetime
-
-            mock_result = OptimizationResult(
-                trials=[],
-                best_config={},
-                best_score=0.0,
-                optimization_id="opt_zero",
-                duration=0.0,
-                convergence_info={},
-                status=OptimizationStatus.COMPLETED,
-                objectives=sample_objectives,
-                algorithm="random",
-                timestamp=datetime.now(),
-                metadata={},
-            )
-            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
-
-            result = await opt_func.optimize(max_trials=0)
-
-            assert result is mock_result
-            assert len(result.trials) == 0
-            assert mock_orchestrator_class.call_args[1]["max_trials"] == 0
-            mock_orchestrator.optimize.assert_awaited_once()
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
+            await opt_func.optimize(max_trials=0)
 
     @pytest.mark.asyncio
     async def test_optimize_with_custom_evaluator(
