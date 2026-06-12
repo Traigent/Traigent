@@ -2581,7 +2581,18 @@ Remediation:
         test_dataset: Dataset | None = None,
         **fixed_config: Any,
     ) -> Any:
-        """Train a local text skill document behind a strict selection gate."""
+        """Train a text skill document behind a strict selection gate.
+
+        Privacy semantics, precisely: no Traigent-managed optimizer is invoked —
+        optimizer calls go only to the caller-supplied ``optimizer_llm``, which
+        RECEIVES ROLLOUT CONTENTS (inputs, expected/actual outputs, metrics) in
+        its reflection prompts. Candidate evaluation runs through this
+        function's configured execution path; end-to-end local training is
+        guaranteed only when ``execution_mode`` is local/edge. Under hybrid
+        modes, trial payloads (including the candidate document as a
+        configuration value) may be submitted to the backend; a warning is
+        emitted in that case.
+        """
 
         from traigent.api.parameter_ranges import Choices
         from traigent.generation import (
@@ -2604,6 +2615,15 @@ Remediation:
         )
         llm = resolve_rewrite_llm(optimizer_llm)
         reflector = Reflector(llm, model_hint=options.optimizer_model)
+        effective_mode = getattr(self, "execution_mode", None)
+        if effective_mode and effective_mode != "edge_analytics":
+            logger.warning(
+                "train_skill candidate evaluation follows this function's "
+                "execution mode (%s): trial payloads, including the candidate "
+                "document as a configuration value, may reach the backend. "
+                "End-to-end local training requires edge_analytics mode.",
+                effective_mode,
+            )
         config_space = dict(self.configuration_space or {})
         resolved_doc_param = self._resolve_skill_doc_param(
             config_space, explicit=doc_param or options.doc_param
@@ -2674,6 +2694,14 @@ Remediation:
         from traigent.api.parameter_ranges import TextDocument
 
         if explicit:
+            if explicit not in config_space:
+                available = ", ".join(sorted(config_space)) or "<empty>"
+                raise ValueError(
+                    f"train_skill doc_param {explicit!r} is not a configuration-space "
+                    f"parameter (available: {available}). Add it to the config space "
+                    "(e.g. as a TextDocument) so the trained document is actually "
+                    "wired into the function."
+                )
             return explicit
 
         candidates: list[str] = []

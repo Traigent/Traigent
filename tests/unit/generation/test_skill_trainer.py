@@ -4,6 +4,7 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -476,8 +477,8 @@ def test_train_skill_honors_explicit_selection_and_test_datasets(
         ],
         name="skillset",
     )
-    selection = Dataset(examples=base.examples[:2], name="explicit_selection")
-    test = Dataset(examples=base.examples[2:4], name="explicit_test")
+    selection = Dataset(examples=base.examples[:5], name="explicit_selection")
+    test = Dataset(examples=base.examples[5:10], name="explicit_test")
     opt = OptimizedFunction(
         func=fn,
         eval_dataset=base,
@@ -645,3 +646,109 @@ def test_optimize_decorator_preserves_text_document_marker() -> None:
         return "ok"
 
     assert isinstance(fn.configuration_space["doc"], TextDocument)
+
+
+def test_explicit_selection_dataset_below_minimum_raises() -> None:
+    dataset = _dataset(20)
+    trainer = SkillTrainer(
+        dataset=dataset,
+        evaluate_fn=_ScriptedEvaluate({"base doc": 0.5}),
+        reflector=_Reflector([]),
+        options=_options(write_artifacts=False),
+        selection_dataset=Dataset(examples=dataset.examples[:3], name="tiny_sel"),
+    )
+
+    with pytest.raises(ValueError, match="at least 5 examples"):
+        trainer.run("base doc")
+
+
+def test_explicit_small_selection_and_test_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    dataset = _dataset(30)
+    trainer = SkillTrainer(
+        dataset=dataset,
+        evaluate_fn=_ScriptedEvaluate({"base doc": 0.5}),
+        reflector=_Reflector([]),
+        options=_options(slow_update=False, meta_skill=False, write_artifacts=False),
+        selection_dataset=Dataset(examples=dataset.examples[:7], name="small_sel"),
+        test_dataset=Dataset(examples=dataset.examples[7:10], name="small_test"),
+    )
+
+    with caplog.at_level("WARNING"):
+        trainer.run("base doc")
+
+    messages = " ".join(record.message for record in caplog.records)
+    assert "only 7 examples" in messages
+    assert "only 3 examples" in messages
+
+
+def test_train_skill_rejects_unknown_explicit_doc_param() -> None:
+    def fn(**kwargs: Any) -> str:
+        return "ok"
+
+    opt = OptimizedFunction(
+        func=fn,
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"doc": Choices(["base"])},
+    )
+
+    with pytest.raises(ValueError, match="not a configuration-space parameter"):
+        opt.train_skill(
+            document="base",
+            doc_param="skil_doc",
+            optimizer_llm=lambda prompt: "{}",
+        )
+
+
+def test_write_artifacts_refuses_symlinked_filename(tmp_path) -> None:
+    from traigent.generation.skill_train.artifacts import write_artifacts
+    from traigent.generation.skill_train.trainer_result import SkillTrainResult
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not clobber", encoding="utf-8")
+    art_dir = tmp_path / "artifacts"
+    art_dir.mkdir()
+    (art_dir / "best_skill.md").symlink_to(victim)
+    result = SkillTrainResult(
+        best_document="doc",
+        best_selection_score=1.0,
+        baseline_selection_score=0.0,
+        test_score=None,
+        evaluation_basis="selection_only",
+        accepted_edits=[],
+        all_edit_records=[],
+        epoch_summaries=[],
+        artifacts_dir=None,
+    )
+
+    with pytest.raises(ValueError, match="symlink"):
+        write_artifacts(art_dir, result, history=[])
+    assert victim.read_text(encoding="utf-8") == "do not clobber"
+
+
+def test_write_artifacts_containment_root_enforced(tmp_path) -> None:
+    from traigent.generation.skill_train.artifacts import write_artifacts
+    from traigent.generation.skill_train.trainer_result import SkillTrainResult
+
+    result = SkillTrainResult(
+        best_document="doc",
+        best_selection_score=1.0,
+        baseline_selection_score=0.0,
+        test_score=None,
+        evaluation_basis="selection_only",
+        accepted_edits=[],
+        all_edit_records=[],
+        epoch_summaries=[],
+        artifacts_dir=None,
+    )
+    root = tmp_path / "storage"
+    escape = tmp_path / "elsewhere" / "run1"
+
+    with pytest.raises(ValueError, match="escapes its storage root"):
+        write_artifacts(escape, result, history=[], containment_root=root)
+
+    inside = root / "skill_train" / "run1"
+    written = write_artifacts(inside, result, history=[], containment_root=root)
+    assert (Path(written) / "best_skill.md").read_text(encoding="utf-8") == "doc"

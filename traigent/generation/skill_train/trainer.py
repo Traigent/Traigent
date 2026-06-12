@@ -329,7 +329,21 @@ class SkillTrainer:
                 "training-data-derived content.",
                 artifacts_dir,
             )
-            result.artifacts_dir = write_artifacts(artifacts_dir, result, history)
+            # Default (non-explicit) directories must stay contained under the
+            # storage root they were derived from; an explicit artifacts_dir is
+            # the caller's deliberate choice and is exempt from containment
+            # (symlinked artifact filenames are refused either way).
+            containment_root = (
+                None
+                if options.artifacts_dir
+                else (self._artifacts_root or Path(".traigent"))
+            )
+            result.artifacts_dir = write_artifacts(
+                artifacts_dir,
+                result,
+                history,
+                containment_root=containment_root,
+            )
         return result
 
     def _resolve_datasets(self) -> tuple[Dataset, Dataset, Dataset | None]:
@@ -355,6 +369,7 @@ class SkillTrainer:
                 0.0,
                 options.split_seed,
             )
+            _validate_explicit_split_sizes(None, self._test_dataset)
             return train, selection, self._test_dataset
 
         selection = self._selection_dataset
@@ -371,6 +386,7 @@ class SkillTrainer:
             raise ValueError(
                 "explicit skill training splits leave no training examples"
             )
+        _validate_explicit_split_sizes(selection, self._test_dataset)
         return train, selection, self._test_dataset
 
     def _evaluate_cached(
@@ -730,6 +746,30 @@ class SkillTrainer:
         run_id = hashlib.sha256(run_basis.encode("utf-8")).hexdigest()[:12]
         root = artifacts_root if artifacts_root is not None else Path(".traigent")
         return str(root / "skill_train" / run_id)
+
+
+def _validate_explicit_split_sizes(
+    selection: Dataset | None, test: Dataset | None
+) -> None:
+    """Mirror split_dataset's size guards for caller-supplied splits."""
+    if selection is not None:
+        count = len(selection.examples)
+        if count < 5:
+            raise ValueError(
+                f"explicit selection dataset requires at least 5 examples, got {count}"
+            )
+        if count < 10:
+            logger.warning(
+                "explicit selection dataset has only %d examples; the "
+                "strictly-greater gate quantizes coarsely below 10.",
+                count,
+            )
+    if test is not None and len(test.examples) < 5:
+        logger.warning(
+            "explicit test dataset has only %d examples; held-out claims will "
+            "be very coarse.",
+            len(test.examples),
+        )
 
 
 def _resolve_metric_name(metrics: dict[str, float]) -> str | None:

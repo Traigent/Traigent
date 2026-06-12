@@ -97,7 +97,12 @@ class SkillTrainOptions(BaseModel):
     )
     privacy_mode: bool = Field(
         True,
-        description="When True, generation runs only on the user's LLM; content never leaves the client.",
+        description=(
+            "When True, optimizer calls go only to the caller-supplied LLM (no "
+            "Traigent-managed optimizer); that LLM receives rollout contents in "
+            "reflection prompts. Candidate evaluation follows the function's "
+            "execution mode — end-to-end local training requires edge_analytics."
+        ),
     )
     max_optimizer_calls: int | None = Field(None, ge=0)
     max_gate_evaluations: int | None = Field(None, ge=0)
