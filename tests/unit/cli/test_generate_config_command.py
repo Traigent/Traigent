@@ -135,7 +135,9 @@ class TestGenerateConfigCLI:
             return_value=_make_result(),
         ):
             runner = CliRunner()
-            result = runner.invoke(generate_config, [str(source_file), "--json-detailed"])
+            result = runner.invoke(
+                generate_config, [str(source_file), "--json-detailed"]
+            )
             assert result.exit_code == 0
             data = json.loads(result.output)
             detailed = data["recommendations"][0]
@@ -245,6 +247,26 @@ class TestGenerateConfigCLI:
 
         with pytest.raises(ValueError, match="outside the allowed base directory"):
             _output_tvl(_make_result(), source_file)
+
+    def test_tvl_output_outside_base_reports_clean_cli_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        safe_dir = tmp_path / "safe"
+        safe_dir.mkdir()
+        source_file = tmp_path / "agent.py"
+        source_file.write_text(SAMPLE_SOURCE)
+        monkeypatch.chdir(safe_dir)
+
+        with patch(
+            "traigent.config_generator.generate_config",
+            return_value=_make_result(),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(generate_config, [str(source_file), "-o", "tvl"])
+
+        assert result.exit_code == 1
+        assert "outside the allowed base directory" in result.output
+        assert "Traceback" not in result.output
 
     def test_apply_decorator(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

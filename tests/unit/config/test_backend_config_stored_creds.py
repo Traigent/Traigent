@@ -386,8 +386,10 @@ class TestCliAuthPayload:
             patch.object(
                 TraigentAuthCLI,
                 "__init__",
-                lambda self: setattr(self, "backend_api_url", "http://test/api/v1")
-                or setattr(self, "backend_url", "http://test"),
+                lambda self: (
+                    setattr(self, "backend_api_url", "http://test/api/v1")
+                    or setattr(self, "backend_url", "http://test")
+                ),
             ),
         ):
             cli = object.__new__(TraigentAuthCLI)
@@ -603,3 +605,19 @@ class TestCentralizedCredentialHints:
             SIGNUP_URL in record.message and record.levelno == logging.DEBUG
             for record in caplog.records
         ), f"Expected {SIGNUP_URL!r} in debug messages: {caplog.messages}"
+
+    def test_get_api_key_happy_path_does_not_log_key_length(self, caplog):
+        import logging
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_API_KEY": "tg_test_key"},  # pragma: allowlist secret
+                clear=True,
+            ),
+            caplog.at_level(logging.INFO, logger="traigent.config.backend_config"),
+        ):
+            assert BackendConfig.get_api_key() == "tg_test_key"
+
+        assert "length" not in caplog.text
+        assert "TRAIGENT_API_KEY" not in caplog.text

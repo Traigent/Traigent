@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from traigent._version import get_version
 from traigent.api.types import OptimizationStatus
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.config.types import ExecutionMode, TraigentConfig
@@ -184,7 +185,7 @@ class LocalAnalytics:
                 "sessions_last_30_days": len(recent_sessions),
                 "days_since_first_use": self._get_days_since_first_use(),
                 # Version and environment (non-sensitive)
-                "sdk_version": "1.1.0",  # Should be dynamic from version
+                "sdk_version": get_version(),
                 "execution_mode": self.config.execution_mode,
                 "timestamp": datetime.now(UTC).isoformat(),
                 # Anonymous user tracking
@@ -279,7 +280,7 @@ class LocalAnalytics:
                     search_space={
                         "type": "analytics",
                         "mode": "local_usage_stats",
-                        "version": stats.get("sdk_version", "1.1.0"),
+                        "version": stats.get("sdk_version") or get_version(),
                     },
                     optimization_config={
                         "objectives": ["track_usage"],  # Placeholder objective

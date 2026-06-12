@@ -44,6 +44,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from traigent._version import get_version
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.logging import get_logger
 
@@ -262,7 +263,7 @@ class WorkflowGraphPayload:
     edges: list[WorkflowEdge]
     loops: list[WorkflowLoop] = field(default_factory=list)
     experiment_run_id: str | None = None
-    sdk_version: str = "1.0.0"
+    sdk_version: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -272,7 +273,7 @@ class WorkflowGraphPayload:
             "nodes": [n.to_dict() for n in self.nodes],
             "edges": [e.to_dict() for e in self.edges],
             "loops": [loop.to_dict() for loop in self.loops],
-            "sdk_version": self.sdk_version,
+            "sdk_version": self.sdk_version or get_version(),
         }
         if self.experiment_run_id:
             result["experiment_run_id"] = self.experiment_run_id
@@ -1213,7 +1214,7 @@ class WorkflowTracesTracker:
         experiment_id: str,
         experiment_run_id: str,
         graph: Any,
-        sdk_version: str = "1.0.0",
+        sdk_version: str | None = None,
     ) -> str | None:
         """Extract and send a workflow graph from a LangGraph instance.
 
@@ -1237,7 +1238,7 @@ class WorkflowTracesTracker:
             nodes=nodes,
             edges=edges,
             loops=loops,
-            sdk_version=sdk_version,
+            sdk_version=sdk_version or get_version(),
         )
 
         response = self.client.ingest_traces(graph=graph_payload)
@@ -1258,7 +1259,7 @@ class WorkflowTracesTracker:
         nodes: list[dict[str, Any]],
         edges: list[dict[str, Any]],
         loops: list[dict[str, Any]] | None = None,
-        sdk_version: str = "1.0.0",
+        sdk_version: str | None = None,
     ) -> str | None:
         """Send a raw workflow graph without LangGraph extraction.
 
@@ -1306,7 +1307,7 @@ class WorkflowTracesTracker:
                 )
                 for loop in (loops or [])
             ],
-            sdk_version=sdk_version,
+            sdk_version=sdk_version or get_version(),
         )
 
         response = self.client.ingest_traces(graph=graph_payload)

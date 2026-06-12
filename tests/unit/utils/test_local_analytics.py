@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
+from traigent._version import get_version
 from traigent.api.types import OptimizationStatus
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.config.types import ExecutionMode, TraigentConfig
@@ -419,7 +420,7 @@ class TestCollectUsageStats:
             stats = analytics_instance.collect_usage_stats()
 
             assert "sdk_version" in stats
-            assert stats["sdk_version"] == "1.1.0"
+            assert stats["sdk_version"] == get_version()
 
     def test_collect_usage_stats_includes_execution_mode(
         self, analytics_instance: LocalAnalytics

@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from traigent._version import get_version
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.integrations.observability import workflow_traces as wt_module
 from traigent.integrations.observability.workflow_traces import (
@@ -346,6 +347,20 @@ class TestWorkflowGraphPayload:
         assert len(result["nodes"]) == 3
         assert len(result["edges"]) == 3
         assert result["sdk_version"] == "1.0.0"
+
+    def test_to_dict_defaults_sdk_version_from_resolver(
+        self, sample_nodes: list[WorkflowNode], sample_edges: list[WorkflowEdge]
+    ) -> None:
+        """Test default graph payload SDK version uses package metadata."""
+        graph = WorkflowGraphPayload(
+            experiment_id="exp_123",
+            nodes=sample_nodes,
+            edges=sample_edges,
+        )
+
+        result = graph.to_dict()
+
+        assert result["sdk_version"] == get_version()
 
     def test_compute_hash_deterministic(
         self, sample_nodes: list[WorkflowNode], sample_edges: list[WorkflowEdge]

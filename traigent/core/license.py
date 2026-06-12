@@ -48,6 +48,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.env_config import _is_truthy_env_value
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,7 +171,7 @@ class LicenseValidator:
         self._offline_mode = (
             offline_mode
             if offline_mode is not None
-            else os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true"
+            else _is_truthy_env_value(os.environ.get("TRAIGENT_OFFLINE_MODE", ""))
         )
         # Track the path's origin: explicit caller paths are trusted and
         # may live anywhere on disk, while env-sourced paths are

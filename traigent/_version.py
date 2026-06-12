@@ -10,8 +10,6 @@ import importlib.metadata
 import os
 from pathlib import Path
 
-_FALLBACK_VERSION = "0.12.0"
-
 
 def _read_pyproject_version() -> str | None:
     """Read version from pyproject.toml without external dependencies."""
@@ -43,10 +41,15 @@ def get_version() -> str:
     1. TRAIGENT_FORCE_VERSION env var (override for testing)
     2. pyproject.toml (development mode - single source of truth)
     3. Installed package metadata (pip-installed mode)
-    4. Hardcoded fallback
+    4. Loud failure if neither source is available
 
     Returns:
         Version string
+
+    Raises:
+        RuntimeError: If neither pyproject.toml nor installed package metadata
+            can provide a version. Returning a hand-maintained fallback risks
+            silently reporting a stale SDK version.
     """
     if override := os.getenv("TRAIGENT_FORCE_VERSION"):
         return override
@@ -60,9 +63,15 @@ def get_version() -> str:
     try:
         return importlib.metadata.version("traigent")
     except importlib.metadata.PackageNotFoundError:
-        pass
+        raise RuntimeError(
+            "Unable to resolve Traigent SDK version from pyproject.toml or "
+            "installed package metadata"
+        ) from None
 
-    return _FALLBACK_VERSION
+    raise RuntimeError(
+        "Unable to resolve Traigent SDK version from pyproject.toml or "
+        "installed package metadata"
+    )
 
 
 def get_version_info() -> dict[str, str]:

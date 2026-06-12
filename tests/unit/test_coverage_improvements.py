@@ -69,7 +69,7 @@ def test_version_package_metadata_path():
 
 
 def test_version_package_metadata_not_found():
-    """Test fallback when package metadata is not found."""
+    """Test loud failure when package metadata is not found."""
     import importlib
     import importlib.metadata
 
@@ -82,10 +82,8 @@ def test_version_package_metadata_not_found():
                 "importlib.metadata.version",
                 side_effect=importlib.metadata.PackageNotFoundError("traigent"),
             ):
-                importlib.reload(version_module)
-                result = version_module.get_version()
-                # Should fall back to hardcoded version
-                assert result == version_module._FALLBACK_VERSION
+                with pytest.raises(RuntimeError, match="Unable to resolve"):
+                    importlib.reload(version_module)
 
     # Clean up
     if "TRAIGENT_USE_PACKAGE_METADATA" in os.environ:
@@ -104,6 +102,7 @@ def test_get_version_info():
     assert "patch" in info
     # Verify version info is consistent with get_version()
     from traigent._version import get_version
+
     expected_parts = get_version().split(".")
     assert info["major"] == expected_parts[0]
     assert info["minor"] == expected_parts[1]
