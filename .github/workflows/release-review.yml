@@ -241,6 +241,10 @@ jobs:
         uses: github/codeql-action/init@v4.36.0
         with:
           languages: python
+          # security-extended adds CodeQL's deeper data-flow/taint queries on
+          # top of the default suite (CWE-532 sensitive-data-in-logs, injection,
+          # SSRF, cleartext storage). Alerts surface in the Security tab.
+          queries: security-extended
       - name: Perform CodeQL analysis
         id: codeql_analyze
         continue-on-error: true
