@@ -382,6 +382,7 @@ class OptimizedFunction:
         # optimize_with_guidance when not overridden at the call site.
         self.prompt_rewrite_options = kwargs.pop("prompt_rewrite", None)
         self.grow_dataset_options = kwargs.pop("grow_dataset", None)
+        self.skill_train_options = kwargs.pop("skill_train", None)
         # Store core parameters
         self._store_core_parameters(
             func,
@@ -2053,8 +2054,7 @@ Remediation:
 
         warnings.warn(message, UserWarning, stacklevel=3)
         logger.info(
-            "Proceeding with unpriced models after interactive user "
-            "confirmation: %s",
+            "Proceeding with unpriced models after interactive user confirmation: %s",
             ", ".join(missing),
         )
 
@@ -2471,14 +2471,6 @@ Remediation:
             },
         )
 
-    def set_eval_dataset_override(self, dataset: Dataset | None) -> None:
-        """Pin the dataset returned by ``_load_dataset``.
-
-        Used by guided generation so a grown dataset persists across
-        re-optimization rounds. Pass ``None`` to clear.
-        """
-        self._dataset_override = dataset
-
     def optimize_with_guidance(
         self,
         provider: Any,
@@ -2577,6 +2569,299 @@ Remediation:
         finally:
             self.set_eval_dataset_override(None)
         return outcome.best_result
+
+    def train_skill(
+        self,
+        *,
+        document: str,
+        optimizer_llm: Any = None,
+        skill_train: Any = None,
+        doc_param: str | None = None,
+        selection_dataset: Dataset | None = None,
+        test_dataset: Dataset | None = None,
+        **fixed_config: Any,
+    ) -> Any:
+        """Train a text skill document behind a strict selection gate.
+
+        Privacy semantics, precisely: no Traigent-managed optimizer is invoked —
+        optimizer calls go only to the caller-supplied ``optimizer_llm``, which
+        RECEIVES ROLLOUT CONTENTS (inputs, expected/actual outputs, metrics) in
+        its reflection prompts. Candidate evaluation runs through this
+        function's configured execution path; end-to-end local training is
+        guaranteed only when ``execution_mode`` is local/edge. Under hybrid
+        modes, trial payloads (including the candidate document as a
+        configuration value) may be submitted to the backend; a warning is
+        emitted in that case.
+        """
+
+        from traigent.api.parameter_ranges import Choices
+        from traigent.generation import (
+            SkillTrainOptions,
+            merge_prompt_candidates,
+            resolve_rewrite_llm,
+        )
+        from traigent.generation.skill_train.reflection import Reflector
+        from traigent.generation.skill_train.trainer import RolloutRecord, SkillTrainer
+
+        def _coerce(spec: Any) -> SkillTrainOptions:
+            if spec is None:
+                return SkillTrainOptions()
+            if isinstance(spec, SkillTrainOptions):
+                return spec
+            return SkillTrainOptions(**spec)
+
+        options = _coerce(
+            skill_train if skill_train is not None else self.skill_train_options
+        )
+        llm = resolve_rewrite_llm(optimizer_llm)
+        reflector = Reflector(llm, model_hint=options.optimizer_model)
+        effective_mode = getattr(self, "execution_mode", None)
+        if effective_mode and effective_mode != "edge_analytics":
+            logger.warning(
+                "train_skill candidate evaluation follows this function's "
+                "execution mode (%s): trial payloads, including the candidate "
+                "document as a configuration value, may reach the backend. "
+                "End-to-end local training requires edge_analytics mode.",
+                effective_mode,
+            )
+        config_space = dict(self.configuration_space or {})
+        resolved_doc_param = self._resolve_skill_doc_param(
+            config_space, explicit=doc_param or options.doc_param
+        )
+        pinned = self._preflight_skill_fixed_config(
+            config_space,
+            doc_param=resolved_doc_param,
+            fixed_config=fixed_config,
+        )
+        dataset = self._load_dataset()
+
+        def _evaluate_document(
+            text: str, split_dataset: Dataset
+        ) -> tuple[float, list[RolloutRecord]]:
+            evaluation_space: dict[str, Any] = {
+                name: Choices([value]) for name, value in pinned.items()
+            }
+            evaluation_space[resolved_doc_param] = Choices([text])
+            self.set_eval_dataset_override(split_dataset)
+            try:
+                result = self.optimize_sync(
+                    configuration_space=evaluation_space,
+                    max_trials=1,
+                )
+            finally:
+                self.set_eval_dataset_override(None)
+            return self._skill_result_to_rollouts(result, options)
+
+        trainer = SkillTrainer(
+            dataset=dataset,
+            evaluate_fn=_evaluate_document,
+            reflector=reflector,
+            options=options,
+            selection_dataset=selection_dataset,
+            test_dataset=test_dataset,
+            artifacts_root=self.local_storage_path,
+        )
+        result = trainer.run(document)
+        result.summary = {
+            **result.summary,
+            "doc_param": resolved_doc_param,
+            "evaluation_basis": result.evaluation_basis,
+        }
+        if resolved_doc_param in config_space:
+            merged = merge_prompt_candidates(
+                config_space, resolved_doc_param, [result.best_document]
+            )
+            result.summary["merged_config_space"] = {
+                **config_space,
+                resolved_doc_param: merged,
+            }
+        return result
+
+    def set_eval_dataset_override(self, dataset: Dataset | None) -> None:
+        """Pin the dataset returned by ``_load_dataset``.
+
+        Used by guided generation so a grown dataset persists across
+        re-optimization rounds. Pass ``None`` to clear.
+        """
+        self._dataset_override = dataset
+
+    def _resolve_skill_doc_param(
+        self,
+        config_space: dict[str, Any],
+        *,
+        explicit: str | None,
+    ) -> str:
+        from traigent.api.parameter_ranges import TextDocument
+
+        if explicit:
+            if explicit not in config_space:
+                available = ", ".join(sorted(config_space)) or "<empty>"
+                raise ValueError(
+                    f"train_skill doc_param {explicit!r} is not a configuration-space "
+                    f"parameter (available: {available}). Add it to the config space "
+                    "(e.g. as a TextDocument) so the trained document is actually "
+                    "wired into the function."
+                )
+            return explicit
+
+        candidates: list[str] = []
+        for name, value in config_space.items():
+            if isinstance(value, TextDocument):
+                candidates.append(name)
+
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise ValueError(
+                "train_skill requires doc_param because the config space has no "
+                "TextDocument parameter to train."
+            )
+        raise ValueError(
+            "train_skill requires doc_param because multiple TextDocument "
+            f"parameters could hold the document: {sorted(candidates)}"
+        )
+
+    def _preflight_skill_fixed_config(
+        self,
+        config_space: dict[str, Any],
+        *,
+        doc_param: str,
+        fixed_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        pinned: dict[str, Any] = {}
+        unpinned: list[str] = []
+        default_config = dict(getattr(self, "default_config", {}) or {})
+
+        for name, spec in config_space.items():
+            if name == doc_param:
+                continue
+            if name in fixed_config:
+                pinned[name] = fixed_config[name]
+                continue
+            if name in default_config:
+                pinned[name] = default_config[name]
+                continue
+
+            default_getter = getattr(spec, "get_default", None)
+            if callable(default_getter):
+                default_value = default_getter()
+                if default_value is not None:
+                    pinned[name] = default_value
+                    continue
+
+            values = getattr(spec, "values", None)
+            if values is not None and len(values) == 1:
+                pinned[name] = list(values)[0]
+                continue
+            if isinstance(spec, (list, tuple)) and len(spec) == 1:
+                pinned[name] = spec[0]
+                continue
+            if not isinstance(spec, (list, tuple, dict)) and values is None:
+                pinned[name] = spec
+                continue
+            unpinned.append(name)
+
+        if unpinned:
+            raise ValueError(
+                "train_skill requires every non-document config parameter to be "
+                "pinned. Provide fixed_config values or single defaults for: "
+                + ", ".join(sorted(unpinned))
+            )
+        return pinned
+
+    def _skill_result_to_rollouts(
+        self, result: Any, options: Any
+    ) -> tuple[float, list[Any]]:
+        if not getattr(result, "trials", None):
+            raise RuntimeError("train_skill optimization produced no trials")
+        trial = result.trials[0]
+        score = self._skill_extract_score(result, trial, options.score_metric)
+        entries: Any = []
+        metadata = getattr(trial, "metadata", None)
+        if isinstance(metadata, dict):
+            entries = metadata.get("example_results") or []
+        rollouts = [
+            self._skill_entry_to_rollout(
+                entry, options.score_metric, options.failure_threshold
+            )
+            for entry in entries
+        ]
+        return score, rollouts
+
+    def _skill_extract_score(
+        self, result: Any, trial: Any, score_metric: str | None
+    ) -> float:
+        metrics = dict(getattr(trial, "metrics", {}) or {})
+        result_metrics = dict(getattr(result, "metrics", {}) or {})
+        if score_metric is not None:
+            for source in (metrics, result_metrics):
+                value = source.get(score_metric)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return float(value)
+
+        best_score = getattr(result, "best_score", None)
+        if isinstance(best_score, (int, float)) and not isinstance(best_score, bool):
+            return float(best_score)
+
+        objective_names = list(getattr(result, "objectives", []) or [])
+        for name in [*(objective_names[:1]), "accuracy", "score"]:
+            value = metrics.get(name, result_metrics.get(name))
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+
+        for source in (metrics, result_metrics):
+            for value in source.values():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return float(value)
+        raise RuntimeError("train_skill could not resolve a numeric trial score")
+
+    def _skill_entry_to_rollout(
+        self,
+        entry: Any,
+        score_metric: str | None,
+        failure_threshold: float,
+    ) -> Any:
+        from traigent.generation.skill_train.trainer import RolloutRecord
+
+        def _get(name: str, default: Any = None) -> Any:
+            if isinstance(entry, Mapping):
+                return entry.get(name, default)
+            return getattr(entry, name, default)
+
+        metrics_raw = _get("metrics", {}) or {}
+        metrics = {
+            key: float(value)
+            for key, value in dict(metrics_raw).items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        success_value = _get("success", None)
+        if success_value is None:
+            success_value = bool(getattr(entry, "is_successful", False))
+        success = bool(success_value)
+        metric = score_metric or self._skill_resolve_metric_name(metrics)
+        metric_value = metrics.get(metric) if metric else None
+        is_failure = not success or (
+            isinstance(metric_value, (int, float))
+            and float(metric_value) < failure_threshold
+        )
+        return RolloutRecord(
+            example_id=str(_get("example_id", "")),
+            input_data=_get("input_data", {}),
+            expected=_get("expected_output", _get("expected")),
+            actual=_get("actual_output", _get("actual")),
+            metrics=metrics,
+            success=success,
+            is_failure=is_failure,
+        )
+
+    @staticmethod
+    def _skill_resolve_metric_name(metrics: dict[str, float]) -> str | None:
+        for preferred in ("accuracy", "score", "primary"):
+            if preferred in metrics:
+                return preferred
+        if metrics:
+            return sorted(metrics)[0]
+        return None
 
     def _load_dataset(self) -> Dataset:
         """Load evaluation dataset.

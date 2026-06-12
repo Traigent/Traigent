@@ -911,6 +911,15 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         )
 
 
+class TextDocument(Choices[str]):
+    """Single trainable text document parameter for skill training."""
+
+    trainable = True
+
+    def __init__(self, initial_text: str, name: str | None = None) -> None:
+        super().__init__((initial_text,), name=name)
+
+
 # =============================================================================
 # Utility Functions
 # =============================================================================
@@ -1088,14 +1097,17 @@ def _process_param_entry(
         # D-1: Auto-assign name from decorator kwarg if not already set
         param = value
         if param.name is None:
-            try:
-                # Cast to Any since all ParameterRange subclasses are dataclasses
-                param = replace(cast(Any, param), name=key)
-            except TypeError:
-                # Fallback if replace fails (shouldn't happen with our dataclasses)
-                logger.debug(
-                    f"Could not auto-assign name '{key}' to {type(value).__name__}"
-                )
+            if isinstance(param, TextDocument):
+                param = TextDocument(param.values[0], name=key)
+            else:
+                try:
+                    # Cast to Any since all ParameterRange subclasses are dataclasses
+                    param = replace(cast(Any, param), name=key)
+                except TypeError:
+                    # Fallback if replace fails (shouldn't happen with our dataclasses)
+                    logger.debug(
+                        f"Could not auto-assign name '{key}' to {type(value).__name__}"
+                    )
         result[key] = param.to_config_value()
         default_val = param.get_default()
         if default_val is not None:
@@ -1170,6 +1182,7 @@ __all__ = [
     "IntRange",
     "LogRange",
     "Choices",
+    "TextDocument",
     "is_parameter_range",
     "is_float_range_config_dict",
     "is_int_range_config_dict",

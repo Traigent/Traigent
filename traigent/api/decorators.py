@@ -59,6 +59,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
     ParameterRange,
+    TextDocument,
     is_inline_param_definition,
     normalize_configuration_space,
 )
@@ -1519,6 +1520,9 @@ def _normalize_config_space_and_defaults(
         normalized_space, param_defaults = normalize_configuration_space(
             configuration_space, inline_params
         )
+        _restore_text_document_markers(
+            normalized_space, configuration_space, inline_params
+        )
         if param_defaults:
             default_config = {**param_defaults, **(default_config or {})}
 
@@ -1526,6 +1530,21 @@ def _normalize_config_space_and_defaults(
         constraints = config_space_constraints
 
     return normalized_space, default_config, constraints
+
+
+def _restore_text_document_markers(
+    normalized_space: dict[str, Any],
+    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
+    inline_params: dict[str, Any],
+) -> None:
+    """Keep train_skill auto-discovery markers after decorator normalization."""
+
+    for source in _iter_constraint_scope_sources(
+        raw_configuration_space, inline_params
+    ):
+        for name, value in source.items():
+            if isinstance(value, TextDocument):
+                normalized_space[name] = value
 
 
 def _resolve_auto_detect_tvars_mode(
@@ -1697,6 +1716,7 @@ def optimize(  # NOSONAR(S107)
     # Guided generation: configure here, then run via fn.optimize_with_guidance(provider)
     prompt_rewrite: dict[str, Any] | None = None,
     grow_dataset: dict[str, Any] | None = None,
+    skill_train: dict[str, Any] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -2404,6 +2424,7 @@ def optimize(  # NOSONAR(S107)
             # Guided-generation defaults (consumed by optimize_with_guidance)
             prompt_rewrite=prompt_rewrite,
             grow_dataset=grow_dataset,
+            skill_train=skill_train,
             **combined_runtime_overrides,
         )
 

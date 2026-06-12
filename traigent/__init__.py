@@ -187,6 +187,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "LogRange": ("traigent.api.parameter_ranges", "LogRange"),
     "ParameterRange": ("traigent.api.parameter_ranges", "ParameterRange"),
     "Range": ("traigent.api.parameter_ranges", "Range"),
+    "TextDocument": ("traigent.api.parameter_ranges", "TextDocument"),
     # TVL constraint system
     "AndCondition": ("traigent.api.constraints", "AndCondition"),
     "BoolExpr": ("traigent.api.constraints", "BoolExpr"),
@@ -459,6 +460,7 @@ __all__ = [
     "IntRange",
     "LogRange",
     "Choices",
+    "TextDocument",
     "ParameterRange",
     # TVL constraint system
     "AndCondition",

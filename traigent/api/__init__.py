@@ -53,6 +53,7 @@ __all__ = [
     "SafetyThreshold",
     "SafetyValidator",
     "get_available_safety_presets",
+    "TextDocument",
 ]
 
 _EXPORT_MAP = {
@@ -126,6 +127,7 @@ _EXPORT_MAP = {
         "traigent.api.safety",
         "get_available_safety_presets",
     ),
+    "TextDocument": ("traigent.api.parameter_ranges", "TextDocument"),
 }
 
 
