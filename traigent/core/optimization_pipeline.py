@@ -311,6 +311,8 @@ def build_metric_functions(
         target_metric = "accuracy"
     elif "score" in objectives:
         target_metric = "score"
+    elif objectives:
+        target_metric = objectives[0]
 
     if target_metric and target_metric not in effective_metric_functions:
         effective_metric_functions[target_metric] = scoring_function
