@@ -115,9 +115,8 @@ async def test_local_lane_final_trial_metrics_capped_after_total_cost(
     assert len(metrics) <= TOTAL_MEASURES_CEILING
     # ALL 12 non-user (reserved) keys must survive the cap; only user keys shrink.
     present_non_user = {k for k in metrics if not k.startswith("composite_metric_")}
-    assert EXPECTED_NON_USER_KEYS <= present_non_user, (
-        f"reserved keys dropped: {EXPECTED_NON_USER_KEYS - present_non_user}"
-    )
+    missing_reserved = EXPECTED_NON_USER_KEYS - present_non_user
+    assert not missing_reserved, f"reserved keys dropped: {missing_reserved}"
     # total_cost (the post-cap writer) is present and is a reserved key, not a
     # casualty of the ceiling.
     assert "total_cost" in metrics
@@ -249,6 +248,43 @@ def test_near_miss_bad_value_logs_warning_no_unpack(
     ]
     assert len(warnings) == 1
     assert "good_key" in warnings[0].getMessage()
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -float("inf")])
+def test_near_miss_non_finite_value_logs_warning_no_unpack(
+    bad_value: float,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Non-finite numeric values are rejected before aggregation."""
+    raw = ("YES", {"score": bad_value})
+    with caplog.at_level(logging.WARNING, logger="traigent.evaluators.base"):
+        output, user_metrics = SimpleScoringEvaluator._unpack_user_metrics(raw)
+
+    assert output is raw
+    assert user_metrics is None
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and "not treated as" in r.getMessage().lower()
+    ]
+    assert len(warnings) == 1
+    assert "score" in warnings[0].getMessage()
+    assert "finite number" in warnings[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_non_finite_tuple_metric_does_not_reach_aggregate() -> None:
+    """NaN/Inf tuple metrics must not poison aggregate metrics."""
+
+    async def func(text: str) -> tuple[str, dict[str, float]]:
+        return "YES", {"custom_nan_metric": float("nan")}
+
+    result = await _local_evaluator().evaluate(func, {}, _two_example_dataset())
+
+    assert "custom_nan_metric" not in result.metrics
+    assert all(
+        "custom_nan_metric" not in example.metrics for example in result.example_results
+    )
 
 
 @pytest.mark.parametrize(

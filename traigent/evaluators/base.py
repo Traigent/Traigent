@@ -442,6 +442,13 @@ def _coerce_dataset_example_mapping(
     return item[input_key], expected_output, metadata
 
 
+def _example_correlation_key(example: EvaluationExample, index: int) -> Any:
+    """Return the key used to correlate captured LLM responses for an example."""
+    if example.metadata:
+        return example.metadata.get("example_id", f"example_{index}")
+    return f"example_{index}"
+
+
 @dataclass
 class Dataset:
     """Dataset for evaluation."""
@@ -462,6 +469,25 @@ class Dataset:
         for i, example in enumerate(self.examples):
             if not isinstance(example, EvaluationExample):
                 raise TypeError(f"Example {i} must be an EvaluationExample instance")
+
+        seen_example_ids: dict[Any, int] = {}
+        for i, example in enumerate(self.examples):
+            example_id = _example_correlation_key(example, i)
+            try:
+                previous_index = seen_example_ids.get(example_id)
+            except TypeError as exc:
+                raise ValidationError(
+                    f"Example {i} in dataset '{self.name}' has an unhashable "
+                    f"example_id {example_id!r}; example_id values must be "
+                    "hashable and unique"
+                ) from exc
+            if previous_index is not None:
+                raise ValidationError(
+                    f"Duplicate example_id {example_id!r} in dataset "
+                    f"'{self.name}' at examples {previous_index} and {i}; "
+                    "example_id values must be unique"
+                )
+            seen_example_ids[example_id] = i
 
     @classmethod
     def from_jsonl(cls, file_path: str) -> Dataset:
@@ -530,6 +556,23 @@ class Dataset:
         """Add an example to the dataset."""
         if not isinstance(example, EvaluationExample):
             raise TypeError("Example must be an EvaluationExample instance")
+        new_index = len(self.examples)
+        new_example_id = _example_correlation_key(example, new_index)
+        try:
+            hash(new_example_id)
+            for i, existing in enumerate(self.examples):
+                if _example_correlation_key(existing, i) == new_example_id:
+                    raise ValidationError(
+                        f"Duplicate example_id {new_example_id!r} in dataset "
+                        f"'{self.name}' at examples {i} and {new_index}; "
+                        "example_id values must be unique"
+                    )
+        except TypeError as exc:
+            raise ValidationError(
+                f"Example {new_index} in dataset '{self.name}' has an "
+                f"unhashable example_id {new_example_id!r}; example_id values "
+                "must be hashable and unique"
+            ) from exc
         self.examples.append(example)
 
 
@@ -1157,7 +1200,11 @@ class BaseEvaluator(ABC):
                     USER_METRIC_KEY_PATTERN.pattern,
                 )
                 return raw, None
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
                 logger.warning(
                     "Return value %r looks like an (output, metrics) tuple but "
                     "value %r for key %r is not a finite number (got %s); the "
@@ -2251,11 +2298,7 @@ class BaseEvaluator(ABC):
         Returns:
             ExampleResult with detailed information
         """
-        example_id = (
-            example.metadata.get("example_id", f"example_{example_index}")
-            if example.metadata
-            else f"example_{example_index}"
-        )
+        example_id = _example_correlation_key(example, example_index)
         start_time = time.time()
 
         if getattr(self, "privacy_enabled", False):

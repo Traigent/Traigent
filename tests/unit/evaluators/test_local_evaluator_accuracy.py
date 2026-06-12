@@ -173,8 +173,7 @@ async def test_optimize_scoring_function_called_with_prediction_expected_plain_r
     assert result.best_score == pytest.approx(0.75)
     assert len(result.trials) == 2
     assert all(
-        trial.metrics["accuracy"] == pytest.approx(0.75)
-        for trial in result.trials
+        trial.metrics["accuracy"] == pytest.approx(0.75) for trial in result.trials
     )
 
 
@@ -203,6 +202,64 @@ async def test_optimize_scoring_function_uses_unpacked_tuple_output(
     assert calls == [("YES", "YES")]
     assert result.best_score == pytest.approx(0.4)
     assert result.trials[0].metrics["accuracy"] == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_optimize_scoring_function_binds_to_custom_primary_objective(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_backend_tracking(monkeypatch)
+    calls: list[tuple[str, str]] = []
+
+    def scorer(prediction: str, expected: str) -> float:
+        calls.append((prediction, expected))
+        return 0.9 if prediction == expected else 0.0
+
+    @traigent.optimize(
+        eval_dataset=Dataset([EvaluationExample({"text": "q"}, "YES")], name="g4"),
+        objectives=["quality"],
+        configuration_space={"style": ["a", "b"]},
+        scoring_function=scorer,
+    )
+    def agent(text: str) -> str:
+        return "YES"
+
+    result = await agent.optimize(algorithm="grid", max_trials=2)
+
+    assert calls == [("YES", "YES"), ("YES", "YES")]
+    assert result.best_score == pytest.approx(0.9)
+    assert len(result.trials) == 2
+    assert all(
+        trial.metrics["quality"] == pytest.approx(0.9) for trial in result.trials
+    )
+
+
+@pytest.mark.asyncio
+async def test_optimize_dict_returning_scoring_function_merges_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_backend_tracking(monkeypatch)
+
+    def scorer(prediction: str, expected: str) -> dict[str, float]:
+        return {
+            "accuracy": 1.0 if prediction == expected else 0.0,
+            "f1": 0.5,
+        }
+
+    @traigent.optimize(
+        eval_dataset=Dataset([EvaluationExample({"text": "q"}, "YES")], name="g4"),
+        objectives=["accuracy"],
+        configuration_space={"style": ["a"]},
+        scoring_function=scorer,
+    )
+    def agent(text: str) -> str:
+        return "YES"
+
+    result = await agent.optimize(algorithm="grid", max_trials=1)
+
+    assert result.best_score == pytest.approx(1.0)
+    assert result.trials[0].metrics["accuracy"] == pytest.approx(1.0)
+    assert result.trials[0].metrics["f1"] == pytest.approx(0.5)
 
 
 @pytest.mark.asyncio
