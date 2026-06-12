@@ -11,6 +11,7 @@ MAX_IDENTIFIER_LENGTH = 128
 MAX_NAME_LENGTH = 255
 MAX_ENVIRONMENT_LENGTH = 64
 MAX_LABEL_LENGTH = 64
+MAX_STATUS_LENGTH = 64
 
 
 def utc_now() -> datetime:
@@ -196,6 +197,7 @@ class ObservationDTO:
     def __post_init__(self) -> None:
         _validate_required_string("id", self.id, max_length=MAX_IDENTIFIER_LENGTH)
         _validate_required_string("name", self.name, max_length=MAX_NAME_LENGTH)
+        _validate_required_string("status", self.status, max_length=MAX_STATUS_LENGTH)
         _validate_optional_string(
             "parent_observation_id",
             self.parent_observation_id,
@@ -212,6 +214,8 @@ class ObservationDTO:
         _validate_non_negative("output_tokens", self.output_tokens)
         _validate_non_negative("total_tokens", self.total_tokens)
         _validate_non_negative("cost_usd", self.cost_usd)
+        if self.type is ObservationType.EVENT and self.children:
+            raise ValueError("event observations cannot have children")
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -271,6 +275,7 @@ class TraceDTO:
     def __post_init__(self) -> None:
         _validate_required_string("id", self.id, max_length=MAX_IDENTIFIER_LENGTH)
         _validate_required_string("name", self.name, max_length=MAX_NAME_LENGTH)
+        _validate_required_string("status", self.status, max_length=MAX_STATUS_LENGTH)
         _validate_optional_string(
             "session_id", self.session_id, max_length=MAX_IDENTIFIER_LENGTH
         )

@@ -103,6 +103,7 @@ class _EchoCanaryEvaluator(BaseEvaluator):
     """Evaluator that returns the dataset's canary-laden content as the output."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.call_count = 0
 
     async def evaluate(
@@ -401,9 +402,8 @@ def test_canary_regexes_match_their_own_values() -> None:
     meaningless even if it passes.
     """
     for label, value, rx in CANARIES:
-        assert rx.search(value), (
-            f"canary regex for {label!r} does not match its seed value"
-        )
+        message = f"canary regex for {label!r} does not match its seed value"
+        assert rx.search(value), message
 
 
 def test_contains_canary_detects_partial_embeddings() -> None:
@@ -414,9 +414,8 @@ def test_contains_canary_detects_partial_embeddings() -> None:
     """
     for label, value, _rx in CANARIES:
         blob = f"some prefix [{value}] suffix"
-        assert label in _contains_canary(blob), (
-            f"scanner missed {label!r} when embedded in surrounding text"
-        )
+        message = f"scanner missed {label!r} when embedded in surrounding text"
+        assert label in _contains_canary(blob), message
 
 
 def test_contains_canary_is_quiet_on_clean_text() -> None:
