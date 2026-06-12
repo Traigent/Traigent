@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/lifecycle/agent_playbook_schema.json",
+  "title": "AgentPlaybook",
+  "description": "Agent build playbook (traigent.playbook.yaml): a versioned lifecycle artifact in the user's repo pinning each agent-build stage (dataset, metric, evaluator, optimize, gate). Lifecycle states per stage: pending -> in_progress -> pinned; deprecated requires deprecation_reason. 'stale' is COMPUTED by tooling (an earlier stage re-pinned after a later one was pinned), never stored. Optimization runs record a playbook snapshot hash; in-flight runs stay locked to their snapshot. Semantic rule enforced by tooling, not this schema: status=pinned implies pin is present.",
+  "type": "object",
+  "required": ["playbook_version", "agent", "stages"],
+  "additionalProperties": false,
+  "properties": {
+    "playbook_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver of this playbook instance; bump on meaningful edits."
+    },
+    "agent": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "entrypoint": {"type": "string", "description": "module:function or file path of the callable under optimization"},
+        "agent_type": {"type": "string", "description": "Recommendation-catalog vocabulary, e.g. code_gen | rag | general"}
+      }
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "metric", "evaluator", "optimize", "gate"],
+      "properties": {
+        "dataset": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {"$ref": "#/definitions/stage_status"},
+            "pinned_at": {"type": "string", "format": "date-time"},
+            "deprecation_reason": {"type": "string"},
+            "pin": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["dataset_ref"],
+              "properties": {
+                "dataset_ref": {"type": "string", "minLength": 1, "description": "Local path or traigent:// dataset reference"},
+                "revision": {"type": "integer", "minimum": 1},
+                "holdout_ref": {"type": "string", "description": "Held-out split never used for tuning claims"}
+              }
+            }
+          }
+        },
+        "metric": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {"$ref": "#/definitions/stage_status"},
+            "pinned_at": {"type": "string", "format": "date-time"},
+            "deprecation_reason": {"type": "string"},
+            "pin": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["metric_name"],
+              "properties": {
+                "measure_type": {"type": "string", "enum": ["sanity_check", "accuracy", "quality", "latency", "safety", "efficiency", "reliability"]},
+                "metric_name": {"type": "string", "minLength": 1},
+                "metric_output_type": {"type": "string", "enum": ["binary", "discrete", "continuous", "ranking"]}
+              }
+            }
+          }
+        },
+        "evaluator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {"$ref": "#/definitions/stage_status"},
+            "pinned_at": {"type": "string", "format": "date-time"},
+            "deprecation_reason": {"type": "string"},
+            "pin": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["evaluator_ref"],
+              "properties": {
+                "evaluation_method": {"type": "string", "enum": ["deterministic", "llm_based", "statistical", "hybrid"]},
+                "evaluator_ref": {"type": "string", "minLength": 1, "description": "module:symbol of the evaluator / metric_functions / custom_evaluator wiring"},
+                "audit_ref": {"type": "string", "description": "Pointer to the evaluator audit evidence (e.g. tests or report path)"}
+              }
+            }
+          }
+        },
+        "optimize": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {"$ref": "#/definitions/stage_status"},
+            "pinned_at": {"type": "string", "format": "date-time"},
+            "deprecation_reason": {"type": "string"},
+            "pin": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["objectives"],
+              "properties": {
+                "configuration_space_ref": {"type": "string", "description": "module:symbol or file holding the configuration space"},
+                "objectives": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "last_run_id": {"type": "string"}
+              }
+            }
+          }
+        },
+        "gate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {"$ref": "#/definitions/stage_status"},
+            "pinned_at": {"type": "string", "format": "date-time"},
+            "deprecation_reason": {"type": "string"},
+            "pin": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["baseline_artifact"],
+              "properties": {
+                "baseline_artifact": {"type": "string", "description": "Path to the pinned incumbent baseline, e.g. .traigent/baseline.json"},
+                "budgets": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "max_cost_per_run": {"type": "number", "exclusiveMinimum": 0},
+                    "max_latency_p95_ms": {"type": "number", "exclusiveMinimum": 0}
+                  }
+                },
+                "policy": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+                    "min_effect": {"type": "number", "minimum": 0}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "created_by": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "recommendations_used": {"type": "array", "items": {"type": "string"}, "description": "Catalog entry_ids that informed pins"}
+      }
+    }
+  },
+  "definitions": {
+    "stage_status": {
+      "type": "string",
+      "enum": ["pending", "in_progress", "pinned", "deprecated"]
+    }
+  }
+}
