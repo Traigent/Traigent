@@ -41,6 +41,7 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING
 
+from traigent.utils.env_config import is_truthy
 from traigent.utils.exceptions import CostLimitExceeded
 
 if TYPE_CHECKING:
@@ -323,12 +324,8 @@ class CostEnforcer:
     @staticmethod
     def _check_require_cost_tracking_mode() -> bool:
         """Read strict cost-tracking mode from environment."""
-        require_tracking = (
-            os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower() == "true"
-        )
-        strict_accounting = (
-            os.environ.get("TRAIGENT_STRICT_COST_ACCOUNTING", "").lower() == "true"
-        )
+        require_tracking = is_truthy(os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING"))
+        strict_accounting = is_truthy(os.environ.get("TRAIGENT_STRICT_COST_ACCOUNTING"))
         return require_tracking or strict_accounting
 
     def _require_cost_tracking(self) -> bool:

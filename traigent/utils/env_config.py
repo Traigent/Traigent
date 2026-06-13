@@ -432,7 +432,7 @@ def is_strict_cost_accounting() -> bool:
     - Require priced models (no silent 0.0 for unknown models)
     - Raise on unknown/missing trial cost instead of fallback mode
     """
-    return get_env_var("TRAIGENT_STRICT_COST_ACCOUNTING", "false").lower() == "true"
+    return is_truthy(get_env_var("TRAIGENT_STRICT_COST_ACCOUNTING", "false"))
 
 
 def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:

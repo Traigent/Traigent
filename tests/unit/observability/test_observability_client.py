@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from urllib import error
 
@@ -11,6 +12,7 @@ import pytest
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.config.context import ConfigurationContext, TrialContext
 from traigent.observability import (
+    FlushResult,
     ObservabilityClient,
     ObservabilityConfig,
     ObservationType,
@@ -519,6 +521,70 @@ def test_observability_client_close_flushes_active_trace_payloads_without_explic
     assert result.success is True
     assert result.items_sent == 1
     assert sent_batches[-1][-1]["id"] == "trace_close_flush"
+
+
+def test_observability_client_close_waits_for_inflight_snapshot_submission(monkeypatch):
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+    trace_id = client.start_trace("close-race", trace_id="trace_close_race")
+
+    submit_entered = threading.Event()
+    release_submit = threading.Event()
+    original_submit = client._submit_trace_snapshot
+
+    def delayed_submit(trace_id: str, payload: dict) -> None:
+        submit_entered.set()
+        assert release_submit.wait(timeout=2.0)
+        original_submit(trace_id, payload)
+
+    monkeypatch.setattr(client, "_submit_trace_snapshot", delayed_submit)
+
+    record_error: list[BaseException] = []
+
+    def record_observation() -> None:
+        try:
+            client.record_observation(trace_id, name="close-race-observation")
+        except BaseException as exc:
+            record_error.append(exc)
+
+    record_thread = threading.Thread(target=record_observation)
+    record_thread.start()
+    assert submit_entered.wait(timeout=2.0)
+
+    close_result: list[FlushResult] = []
+    close_thread = threading.Thread(target=lambda: close_result.append(client.close()))
+    close_thread.start()
+
+    close_thread.join(timeout=0.05)
+    assert close_thread.is_alive()
+    release_submit.set()
+
+    record_thread.join(timeout=2.0)
+    close_thread.join(timeout=2.0)
+
+    assert not record_thread.is_alive()
+    assert not close_thread.is_alive()
+    assert record_error == []
+    assert close_result
+    assert close_result[0].items_dropped == 0
+    assert all(
+        "transport closed; dropped payload" not in error
+        for error in close_result[0].errors
+    )
+    assert sent_batches[-1][-1]["id"] == "trace_close_race"
 
 
 def test_sync_batch_transport_records_closed_transport_drops():
