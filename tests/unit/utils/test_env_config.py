@@ -180,7 +180,14 @@ def test_database_and_redis_are_required_in_production(monkeypatch):
     [
         ("true", True),
         ("TRUE", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        (" TRUE ", True),
         ("false", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
         ("", False),
     ],
 )

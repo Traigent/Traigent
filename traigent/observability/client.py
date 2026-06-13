@@ -350,6 +350,8 @@ class ObservabilityClient:
         self._request_sender_override = request_sender
         self._trace_states: dict[str, _TraceState] = {}
         self._lock = threading.RLock()
+        self._snapshot_submission_condition = threading.Condition(self._lock)
+        self._inflight_snapshot_submissions = 0
         self._closed = False
         self._offline_notice_logged = False
         self._http_opener = request.build_opener(_NoRedirectHandler)
@@ -611,6 +613,8 @@ class ObservabilityClient:
                 for trace_id, state in self._trace_states.items()
             ]
             self._closed = True
+            while self._inflight_snapshot_submissions:
+                self._snapshot_submission_condition.wait()
 
         for trace_id, payload in trace_payloads:
             self._submit_trace_snapshot(trace_id, payload)
@@ -965,7 +969,14 @@ class ObservabilityClient:
             if state is None or self._closed:
                 return
             payload = cast(dict[str, Any], redact_sensitive_data(state.to_payload()))
-        self._submit_trace_snapshot(trace_id, payload)
+            self._inflight_snapshot_submissions += 1
+        try:
+            self._submit_trace_snapshot(trace_id, payload)
+        finally:
+            with self._lock:
+                self._inflight_snapshot_submissions -= 1
+                if self._inflight_snapshot_submissions == 0:
+                    self._snapshot_submission_condition.notify_all()
 
     def _submit_trace_snapshot(self, trace_id: str, payload: dict[str, Any]) -> None:
         submitted = self._transport.submit(trace_id, payload)
