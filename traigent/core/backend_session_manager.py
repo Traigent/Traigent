@@ -241,10 +241,60 @@ class BackendSessionManager:
         # never acknowledged).
         self._acknowledged_trials: set[tuple[str, str]] = set()
 
+        # Issue #1265: a backend that becomes unreachable *mid-run* (transient
+        # outage / maintenance window) is distinct from the explicit
+        # TRAIGENT_OFFLINE_MODE air-gap. When it happens in a backend-tracking
+        # mode we degrade to local-only: trials are still optimized and
+        # persisted locally, but the run is no longer cloud-tracked. We record
+        # that here so the run's result can be marked source="local" and a
+        # single prominent warning is emitted (instead of one per trial).
+        self._runtime_degraded: bool = False
+        self._degraded_warning_emitted: bool = False
+
     @property
     def backend_tracking_enabled(self) -> bool:
         """Whether remote backend tracking is active for this run."""
         return self._backend_tracking_enabled
+
+    @property
+    def backend_degraded(self) -> bool:
+        """Whether the backend became unreachable mid-run (issue #1265)."""
+        return self._runtime_degraded
+
+    def _flag_backend_degraded(self, context: str) -> None:
+        """Mark the run as degraded to local-only and warn once (issue #1265).
+
+        Called when a backend-tracking interaction fails at runtime. The first
+        call emits a single, prominent warning; subsequent calls are quiet so a
+        long run doesn't spam one warning per trial.
+        """
+        self._runtime_degraded = True
+        if self._degraded_warning_emitted:
+            return
+        self._degraded_warning_emitted = True
+        logger.warning(
+            "⚠️  Traigent backend tracking became unavailable during %s — "
+            "continuing in LOCAL-ONLY mode. Trials are still optimized and "
+            "saved to local storage, but this run is NOT tracked on the cloud "
+            "backend; its result is marked source='local'. Locally-stored "
+            "results sync to the cloud on the next successful run.",
+            context,
+        )
+
+    def result_source(self, trial_count: int) -> str:
+        """Return the provenance of this run's result: 'backend' or 'local'.
+
+        'backend' only when remote tracking stayed healthy *and* at least one
+        trial was acknowledged by the backend. A run that degraded mid-flight,
+        never had tracking, or produced trials that the backend never
+        acknowledged is reported as 'local' so callers (and the UI) can tell a
+        cloud-tracked run from a locally-computed one (issue #1265).
+        """
+        if not self._backend_tracking_enabled or self._runtime_degraded:
+            return "local"
+        if trial_count > 0 and not self._acknowledged_trials:
+            return "local"
+        return "backend"
 
     def disable_backend_tracking(self, reason: SessionCreationFailureReason) -> None:
         """Disable backend tracking for this run. Idempotent — keeps first reason."""
@@ -873,6 +923,9 @@ class BackendSessionManager:
                 # Fail closed: no acknowledged backend slot ⇒ NO submission and
                 # NO acknowledgment. The certified-selection report will then
                 # withhold for this incumbent (never attest an unbound winner).
+                # A missing slot in a tracking-enabled run is the first symptom
+                # of a backend outage — degrade to local-only (issue #1265).
+                self._flag_backend_degraded("trial submission")
                 logger.warning(
                     "No backend trial slot acquired for session %s "
                     "(client trial %s); skipping submission (fail closed)",
@@ -912,8 +965,12 @@ class BackendSessionManager:
                 else submitted_result
             )
             if not submitted:
+                # A False return covers both a backend rejection and a network
+                # failure swallowed by the trial-submit layer; either way this
+                # trial is not cloud-tracked, so degrade to local-only (#1265).
+                self._flag_backend_degraded("trial submission")
                 logger.warning(
-                    "Backend session endpoint rejected trial %s for session %s",
+                    "Backend session endpoint did not accept trial %s for session %s",
                     backend_trial_id,
                     session_id,
                 )
@@ -929,6 +986,10 @@ class BackendSessionManager:
                     sorted(metrics_payload.keys()),
                 )
         except Exception as exc:
+            # A raised error here is a backend interaction failure; the run is
+            # no longer cloud-tracked for this trial, so degrade to local-only
+            # (issue #1265) rather than retrying the backend every trial.
+            self._flag_backend_degraded("trial submission")
             logger.warning(
                 "Failed to submit trial %s for session %s to backend: %s",
                 trial_result.trial_id,
