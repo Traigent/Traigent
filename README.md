@@ -15,27 +15,37 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 
 **Quick Install:**
 
+Install from PyPI — no clone required (Python 3.11+):
+
+```bash
+# pip
+pip install "traigent[recommended]"
+
+# uv (into the active venv, or `uv add` into a uv project)
+uv pip install "traigent[recommended]"
+uv add "traigent[recommended]"
+```
+
+<details>
+<summary>Prefer an isolated virtual environment first?</summary>
+
 macOS / Linux:
 
 ```bash
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
-
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[recommended]"
+pip install "traigent[recommended]"
 ```
 
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
-
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e ".[recommended]"
+pip install "traigent[recommended]"
 ```
+
+</details>
 
 For more options, see [Installation details](#installation).
 
@@ -262,7 +272,7 @@ def multi_provider_agent(question: str) -> str:
 
 ### Installation
 
-Python 3.11+ on Linux, macOS, or Windows. For coordinated release validation, install from this repository source tree.
+Python 3.11+ on Linux, macOS, or Windows. The published package on [PyPI](https://pypi.org/project/traigent/) is the recommended way to install — `pip install "traigent[recommended]"` or `uv add "traigent[recommended]"`. No repository checkout is required to use the SDK or its `traigent` CLI.
 
 | Feature Set | Description |
 |-------------|-------------|
@@ -274,7 +284,8 @@ Python 3.11+ on Linux, macOS, or Windows. For coordinated release validation, in
 
 **[Full installation guide →](docs/getting-started/installation.md)**
 
-Source install with `pip`:
+Contributor / source install (only needed to hack on Traigent itself or run the
+coordinated release-validation suite — not required to use the SDK):
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git
