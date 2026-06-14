@@ -144,9 +144,13 @@ class TestValidateLegacyToken:
     def test_z_suffix_handled(self) -> None:
         # Z suffix gets replaced with +00:00, producing a tz-aware datetime
         # Code then uses datetime.now().replace(tzinfo=UTC) — use large delta to be safe
-        future = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        future = (datetime.now(UTC) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
         token = {"approved_by": "tester", "expires_at": future}
         assert _validate_legacy_token(token) is True
+
+    def test_far_future_unsigned_token_rejected(self) -> None:
+        token = {"approved_by": "tester", "expires_at": "9999-12-31T23:59:59"}
+        assert _validate_legacy_token(token) is False
 
 
 # ---------------------------------------------------------------------------

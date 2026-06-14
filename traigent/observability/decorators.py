@@ -175,6 +175,7 @@ class ObserveContext:
         release: str | None = None,
         tags: list[str] | None = None,
         redact_input: bool = False,
+        redact_output: bool = False,
     ) -> None:
         self.name = name
         self.client = client
@@ -192,6 +193,7 @@ class ObserveContext:
         self.release = release
         self.tags = list(tags or [])
         self.redact_input = redact_input
+        self.redact_output = redact_output
 
         self._started_at: datetime | None = None
         self._trace_id: str | None = None
@@ -203,6 +205,12 @@ class ObserveContext:
         self._finished = False
         self._result: Any = None
         self._enriched_metadata = _build_observe_enrichment_metadata()
+
+    def _captured_input(self) -> Any:
+        return _redacted_input_payload() if self.redact_input else self.input_data
+
+    def _captured_output(self, result: Any) -> Any:
+        return _redacted_input_payload() if self.redact_output else result
 
     def __enter__(self) -> ObserveContext:
         self._started_at = utc_now()
@@ -225,7 +233,7 @@ class ObserveContext:
                 tags=self.tags,
                 metadata=trace_metadata,
                 started_at=self._started_at,
-                input_data=self.input_data,
+                input_data=self._captured_input(),
                 custom_trace_id=self.custom_trace_id,
             )
             self._created_trace = True
@@ -243,7 +251,7 @@ class ObserveContext:
             parent_observation_id=parent_observation_id,
             status="running",
             started_at=self._started_at,
-            input_data=self.input_data,
+            input_data=self._captured_input(),
             metadata=observation_metadata,
         )
         self._trace_id = trace_id
@@ -279,6 +287,7 @@ class ObserveContext:
             metadata["error_message"] = str(error)
 
         if self._trace_id and self._observation_id:
+            output_data = self._captured_output(result)
             client.record_observation(
                 self._trace_id,
                 observation_id=self._observation_id,
@@ -286,15 +295,15 @@ class ObserveContext:
                 observation_type=self.observation_type,
                 status=status,
                 ended_at=ended_at,
-                input_data=self.input_data,
-                output_data=result,
+                input_data=self._captured_input(),
+                output_data=output_data,
                 metadata=metadata,
             )
             if self._created_trace:
                 client.end_trace(
                     self._trace_id,
                     status=status,
-                    output_data=result,
+                    output_data=output_data,
                     ended_at=ended_at,
                 )
 
@@ -323,6 +332,7 @@ class _ObserveFactory:
         release: str | None = None,
         tags: list[str] | None = None,
         redact_input: bool = False,
+        redact_output: bool = False,
     ) -> None:
         self.name = name
         self.client = client
@@ -335,6 +345,7 @@ class _ObserveFactory:
         self.release = release
         self.tags = tags
         self.redact_input = redact_input
+        self.redact_output = redact_output
         self._context: ObserveContext | None = None
 
     def _require_context(self) -> ObserveContext:
@@ -369,6 +380,7 @@ class _ObserveFactory:
                     release=self.release,
                     tags=self.tags,
                     redact_input=self.redact_input,
+                    redact_output=self.redact_output,
                 ) as ctx:
                     result = await func(*args, **kwargs)
                     ctx._result = result
@@ -396,6 +408,7 @@ class _ObserveFactory:
                 release=self.release,
                 tags=self.tags,
                 redact_input=self.redact_input,
+                redact_output=self.redact_output,
             ) as ctx:
                 result = func(*args, **kwargs)
                 ctx._result = result
@@ -416,6 +429,7 @@ class _ObserveFactory:
             release=self.release,
             tags=self.tags,
             redact_input=self.redact_input,
+            redact_output=self.redact_output,
         )
         return self._context.__enter__()
 
@@ -435,6 +449,7 @@ class _ObserveFactory:
             release=self.release,
             tags=self.tags,
             redact_input=self.redact_input,
+            redact_output=self.redact_output,
         )
         return await self._context.__aenter__()
 
@@ -455,11 +470,15 @@ def observe(
     release: str | None = None,
     tags: list[str] | None = None,
     redact_input: bool = False,
+    redact_output: bool = False,
 ):
     """Create a decorator or context manager for observability instrumentation.
 
-    By default the decorator captures function arguments as trace input. Set
-    `redact_input=True` when arguments may include secrets, credentials, or PII.
+    By default the decorator captures function arguments as trace input and
+    return values as trace output. Set `redact_input=True` or
+    `redact_output=True` when arguments or return values may include secrets,
+    credentials, PII, or proprietary content. When redaction is not enabled,
+    the transport still applies pattern-based secret scrubbing before send.
     """
 
     if callable(name):
@@ -478,4 +497,5 @@ def observe(
         release=release,
         tags=tags,
         redact_input=redact_input,
+        redact_output=redact_output,
     )

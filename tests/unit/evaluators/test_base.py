@@ -156,6 +156,38 @@ class TestDataset:
         assert dataset.size == 0
         assert dataset.name == "empty"
 
+    def test_dataset_rejects_duplicate_example_ids(self):
+        """Duplicate correlation keys would misattribute captured response metrics."""
+        examples = [
+            EvaluationExample(
+                input_data={"text": "one"},
+                expected_output="1",
+                metadata={"example_id": "same"},
+            ),
+            EvaluationExample(
+                input_data={"text": "two"},
+                expected_output="2",
+                metadata={"example_id": "same"},
+            ),
+        ]
+
+        with pytest.raises(ValidationError, match="Duplicate example_id 'same'"):
+            Dataset(examples=examples, name="duplicate-ids")
+
+    def test_dataset_rejects_explicit_id_colliding_with_fallback_id(self):
+        """Fallback and explicit example IDs share the same capture-key namespace."""
+        examples = [
+            EvaluationExample(input_data={"text": "one"}, expected_output="1"),
+            EvaluationExample(
+                input_data={"text": "two"},
+                expected_output="2",
+                metadata={"example_id": "example_0"},
+            ),
+        ]
+
+        with pytest.raises(ValidationError, match="Duplicate example_id 'example_0'"):
+            Dataset(examples=examples, name="fallback-collision")
+
     def test_dataset_creation_default_values(self):
         """Test creating Dataset with default name and description."""
         examples = [EvaluationExample({"test": "data"}, "output")]
@@ -305,6 +337,27 @@ class TestDataset:
 
         with pytest.raises(TypeError):
             dataset.add_example({"dict": "not_example"})
+
+    def test_dataset_add_example_rejects_duplicate_example_id(self):
+        """Test add_example keeps example_id correlation keys unique."""
+        dataset = Dataset(
+            [
+                EvaluationExample(
+                    {"text": "first"},
+                    "one",
+                    metadata={"example_id": "same"},
+                )
+            ]
+        )
+
+        with pytest.raises(ValidationError, match="Duplicate example_id 'same'"):
+            dataset.add_example(
+                EvaluationExample(
+                    {"text": "second"},
+                    "two",
+                    metadata={"example_id": "same"},
+                )
+            )
 
     def test_dataset_string_representation(self):
         """Test Dataset string representation."""

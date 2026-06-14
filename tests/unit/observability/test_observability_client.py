@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from urllib import error
 
@@ -11,16 +12,18 @@ import pytest
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.config.context import ConfigurationContext, TrialContext
 from traigent.observability import (
+    FlushResult,
     ObservabilityClient,
     ObservabilityConfig,
     ObservationType,
+    ObserveContext,
     PromptReferenceDTO,
     ThumbRating,
     observe,
 )
 from traigent.observability.client import _SyncBatchTransport
 from traigent.observability.decorators import set_default_observability_client
-from traigent.observability.dtos import ObservationDTO
+from traigent.observability.dtos import ObservationDTO, TraceDTO
 from traigent.utils.exceptions import AuthenticationError, ClientError
 
 
@@ -37,6 +40,15 @@ FAKE_TRACE_API_KEY = (
 def _clear_observability_offline_mode(monkeypatch, jwt_development_mode):
     del jwt_development_mode
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_ENV", "development")
+
+
+def _mock_public_backend_dns(monkeypatch):
+    public_addr = ".".join(["93", "184", "216", "34"])
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        lambda *args, **kwargs: [(None, None, None, None, (public_addr, 443))],
+    )
 
 
 def test_observability_config_uses_canonical_environment_resolution(monkeypatch):
@@ -44,8 +56,9 @@ def test_observability_config_uses_canonical_environment_resolution(monkeypatch)
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
     monkeypatch.setenv("TRAIGENT_ENV", "staging")
+    _mock_public_backend_dns(monkeypatch)
 
-    config = ObservabilityConfig(backend_origin="http://localhost:5000")
+    config = ObservabilityConfig(backend_origin="https://auth.example.com")
 
     assert config.default_environment == "staging"
 
@@ -56,11 +69,48 @@ def test_observability_config_does_not_emit_unknown_environment_content(monkeypa
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
     monkeypatch.setenv("TRAIGENT_ENV", sentinel)
+    _mock_public_backend_dns(monkeypatch)
 
-    config = ObservabilityConfig(backend_origin="http://localhost:5000")
+    config = ObservabilityConfig(backend_origin="https://auth.example.com")
 
     assert config.default_environment is None
     assert sentinel not in json.dumps(config.__dict__)
+
+
+@pytest.mark.parametrize(
+    ("origin", "message"),
+    [
+        ("http://api.traigent.example", "https"),
+        ("metadata-ip", "private or loopback"),
+    ],
+)
+def test_observability_config_rejects_unsafe_production_origins(
+    monkeypatch, origin, message
+):
+    monkeypatch.setenv("TRAIGENT_ENV", "production")
+    if origin == "metadata-ip":
+        origin = f"https://{'.'.join(['169', '254', '169', '254'])}"
+
+    with pytest.raises(ValueError, match=message):
+        ObservabilityConfig(backend_origin=origin)
+
+
+def test_observability_client_uses_no_redirect_http_opener():
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        )
+    )
+
+    handler_names = {type(handler).__name__ for handler in client._http_opener.handlers}
+    client.close()
+
+    assert "_NoRedirectHandler" in handler_names
 
 
 def test_observability_client_flushes_trace_payloads():
@@ -473,6 +523,70 @@ def test_observability_client_close_flushes_active_trace_payloads_without_explic
     assert sent_batches[-1][-1]["id"] == "trace_close_flush"
 
 
+def test_observability_client_close_waits_for_inflight_snapshot_submission(monkeypatch):
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+    trace_id = client.start_trace("close-race", trace_id="trace_close_race")
+
+    submit_entered = threading.Event()
+    release_submit = threading.Event()
+    original_submit = client._submit_trace_snapshot
+
+    def delayed_submit(trace_id: str, payload: dict) -> None:
+        submit_entered.set()
+        assert release_submit.wait(timeout=2.0)
+        original_submit(trace_id, payload)
+
+    monkeypatch.setattr(client, "_submit_trace_snapshot", delayed_submit)
+
+    record_error: list[BaseException] = []
+
+    def record_observation() -> None:
+        try:
+            client.record_observation(trace_id, name="close-race-observation")
+        except BaseException as exc:
+            record_error.append(exc)
+
+    record_thread = threading.Thread(target=record_observation)
+    record_thread.start()
+    assert submit_entered.wait(timeout=2.0)
+
+    close_result: list[FlushResult] = []
+    close_thread = threading.Thread(target=lambda: close_result.append(client.close()))
+    close_thread.start()
+
+    close_thread.join(timeout=0.05)
+    assert close_thread.is_alive()
+    release_submit.set()
+
+    record_thread.join(timeout=2.0)
+    close_thread.join(timeout=2.0)
+
+    assert not record_thread.is_alive()
+    assert not close_thread.is_alive()
+    assert record_error == []
+    assert close_result
+    assert close_result[0].items_dropped == 0
+    assert all(
+        "transport closed; dropped payload" not in error
+        for error in close_result[0].errors
+    )
+    assert sent_batches[-1][-1]["id"] == "trace_close_race"
+
+
 def test_sync_batch_transport_records_closed_transport_drops():
     transport = _SyncBatchTransport(
         sender=lambda traces: None,
@@ -491,6 +605,27 @@ def test_sync_batch_transport_records_closed_transport_drops():
         "transport closed; dropped payload for item 'trace_after_close'"
         in stats["errors"]
     )
+
+
+def test_sync_batch_transport_stats_snapshot_includes_locked_diagnostics():
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=1024,
+    )
+
+    transport._append_error("error-1")
+    transport._append_warning("warning-1")
+
+    stats = transport.get_stats()
+    result = transport.close()
+
+    assert stats["errors"] == ["error-1"]
+    assert stats["warnings"] == ["warning-1"]
+    assert result.errors == ["error-1"]
+    assert result.warnings == ["warning-1"]
 
 
 def test_observability_client_chunks_flushes_by_byte_limit():
@@ -847,6 +982,106 @@ def test_observe_decorator_can_redact_inputs():
     assert trace_payload["observations"][0]["input_data"] == {"redacted": True}
 
 
+@pytest.mark.parametrize(
+    ("redact_input", "redact_output"),
+    [
+        (False, False),
+        (True, False),
+        (False, True),
+        (True, True),
+    ],
+)
+def test_observe_decorator_redacts_input_output_combinations(
+    redact_input, redact_output
+):
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    @observe(
+        "redaction-matrix",
+        client=client,
+        redact_input=redact_input,
+        redact_output=redact_output,
+    )
+    def sensitive(secret: str) -> dict[str, str]:
+        return {"answer": f"derived from {secret}"}
+
+    assert sensitive("top-secret-value") == {"answer": "derived from top-secret-value"}
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    observation = trace_payload["observations"][0]
+    if redact_input:
+        assert trace_payload["input_data"] == {"redacted": True}
+        assert observation["input_data"] == {"redacted": True}
+    else:
+        assert trace_payload["input_data"]["args"] == ["top-secret-value"]
+        assert observation["input_data"]["args"] == ["top-secret-value"]
+
+    if redact_output:
+        assert trace_payload["output_data"] == {"redacted": True}
+        assert observation["output_data"] == {"redacted": True}
+    else:
+        assert trace_payload["output_data"] == {
+            "answer": "derived from top-secret-value"
+        }
+        assert observation["output_data"] == {"answer": "derived from top-secret-value"}
+
+
+def test_observe_context_redacts_input_and_output():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    with ObserveContext(
+        name="context-redaction",
+        client=client,
+        input_data={"password": "top-secret-value"},  # pragma: allowlist secret
+        redact_input=True,
+        redact_output=True,
+    ) as ctx:
+        ctx._result = {"answer": "top-secret-value"}  # pragma: allowlist secret
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    observation = trace_payload["observations"][0]
+    assert trace_payload["input_data"] == {"redacted": True}
+    assert observation["input_data"] == {"redacted": True}
+    assert trace_payload["output_data"] == {"redacted": True}
+    assert observation["output_data"] == {"redacted": True}
+
+
 def test_observability_client_flush_surfaces_backend_warnings():
     client = ObservabilityClient(
         ObservabilityConfig(
@@ -904,6 +1139,109 @@ def test_observation_dto_rejects_negative_values():
             name="bad-observation",
             input_tokens=-1,
         )
+
+
+@pytest.mark.parametrize("status", ["", "x" * 65])
+def test_observation_dto_rejects_invalid_status(status):
+    with pytest.raises(ValueError, match="status"):
+        ObservationDTO(
+            id="obs_bad_status",
+            type=ObservationType.SPAN,
+            name="bad-observation",
+            status=status,
+        )
+
+
+@pytest.mark.parametrize("status", ["", "x" * 65])
+def test_trace_dto_rejects_invalid_status(status):
+    with pytest.raises(ValueError, match="status"):
+        TraceDTO(id="trace_bad_status", name="bad-trace", status=status)
+
+
+def test_observation_dto_rejects_event_with_children():
+    child = ObservationDTO(
+        id="obs_child",
+        type=ObservationType.SPAN,
+        name="child",
+    )
+
+    with pytest.raises(ValueError, match="event observations cannot have children"):
+        ObservationDTO(
+            id="obs_event",
+            type=ObservationType.EVENT,
+            name="event-parent",
+            children=[child],
+        )
+
+
+def test_observability_client_rejects_child_under_event_observation():
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: None,
+    )
+
+    trace_id = client.start_trace("event-child-validation", trace_id="trace_event")
+    event_id = client.record_observation(
+        trace_id,
+        observation_id="obs_event",
+        name="event-parent",
+        observation_type=ObservationType.EVENT,
+    )
+
+    with pytest.raises(ValueError, match="event observations cannot have children"):
+        client.record_observation(
+            trace_id,
+            observation_id="obs_child",
+            parent_observation_id=event_id,
+            name="invalid-child",
+            observation_type=ObservationType.SPAN,
+        )
+
+    client.close()
+
+
+def test_observability_client_rejects_converting_parent_to_event():
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: None,
+    )
+
+    trace_id = client.start_trace("event-parent-validation", trace_id="trace_parent")
+    parent_id = client.record_observation(
+        trace_id,
+        observation_id="obs_parent",
+        name="parent",
+        observation_type=ObservationType.SPAN,
+    )
+    client.record_observation(
+        trace_id,
+        observation_id="obs_child",
+        parent_observation_id=parent_id,
+        name="child",
+        observation_type=ObservationType.SPAN,
+    )
+
+    with pytest.raises(ValueError, match="event observations cannot have children"):
+        client.record_observation(
+            trace_id,
+            observation_id=parent_id,
+            name="parent",
+            observation_type=ObservationType.EVENT,
+        )
+
+    client.close()
 
 
 def test_observability_client_collaboration_helpers_follow_backend_contract():
@@ -1343,8 +1681,7 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
     )
 
     monkeypatch.setattr(
-        "traigent.observability.client.request.urlopen",
-        lambda *args, **kwargs: _FakeResponse(),
+        client, "_open_http_request", lambda http_request: _FakeResponse()
     )
 
     with caplog.at_level(logging.WARNING):
@@ -1403,8 +1740,9 @@ def test_observability_client_closes_http_errors(
     )
 
     monkeypatch.setattr(
-        "traigent.observability.client.request.urlopen",
-        lambda *call_args, **call_kwargs: (_ for _ in ()).throw(http_error),
+        client,
+        "_open_http_request",
+        lambda http_request: (_ for _ in ()).throw(http_error),
     )
 
     with pytest.raises(ClientError, match=message):

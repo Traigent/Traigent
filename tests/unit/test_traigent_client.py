@@ -878,8 +878,10 @@ class TestOptimizeLocal:
                 assert result["best_configuration"] is not None
 
     @pytest.mark.asyncio
-    async def test_optimize_local_no_trials(self, mock_client: TraigentClient) -> None:
-        """Test local optimization with max_trials=0."""
+    async def test_optimize_local_rejects_zero_trials(
+        self, mock_client: TraigentClient
+    ) -> None:
+        """Test local optimization rejects max_trials=0."""
 
         def test_func() -> str:
             return "test"
@@ -888,14 +890,10 @@ class TestOptimizeLocal:
         config_space = {"model": ["gpt-3.5-turbo"]}
         objectives = ["accuracy"]
 
-        result = await mock_client.optimize(
-            test_func, dataset, config_space, objectives, max_trials=0
-        )
-
-        assert result["execution_mode"] == "edge_analytics"
-        assert result["completed_trials"] == 0
-        assert result["status"] == "no_trials"
-        assert result["best_configuration"] is None
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
+            await mock_client.optimize(
+                test_func, dataset, config_space, objectives, max_trials=0
+            )
 
     @pytest.mark.asyncio
     async def test_optimize_local_missing_agent_builder(

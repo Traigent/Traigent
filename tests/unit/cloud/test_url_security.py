@@ -92,6 +92,13 @@ def test_validate_cloud_base_url_allows_localhost_in_development() -> None:
         )
 
 
+def test_validate_cloud_base_url_honors_traigent_environment_development() -> None:
+    with patch.dict("os.environ", {"TRAIGENT_ENVIRONMENT": "development"}, clear=True):
+        assert (
+            validate_cloud_base_url("http://localhost:5000/") == "http://localhost:5000"
+        )
+
+
 def test_validate_cloud_base_url_production_signal_wins_over_dev_signal() -> None:
     with patch.dict(
         "os.environ",

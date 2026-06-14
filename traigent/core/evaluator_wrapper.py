@@ -298,12 +298,22 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 llm_metrics, "response.response_time_ms", 0
             )
             if response_time_ms > 0:
+                response_time_ms = float(response_time_ms)
+                example_result.metrics["response_time_ms"] = response_time_ms
+                example_result.metadata["response_time_ms"] = response_time_ms
+                # Compatibility: remove in <next-minor> once consumers have
+                # migrated to canonical response_time_ms.
                 model_response_time = response_time_ms / 1000.0
                 example_result.metrics["model_response_time"] = model_response_time
                 example_result.metadata["model_response_time"] = model_response_time
 
         # Track total function duration
         if per_example_duration is not None:
+            execution_time_ms = float(per_example_duration) * 1000.0
+            example_result.metrics["execution_time_ms"] = execution_time_ms
+            example_result.metadata["execution_time_ms"] = execution_time_ms
+            # Compatibility: remove in <next-minor> once consumers have
+            # migrated to canonical execution_time_ms.
             example_result.metrics["function_duration"] = per_example_duration
             example_result.metadata["function_duration"] = per_example_duration
 
@@ -312,6 +322,13 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if not current_execution_time:
             example_result.execution_time = per_example_duration
         else:
+            current_execution_time_ms = float(current_execution_time) * 1000.0
+            example_result.metrics.setdefault(
+                "execution_time_ms", current_execution_time_ms
+            )
+            example_result.metadata.setdefault(
+                "execution_time_ms", current_execution_time_ms
+            )
             example_result.metadata.setdefault(
                 "function_duration", current_execution_time
             )

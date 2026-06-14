@@ -23,6 +23,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   example at `examples/advanced/composite-knobs/composite_telemetry.py`.
 
 ### Changed
+- **Timing metrics now emit canonical millisecond keys** (#1225). Model latency is
+  reported as `response_time_ms`, evaluation wall time is reported as
+  `execution_time_ms`, and execution duration is no longer copied into
+  `response_time_ms`. Legacy seconds keys `model_response_time` and
+  `function_duration` remain populated for one minor-version compatibility window;
+  remove them after the next minor once downstream dashboards have migrated.
 - **Unpriced models now block instead of warn-and-continue.** When a real run includes
   models with no known pricing, the SDK now requires explicit confirmation: interactive
   terminals get a blocking prompt; non-interactive runs fail closed before any trial.

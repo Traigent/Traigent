@@ -1,0 +1,533 @@
+[
+  {
+    "entry_id": "code_gen.execution_accuracy.spider.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "code_gen"
+    ],
+    "measure_type": "accuracy",
+    "metric": {
+      "name": "execution_accuracy",
+      "output_type": "binary",
+      "builtin_function": null,
+      "definition_note": "Run generated SQL against the benchmark database and score whether the result matches the reference execution result."
+    },
+    "evaluation_method": "deterministic",
+    "evaluator_binding": {
+      "kind": "custom_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Provide a metric_functions callback that executes predicted and reference SQL in an isolated read-only database fixture and returns 1.0 for matching result sets."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "Spider: A Large-Scale Human-Labeled Dataset for Complex and Cross-Domain Semantic Parsing and Text-to-SQL Task (Yu et al., 2018)",
+        "year": 2018,
+        "venue": "EMNLP",
+        "finding_summary": "Spider uses execution-oriented evaluation for text-to-SQL systems, making result-set correctness a task-fit metric when a database fixture is available.",
+        "url_or_doi": "arXiv:1809.08887"
+      }
+    ],
+    "impact_estimate": "high",
+    "confidence": "high",
+    "limitations": [
+      "Requires safe database fixtures and query timeouts.",
+      "Equivalent SQL strings can still fail if the fixture under-specifies edge cases."
+    ]
+  },
+  {
+    "entry_id": "code_gen.pass_at_k.humaneval.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "code_gen"
+    ],
+    "measure_type": "accuracy",
+    "metric": {
+      "name": "pass_at_k",
+      "output_type": "continuous",
+      "builtin_function": null,
+      "definition_note": "Estimate the probability that at least one of k sampled code generations passes the task's unit tests."
+    },
+    "evaluation_method": "statistical",
+    "evaluator_binding": {
+      "kind": "custom_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Collect n independent samples per task, run tests in a sandbox, then aggregate with the HumanEval pass@k estimator."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "Evaluating Large Language Models Trained on Code (Chen et al., 2021)",
+        "year": 2021,
+        "venue": "arXiv",
+        "finding_summary": "HumanEval popularized pass@k for code-generation systems evaluated against executable unit tests.",
+        "url_or_doi": "arXiv:2107.03374"
+      }
+    ],
+    "impact_estimate": "high",
+    "confidence": "high",
+    "limitations": [
+      "Needs multiple samples per task for the estimator to be meaningful.",
+      "Unit tests measure behavior covered by the test suite, not all program properties."
+    ]
+  },
+  {
+    "entry_id": "code_gen.syntax_validity.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "code_gen"
+    ],
+    "measure_type": "sanity_check",
+    "metric": {
+      "name": "syntax_valid",
+      "output_type": "binary",
+      "builtin_function": null,
+      "definition_note": "Parse generated code with the target-language parser and score whether parsing succeeds without syntax errors."
+    },
+    "evaluation_method": "deterministic",
+    "evaluator_binding": {
+      "kind": "custom_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Bind a parser-backed metric function for the target language before running deeper behavioral tests."
+    },
+    "provenance": [
+      {
+        "kind": "operational_practice",
+        "citation": "Compiler or parser preflight before executable code evaluation",
+        "year": 2026,
+        "finding_summary": "Syntax preflights catch invalid generations cheaply before sandboxed execution and unit-test evaluation."
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "Syntactic validity does not imply semantic correctness.",
+      "Language-specific parsers and dependency resolution must match the target runtime."
+    ]
+  },
+  {
+    "entry_id": "code_gen.unit_test_success_rate.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "code_gen"
+    ],
+    "measure_type": "reliability",
+    "metric": {
+      "name": "success_rate",
+      "output_type": "continuous",
+      "builtin_function": "success_rate",
+      "definition_note": "Aggregate the share of examples that complete without evaluator-recorded errors."
+    },
+    "evaluation_method": "deterministic",
+    "evaluator_binding": {
+      "kind": "builtin",
+      "sdk_ref": "traigent.evaluators.LocalEvaluator",
+      "setup_note": "Include success_rate in the evaluator metrics list after the code execution harness records per-example success flags."
+    },
+    "provenance": [
+      {
+        "kind": "operational_practice",
+        "citation": "Executable test harness pass/fail aggregation",
+        "year": 2026,
+        "finding_summary": "Pass/fail aggregation is a standard first-line reliability signal for generated code and tool execution workflows."
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "A high success rate can hide weak assertions or missing edge cases.",
+      "Harness errors should be separated from model-output failures during triage."
+    ]
+  },
+  {
+    "entry_id": "rag.answer_exact_match.squad.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "rag"
+    ],
+    "measure_type": "accuracy",
+    "metric": {
+      "name": "exact_match",
+      "output_type": "binary",
+      "builtin_function": "accuracy",
+      "definition_note": "Normalize the answer and reference, then score exact answer-string agreement."
+    },
+    "evaluation_method": "deterministic",
+    "evaluator_binding": {
+      "kind": "builtin",
+      "sdk_ref": "traigent.evaluators.LocalEvaluator",
+      "setup_note": "Use the built-in accuracy metric when expected answers are normalized to the same representation as model outputs."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "SQuAD: 100,000+ Questions for Machine Comprehension of Text (Rajpurkar et al., 2016)",
+        "year": 2016,
+        "venue": "EMNLP",
+        "finding_summary": "SQuAD uses exact match alongside token F1 for answer correctness on extractive question answering.",
+        "url_or_doi": "arXiv:1606.05250"
+      }
+    ],
+    "impact_estimate": "high",
+    "confidence": "high",
+    "limitations": [
+      "Exact match is brittle for paraphrases and alternate valid answers.",
+      "Reference normalization must be documented and kept consistent across runs."
+    ]
+  },
+  {
+    "entry_id": "rag.token_f1.squad.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "rag"
+    ],
+    "measure_type": "accuracy",
+    "metric": {
+      "name": "token_f1",
+      "output_type": "continuous",
+      "builtin_function": null,
+      "definition_note": "Compute token-overlap F1 between normalized answer and reference answer."
+    },
+    "evaluation_method": "deterministic",
+    "evaluator_binding": {
+      "kind": "custom_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Bind a token-normalization and F1 metric function when answers can be partially correct or phrased differently."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "SQuAD: 100,000+ Questions for Machine Comprehension of Text (Rajpurkar et al., 2016)",
+        "year": 2016,
+        "venue": "EMNLP",
+        "finding_summary": "SQuAD reports token F1 to capture partial overlap beyond exact answer-string agreement.",
+        "url_or_doi": "arXiv:1606.05250"
+      }
+    ],
+    "impact_estimate": "high",
+    "confidence": "high",
+    "limitations": [
+      "Token overlap can reward unsupported answers that share surface words.",
+      "It is less suitable for long-form answers where semantic equivalence matters."
+    ]
+  },
+  {
+    "entry_id": "rag.faithfulness.ragas.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "rag"
+    ],
+    "measure_type": "quality",
+    "metric": {
+      "name": "faithfulness",
+      "output_type": "continuous",
+      "builtin_function": null,
+      "definition_note": "Estimate whether the generated answer is supported by retrieved context."
+    },
+    "evaluation_method": "llm_based",
+    "evaluator_binding": {
+      "kind": "llm_judge_template",
+      "sdk_ref": "traigent.metrics.ragas_metrics.compute_ragas_metrics",
+      "setup_note": "Configure RAGAS with a judge LLM and context columns, then compute faithfulness on question-answer-context rows."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "RAGAS: Automated Evaluation of Retrieval Augmented Generation (Es et al., 2023)",
+        "year": 2023,
+        "venue": "arXiv",
+        "finding_summary": "RAGAS proposes faithfulness as an automated RAG metric for checking answer support against retrieved contexts.",
+        "url_or_doi": "arXiv:2309.15217"
+      }
+    ],
+    "impact_estimate": "high",
+    "confidence": "medium",
+    "limitations": [
+      "Judge-model behavior can vary by prompt, model, and context formatting.",
+      "Retrieved context must be captured faithfully for the score to be interpretable."
+    ],
+    "cost_note": "Requires judge-model calls for evaluated rows; sample or batch evaluations when cost is material."
+  },
+  {
+    "entry_id": "rag.answer_relevance.ragas.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "rag"
+    ],
+    "measure_type": "quality",
+    "metric": {
+      "name": "answer_relevance",
+      "output_type": "continuous",
+      "builtin_function": null,
+      "definition_note": "Estimate how well the answer addresses the user question."
+    },
+    "evaluation_method": "llm_based",
+    "evaluator_binding": {
+      "kind": "llm_judge_template",
+      "sdk_ref": "traigent.metrics.ragas_metrics.compute_ragas_metrics",
+      "setup_note": "Configure RAGAS answer-relevance evaluation with a judge LLM and question-answer columns."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "RAGAS: Automated Evaluation of Retrieval Augmented Generation (Es et al., 2023)",
+        "year": 2023,
+        "venue": "arXiv",
+        "finding_summary": "RAGAS includes answer-relevance style evaluation for RAG responses against the originating question.",
+        "url_or_doi": "arXiv:2309.15217"
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "Relevance scores can miss factual support issues.",
+      "Judge prompts should be versioned because scoring can drift with prompt changes."
+    ],
+    "cost_note": "Requires judge-model calls; keep a deterministic accuracy metric alongside it for low-cost regression checks."
+  },
+  {
+    "entry_id": "rag.latency_p95.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "rag",
+      "general"
+    ],
+    "measure_type": "latency",
+    "metric": {
+      "name": "latency",
+      "output_type": "continuous",
+      "builtin_function": "latency",
+      "definition_note": "Track per-example latency and aggregate percentile summaries such as p95 outside the per-example metric."
+    },
+    "evaluation_method": "statistical",
+    "evaluator_binding": {
+      "kind": "builtin",
+      "sdk_ref": "traigent.evaluators.LocalEvaluator",
+      "setup_note": "Include latency in the metrics list and compute percentile summaries over detailed per-example results."
+    },
+    "provenance": [
+      {
+        "kind": "operational_practice",
+        "citation": "Service-level latency percentile monitoring",
+        "year": 2026,
+        "finding_summary": "Latency percentiles expose tail behavior that averages can hide in retrieval and generation pipelines."
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "Local measurements may not match production network and cache behavior.",
+      "Percentile estimates need enough samples to avoid noisy tails."
+    ]
+  },
+  {
+    "entry_id": "general.bertscore_f1.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "general",
+      "rag"
+    ],
+    "measure_type": "quality",
+    "metric": {
+      "name": "bertscore_f1",
+      "output_type": "continuous",
+      "builtin_function": null,
+      "definition_note": "Compute contextual embedding similarity between generated text and reference text."
+    },
+    "evaluation_method": "deterministic",
+    "evaluator_binding": {
+      "kind": "custom_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Bind a BERTScore-backed metric function and pin the scorer model/version used for embedding comparisons."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "BERTScore: Evaluating Text Generation with BERT (Zhang et al., 2020)",
+        "year": 2020,
+        "venue": "ICLR",
+        "finding_summary": "BERTScore evaluates generated text against references using contextual embedding similarity rather than only lexical overlap.",
+        "url_or_doi": "arXiv:1904.09675"
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "high",
+    "limitations": [
+      "Requires reference answers and a pinned embedding model.",
+      "Semantic similarity does not replace factuality or task-specific correctness checks."
+    ]
+  },
+  {
+    "entry_id": "general.llm_judge_mt_bench.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "general"
+    ],
+    "measure_type": "quality",
+    "metric": {
+      "name": "llm_judge_score",
+      "output_type": "discrete",
+      "builtin_function": null,
+      "definition_note": "Use a judge LLM rubric to assign a bounded quality score or pairwise preference."
+    },
+    "evaluation_method": "llm_based",
+    "evaluator_binding": {
+      "kind": "llm_judge_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Bind a judge callback with a pinned rubric, model, prompt version, and randomized answer ordering for pairwise comparisons."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena (Zheng et al., 2023)",
+        "year": 2023,
+        "venue": "NeurIPS Datasets and Benchmarks",
+        "finding_summary": "MT-Bench reports useful judge agreement while documenting biases such as position and verbosity effects.",
+        "url_or_doi": "arXiv:2306.05685"
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "Position and verbosity bias must be mitigated and monitored.",
+      "Use alongside deterministic checks when a reference answer or executable oracle exists."
+    ],
+    "cost_note": "Requires judge-model calls for each scored answer or pair; use sampling and cache judge prompts where appropriate."
+  },
+  {
+    "entry_id": "general.geval_quality.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "general"
+    ],
+    "measure_type": "quality",
+    "metric": {
+      "name": "geval_quality",
+      "output_type": "discrete",
+      "builtin_function": null,
+      "definition_note": "Ask a judge LLM to score generated text against explicit criteria and a rubric."
+    },
+    "evaluation_method": "llm_based",
+    "evaluator_binding": {
+      "kind": "llm_judge_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Bind a G-Eval-style rubric prompt with pinned criteria, judge model, and output parser."
+    },
+    "provenance": [
+      {
+        "kind": "paper",
+        "citation": "G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment (Liu et al., 2023)",
+        "year": 2023,
+        "venue": "EMNLP",
+        "finding_summary": "G-Eval uses LLM-based rubric evaluation for natural-language generation quality dimensions.",
+        "url_or_doi": "arXiv:2303.16634"
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "Rubric wording and judge model selection materially affect scores.",
+      "Scores should be calibrated against human review samples for high-stakes use."
+    ],
+    "cost_note": "Requires judge-model calls; reserve for cases where deterministic or reference-based metrics do not capture the target quality dimension."
+  },
+  {
+    "entry_id": "general.cost_per_success.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "general",
+      "rag",
+      "code_gen"
+    ],
+    "measure_type": "efficiency",
+    "metric": {
+      "name": "cost_per_success",
+      "output_type": "continuous",
+      "builtin_function": null,
+      "definition_note": "Divide total evaluation cost by successful examples to compare usable output per dollar."
+    },
+    "evaluation_method": "statistical",
+    "evaluator_binding": {
+      "kind": "custom_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Combine recorded total_cost with success_rate or task-specific pass/fail outcomes in an aggregate metric."
+    },
+    "provenance": [
+      {
+        "kind": "operational_practice",
+        "citation": "Cost-normalized success tracking for model and configuration selection",
+        "year": 2026,
+        "finding_summary": "Cost-per-success helps compare configurations that trade accuracy, latency, and spend differently."
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "Requires consistent cost accounting across providers and cached calls.",
+      "Can over-rank cheap configurations if the success criterion is too weak."
+    ]
+  },
+  {
+    "entry_id": "general.safety_refusal_check.v1",
+    "schema_version": "1.0.0",
+    "status": "active",
+    "version": "1.0.0",
+    "task_types": [
+      "general",
+      "rag"
+    ],
+    "measure_type": "safety",
+    "metric": {
+      "name": "policy_refusal_check",
+      "output_type": "binary",
+      "builtin_function": null,
+      "definition_note": "Apply a deterministic policy test to verify expected refusals or safe completions for known safety cases."
+    },
+    "evaluation_method": "deterministic",
+    "evaluator_binding": {
+      "kind": "custom_template",
+      "sdk_ref": "traigent.evaluators.SimpleScoringEvaluator",
+      "setup_note": "Bind policy-case fixtures and deterministic matchers for expected refusal, escalation, or safe-answer behavior."
+    },
+    "provenance": [
+      {
+        "kind": "operational_practice",
+        "citation": "Policy regression suite for safety-case fixtures",
+        "year": 2026,
+        "finding_summary": "Fixed safety fixtures catch regressions in refusal and safe-completion behavior before broader human or judge review."
+      }
+    ],
+    "impact_estimate": "medium",
+    "confidence": "medium",
+    "limitations": [
+      "Deterministic fixtures cover known cases and miss novel unsafe behaviors.",
+      "Policy text and expected behavior must be versioned with the evaluation set."
+    ]
+  }
+]

@@ -568,11 +568,17 @@ class MetricsTracker:
         if accuracy_value is None and not strict_nulls:
             accuracy_value = 0.0
 
+        duration_value = safe_get(aggregated, "duration")
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
             "accuracy": accuracy_value,  # Use actual accuracy
-            "duration": safe_get(aggregated, "duration"),
+            "duration": duration_value,
+            "execution_time_ms": (
+                duration_value * 1000.0
+                if isinstance(duration_value, (int, float))
+                else duration_value
+            ),
             # Use mean values as the primary metrics (without suffix)
             "input_tokens": safe_get(aggregated, "input_tokens", "mean"),
             "output_tokens": safe_get(aggregated, "output_tokens", "mean"),

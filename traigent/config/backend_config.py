@@ -254,9 +254,7 @@ class BackendConfig:
         """
         api_key = os.environ.get("TRAIGENT_API_KEY")
         if api_key:
-            logger.info(
-                "✅ Using API key from TRAIGENT_API_KEY (length=%d)", len(api_key)
-            )
+            logger.debug("Using API key from TRAIGENT_API_KEY")
             return api_key
 
         # Fall through to CLI-stored credentials — api_key only, not JWT
@@ -265,10 +263,7 @@ class BackendConfig:
 
             stored_key = CredentialManager.get_stored_api_key_only()
             if stored_key:
-                logger.info(
-                    "✅ Using API key from stored CLI credentials (length=%d)",
-                    len(stored_key),
-                )
+                logger.debug("Using API key from stored CLI credentials")
                 return stored_key
         except Exception:
             pass

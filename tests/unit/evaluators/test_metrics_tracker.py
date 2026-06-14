@@ -81,6 +81,7 @@ class TestMetricsTracker:
         assert "score" in formatted
         assert "accuracy" in formatted
         assert "duration" in formatted
+        assert "execution_time_ms" in formatted
         assert "input_tokens" in formatted  # Returns mean value directly
         assert "output_tokens" in formatted
         assert "total_tokens" in formatted

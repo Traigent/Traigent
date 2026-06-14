@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from traigent._version import get_version
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.local_analytics import (
@@ -121,7 +122,7 @@ class TestLocalAnalytics:
         assert stats["avg_improvement_percent"] is None
         assert stats["sessions_last_30_days"] == 0
         assert stats["days_since_first_use"] == 0
-        assert stats["sdk_version"] == "1.1.0"
+        assert stats["sdk_version"] == get_version()
         assert stats["execution_mode"] == ExecutionMode.EDGE_ANALYTICS.value
         assert stats["anonymous_user_id"] == self.analytics.user_id
         assert "timestamp" in stats
@@ -611,7 +612,8 @@ class TestAnalyticsIntegration:
         """Test analytics error handling with corrupted data."""
         # Create session manually with invalid data to test error handling
         self.storage.create_session(
-            function_name="test_function", optimization_config=None  # Invalid config
+            function_name="test_function",
+            optimization_config=None,  # Invalid config
         )
 
         # Analytics should handle this gracefully

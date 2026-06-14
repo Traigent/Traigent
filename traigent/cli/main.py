@@ -31,6 +31,11 @@ from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_edge_analytics_commands
+from traigent.evaluators import (
+    list_eval_recommendation_task_types,
+    recommend_evaluator,
+    recommend_metrics,
+)
 from traigent.utils.logging import setup_logging
 from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import (
@@ -38,6 +43,7 @@ from traigent.utils.secure_path import (
     safe_open,
     safe_write_text,
     validate_path,
+    validate_user_path,
 )
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
@@ -78,6 +84,25 @@ def _resolve_workspace_path(
         raise click.ClickException(
             f"{description} must reside within the Traigent workspace ({WORKSPACE_ROOT})"
         ) from exc
+
+
+def _resolve_user_cli_path(
+    path: Path,
+    description: str,
+    *,
+    must_exist: bool = False,
+    for_write: bool = False,
+) -> Path:
+    """Resolve a user-supplied CLI path relative to the caller's CWD."""
+    try:
+        resolved = validate_user_path(path.expanduser(), for_write=for_write)
+        if must_exist and not resolved.exists():
+            raise FileNotFoundError(f"Path does not exist: {resolved}")
+        return resolved
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"{description} does not exist: {exc}") from exc
+    except (PathTraversalError, ValueError) as exc:
+        raise click.ClickException(f"{description} is not allowed: {exc}") from exc
 
 
 def _print_optimization_header(
@@ -251,10 +276,14 @@ def _load_user_module(file_path_obj: Path) -> Any | None:
 
 def _resolve_output_dir(output_dir: str) -> Path:
     """Resolve and validate the output directory path."""
-    output_dir_candidate = Path(output_dir)
-    if not output_dir_candidate.is_absolute():
-        output_dir_candidate = WORKSPACE_ROOT / output_dir_candidate
-    return _resolve_workspace_path(output_dir_candidate, "Output directory")
+    resolved = _resolve_user_cli_path(
+        Path(output_dir),
+        "Output directory",
+        for_write=True,
+    )
+    if resolved.exists() and not resolved.is_dir():
+        raise click.ClickException(f"Output directory is not a directory: {resolved}")
+    return resolved
 
 
 def _parse_comma_separated_list(value: str | None) -> list[str] | None:
@@ -576,6 +605,100 @@ def recommend(
     _print_recommendations_table(data)
 
 
+@cli.command("recommend-eval")
+@click.argument("task_type", required=False)
+@click.option(
+    "--list-types",
+    is_flag=True,
+    default=False,
+    help="List valid metric/evaluator recommendation task types.",
+)
+@click.option(
+    "--measure-type",
+    "measure_types",
+    multiple=True,
+    type=click.Choice(
+        [
+            "sanity_check",
+            "accuracy",
+            "quality",
+            "latency",
+            "safety",
+            "efficiency",
+            "reliability",
+        ],
+        case_sensitive=False,
+    ),
+    help="Measure type to include. Can be repeated.",
+)
+@click.option(
+    "--evaluator",
+    "show_evaluator",
+    is_flag=True,
+    default=False,
+    help="Show evaluator recommendations instead of metric recommendations.",
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Output recommendations as JSON for tooling integration.",
+)
+def recommend_eval(
+    task_type: str | None,
+    list_types: bool,
+    measure_types: tuple[str, ...],
+    show_evaluator: bool,
+    output_json: bool,
+) -> None:
+    """Show metric/evaluator recommendations for a task type.
+
+    Examples:
+        traigent recommend-eval rag
+        traigent recommend-eval code_gen --measure-type accuracy
+        traigent recommend-eval general --evaluator
+        traigent recommend-eval --list-types
+    """
+    valid_types = list_eval_recommendation_task_types()
+    if list_types:
+        if output_json:
+            click.echo(json.dumps({"valid_task_types": list(valid_types)}, indent=2))
+            return
+        console.print(
+            "Valid metric/evaluator recommendation task types: "
+            + ", ".join(f"[cyan]{task_type}[/cyan]" for task_type in valid_types)
+        )
+        return
+
+    if task_type is None:
+        raise click.ClickException(
+            "task_type is required unless --list-types is provided. "
+            f"Valid types: {', '.join(valid_types)}"
+        )
+
+    try:
+        data = (
+            recommend_evaluator(task_type)
+            if show_evaluator
+            else recommend_metrics(
+                task_type,
+                measure_types=measure_types or None,
+            )
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if output_json:
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    if show_evaluator:
+        _print_eval_evaluator_table(data)
+        return
+    _print_eval_metrics_table(data)
+
+
 def _print_recommendations_table(data: dict[str, Any]) -> None:
     recommendations = data["recommendations"]
     console.print(
@@ -616,6 +739,102 @@ def _print_recommendations_table(data: dict[str, Any]) -> None:
             f"[cyan]{row['name']}[/cyan]: "
             f"{_truncate_text(str(row['apply_guidance']), 300)}"
         )
+
+
+def _print_eval_metrics_table(data: dict[str, Any]) -> None:
+    recommendations = data["recommendations"]
+    console.print(
+        f"\n[bold blue]Metric Recommendations for {data['task_type']}[/bold blue]"
+    )
+    console.print(f"[dim]{data['caveat']}[/dim]\n")
+
+    if not recommendations:
+        console.print(
+            "[yellow]No recommendations matched the requested filters.[/yellow]"
+        )
+        return
+
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Measure", no_wrap=True)
+    table.add_column("Method", no_wrap=True)
+    table.add_column("Function", style="green", no_wrap=True)
+    table.add_column("Impact / Evidence", no_wrap=True)
+
+    for row in recommendations:
+        metric = row["metric"]
+        table.add_row(
+            str(metric["name"]),
+            str(row["measure_type"]),
+            str(row["evaluation_method"]),
+            str(metric.get("builtin_function") or "custom"),
+            f"{row['impact_estimate']} / {row['confidence']}",
+        )
+
+    console.print(table)
+    console.print("\n[bold]Provenance[/bold]")
+    for row in recommendations:
+        metric = row["metric"]
+        console.print(
+            f"[cyan]{metric['name']}[/cyan]: "
+            f"{_truncate_text(_format_eval_provenance(row), 300)}"
+        )
+
+
+def _print_eval_evaluator_table(data: dict[str, Any]) -> None:
+    recommendations = data["recommendations"]
+    console.print(
+        f"\n[bold blue]Evaluator Recommendations for {data['task_type']}[/bold blue]"
+    )
+    console.print(f"[dim]{data['caveat']}[/dim]\n")
+
+    if not recommendations:
+        console.print(
+            "[yellow]No evaluator recommendations matched the requested filters."
+            "[/yellow]"
+        )
+        return
+
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Method", no_wrap=True)
+    table.add_column("Binding", style="green", no_wrap=True)
+    table.add_column("Cost", no_wrap=True)
+    table.add_column("Impact / Evidence", no_wrap=True)
+
+    for row in recommendations:
+        binding = row["evaluator_binding"]
+        table.add_row(
+            str(row["metric_name"]),
+            str(row["evaluation_method"]),
+            f"{binding['kind']}\n{binding['sdk_ref']}",
+            str(row["cost_tier"]),
+            f"{row['impact_estimate']} / {row['confidence']}",
+        )
+
+    console.print(table)
+    console.print("\n[bold]Setup Notes[/bold]")
+    for row in recommendations:
+        binding = row["evaluator_binding"]
+        console.print(
+            f"[cyan]{row['metric_name']}[/cyan]: "
+            f"{_truncate_text(str(binding['setup_note']), 300)}"
+        )
+    console.print("\n[bold]Cost Notes[/bold]")
+    for row in recommendations:
+        console.print(
+            f"[cyan]{row['metric_name']}[/cyan]: "
+            f"{_truncate_text(str(row['cost_note']), 300)}"
+        )
+
+
+def _format_eval_provenance(row: dict[str, Any]) -> str:
+    parts = []
+    for ref in row.get("provenance", []):
+        citation = str(ref.get("citation", ""))
+        summary = str(ref.get("finding_summary", ""))
+        parts.append(f"{citation}: {summary}")
+    return "; ".join(parts) or "No provenance note listed."
 
 
 def _format_recommendation_range(row: dict[str, Any]) -> str:
@@ -869,7 +1088,7 @@ def optimize(
     )
 
     # Resolve paths
-    file_path_obj = _resolve_workspace_path(
+    file_path_obj = _resolve_user_cli_path(
         Path(file_path), "File path", must_exist=True
     )
     output_dir_resolved = _resolve_output_dir(output_dir)
@@ -941,7 +1160,17 @@ def optimize(
     help="Objectives to validate (e.g., accuracy, latency)",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed validation output")
-def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> None:
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit nonzero when dataset or objective validation fails",
+)
+def validate(
+    dataset_path: str,
+    objectives: tuple[str, ...],
+    verbose: bool,
+    strict: bool,
+) -> None:
     """Validate dataset format and optimization configuration."""
     console.print(f"\n[bold blue]Validating Dataset: {dataset_path}[/bold blue]\n")
 
@@ -963,6 +1192,8 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
             "\n[yellow]Hint:[/yellow] Dataset paths must reside under the current "
             "working directory or the path specified by TRAIGENT_DATASET_ROOT."
         )
+        if strict:
+            raise click.ClickException("Dataset validation failed") from e
         return
 
     # Step 2: Validate dataset content format
@@ -976,6 +1207,8 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
     if verbose or not path_result.is_valid:
         console.print(path_result.get_feedback())
 
+    has_failure = not path_result.is_valid
+
     # Validate objectives if provided
     if objectives:
         obj_result = Validators.validate_objectives(list(objectives))
@@ -985,6 +1218,10 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
         else:
             console.print("❌ [red]Objectives validation failed[/red]")
             console.print(obj_result.get_feedback())
+            has_failure = True
+
+    if strict and has_failure:
+        raise click.ClickException("Dataset validation failed")
 
 
 @cli.command(name="report-example-map")
@@ -1843,12 +2080,14 @@ def validate_config(config_file: str) -> None:
     console.print(f"\n[bold blue]Validating Configuration: {config_file}[/bold blue]\n")
 
     try:
-        config_path = _resolve_workspace_path(
+        config_path = _resolve_user_cli_path(
             Path(config_file),
             "Config file",
             must_exist=True,
         )
-        with safe_open(config_path, WORKSPACE_ROOT, mode="r", encoding="utf-8") as f:
+        with safe_open(
+            config_path, config_path.parent, mode="r", encoding="utf-8"
+        ) as f:
             config = json.load(f)
 
         # Extract configuration components
@@ -1899,9 +2138,10 @@ def generate(template: str, output: str) -> None:
 
     template_code = templates[template]
 
-    output_path = _resolve_workspace_path(
+    output_path = _resolve_user_cli_path(
         Path(output),
         "Output file",
+        for_write=True,
     )
 
     # Check if file already exists
@@ -1911,7 +2151,8 @@ def generate(template: str, output: str) -> None:
             return
 
     # Write template to file
-    safe_write_text(output_path, template_code, WORKSPACE_ROOT, encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_write_text(output_path, template_code, output_path.parent, encoding="utf-8")
 
     console.print(f"✅ [green]Template generated: {output}[/green]")
 
@@ -2412,6 +2653,10 @@ cli.add_command(generate_config)
 from traigent.cli.next_steps_command import next_steps  # noqa: E402
 
 cli.add_command(next_steps)
+
+from traigent.cli.playbook_commands import playbook  # noqa: E402
+
+cli.add_command(playbook)
 
 from traigent.cli.onboard_commands import first_prompt, onboard  # noqa: E402
 

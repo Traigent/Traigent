@@ -11,7 +11,9 @@ Tests error scenarios including:
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
+from traigent.api.constraints import require
 from traigent.api.decorators import ExecutionOptions, optimize
+from traigent.api.parameter_ranges import Choices
 from traigent.utils.exceptions import ConfigurationError, ValidationError
 
 from .test_base import DecoratorTestBase
@@ -358,6 +360,59 @@ class TestEnterpriseGatedFeatures(DecoratorTestBase):
         ExecutionOptions()
         # Explicit defaults
         ExecutionOptions(reps_per_trial=1, reps_aggregation="mean")
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("hybrid_api_batch_size", 0),
+            ("hybrid_api_batch_parallelism", 0),
+            ("hybrid_api_heartbeat_interval", 0.0),
+            ("hybrid_api_heartbeat_interval", -5.0),
+        ],
+    )
+    def test_hybrid_api_execution_options_reject_degenerate_values(self, field, value):
+        """Hybrid API execution controls must be positive."""
+        with pytest.raises(PydanticValidationError) as exc:
+            ExecutionOptions(**{field: value})
+
+        assert field in str(exc.value)
+
+    def test_max_trials_zero_rejected_at_decoration(self):
+        """max_trials=0 fails at decoration instead of producing a no-op run."""
+        with pytest.raises(ValueError, match="max_trials must be a positive integer"):
+
+            @optimize(
+                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+                max_trials=0,
+            )
+            def test_func(text: str) -> str:
+                return text
+
+    def test_unsatisfiable_finite_constraints_rejected_at_decoration(self):
+        """Contradictory finite-domain constraints fail before optimization starts."""
+        model = Choices(["a", "b"], name="model")
+
+        with pytest.raises(ValueError, match="constraints are unsatisfiable"):
+
+            @optimize(
+                configuration_space={"model": model},
+                constraints=[require(model.equals("a")), require(model.equals("b"))],
+            )
+            def test_func(text: str) -> str:
+                return text
+
+    def test_satisfiable_finite_constraints_still_decorate(self):
+        """A finite-domain constraint set with a valid config is unchanged."""
+        model = Choices(["a", "b"], name="model")
+
+        @optimize(
+            configuration_space={"model": model},
+            constraints=[require(model.equals("a"))],
+        )
+        def test_func(text: str) -> str:
+            return text
+
+        assert test_func("ok") == "ok"
 
     def test_reps_assignment_rejected_after_construction(self):
         """Assignment validation preserves the enterprise gate after construction."""

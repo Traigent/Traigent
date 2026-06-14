@@ -180,7 +180,14 @@ def test_database_and_redis_are_required_in_production(monkeypatch):
     [
         ("true", True),
         ("TRUE", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        (" TRUE ", True),
         ("false", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
         ("", False),
     ],
 )
@@ -188,3 +195,10 @@ def test_is_strict_cost_accounting(monkeypatch, raw_value, expected):
     """Strict cost accounting flag should parse bool-like env values."""
     monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", raw_value)
     assert env_config.is_strict_cost_accounting() is expected
+
+
+@pytest.mark.parametrize("raw_value", ["true", "1", "yes", "on", " TRUE "])
+def test_backend_offline_accepts_standard_truthy_values(monkeypatch, raw_value):
+    """Offline mode should honor the standard truthy env vocabulary."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", raw_value)
+    assert env_config.is_backend_offline() is True
