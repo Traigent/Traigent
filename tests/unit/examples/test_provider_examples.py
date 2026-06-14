@@ -19,6 +19,7 @@ The examples themselves are exercised end-to-end (a real mock run) in
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -130,31 +131,50 @@ def test_example_file_exists_and_matches_manifest(provider):
 
 
 @pytest.mark.parametrize("provider", _RUNNABLE, ids=[p["id"] for p in _RUNNABLE])
-def test_example_module_imports_against_live_sdk(provider, monkeypatch):
+def test_example_module_imports_against_live_sdk(provider):
     """Importing the example exercises @traigent.optimize, EvaluationOptions,
     get_config and the provider entry point. A rename in the SDK surface makes
-    this raise ImportError/AttributeError — the drift signal we want."""
+    this raise ImportError/AttributeError — the drift signal we want.
+
+    Run in a SUBPROCESS: importing an example has deliberate global side effects
+    (it enables mock mode and seeds TRAIGENT_DATASET_ROOT + placeholder provider
+    keys so its module-level @traigent.optimize can validate the dataset). Doing
+    that in-process would leak into sibling tests (it did — it broke the MCP
+    scaffold test under random ordering). This mirrors test_quickstart_entry,
+    which never imports the example __main__ in-process for the same reason.
+    """
     # Skip cleanly if the provider's package isn't installed in this env
-    # (e.g. core-only CI without the LangChain extras).
+    # (e.g. core-only CI without the LangChain extras). find_spec does not
+    # import the module, so it has no side effects.
     if importlib.util.find_spec(provider["import_check"]) is None:
         pytest.skip(f"{provider['import_check']} not installed")
 
-    # Keep the import hermetic: development env, never auto-install, mock on.
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("TRAIGENT_EXAMPLES_NO_INSTALL", "1")
-    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
-    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
-
     module_name = f"traigent.examples.providers.{provider['runnable_module']}"
-    sys.modules.pop(module_name, None)
-    module = importlib.import_module(module_name)
-
-    assert hasattr(module, "answer"), f"{module_name}.answer is missing"
-    assert hasattr(module.answer, "optimize"), (
-        f"{module_name}.answer is not a Traigent-optimized function "
-        "(no .optimize) — the @traigent.optimize surface may have changed"
+    code = (
+        "import importlib;"
+        f"m = importlib.import_module({module_name!r});"
+        "assert hasattr(m, 'answer'), 'missing answer';"
+        "assert hasattr(m.answer, 'optimize'), "
+        "'answer is not @traigent.optimize-decorated (SDK surface changed?)';"
+        "assert callable(getattr(m, 'main', None)), 'missing main';"
     )
-    assert callable(getattr(module, "main", None))
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "ENVIRONMENT": "development",
+        "TRAIGENT_MOCK_LLM": "true",
+        "TRAIGENT_EXAMPLES_NO_INSTALL": "1",
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    assert proc.returncode == 0, (
+        f"importing {module_name} failed:\n{proc.stdout}\n{proc.stderr}"
+    )
 
 
 def test_get_provider_unknown_raises():
