@@ -93,6 +93,7 @@ except ImportError:
         OptimizationHistory,
         PerformancePredictor,
     )
+    from .next_steps import NextStepsClient
 
     # Predictive analytics
     from .predictive import (
@@ -135,6 +136,7 @@ def is_plugin_installed() -> bool:
 __all__ = [
     # Example Insights
     "ExampleInsightsClient",
+    "NextStepsClient",
     # Historical analytics
     "HistoricalAnalyticsEngine",
     "MetaLearningEngine",

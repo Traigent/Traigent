@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.13.0.dev1"
+version = "0.13.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -252,7 +252,12 @@ include = ["traigent*", "traigent_validation*"]
 exclude = ["tests*", "demos*", "docs*", "traigent.experimental*"]
 
 [tool.setuptools.package-data]
-traigent = ["py.typed", "examples/**/*.jsonl", "skills/**/*.md"]
+traigent = [
+    "py.typed",
+    "examples/**/*.jsonl",
+    "skills/**/*.md",
+    "playbook/schemas/*.json",
+]
 traigent_validation = ["py.typed"]
 
 [tool.uv]

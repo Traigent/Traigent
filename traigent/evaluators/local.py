@@ -7,7 +7,7 @@ from __future__ import annotations
 import inspect
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,7 +15,12 @@ if TYPE_CHECKING:
     from traigent.core.meta_types import TraigentMetadata
 
 from traigent.config.types import ExecutionMode, resolve_execution_mode
-from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
+from traigent.evaluators.base import (
+    BaseEvaluator,
+    Dataset,
+    EvaluationResult,
+    _example_correlation_key,
+)
 from traigent.evaluators.metrics_tracker import (
     ExampleMetrics,
     MetricsCalculator,
@@ -433,11 +438,7 @@ class LocalEvaluator(BaseEvaluator):
         # Try correlation key (example_id)
         try:
             ex = dataset.examples[example_index]
-            ex_key = (
-                ex.metadata.get("example_id", f"example_{example_index}")
-                if ex.metadata
-                else f"example_{example_index}"
-            )
+            ex_key = _example_correlation_key(ex, example_index)
         except Exception:
             ex_key = f"example_{example_index}"
 
@@ -592,6 +593,14 @@ class LocalEvaluator(BaseEvaluator):
                 llm_payload,
                 example_index,
             )
+            if isinstance(value, Mapping):
+                for result_name, result_value in value.items():
+                    if result_value is None:
+                        continue
+                    example_metric.custom_metrics[str(result_name)] = float(
+                        result_value
+                    )
+                continue
             example_metric.custom_metrics[metric_name] = (
                 float(value) if value is not None else 0.0
             )

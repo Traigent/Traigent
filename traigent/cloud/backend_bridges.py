@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from traigent._version import get_version
 from traigent.cloud.dataset_converter import (
     metadata_to_backend_tags,
     sanitize_backend_metadata,
@@ -259,7 +260,7 @@ class SDKBackendBridge:
             "traigent_metadata": {
                 "trial_id": trial.trial_id,
                 "trial_number": trial.trial_number,
-                "sdk_version": "1.1.0",
+                "sdk_version": get_version(),
                 "optimization_mode": "local_privacy",
                 "model_config": (
                     {

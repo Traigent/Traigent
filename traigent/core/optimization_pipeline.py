@@ -70,8 +70,8 @@ def resolve_execution_parameters(
     resolved_algorithm: str = algorithm if algorithm else fallback_algorithm
 
     resolved_max_trials = max_trials if max_trials is not None else fallback_max_trials
-    if resolved_max_trials is not None and resolved_max_trials < 0:
-        raise ValueError("max_trials must be non-negative")
+    if resolved_max_trials is not None and resolved_max_trials <= 0:
+        raise ValueError("max_trials must be a positive integer")
 
     if not effective_config_space or effective_config_space == {}:
         raise ValueError(
@@ -311,6 +311,8 @@ def build_metric_functions(
         target_metric = "accuracy"
     elif "score" in objectives:
         target_metric = "score"
+    elif objectives:
+        target_metric = objectives[0]
 
     if target_metric and target_metric not in effective_metric_functions:
         effective_metric_functions[target_metric] = scoring_function

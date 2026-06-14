@@ -45,20 +45,20 @@ def validate_constructor_arguments(
     Args:
         optimizer: Optimizer instance (must be BaseOptimizer subclass)
         evaluator: Evaluator instance (must be BaseEvaluator subclass)
-        max_trials: Maximum number of trials (None for unlimited, must be non-negative)
+        max_trials: Maximum number of trials (None for unlimited, must be positive)
         max_total_examples: Maximum examples to evaluate (None for unlimited)
         timeout: Timeout in seconds (None for no timeout, must be non-negative)
 
     Raises:
         TypeError: If optimizer or evaluator are not instances of their base classes
-        ValueError: If max_trials, max_total_examples, or timeout are negative
+        ValueError: If max_trials is non-positive, or max_total_examples/timeout are negative
     """
     if not isinstance(optimizer, BaseOptimizer):
         raise TypeError("optimizer must be an instance of BaseOptimizer")
     if not isinstance(evaluator, BaseEvaluator):
         raise TypeError("evaluator must be an instance of BaseEvaluator")
-    if max_trials is not None and max_trials < 0:
-        raise ValueError("max_trials must be non-negative")
+    if max_trials is not None and max_trials <= 0:
+        raise ValueError("max_trials must be a positive integer")
     if max_total_examples is not None and max_total_examples < 0:
         raise ValueError("max_total_examples must be non-negative")
     if timeout is not None and timeout < 0:

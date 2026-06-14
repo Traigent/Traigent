@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from itertools import product
 from typing import TYPE_CHECKING, Any
 
 from traigent_validation.base import (
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from traigent.tvl.models import StructuralConstraint
 
 _PARAM_REF_PATTERN = re.compile(r"\bparams\.([A-Za-z_][A-Za-z0-9_]*)\b")
+_MAX_SAT_ENUMERATION_CONFIGS = 10_000
 
 
 def _extract_param_refs(expression: str) -> set[str]:
@@ -85,6 +87,39 @@ class PythonConstraintValidator:
         if not tvars:
             return SatResult(status=SatStatus.UNSAT, message="No parameters defined")
 
+        domains = self._finite_domains(tvars)
+        if domains is not None:
+            names = list(domains)
+            total_configs = 1
+            for values in domains.values():
+                total_configs *= len(values)
+                if total_configs > _MAX_SAT_ENUMERATION_CONFIGS:
+                    return SatResult(
+                        status=SatStatus.UNKNOWN,
+                        message=(
+                            "Finite satisfiability check skipped because the "
+                            f"space has more than {_MAX_SAT_ENUMERATION_CONFIGS} "
+                            "candidate configurations."
+                        ),
+                    )
+
+            var_names = {id(tvar): name for name, tvar in tvars.items()}
+            for values in product(*(domains[name] for name in names)):
+                config = dict(zip(names, values, strict=True))
+                result = self.validate_config(config, constraints, var_names)
+                if result.is_valid:
+                    return SatResult(
+                        status=SatStatus.SAT,
+                        example_config=config,
+                        message="At least one configuration satisfies all constraints",
+                    )
+
+            return SatResult(
+                status=SatStatus.UNSAT,
+                unsat_core=list(range(len(constraints))),
+                message="No finite-domain configuration satisfies all constraints",
+            )
+
         return SatResult(
             status=SatStatus.UNKNOWN,
             message=(
@@ -92,6 +127,33 @@ class PythonConstraintValidator:
                 "Consider a SAT/SMT validator for complex constraints."
             ),
         )
+
+    def _finite_domains(
+        self, tvars: Mapping[str, ParameterRange]
+    ) -> dict[str, tuple[Any, ...]] | None:
+        domains: dict[str, tuple[Any, ...]] = {}
+        for name, tvar in tvars.items():
+            domain = self._finite_domain(tvar)
+            if domain is None:
+                return None
+            domains[name] = domain
+        return domains
+
+    def _finite_domain(self, tvar: ParameterRange) -> tuple[Any, ...] | None:
+        values = getattr(tvar, "values", None)
+        if values is not None:
+            return tuple(values)
+
+        low = getattr(tvar, "low", None)
+        high = getattr(tvar, "high", None)
+        if not isinstance(low, int) or not isinstance(high, int):
+            return None
+
+        step = getattr(tvar, "step", None) or 1
+        if not isinstance(step, int) or step <= 0:
+            return None
+
+        return tuple(range(low, high + 1, step))
 
     def validate_structural_constraints(
         self,

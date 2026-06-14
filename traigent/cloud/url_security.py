@@ -10,7 +10,13 @@ from urllib.parse import unquote, urlparse, urlunparse
 
 _DEVELOPMENT_ENV_NAMES = {"dev", "development", "local", "test", "testing"}
 _PRODUCTION_ENV_NAMES = {"prod", "production", "stage", "staging"}
-_ENV_KEYS = ("TRAIGENT_ENV", "ENVIRONMENT", "APP_ENV", "FLASK_ENV")
+_ENV_KEYS = (
+    "TRAIGENT_ENV",
+    "ENVIRONMENT",
+    "TRAIGENT_ENVIRONMENT",
+    "APP_ENV",
+    "FLASK_ENV",
+)
 
 
 def _is_development_environment() -> bool:

@@ -507,6 +507,28 @@ class TestPythonConstraintValidator:
 
         assert result.status == SatStatus.UNKNOWN
 
+    def test_check_satisfiability_finite_domain_sat(self) -> None:
+        """Finite domains return SAT when at least one config satisfies constraints."""
+        model = Choices(["a", "b"], name="model")
+        constraints = [require(model.equals("a"))]
+
+        validator = PythonConstraintValidator()
+        result = validator.check_satisfiability({"model": model}, constraints)
+
+        assert result.status == SatStatus.SAT
+        assert result.example_config == {"model": "a"}
+
+    def test_check_satisfiability_finite_domain_unsat(self) -> None:
+        """Finite domains return UNSAT when no config satisfies all constraints."""
+        model = Choices(["a", "b"], name="model")
+        constraints = [require(model.equals("a")), require(model.equals("b"))]
+
+        validator = PythonConstraintValidator()
+        result = validator.check_satisfiability({"model": model}, constraints)
+
+        assert result.status == SatStatus.UNSAT
+        assert result.unsat_core == [0, 1]
+
 
 class TestSATConstraintValidator:
     """Tests for SATConstraintValidator compatibility adapter."""

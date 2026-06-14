@@ -38,6 +38,27 @@ from traigent.tuned_variables.detector import TunedVariableDetector
 console = Console()
 stderr = Console(stderr=True)
 
+
+def _detect_from_file(
+    detector: TunedVariableDetector,
+    path: Path,
+    function_name: str | None,
+    *,
+    strict: bool,
+) -> list[DetectionResult]:
+    try:
+        return detector.detect_from_file(path, function_name)
+    except UnicodeDecodeError:
+        message = f"Could not read {path} as UTF-8 text"
+    except OSError as exc:
+        message = f"Could not read {path}: {exc}"
+
+    if strict:
+        raise click.ClickException(message) from None
+    stderr.print(f"[yellow]Skipping {path}: {message}[/yellow]")
+    return []
+
+
 _CONFIDENCE_COLORS = {
     DetectionConfidence.HIGH: "green",
     DetectionConfidence.MEDIUM: "yellow",
@@ -93,7 +114,7 @@ def detect_tvars(
     if path.is_file():
         if path.suffix != ".py":
             raise click.ClickException(f"Expected a .py file, got: {path}")
-        results = detector.detect_from_file(path, function_name)
+        results = _detect_from_file(detector, path, function_name, strict=True)
     else:
         # Directory: scan all .py files recursively
         py_files = sorted(path.rglob("*.py"))
@@ -108,7 +129,9 @@ def detect_tvars(
                 for part in py_file.parts
             ):
                 continue
-            results.extend(detector.detect_from_file(py_file, function_name))
+            results.extend(
+                _detect_from_file(detector, py_file, function_name, strict=False)
+            )
 
     # Filter by confidence
     min_level = DetectionConfidence(min_confidence)

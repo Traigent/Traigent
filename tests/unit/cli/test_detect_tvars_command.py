@@ -153,9 +153,8 @@ class TestJsonOutput:
             "detection_source",
         }
         for entry in data:
-            assert required.issubset(
-                entry.keys()
-            ), f"Missing keys: {required - entry.keys()}"
+            missing_keys = required - entry.keys()
+            assert not missing_keys, f"Missing keys: {missing_keys}"
 
     def test_json_has_suggested_range(
         self, runner: CliRunner, agent_file: Path
@@ -240,6 +239,18 @@ class TestEdgeCases:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data == []
+
+    def test_non_utf8_file_reports_clean_error(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "bad.py"
+        p.write_bytes(b"\xff\xfe bad")
+
+        result = runner.invoke(detect_tvars, [str(p)])
+
+        assert result.exit_code == 1
+        assert "Could not read" in result.output
+        assert "Traceback" not in result.output
 
 
 # ---------------------------------------------------------------------------

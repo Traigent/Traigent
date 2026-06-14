@@ -54,6 +54,21 @@ _TRACE_BATCH_SUFFIX_BYTES = len(b"]}")
 _TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
 
 
+class _NoRedirectHandler(request.HTTPRedirectHandler):
+    """Prevent credentialed observability requests from replaying headers elsewhere."""
+
+    def redirect_request(
+        self,
+        req: request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
 def _new_trace_id() -> str:
     return f"trace_{uuid.uuid4().hex}"
 
@@ -167,8 +182,8 @@ class _SyncBatchTransport:
     def get_stats(self) -> dict[str, Any]:
         with self._lock:
             snapshot: dict[str, Any] = dict(self._stats)
-        snapshot["errors"] = list(self._errors)
-        snapshot["warnings"] = list(self._warnings)
+            snapshot["errors"] = list(self._errors)
+            snapshot["warnings"] = list(self._warnings)
         return snapshot
 
     def _ensure_timer_locked(self) -> None:
@@ -300,14 +315,16 @@ class _SyncBatchTransport:
             )
 
     def _append_error(self, message: str) -> None:
-        self._errors.append(message)
-        if len(self._errors) > 20:
-            self._errors = self._errors[-20:]
+        with self._lock:
+            self._errors.append(message)
+            if len(self._errors) > 20:
+                self._errors = self._errors[-20:]
 
     def _append_warning(self, message: str) -> None:
-        self._warnings.append(message)
-        if len(self._warnings) > 50:
-            self._warnings = self._warnings[-50:]
+        with self._lock:
+            self._warnings.append(message)
+            if len(self._warnings) > 50:
+                self._warnings = self._warnings[-50:]
 
 
 class ObservabilityClient:
@@ -333,8 +350,11 @@ class ObservabilityClient:
         self._request_sender_override = request_sender
         self._trace_states: dict[str, _TraceState] = {}
         self._lock = threading.RLock()
+        self._snapshot_submission_condition = threading.Condition(self._lock)
+        self._inflight_snapshot_submissions = 0
         self._closed = False
         self._offline_notice_logged = False
+        self._http_opener = request.build_opener(_NoRedirectHandler)
         self._transport = self._create_transport()
 
         if self.config.enable_atexit_flush:
@@ -422,6 +442,12 @@ class ObservabilityClient:
             state = self._trace_states.get(trace_id)
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
+            self._validate_observation_relationship(
+                state,
+                observation_id=observation_id,
+                observation_type=observation_type,
+                parent_observation_id=parent_observation_id,
+            )
 
             existing = state.observations.get(observation_id)
             if existing is None:
@@ -559,28 +585,39 @@ class ObservabilityClient:
         return stats
 
     def close(self, timeout: float | None = None) -> FlushResult:
-        if self._closed:
-            return FlushResult(
-                success=True,
-                items_sent=0,
-                items_pending=0,
-                items_dropped=0,
-                successful_batches=0,
-                failed_batches=0,
-                errors=[],
-                warnings=[],
-            )
+        with self._lock:
+            if self._closed:
+                return FlushResult(
+                    success=True,
+                    items_sent=0,
+                    items_pending=0,
+                    items_dropped=0,
+                    successful_batches=0,
+                    failed_batches=0,
+                    errors=[],
+                    warnings=[],
+                )
 
         if self.config.offline_mode and not self._has_custom_trace_sender:
             self._log_offline_mode_once()
-            self._closed = True
+            with self._lock:
+                self._closed = True
             return self._offline_flush_result()
-        with self._lock:
-            trace_ids = list(self._trace_states.keys())
-        for trace_id in trace_ids:
-            self._queue_trace_snapshot(trace_id)
 
-        self._closed = True
+        with self._lock:
+            trace_payloads = [
+                (
+                    trace_id,
+                    cast(dict[str, Any], redact_sensitive_data(state.to_payload())),
+                )
+                for trace_id, state in self._trace_states.items()
+            ]
+            self._closed = True
+            while self._inflight_snapshot_submissions:
+                self._snapshot_submission_condition.wait()
+
+        for trace_id, payload in trace_payloads:
+            self._submit_trace_snapshot(trace_id, payload)
         result = self._transport.close()
         return FlushResult(
             success=result.success,
@@ -771,9 +808,7 @@ class ObservabilityClient:
             method="POST",
         )
         try:
-            with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
-                http_request, timeout=self.config.request_timeout
-            ) as response:
+            with self._open_http_request(http_request) as response:
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 if status_code >= 400:
@@ -834,8 +869,9 @@ class ObservabilityClient:
         path: str,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if self._closed:
-            raise ClientError("Observability client is closed")
+        with self._lock:
+            if self._closed:
+                raise ClientError("Observability client is closed")
         if self.config.offline_mode:
             self._log_offline_mode_once()
             raise ClientError(
@@ -864,9 +900,7 @@ class ObservabilityClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
-                http_request, timeout=self.config.request_timeout
-            ) as response:
+            with self._open_http_request(http_request) as response:
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 parsed = json.loads(body) if body else {}
@@ -899,6 +933,34 @@ class ObservabilityClient:
             raise ClientError(f"Unexpected response structure for {label}")
         return data
 
+    def _open_http_request(self, http_request: request.Request) -> Any:
+        return self._http_opener.open(
+            http_request,
+            timeout=self.config.request_timeout,
+        )
+
+    @staticmethod
+    def _validate_observation_relationship(
+        state: _TraceState,
+        *,
+        observation_id: str,
+        observation_type: ObservationType,
+        parent_observation_id: str | None,
+    ) -> None:
+        if parent_observation_id is not None:
+            parent = state.observations.get(parent_observation_id)
+            if parent is not None and parent.type is ObservationType.EVENT:
+                raise ValueError("event observations cannot have children")
+
+        if observation_type is ObservationType.EVENT:
+            has_children = any(
+                existing_id != observation_id
+                and observation.parent_observation_id == observation_id
+                for existing_id, observation in state.observations.items()
+            )
+            if has_children:
+                raise ValueError("event observations cannot have children")
+
     def _queue_trace_snapshot(self, trace_id: str) -> None:
         if self.config.offline_mode and not self._has_custom_trace_sender:
             return
@@ -907,6 +969,16 @@ class ObservabilityClient:
             if state is None or self._closed:
                 return
             payload = cast(dict[str, Any], redact_sensitive_data(state.to_payload()))
+            self._inflight_snapshot_submissions += 1
+        try:
+            self._submit_trace_snapshot(trace_id, payload)
+        finally:
+            with self._lock:
+                self._inflight_snapshot_submissions -= 1
+                if self._inflight_snapshot_submissions == 0:
+                    self._snapshot_submission_condition.notify_all()
+
+    def _submit_trace_snapshot(self, trace_id: str, payload: dict[str, Any]) -> None:
         submitted = self._transport.submit(trace_id, payload)
         if not submitted:
             stats = self._transport.get_stats()
@@ -1008,8 +1080,9 @@ class ObservabilityClient:
         return PromptReferenceDTO(**prompt_reference)
 
     def _atexit_close(self) -> None:
-        if self._closed:
-            return
+        with self._lock:
+            if self._closed:
+                return
         try:
             self.close(timeout=self.config.flush_timeout)
         except Exception as exc:

@@ -9,6 +9,8 @@ name: SDK Required PR Gate
 on:
   pull_request:
     branches: [develop]
+    # Default types + ready_for_review so flipping a draft to ready runs the gate.
+    types: [opened, synchronize, reopened, ready_for_review]
   # Merge-queue candidate refs (gh-readonly-queue/*); required checks must
   # report on the candidate commit.
   merge_group: {}
@@ -26,6 +28,9 @@ env:
 jobs:
   changes:
     name: detect-changes
+    # Skip CI on draft PRs (they can't merge); merge_group always runs.
+    # Downstream jobs skip and required-pr-gate still passes (skipped deps = pass).
+    if: ${{ github.event_name == 'merge_group' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

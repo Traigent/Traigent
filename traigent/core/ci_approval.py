@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 
 # ISO 8601 timezone suffix for UTC (used in token validation)
 _UTC_TIMEZONE_SUFFIX = "+00:00"
+_LEGACY_TOKEN_MAX_TTL = timedelta(hours=24)
 
 
 def _is_ci_environment() -> bool:
@@ -61,7 +62,7 @@ def _sanitize_for_log(value: str, max_len: int = 50) -> str:
 
 
 def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
-    """Validate a legacy format approval token."""
+    """Validate a legacy format approval token with a migration TTL cap."""
     if "approved_by" not in token_data or "expires_at" not in token_data:
         return False
     try:
@@ -71,10 +72,17 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
         )
         now = datetime.now()
         if expires_at.tzinfo:
-            now = now.replace(tzinfo=UTC)
+            now = datetime.now(UTC)
+        if expires_at - now > _LEGACY_TOKEN_MAX_TTL:
+            logger.warning("Legacy CI approval token TTL exceeds 24 hours, rejecting")
+            return False
         if expires_at > now:
             safe_approver = _sanitize_for_log(token_data.get("approved_by", "unknown"))
-            logger.info("CI optimization approved by legacy token: %s", safe_approver)
+            logger.warning(
+                "CI optimization approved by unsigned legacy token for %s; "
+                "migrate to HMAC-signed approval tokens",
+                safe_approver,
+            )
             return True
     except (ValueError, KeyError):
         pass

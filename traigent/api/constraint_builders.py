@@ -23,6 +23,87 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+def _parameter_label(tvar: Any) -> str:
+    return str(getattr(tvar, "name", None) or "parameter")
+
+
+def _numeric_bounds(tvar: Any) -> tuple[float, float] | None:
+    low = getattr(tvar, "low", None)
+    high = getattr(tvar, "high", None)
+    if low is None or high is None:
+        return None
+    return float(low), float(high)
+
+
+def _validate_numeric_value(tvar: Any, value: float, operator: str) -> None:
+    bounds = _numeric_bounds(tvar)
+    if bounds is None:
+        return
+    low, high = bounds
+    numeric_value = float(value)
+    if not low <= numeric_value <= high:
+        raise ValueError(
+            f"{_parameter_label(tvar)}.{operator}({value!r}) is outside "
+            f"the parameter domain [{low}, {high}]"
+        )
+
+
+def _validate_numeric_values(
+    tvar: Any, values: Sequence[float], operator: str
+) -> tuple[float, ...]:
+    normalized = tuple(values)
+    if not normalized:
+        raise ValueError(f"{_parameter_label(tvar)}.{operator}() cannot be empty")
+    for value in normalized:
+        _validate_numeric_value(tvar, value, operator)
+    return normalized
+
+
+def _validate_numeric_range(tvar: Any, low_value: float, high_value: float) -> None:
+    if low_value > high_value:
+        raise ValueError(
+            f"{_parameter_label(tvar)}.in_range() lower bound must be <= upper bound"
+        )
+    bounds = _numeric_bounds(tvar)
+    if bounds is None:
+        return
+    low, high = bounds
+    if high_value < low or low_value > high:
+        raise ValueError(
+            f"{_parameter_label(tvar)}.in_range({low_value!r}, {high_value!r}) "
+            f"does not overlap the parameter domain [{low}, {high}]"
+        )
+
+
+def _choices(tvar: Any) -> tuple[Any, ...] | None:
+    values = getattr(tvar, "values", None)
+    if values is None:
+        return None
+    return tuple(values)
+
+
+def _validate_choice_value(tvar: Any, value: Any, operator: str) -> None:
+    values = _choices(tvar)
+    if values is None:
+        return
+    if value not in values:
+        raise ValueError(
+            f"{_parameter_label(tvar)}.{operator}({value!r}) is outside "
+            f"the parameter choices {list(values)!r}"
+        )
+
+
+def _validate_choice_values(
+    tvar: Any, values: Sequence[Any], operator: str
+) -> tuple[Any, ...]:
+    normalized = tuple(values)
+    if not normalized:
+        raise ValueError(f"{_parameter_label(tvar)}.{operator}() cannot be empty")
+    for value in normalized:
+        _validate_choice_value(tvar, value, operator)
+    return normalized
+
+
 class NumericConstraintBuilderMixin:
     """Mixin providing constraint builder methods for numeric ParameterRanges.
 
@@ -50,6 +131,7 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_numeric_value(self, value, "equals")
         return Condition(_tvar=self, operator="==", value=value)  # type: ignore[arg-type]
 
     def not_equals(self, value: float) -> Condition:
@@ -61,6 +143,7 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_numeric_value(self, value, "not_equals")
         return Condition(_tvar=self, operator="!=", value=value)  # type: ignore[arg-type]
 
     def gt(self, value: float) -> Condition:
@@ -72,6 +155,7 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_numeric_value(self, value, "gt")
         return Condition(_tvar=self, operator=">", value=value)  # type: ignore[arg-type]
 
     def gte(self, value: float) -> Condition:
@@ -83,6 +167,7 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_numeric_value(self, value, "gte")
         return Condition(_tvar=self, operator=">=", value=value)  # type: ignore[arg-type]
 
     def lt(self, value: float) -> Condition:
@@ -94,6 +179,7 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_numeric_value(self, value, "lt")
         return Condition(_tvar=self, operator="<", value=value)  # type: ignore[arg-type]
 
     def lte(self, value: float) -> Condition:
@@ -105,6 +191,7 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_numeric_value(self, value, "lte")
         return Condition(_tvar=self, operator="<=", value=value)  # type: ignore[arg-type]
 
     def in_range(self, low: float, high: float) -> Condition:
@@ -116,6 +203,7 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_numeric_range(self, low, high)
         return Condition(_tvar=self, operator="in_range", value=(low, high))  # type: ignore[arg-type]
 
     def is_in(self, values: Sequence[float]) -> Condition:
@@ -129,7 +217,8 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
-        return Condition(_tvar=self, operator="in", value=tuple(values))  # type: ignore[arg-type]
+        normalized = _validate_numeric_values(self, values, "is_in")
+        return Condition(_tvar=self, operator="in", value=normalized)  # type: ignore[arg-type]
 
     def not_in(self, values: Sequence[float]) -> Condition:
         """Create condition: this parameter is not in the given values.
@@ -140,7 +229,8 @@ class NumericConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
-        return Condition(_tvar=self, operator="not_in", value=tuple(values))  # type: ignore[arg-type]
+        normalized = _validate_numeric_values(self, values, "not_in")
+        return Condition(_tvar=self, operator="not_in", value=normalized)  # type: ignore[arg-type]
 
 
 class CategoricalConstraintBuilderMixin:
@@ -165,6 +255,7 @@ class CategoricalConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_choice_value(self, value, "equals")
         return Condition(_tvar=self, operator="==", value=value)  # type: ignore[arg-type]
 
     def not_equals(self, value: Any) -> Condition:
@@ -176,6 +267,7 @@ class CategoricalConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
+        _validate_choice_value(self, value, "not_equals")
         return Condition(_tvar=self, operator="!=", value=value)  # type: ignore[arg-type]
 
     def is_in(self, values: Sequence[Any]) -> Condition:
@@ -187,7 +279,8 @@ class CategoricalConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
-        return Condition(_tvar=self, operator="in", value=tuple(values))  # type: ignore[arg-type]
+        normalized = _validate_choice_values(self, values, "is_in")
+        return Condition(_tvar=self, operator="in", value=normalized)  # type: ignore[arg-type]
 
     def not_in(self, values: Sequence[Any]) -> Condition:
         """Create condition: this parameter is not in the given values.
@@ -198,4 +291,5 @@ class CategoricalConstraintBuilderMixin:
         """
         from traigent.api.constraints import Condition
 
-        return Condition(_tvar=self, operator="not_in", value=tuple(values))  # type: ignore[arg-type]
+        normalized = _validate_choice_values(self, values, "not_in")
+        return Condition(_tvar=self, operator="not_in", value=normalized)  # type: ignore[arg-type]

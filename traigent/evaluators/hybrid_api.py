@@ -17,7 +17,7 @@ import warnings
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from traigent._version import get_version
 from traigent.api.types import ComparabilityInfo, MetricCoverage
@@ -30,13 +30,19 @@ from traigent.hybrid import (
     ConfigSpaceDiscovery,
     HybridEvaluateRequest,
     HybridExecuteRequest,
+    HybridExecuteResponse,
     HybridTransport,
     ServiceCapabilities,
+    TransportConnectionError,
     TransportError,
+    TransportRateLimitError,
+    TransportServerError,
+    TransportTimeoutError,
     create_transport,
 )
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
+from traigent.utils.retry import RetryConfig, RetryHandler
 
 if TYPE_CHECKING:
     from traigent.cloud.production_mcp_client import (
@@ -46,6 +52,19 @@ if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
 
 logger = get_logger(__name__)
+
+_HYBRID_TRANSPORT_RETRY_CONFIG = RetryConfig(
+    max_attempts=3,
+    initial_delay=0.25,
+    max_delay=2.0,
+    jitter=False,
+    retry_on_exception={
+        TransportRateLimitError,
+        TransportServerError,
+        TransportConnectionError,
+        TransportTimeoutError,
+    },
+)
 
 
 @dataclass
@@ -235,7 +254,15 @@ class HybridAPIEvaluator(BaseEvaluator):
         """Get service capabilities."""
         if self._capabilities is None:
             transport = await self._get_transport()
-            self._capabilities = await transport.capabilities()
+            retry = RetryHandler(_HYBRID_TRANSPORT_RETRY_CONFIG)
+            capabilities_call = cast(
+                Callable[[], ServiceCapabilities],
+                transport.capabilities,
+            )
+            self._capabilities = cast(
+                ServiceCapabilities,
+                await retry.execute_async(capabilities_call),
+            )
         return self._capabilities
 
     async def discover_config_space(self) -> dict[str, Any]:
@@ -410,12 +437,50 @@ class HybridAPIEvaluator(BaseEvaluator):
     def _find_output_item(
         outputs: list[dict[str, Any]],
         example_id: str,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Find output item for an example_id/input_id."""
         for out in outputs:
             if out.get("example_id") == example_id or out.get("input_id") == example_id:
                 return out
-        return {}
+        return None
+
+    @staticmethod
+    def _missing_output_error(example_id: str) -> str:
+        """Build the missing-output error used across hybrid response modes."""
+        return f"Execute response did not include output for example_id {example_id!r}"
+
+    @staticmethod
+    def _response_error_message(response: Any) -> str:
+        """Render a top-level hybrid response error into a stable message."""
+        error = getattr(response, "error", None)
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("error") or error.get("detail")
+            code = error.get("code")
+            if message and code:
+                return f"{code}: {message}"
+            if message:
+                return str(message)
+            return str(error)
+        if isinstance(error, str):
+            return error
+        status = getattr(response, "status", "unknown")
+        return f"Hybrid execute response status={status}"
+
+    def _batch_error_results(
+        self,
+        batch: list[Any],
+        inputs: list[dict[str, Any]],
+        error: str,
+    ) -> list[HybridExampleResult]:
+        """Return deterministic error rows for every example in a batch."""
+        return [
+            HybridExampleResult(
+                example_id=str(inp["example_id"]),
+                expected_output=self._extract_expected(batch[i]),
+                error=error,
+            )
+            for i, inp in enumerate(inputs)
+        ]
 
     @staticmethod
     def _extract_target_fields(expected: Any) -> tuple[str, Any]:
@@ -775,7 +840,15 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         try:
             # Execute
-            execute_response = await transport.execute(request)
+            retry = RetryHandler(_HYBRID_TRANSPORT_RETRY_CONFIG)
+            execute_call = cast(
+                Callable[[HybridExecuteRequest], HybridExecuteResponse],
+                transport.execute,
+            )
+            execute_response = cast(
+                HybridExecuteResponse,
+                await retry.execute_async(execute_call, request),
+            )
 
             # Log raw execute response for observability
             logger.info(
@@ -787,11 +860,19 @@ class HybridAPIEvaluator(BaseEvaluator):
             )
 
             # Update session ID if returned
-            if execute_response.session_id:
-                if self._session_id != execute_response.session_id:
-                    self._session_id = execute_response.session_id
+            new_session_id = execute_response.session_id
+            if new_session_id:
+                if self._session_id != new_session_id:
+                    self._session_id = new_session_id
                     if self._lifecycle_manager:
-                        await self._lifecycle_manager.register(self._session_id)
+                        await self._lifecycle_manager.register(new_session_id)
+
+            if execute_response.status == "failed":
+                return self._batch_error_results(
+                    batch,
+                    inputs,
+                    self._response_error_message(execute_response),
+                )
 
             # Check if combined mode (quality metrics included)
             if execute_response.quality_metrics:
@@ -811,14 +892,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         except TransportError as e:
             logger.error(f"Batch execution failed: {e}")
             # Return error results for all examples
-            return [
-                HybridExampleResult(
-                    example_id=str(inp["example_id"]),
-                    expected_output=self._extract_expected(batch[i]),
-                    error=str(e),
-                )
-                for i, inp in enumerate(inputs)
-            ]
+            return self._batch_error_results(batch, inputs, str(e))
 
     def _extract_input(self, example: Any) -> dict[str, Any]:
         """Extract input data from dataset example."""
@@ -873,6 +947,20 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Find matching output
             output_item = self._find_output_item(response.outputs, example_id)
+            if output_item is None:
+                results.append(
+                    HybridExampleResult(
+                        example_id=example_id,
+                        expected_output=expected,
+                        error=self._missing_output_error(example_id),
+                        metadata={
+                            "evaluation_mode": "evaluated",
+                            "accuracy_derivation_path": "none",
+                        },
+                    )
+                )
+                continue
+
             output_data = output_item.get("output")
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
@@ -927,6 +1015,8 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Find matching output
             output_item = self._find_output_item(execute_response.outputs, example_id)
+            if output_item is None:
+                continue
 
             evaluation: dict[str, Any] = {
                 "example_id": example_id,
@@ -943,6 +1033,14 @@ class HybridAPIEvaluator(BaseEvaluator):
             target_key, target_value = self._extract_target_fields(expected)
             evaluation[target_key] = target_value
             evaluations.append(evaluation)
+
+        if not evaluations:
+            return self._process_execute_only_response(
+                batch,
+                inputs,
+                execute_response,
+                evaluation_mode="evaluate_fallback",
+            )
 
         eval_request = HybridEvaluateRequest(
             tunable_id=self._tunable_id or "default",
@@ -985,10 +1083,15 @@ class HybridAPIEvaluator(BaseEvaluator):
                 output_item = self._find_output_item(
                     execute_response.outputs, example_id
                 )
-                output_data = output_item.get("output")
-                if output_data is None and "output_id" in output_item:
-                    output_data = {"output_id": output_item["output_id"]}
-                execute_error = output_item.get("error")
+                execute_error: Any | None
+                if output_item is None:
+                    output_data = None
+                    execute_error = self._missing_output_error(example_id)
+                else:
+                    output_data = output_item.get("output")
+                    if output_data is None and "output_id" in output_item:
+                        output_data = {"output_id": output_item["output_id"]}
+                    execute_error = output_item.get("error")
 
                 # Find metrics from evaluate
                 per_example_metrics: dict[str, float] = {}
@@ -1011,9 +1114,17 @@ class HybridAPIEvaluator(BaseEvaluator):
                     derivation_path = "none"
 
                 # Prefer per-item operational metrics when present.
-                cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
-                latency = self._coerce_metric(
-                    output_item.get("latency_ms"), fallback_latency
+                cost = (
+                    0.0
+                    if output_item is None
+                    else self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
+                )
+                latency = (
+                    0.0
+                    if output_item is None
+                    else self._coerce_metric(
+                        output_item.get("latency_ms"), fallback_latency
+                    )
                 )
 
                 # Log raw per-example result for observability
@@ -1022,7 +1133,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                     "output_id=%s, accuracy=%s, cost=%.6f, "
                     "latency=%.0fms, error=%s",
                     example_id,
-                    output_item.get("output_id"),
+                    output_item.get("output_id") if output_item is not None else None,
                     per_example_metrics.get("accuracy"),
                     cost,
                     latency,
@@ -1082,6 +1193,20 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Find matching output
             output_item = self._find_output_item(response.outputs, example_id)
+            if output_item is None:
+                results.append(
+                    HybridExampleResult(
+                        example_id=example_id,
+                        expected_output=expected,
+                        error=self._missing_output_error(example_id),
+                        metadata={
+                            "evaluation_mode": evaluation_mode,
+                            "accuracy_derivation_path": "none",
+                        },
+                    )
+                )
+                continue
+
             output_data = output_item.get("output")
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}

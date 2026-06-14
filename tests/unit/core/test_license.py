@@ -374,7 +374,8 @@ class TestLicenseValidatorInit:
     def test_init_with_api_key_env(self):
         """Test initialization falls back to TRAIGENT_API_KEY env var."""
         with patch.dict(
-            os.environ, {"TRAIGENT_API_KEY": "env-key-456"}  # pragma: allowlist secret
+            os.environ,
+            {"TRAIGENT_API_KEY": "env-key-456"},  # pragma: allowlist secret
         ):
             validator = LicenseValidator()
             assert validator._api_key == "env-key-456"  # pragma: allowlist secret
@@ -382,7 +383,8 @@ class TestLicenseValidatorInit:
     def test_init_explicit_api_key_overrides_env(self):
         """Test explicit api_key takes precedence over env var."""
         with patch.dict(
-            os.environ, {"TRAIGENT_API_KEY": "env-key"}  # pragma: allowlist secret
+            os.environ,
+            {"TRAIGENT_API_KEY": "env-key"},  # pragma: allowlist secret
         ):
             validator = LicenseValidator(
                 api_key="explicit-key"  # pragma: allowlist secret
@@ -397,6 +399,13 @@ class TestLicenseValidatorInit:
     def test_init_offline_mode_env(self):
         """Test initialization reads TRAIGENT_OFFLINE_MODE env var."""
         with patch.dict(os.environ, {"TRAIGENT_OFFLINE_MODE": "true"}):
+            validator = LicenseValidator()
+            assert validator._offline_mode is True
+
+    @pytest.mark.parametrize("raw_value", ["1", "yes", "on", " TRUE "])
+    def test_init_offline_mode_env_accepts_truthy_values(self, raw_value):
+        """Test initialization uses shared truthy parsing for offline mode."""
+        with patch.dict(os.environ, {"TRAIGENT_OFFLINE_MODE": raw_value}):
             validator = LicenseValidator()
             assert validator._offline_mode is True
 
@@ -1354,7 +1363,7 @@ class TestValidateSync:
             return expected
 
         with patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")):
-            with patch("asyncio.run", side_effect=_run_stub) as mock_run:
+            with patch("asyncio.run", side_effect=_run_stub):
                 result = validator.validate_sync()
 
         assert result is expected
@@ -1808,9 +1817,7 @@ class TestEnvLicenseFileBoundary:
             .rstrip("=")
         )
         body = (
-            base64.urlsafe_b64encode(json.dumps(payload).encode())
-            .decode()
-            .rstrip("=")
+            base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
         )
         sig = base64.urlsafe_b64encode(b"sig").decode().rstrip("=")
         token = f"{header}.{body}.{sig}"
@@ -1893,9 +1900,7 @@ class TestEnvLicenseFileBoundary:
         assert result is not None
         assert result.tier == LicenseTier.PRO
 
-    def test_env_path_rejection_does_not_log_file_contents(
-        self, tmp_path, caplog
-    ):
+    def test_env_path_rejection_does_not_log_file_contents(self, tmp_path, caplog):
         """The rejection log must NOT echo the file's contents.
 
         A file pointed at by ``TRAIGENT_LICENSE_FILE`` is potentially a

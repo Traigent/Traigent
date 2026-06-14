@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 
+from traigent._version import get_version
 from traigent.cloud.backend_bridges import (
     BackendConfigurationRunRequest,
     BackendExperimentRequest,
@@ -324,6 +325,7 @@ class TestSDKBackendBridge:
         assert "trial_id" in config_run.trial_metadata
         assert "mapping_created_at" in config_run.trial_metadata
         assert config_run.trial_metadata["trial_id"] == trial_suggestion.trial_id
+        assert exp_params["traigent_metadata"]["sdk_version"] == get_version()
 
     def test_agent_specification_to_backend(self, sdk_bridge, agent_specification):
         """Test converting agent specification to backend format."""

@@ -168,7 +168,10 @@ def generate_config(
     elif output_format == "json-detailed":
         _output_json(result, detailed=True)
     elif output_format == "tvl":
-        _output_tvl(result, path)
+        try:
+            _output_tvl(result, path)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
     else:
         _output_table(result)
 
