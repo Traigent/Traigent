@@ -2650,6 +2650,10 @@ from traigent.cli.generate_config_command import generate_config  # noqa: E402
 
 cli.add_command(generate_config)
 
+from traigent.cli.next_steps_command import next_steps  # noqa: E402
+
+cli.add_command(next_steps)
+
 from traigent.cli.playbook_commands import playbook  # noqa: E402
 
 cli.add_command(playbook)
