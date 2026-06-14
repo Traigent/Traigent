@@ -782,7 +782,7 @@ class TestSyncManager:
         sync_manager.storage.list_sessions.return_value = mock_sessions
 
         # Mock dry run results
-        def mock_sync(session_id, dry_run=False):
+        def mock_sync(session_id, dry_run=False, force=False):
             return {
                 "session_id": session_id,
                 "status": "success",
@@ -823,7 +823,7 @@ class TestSyncManager:
 
         sync_manager.storage.list_sessions.return_value = mock_sessions
 
-        def mock_sync(session_id, dry_run=False):
+        def mock_sync(session_id, dry_run=False, force=False):
             if session_id == "s1":
                 return {"session_id": session_id, "status": "success"}
             else:

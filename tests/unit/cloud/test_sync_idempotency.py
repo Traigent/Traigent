@@ -9,7 +9,7 @@ is re-synced, and free-text trial metadata never rides to the backend.
 from __future__ import annotations
 
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -161,6 +161,78 @@ def test_changed_session_is_resynced(sync_manager):
     result = sync_manager.sync_session_to_cloud(sid)
     assert result["status"] == "success"
     mocks["_sync_experiment"].assert_called_once()
+
+
+def test_partial_failure_then_resume_reuses_experiment(sync_manager):
+    """BLOCKER regression: a retry after a partial failure must reuse the
+    cloud experiment, never create a duplicate one."""
+    sid = _make_completed_session(sync_manager.storage)
+    mocks = _stub_backend_success(sync_manager)
+    # First attempt: experiment is created but the run step fails → partial.
+    mocks["_sync_experiment_run"].return_value = {"success": False, "error": "boom"}
+
+    first = sync_manager.sync_session_to_cloud(sid)
+    assert first["status"] == "partial"
+    state = sync_manager.storage.load_session(sid).sync_state
+    assert state["status"] == "partial"
+    assert state["cloud_experiment_id"] == "exp1"  # experiment was created
+
+    # Second attempt (same content): run now succeeds.
+    mocks["_sync_experiment_run"].return_value = {
+        "success": True,
+        "experiment_run_id": "run1",
+    }
+    for name in ("_sync_agent", "_sync_benchmark", "_sync_experiment"):
+        mocks[name].reset_mock()
+
+    second = sync_manager.sync_session_to_cloud(sid)
+
+    assert second["status"] == "success"
+    # The experiment was REUSED, not re-created → no duplicate.
+    mocks["_sync_experiment"].assert_not_called()
+    assert second["cloud_experiment_id"] == "exp1"
+
+
+def test_cleanup_skips_delete_when_backup_fails(sync_manager, monkeypatch):
+    """`--clean` must never delete a run whose backup failed."""
+    sid = _make_completed_session(sync_manager.storage)
+    monkeypatch.setattr(sync_manager.storage, "export_session", lambda *a, **k: False)
+
+    result = sync_manager.cleanup_after_sync([sid], keep_backup=True)
+
+    assert result["sessions_deleted"] == 0
+    assert any("backup" in e.lower() for e in result["errors"])
+    # The run is still on disk.
+    assert sync_manager.storage.load_session(sid) is not None
+
+
+def test_force_all_threads_force(sync_manager):
+    captured = {}
+
+    def fake_sync(session_id, dry_run=False, force=False):
+        captured["force"] = force
+        return {"session_id": session_id, "status": "success"}
+
+    _make_completed_session(sync_manager.storage)
+    with patch.object(sync_manager, "sync_session_to_cloud", side_effect=fake_sync):
+        sync_manager.sync_all_sessions(force=True)
+
+    assert captured["force"] is True
+
+
+def test_load_session_tolerates_unknown_future_keys(storage):
+    """A session file written by a newer SDK (extra keys) still loads."""
+    sid = _make_completed_session(storage)
+    session_file = storage.storage_path / "sessions" / f"{sid}.json"
+    data = json.loads(session_file.read_text())
+    data["some_future_field"] = {"added": "by a newer version"}
+    data["trials"][0]["future_trial_field"] = 123
+    session_file.write_text(json.dumps(data))
+
+    reloaded = storage.load_session(sid)
+    assert reloaded is not None
+    assert reloaded.session_id == sid
+    assert len(reloaded.trials) == 2
 
 
 def test_dry_run_uploads_nothing(sync_manager):

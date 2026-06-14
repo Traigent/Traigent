@@ -103,7 +103,14 @@ def sync_command(
     try:
         config = TraigentConfig.from_environment()
         api_key = _resolve_api_key(api_key)
+        sync_manager = SyncManager(config, api_key)
 
+        # No target → status only (wandb `sync` with no args). Needs no key.
+        if not session_id and not sync_all:
+            _print_status(sync_manager, as_json=as_json)
+            return
+
+        # Only real uploads require a key; status and --dry-run do not.
         if not api_key and not dry_run:
             click.echo(
                 "❌ API key required for cloud sync. Use --api-key or set "
@@ -112,13 +119,6 @@ def sync_command(
             )
             click.echo("💡 Configure a key with `traigent auth login`.")
             sys.exit(1)
-
-        sync_manager = SyncManager(config, api_key)
-
-        # No target → status only (wandb `sync` with no args).
-        if not session_id and not sync_all:
-            _print_status(sync_manager, as_json=as_json)
-            return
 
         synced_ids: list[str] = []
         if session_id:
@@ -132,7 +132,7 @@ def sync_command(
             if result.get("status") in {"success", "already_synced"}:
                 synced_ids.append(session_id)
         else:
-            result = sync_manager.sync_all_sessions(dry_run)
+            result = sync_manager.sync_all_sessions(dry_run, force=force)
             if as_json:
                 click.echo(json_module.dumps(result, indent=2, default=str))
             else:

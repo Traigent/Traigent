@@ -10,7 +10,7 @@ import os
 import time
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields as dataclass_fields
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -160,6 +160,17 @@ class OptimizationSession:
 
         data["trials"] = trials
         return cls(**data)
+
+
+def _dataclass_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only keys that ``cls`` (a dataclass) accepts.
+
+    Lets a session file written by a newer SDK — with fields this version
+    doesn't know about — still load instead of raising ``TypeError`` from an
+    unexpected keyword argument.
+    """
+    allowed = {f.name for f in dataclass_fields(cls)}
+    return {key: value for key, value in data.items() if key in allowed}
 
 
 class LocalStorageManager:
@@ -563,10 +574,11 @@ class LocalStorageManager:
             with safe_open(session_file, self.storage_path, mode="r") as f:
                 data = json.load(f)
 
-            # Convert trial data back to TrialResult objects
+            # Convert trial data back to TrialResult objects. Drop unknown keys
+            # so a file written by a newer SDK (with extra fields) still loads.
             trials = []
             for trial_data in data.get("trials", []):
-                trials.append(TrialResult(**trial_data))
+                trials.append(TrialResult(**_dataclass_kwargs(TrialResult, trial_data)))
 
             data["trials"] = trials
 
@@ -581,7 +593,7 @@ class LocalStorageManager:
             if "updated_at" not in data:
                 data["updated_at"] = current_time
 
-            return OptimizationSession(**data)
+            return OptimizationSession(**_dataclass_kwargs(OptimizationSession, data))
 
         except Exception as e:
             logger.error(f"Failed to load session {session_id}: {e}")

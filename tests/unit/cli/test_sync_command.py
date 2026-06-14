@@ -74,6 +74,19 @@ def test_sync_dry_run_does_not_require_api_key():
     assert "Ready to sync s1" in result.output
 
 
+def test_sync_status_needs_no_api_key():
+    """Status-only `traigent sync` must work without an API key."""
+    manager = _patched_manager()
+    with (
+        patch("traigent.cli.sync_commands.SyncManager", return_value=manager),
+        patch("traigent.cli.sync_commands._resolve_api_key", return_value=None),
+    ):
+        result = CliRunner().invoke(cli, ["sync"])
+
+    assert result.exit_code == 0
+    assert "Traigent sync status" in result.output
+
+
 def test_sync_requires_api_key_when_not_dry_run():
     # No api key resolvable and not a dry run → clean error, exit 1.
     with patch("traigent.cli.sync_commands._resolve_api_key", return_value=None):
