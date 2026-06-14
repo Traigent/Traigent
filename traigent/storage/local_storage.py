@@ -134,6 +134,10 @@ class OptimizationSession:
     trials: list[TrialResult] | None = None
     optimization_config: dict[str, Any | None] | None = None
     metadata: dict[str, Any | None] | None = None
+    # Cloud-sync provenance & progress (Sync v2). Absent on never-synced
+    # sessions; populated by the syncer so re-sync is idempotent/resumable and
+    # `traigent sync` can report status. See traigent/cloud/session_sync.py.
+    sync_state: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.trials is None:
@@ -507,6 +511,41 @@ class LocalStorageManager:
         self._save_session(session)
 
         logger.info(f"Finalized session {session_id} with status {status}")
+        return session
+
+    def update_sync_state(
+        self,
+        session_id: str,
+        patch: dict[str, Any],
+        *,
+        trial_updates: dict[str, dict[str, Any]] | None = None,
+    ) -> OptimizationSession | None:
+        """Merge a patch into a session's ``sync_state`` and persist atomically.
+
+        ``patch`` is shallow-merged into the top level of ``sync_state``.
+        ``trial_updates`` (keyed by the local trial id as a string) is merged
+        into ``sync_state["trials"]`` so per-trial upload progress accumulates
+        across resumable sync attempts. Returns the updated session, or None if
+        the session is missing.
+        """
+        session = self.load_session(session_id)
+        if not session:
+            logger.warning("Cannot update sync_state: session %s not found", session_id)
+            return None
+
+        state: dict[str, Any] = dict(session.sync_state or {})
+        state.update(patch)
+        if trial_updates:
+            trials_state: dict[str, Any] = dict(state.get("trials") or {})
+            for trial_key, trial_patch in trial_updates.items():
+                merged = dict(trials_state.get(trial_key) or {})
+                merged.update(trial_patch)
+                trials_state[trial_key] = merged
+            state["trials"] = trials_state
+
+        session.sync_state = state
+        session.updated_at = datetime.now(UTC).isoformat()
+        self._save_session(session)
         return session
 
     def load_session(self, session_id: str) -> OptimizationSession | None:
