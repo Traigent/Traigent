@@ -2599,6 +2599,18 @@ class OptimizationOrchestrator:
 
         self.callback_manager.on_optimization_complete(result)
 
+        # Issue #1265: if a backend-tracking run degraded to local-only, say so
+        # prominently at the end (the per-trial warning fired once mid-run; this
+        # is the final, unmissable summary tied to the result's source marker).
+        if self.backend_session_manager.backend_degraded:
+            logger.warning(
+                "⚠️  Optimization %s finished in LOCAL-ONLY mode (source='local'): "
+                "the Traigent backend was unreachable during the run, so results "
+                "were computed and stored locally and are NOT on the cloud "
+                "backend. They will sync on the next successful run.",
+                self._optimization_id,
+            )
+
         cost_status = self.cost_enforcer.get_status()
         logger.info(
             f"Optimization {self._optimization_id} completed: "
@@ -3113,6 +3125,12 @@ class OptimizationOrchestrator:
         if selection.best_trial_id:
             result_metadata["best_trial_id"] = selection.best_trial_id
 
+        # Provenance marker (issue #1265): "backend" only when remote tracking
+        # stayed healthy; "local" when an intentionally-local mode ran or a
+        # backend-tracking run degraded to local-only mid-flight.
+        source = self.backend_session_manager.result_source(len(self._trials))
+        result_metadata["source"] = source
+
         # Create optimization result
         optimization_result = OptimizationResult(
             trials=self._trials.copy(),
@@ -3132,6 +3150,7 @@ class OptimizationOrchestrator:
             preset_selection=preset_selection,
             stop_reason=self._stop_reason,
             run_label=run_label,
+            source=source,
         )
 
         # Log optimization completion

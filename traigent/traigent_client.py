@@ -23,6 +23,7 @@ try:
         BackendClientConfig,
         BackendIntegratedClient,
     )
+    from traigent.cloud.client import CloudServiceError
     from traigent.cloud.optimizer_client import OptimizerDirectClient
 
     _CLOUD_AVAILABLE = True
@@ -42,6 +43,7 @@ except (
             BackendClientConfig,
             BackendIntegratedClient,
         )
+        from traigent.cloud.client import CloudServiceError
         from traigent.cloud.optimizer_client import OptimizerDirectClient
 
 logger = get_logger(__name__)
@@ -290,10 +292,29 @@ class TraigentClient:
                         logger.error(f"Trial {trial_id} failed: {str(e)}")
                         # Continue with next trial
 
-                # Finalize and get results
-                final_results = await self.backend_client.finalize_hybrid_session(
-                    session_id
-                )
+                # Finalize and get results. If the backend is unreachable at
+                # finalize, degrade to local-only instead of crashing the whole
+                # optimize() call: the trials are already computed, so return
+                # the locally-tracked best result marked source="local" and warn
+                # loudly (issue #1265).
+                try:
+                    final_results = await self.backend_client.finalize_hybrid_session(
+                        session_id
+                    )
+                    final_results.setdefault("source", "backend")
+                except (CloudServiceError, ConnectionError, OSError, TimeoutError) as e:
+                    logger.warning(
+                        "⚠️  Traigent backend unreachable at finalize (%s); "
+                        "returning LOCAL-ONLY results (source='local'). %d trial(s) "
+                        "were completed locally; they will sync on the next "
+                        "successful run.",
+                        e,
+                        completed_trials,
+                    )
+                    final_results = {
+                        "source": "local",
+                        "backend_finalized": False,
+                    }
 
                 # Enhance with local best result if backend doesn't have it
                 if best_result and not final_results.get("best_configuration"):

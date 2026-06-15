@@ -582,6 +582,31 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) >= 1  # At least one trial should complete
         assert result.duration >= 0.5  # Should take at least timeout duration
 
+    def test_result_source_is_local_when_backend_degraded(self, orchestrator):
+        """Issue #1265: when the backend becomes unreachable mid-run, the
+        result is marked source='local' (top-level field and metadata) rather
+        than appearing as a cloud-tracked run."""
+        bsm = orchestrator.backend_session_manager
+        bsm._backend_tracking_enabled = True
+        # Simulate the mid-run outage signal raised inside _log_trial_to_backend.
+        bsm._flag_backend_degraded("trial submission")
+
+        result = orchestrator._create_optimization_result()
+
+        assert result.source == "local"
+        assert result.metadata["source"] == "local"
+
+    def test_result_source_is_backend_when_tracking_healthy(self, orchestrator):
+        """A healthy, cloud-tracked run is marked source='backend'."""
+        bsm = orchestrator.backend_session_manager
+        bsm._backend_tracking_enabled = True
+        bsm._acknowledged_trials.add(("session", "trial"))
+
+        result = orchestrator._create_optimization_result()
+
+        assert result.source == "backend"
+        assert result.metadata["source"] == "backend"
+
     @pytest.mark.asyncio
     @pytest.mark.timeout(10)
     async def test_wall_clock_watchdog_stops_a_hung_trial(

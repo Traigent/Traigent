@@ -683,6 +683,13 @@ class OptimizationResult:
     experiment_id: str | None = None
     cloud_url: str | None = None
     run_label: str | None = None
+
+    # Provenance of this result (issue #1265): "backend" when the run was
+    # tracked end-to-end on the cloud backend, "local" when it was computed
+    # locally — either an intentionally local mode or a hybrid/cloud run that
+    # degraded to local-only because the backend was unreachable mid-run. Also
+    # mirrored in ``metadata["source"]`` for callers that inspect metadata.
+    source: str = "backend"
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
