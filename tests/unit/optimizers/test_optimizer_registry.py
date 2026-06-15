@@ -1,7 +1,7 @@
 """Comprehensive tests for optimizer registry."""
 
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -257,50 +257,6 @@ class TestOptimizerRegistry:
         calls = [call[0][0] for call in mock_register.call_args_list]
         assert "grid" in calls
         assert "random" in calls
-
-    @patch("traigent.optimizers.registry.logger")
-    def test_register_builtin_optimizers_bayesian_available(self, mock_logger):
-        """Test registering Bayesian optimizer when available."""
-        mock_bayesian = Mock(spec=BaseOptimizer)
-
-        with patch("traigent.optimizers.bayesian.BayesianOptimizer", mock_bayesian):
-            _register_builtin_optimizers()
-
-        # Should log successful registration
-        assert any(
-            "Registered Bayesian optimizer" in str(call)
-            for call in mock_logger.debug.call_args_list
-        )
-
-    @patch("traigent.optimizers.registry.logger")
-    def test_register_builtin_optimizers_bayesian_unavailable(self, mock_logger):
-        """Test handling when Bayesian optimizer is unavailable."""
-        import sys
-
-        # Remove from cache if present and patch the import to fail
-        original_modules = sys.modules.copy()
-        if "traigent.optimizers.bayesian" in sys.modules:
-            del sys.modules["traigent.optimizers.bayesian"]
-
-        # Temporarily add a module that raises ImportError when accessed
-        class ImportErrorModule:
-            def __getattr__(self, name):
-                raise ImportError("No module named 'sklearn'")
-
-        sys.modules["traigent.optimizers.bayesian"] = ImportErrorModule()
-
-        try:
-            _register_builtin_optimizers()
-        finally:
-            # Restore original modules
-            sys.modules.clear()
-            sys.modules.update(original_modules)
-
-        # Should log that Bayesian is not available
-        debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
-        assert any(
-            "Bayesian optimizer not available" in call for call in debug_calls
-        ), f"Debug calls: {debug_calls}"
 
     def test_registry_state_isolation(self):
         """Test that registry state is properly isolated between tests."""

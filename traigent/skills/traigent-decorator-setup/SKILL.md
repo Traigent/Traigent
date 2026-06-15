@@ -290,7 +290,7 @@ def answer_question(question: str) -> str:
     )
 
 # Run optimization
-results = await answer_question.optimize(max_trials=10, algorithm="bayesian")
+results = await answer_question.optimize(max_trials=10, algorithm="random")
 
 # Apply best configuration for production
 answer_question.apply_best_config(results)

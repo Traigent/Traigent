@@ -12,21 +12,6 @@ from traigent.optimizers.batch_optimizers import (
     ParallelBatchOptimizer,
 )
 from traigent.optimizers.grid import GridSearchOptimizer
-from traigent.optimizers.optuna_adapter import OptunaAdapter
-from traigent.optimizers.optuna_coordinator import (
-    BatchOptimizer,
-    EdgeExecutor,
-    OptunaCoordinator,
-    RateLimitedOptimizer,
-)
-from traigent.optimizers.optuna_optimizer import (
-    OptunaBaseOptimizer,
-    OptunaCMAESOptimizer,
-    OptunaGridOptimizer,
-    OptunaNSGAIIOptimizer,
-    OptunaRandomOptimizer,
-    OptunaTPEOptimizer,
-)
 from traigent.optimizers.pruners import (
     CeilingPruner,
     CeilingPrunerConfig,
@@ -35,6 +20,7 @@ from traigent.optimizers.pruners import (
 )
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import (
+    _is_smart_algorithm,
     get_optimizer,
     list_optimizers,
     register_optimizer,
@@ -89,17 +75,7 @@ __all__ = [
     "ParallelBatchOptimizer",
     "MultiObjectiveBatchOptimizer",
     "AdaptiveBatchOptimizer",
-    "OptunaBaseOptimizer",
-    "OptunaTPEOptimizer",
-    "OptunaRandomOptimizer",
-    "OptunaCMAESOptimizer",
-    "OptunaNSGAIIOptimizer",
-    "OptunaGridOptimizer",
-    "OptunaCoordinator",
-    "BatchOptimizer",
-    "RateLimitedOptimizer",
-    "EdgeExecutor",
-    "OptunaAdapter",
+    "_is_smart_algorithm",
     "get_optimizer",
     "register_optimizer",
     "list_optimizers",

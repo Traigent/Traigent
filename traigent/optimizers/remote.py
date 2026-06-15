@@ -31,7 +31,7 @@ _NO_REMOTE_CLIENT_MSG = (
     "back to local random search — making the result mislabeled as 'remote'. "
     "If you want random search, pass algorithm='random'. "
     "If you want portal-tracked local execution, pass execution_mode='hybrid' "
-    "with one of the supported algorithms (grid, random, bayesian, optuna_*). "
+    "with one of the locally supported algorithms (grid, random). "
     "If you are wiring a remote suggestion backend, pass it explicitly via "
     "remote_client=... and remote_enabled=True."
 )

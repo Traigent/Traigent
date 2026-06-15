@@ -1,6 +1,6 @@
 ---
 name: traigent-run-optimization
-description: "Run Traigent optimization: async/sync execution, algorithm selection, cost limits, stop conditions, and parallel trials. Use when calling func.optimize() or optimize_sync(), choosing algorithms (grid/random/bayesian/optuna), setting max_trials or cost_limit, configuring parallel execution, or handling CostLimitExceeded."
+description: "Run Traigent optimization: async/sync execution, algorithm selection, cost limits, stop conditions, and parallel trials. Use when calling func.optimize() or optimize_sync(), choosing algorithms (grid/random — locally; bayesian/optuna/tpe run in the Traigent cloud), setting max_trials or cost_limit, configuring parallel execution, or handling CostLimitExceeded."
 license: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
 metadata:
   author: Traigent
@@ -14,7 +14,7 @@ metadata:
 Use this skill after you have decorated a function with `@traigent.optimize()` and need to:
 
 - Run optimization (async or sync)
-- Choose an algorithm (grid, random, bayesian, optuna)
+- Choose an algorithm (grid or random locally; smart algorithms run in the Traigent cloud)
 - Set trial limits, timeouts, or cost budgets
 - Configure parallel trial execution
 - Handle cost limit exceptions
@@ -47,7 +47,7 @@ results = await answer.optimize(max_trials=10, algorithm="grid")
 
 | Parameter | Type | Description |
 |---|---|---|
-| `algorithm` | `str \| None` | Algorithm: `"grid"`, `"random"`, `"bayesian"`, `"optuna"`. Falls back to decorator setting. |
+| `algorithm` | `str \| None` | Algorithm: `"grid"` or `"random"` (local). Smart algorithms (`"bayesian"`, `"optuna"`, etc.) run in the Traigent cloud. Falls back to decorator setting. |
 | `max_trials` | `int \| None` | Maximum number of trials to run. |
 | `timeout` | `float \| None` | Maximum wall-clock time in seconds. |
 | `save_to` | `str \| None` | Path to save results to disk. |
@@ -100,34 +100,18 @@ results = await func.optimize(max_trials=20, algorithm="random")
 
 **Best for**: Large config spaces, quick exploration, when you have a limited trial budget.
 
-### Bayesian Optimization
+### Smart Algorithms (Traigent Cloud)
 
-Uses adaptive search to focus on promising configurations. Backed by Optuna.
-
-```python
-results = await func.optimize(max_trials=30, algorithm="bayesian")
-```
-
-**Best for**: Medium to large config spaces with continuous parameters. Most efficient when trials are expensive.
-
-### Optuna (Advanced)
-
-Direct access to the Optuna optimization framework with advanced features like pruning and multi-objective optimization.
-
-```python
-results = await func.optimize(max_trials=50, algorithm="optuna")
-```
-
-**Best for**: Advanced users who need Optuna-specific features, very large search spaces, or sophisticated sampling strategies.
+Bayesian, Optuna TPE, CMA-ES, NSGA-II, and other smart algorithms are **not available locally**. Passing `algorithm="bayesian"`, `"optuna"`, `"tpe"`, `"nsga2"`, or `"cmaes"` in a local run raises an error. These algorithms run in the Traigent cloud — connect to [Traigent Portal](https://portal.traigent.ai) to use them.
 
 ### Quick Comparison
 
-| Algorithm | Strategy | Config Space Size | Trial Budget |
-|---|---|---|---|
-| `"grid"` | Exhaustive | Small (< 50) | Matches space size |
-| `"random"` | Sampling | Any | Limited |
-| `"bayesian"` | Model-guided | Medium-Large | 15-100 |
-| `"optuna"` | Advanced sampling | Large | 30+ |
+| Algorithm | Availability | Strategy | Config Space Size | Trial Budget |
+|---|---|---|---|---|
+| `"grid"` | Local SDK | Exhaustive | Small (< 50) | Matches space size |
+| `"random"` | Local SDK | Sampling | Any | Limited |
+| `"bayesian"` | **Cloud only** | Model-guided | Medium-Large | 15-100 |
+| `"optuna"` / TPE / CMA-ES / NSGA-II | **Cloud only** | Advanced sampling | Large | 30+ |
 
 ## Cost Controls
 
@@ -151,7 +135,7 @@ When the cost limit is reached, Traigent raises `CostLimitExceeded`:
 from traigent.utils.exceptions import CostLimitExceeded
 
 try:
-    results = await func.optimize(max_trials=100, algorithm="bayesian")
+    results = await func.optimize(max_trials=100, algorithm="random")
 except CostLimitExceeded as e:
     print(f"Cost limit hit: ${e.accumulated:.2f} / ${e.limit:.2f}")
     # Optimization stopped but partial results may be available

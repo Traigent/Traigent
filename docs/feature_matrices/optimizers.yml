@@ -82,83 +82,83 @@ capabilities:
 
   - id: CAP-OPT-BAYESIAN
     name: "Bayesian Optimizer"
-    description: "Bayesian optimization with Gaussian Process"
+    description: "Bayesian optimization with Gaussian Process — cloud only"
+    availability: cloud-only
     implementations:
       - class_name: BayesianOptimizer
-        code_unit: traigent/optimizers/bayesian.py
-        status: complete
-        completion: 1.0
-        implemented_methods:
-          - suggest_next_trial
-          - should_stop
-        notes: "Uses scikit-optimize, optional dependency"
+        code_unit: "(relocated to Traigent cloud; traigent/optimizers/bayesian.py deleted)"
+        status: cloud-only
+        completion: 0.0
+        implemented_methods: []
+        notes: "IP relocated to cloud. File deleted from local SDK. Raises OptimizationError directing users to the Traigent cloud."
 
-  # ---------- Optuna-Based Optimizers ----------
+  # ---------- Optuna-Based Optimizers (cloud only; local files deleted) ----------
   - id: CAP-OPT-OPTUNA-BASE
     name: "Optuna Base Optimizer"
-    description: "Base class for Optuna-based optimizers"
+    description: "Base class for Optuna-based optimizers — cloud only"
+    availability: cloud-only
     implementations:
       - class_name: OptunaBaseOptimizer
-        code_unit: traigent/optimizers/optuna_optimizer.py
-        status: complete
-        completion: 1.0
-        implemented_methods:
-          - suggest_next_trial
-          - should_stop
-          - create_study
-          - save_checkpoint
-          - load_checkpoint
-        notes: "Provides checkpoint support via Optuna study persistence"
+        code_unit: "(relocated to Traigent cloud; traigent/optimizers/optuna_optimizer.py deleted)"
+        status: cloud-only
+        completion: 0.0
+        implemented_methods: []
+        notes: "Not available in the local SDK. Optuna-based optimizers run in the Traigent cloud."
 
   - id: CAP-OPT-OPTUNA-TPE
     name: "Optuna TPE Optimizer"
-    description: "Tree-structured Parzen Estimator"
+    description: "Tree-structured Parzen Estimator — cloud only"
+    availability: cloud-only
     implementations:
       - class_name: OptunaTPEOptimizer
-        code_unit: traigent/optimizers/optuna_optimizer.py
-        status: complete
-        completion: 1.0
-        notes: "Extends OptunaBaseOptimizer with TPE sampler"
+        code_unit: "(relocated to Traigent cloud; traigent/optimizers/optuna_optimizer.py deleted)"
+        status: cloud-only
+        completion: 0.0
+        notes: "Cloud only. Not selectable locally."
 
   - id: CAP-OPT-OPTUNA-RANDOM
     name: "Optuna Random Optimizer"
-    description: "Optuna-based random sampling"
+    description: "Optuna-based random sampling — cloud only"
+    availability: cloud-only
     implementations:
       - class_name: OptunaRandomOptimizer
-        code_unit: traigent/optimizers/optuna_optimizer.py
-        status: complete
-        completion: 1.0
-        notes: "Extends OptunaBaseOptimizer with RandomSampler"
+        code_unit: "(relocated to Traigent cloud; traigent/optimizers/optuna_optimizer.py deleted)"
+        status: cloud-only
+        completion: 0.0
+        notes: "Cloud only. Use the local 'random' algorithm for local random sampling."
 
   - id: CAP-OPT-OPTUNA-CMAES
     name: "Optuna CMA-ES Optimizer"
-    description: "Covariance Matrix Adaptation Evolution Strategy"
+    description: "Covariance Matrix Adaptation Evolution Strategy — cloud only"
+    availability: cloud-only
     implementations:
       - class_name: OptunaCMAESOptimizer
-        code_unit: traigent/optimizers/optuna_optimizer.py
-        status: complete
-        completion: 1.0
-        notes: "Extends OptunaBaseOptimizer with CmaEsSampler"
+        code_unit: "(relocated to Traigent cloud; traigent/optimizers/optuna_optimizer.py deleted)"
+        status: cloud-only
+        completion: 0.0
+        notes: "Cloud only."
 
   - id: CAP-OPT-OPTUNA-NSGAII
     name: "Optuna NSGA-II Optimizer"
-    description: "Multi-objective NSGA-II algorithm"
+    description: "Multi-objective NSGA-II algorithm — cloud only"
+    availability: cloud-only
     implementations:
       - class_name: OptunaNSGAIIOptimizer
-        code_unit: traigent/optimizers/optuna_optimizer.py
-        status: complete
-        completion: 1.0
-        notes: "Multi-objective optimization support"
+        code_unit: "(relocated to Traigent cloud; traigent/optimizers/optuna_optimizer.py deleted)"
+        status: cloud-only
+        completion: 0.0
+        notes: "Cloud only. Multi-objective optimization via the Traigent cloud."
 
   - id: CAP-OPT-OPTUNA-GRID
     name: "Optuna Grid Optimizer"
-    description: "Optuna-based grid search"
+    description: "Optuna-based grid search — cloud only"
+    availability: cloud-only
     implementations:
       - class_name: OptunaGridOptimizer
-        code_unit: traigent/optimizers/optuna_optimizer.py
-        status: complete
-        completion: 1.0
-        notes: "Extends OptunaBaseOptimizer with GridSampler"
+        code_unit: "(relocated to Traigent cloud; traigent/optimizers/optuna_optimizer.py deleted)"
+        status: cloud-only
+        completion: 0.0
+        notes: "Cloud only. Use local 'grid' algorithm for local exhaustive search."
 
   # ---------- Remote/Cloud Optimizers ----------
   - id: CAP-OPT-REMOTE
@@ -240,52 +240,47 @@ capabilities:
         notes: "Supports user feedback during optimization"
 
 # Summary Statistics
+# Note: BayesianOptimizer and all Optuna-based optimizers are cloud-only and not locally available.
 summary:
   total_implementations: 15
-  complete: 14
-  partial: 1
+  local_complete: 8   # RandomSearch, Grid, Remote, Cloud(interface), ParallelBatch, MultiObjectiveBatch, AdaptiveBatch, Interactive
+  cloud_only: 7       # Bayesian, OptunaBase, OptunaTPE, OptunaRandom, OptunaCMAES, OptunaNSGAII, OptunaGrid (all local files deleted)
+  partial: 0
   missing: 0
-  coverage_percentage: 96.7
 
 # Feature Support Matrix
 feature_support:
   async_methods:
+    # Note: BayesianOptimizer and all Optuna variants are cloud-only; local entries only below.
     full_support:
       - RemoteOptimizer (traigent/optimizers/remote.py)
       - CloudOptimizer interface methods (traigent/optimizers/cloud_optimizer.py)
     uses_default:
       - RandomSearchOptimizer
       - GridSearchOptimizer
-      - BayesianOptimizer
-      - OptunaBaseOptimizer
-      - All Optuna variants
       - All Batch optimizers
       - InteractiveOptimizer
 
   checkpoint_support:
-    full_support:
-      - OptunaBaseOptimizer
-      - All Optuna variants
+    # Note: Optuna-based checkpoint support is cloud-only.
+    full_support: []
     partial_support: []
     not_supported:
       - RandomSearchOptimizer
       - GridSearchOptimizer
-      - BayesianOptimizer
       - RemoteOptimizer
       - CloudOptimizer
       - Batch optimizers
       - InteractiveOptimizer
 
   multi_objective:
+    # Note: OptunaNSGAII and OptunaTPE are cloud-only.
     full_support:
-      - OptunaNSGAIIOptimizer
       - MultiObjectiveBatchOptimizer
-    partial_support:
-      - OptunaTPEOptimizer  # via weighted sum
+    partial_support: []
     not_supported:
       - RandomSearchOptimizer
       - GridSearchOptimizer
-      - BayesianOptimizer
 
 # Identified Gaps
 identified_gaps:
@@ -293,20 +288,18 @@ identified_gaps:
     type: pattern
     name: "Inconsistent async support"
     priority: medium
-    description: "Most optimizers use default base class async methods instead of true async"
+    description: "Local optimizers use default base class async methods instead of true async"
     affected:
       - RandomSearchOptimizer
       - GridSearchOptimizer
-      - BayesianOptimizer
       - All batch optimizers
 
   - id: GAP-OPT-002
     type: behavior
     name: "Missing checkpoint support"
     priority: low
-    description: "Only Optuna-based optimizers support checkpoint/restore"
+    description: "Local optimizers do not support checkpoint/restore (Optuna-based checkpoint support is cloud-only)"
     affected:
       - RandomSearchOptimizer
       - GridSearchOptimizer
-      - BayesianOptimizer
       - RemoteOptimizer
