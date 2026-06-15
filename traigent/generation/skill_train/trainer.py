@@ -307,6 +307,7 @@ class SkillTrainer:
             epoch_summaries=epoch_summaries,
             artifacts_dir=None,
             summary={
+                "stop_reason": self._stop_reason,
                 "meta_skill": self._meta_skill,
                 "accept_history": self._accept_history,
                 "reject_history": self._reject_history,
