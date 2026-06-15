@@ -31,6 +31,7 @@ from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_edge_analytics_commands
+from traigent.cli.sync_commands import register_sync_command
 from traigent.evaluators import (
     list_eval_recommendation_task_types,
     recommend_evaluator,
@@ -2639,6 +2640,8 @@ def check(
 
 # Register local commands
 register_edge_analytics_commands(cli)
+# Top-level `traigent sync` (promoted from `edge-analytics sync`).
+register_sync_command(cli)
 
 cli.add_command(auth)
 cli.add_command(hooks)

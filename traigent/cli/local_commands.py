@@ -458,7 +458,15 @@ def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
 def sync_to_cloud(
     api_key: str | None, session_id: str | None, dry_run: bool, cleanup: bool
 ) -> None:
-    """Sync local optimization sessions to Traigent Cloud."""
+    """Sync local optimization sessions to Traigent Cloud.
+
+    Deprecated alias: prefer the top-level `traigent sync` command.
+    """
+    click.echo(
+        "ℹ️  `traigent edge-analytics sync` is deprecated; use `traigent sync` "
+        "(it is idempotent and reports status).",
+        err=True,
+    )
     try:
         config = TraigentConfig.from_environment()
 
