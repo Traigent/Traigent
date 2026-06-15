@@ -704,7 +704,7 @@ class MockRemoteService(RemoteOptimizationService):
         self._service_info = ServiceInfo(
             name=self.service_name,
             version="1.0.0-mock",
-            supported_algorithms=["random", "grid", "bayesian"],
+            supported_algorithms=["random", "grid"],
             max_concurrent_sessions=10,
             capabilities={
                 "batch_suggestions": True,
@@ -845,9 +845,9 @@ class MockRemoteService(RemoteOptimizationService):
             await asyncio.sleep(0.01)  # Simulate network delay
 
             if session_id in self._active_sessions:
-                self._active_sessions[session_id].status = (
-                    OptimizationSessionStatus.COMPLETED
-                )
+                self._active_sessions[
+                    session_id
+                ].status = OptimizationSessionStatus.COMPLETED
                 del self._active_sessions[session_id]
                 logger.info(f"Closed mock session: {session_id}")
 

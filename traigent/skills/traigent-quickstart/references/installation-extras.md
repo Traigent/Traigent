@@ -13,7 +13,7 @@ pip install "traigent[recommended]"
 | Extra           | Description                                        | Key Packages                                                                 |
 | --------------- | -------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `analytics`     | Analytics and intelligence features                | numpy, pandas, matplotlib                                                    |
-| `bayesian`      | Bayesian optimization algorithms                   | scikit-learn, scipy                                                          |
+| `bayesian`      | Bayesian optimization dependencies (used by the Traigent cloud; not available for local runs) | scikit-learn, scipy                                                          |
 | `integrations`  | Framework integrations                             | LangChain (+ community/anthropic/openai/google), OpenAI, Anthropic, Groq, Google GenAI, MLflow, W&B, python-dotenv, boto3, faiss-cpu |
 | `dspy`          | DSPy prompt optimization                           | dspy-ai                                                                      |
 | `pydanticai`    | PydanticAI agent framework                         | pydantic-ai-slim                                                             |
@@ -75,12 +75,12 @@ These packages are installed with the base `pip install traigent`:
 - backoff (retry with backoff)
 - litellm (LLM provider abstraction)
 - rank-bm25 (BM25 retrieval)
-- optuna (optimization engine)
+- optuna (optimization engine — used by the Traigent cloud; smart algorithms are not available in local runs)
 - psutil (system monitoring)
 
 ## Notes
 
 - Requires Python >= 3.11.
 - `faiss-cpu` (in `integrations`) is not available on Windows.
-- The `recommended` bundle installs `integrations`, `analytics`, `bayesian`, `visualization`, `hybrid`, and `pydanticai`.
+- The `recommended` bundle installs `integrations`, `analytics`, `bayesian`, `visualization`, `hybrid`, and `pydanticai`. The `bayesian` extra installs dependencies used by the Traigent cloud; smart optimization algorithms are not available locally.
 - The `all` bundle includes most extras for broad local development and testing.

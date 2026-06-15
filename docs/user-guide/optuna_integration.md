@@ -1,22 +1,19 @@
 # Optuna Integration in Traigent
 
-The Optuna integration augments Traigent's optimisation toolkit with a modern
-ask/tell capable backend. Optuna-based optimisers ship **in addition** to the
-existing random, grid, and Bayesian implementations—change the algorithm name
-to opt into the new behaviour.
+> **Cloud-only feature.** Optuna-based optimisers (TPE, CMA-ES, NSGA-II, and others) are **not available in the local SDK**. Calling `get_optimizer("optuna_tpe")` or passing `algorithm="optuna"` / `"tpe"` / `"nsga2"` / `"cmaes"` in a local run raises an error. To use these algorithms, connect to [Traigent Portal](https://portal.traigent.ai).
+>
+> For local runs, use `algorithm="grid"` (exhaustive, small spaces) or `algorithm="random"` (large spaces, quick exploration).
 
-## When to use Optuna
+## When to use Optuna (via the Traigent cloud)
 
 - **Categorical-heavy search spaces** – Optuna's tree-structured Parzen
-  estimator (TPE) provides significantly better exploration than our previous
-  Gaussian-process implementation.
+  estimator (TPE) provides significantly better exploration than random search.
 - **Multi-objective optimisation** – Optuna keeps track of the full Pareto
   frontier instead of collapsing everything into a single scalar.
-- **Edge and distributed execution** – the ask/tell flow allows you to run
-  trials on remote devices (or slow environments) and report metrics back to a
-  central coordinator.
+- **Large or continuous parameter spaces** – CMA-ES and TPE efficiently explore
+  spaces where exhaustive grid search is impractical.
 
-## New optimisers
+## Available Optuna optimisers (cloud)
 
 | Optimiser name    | Registry id       | Recommended use case                         |
 |-------------------|-------------------|----------------------------------------------|
@@ -26,29 +23,7 @@ to opt into the new behaviour.
 | `OptunaNSGAIIOptimizer` | `optuna_nsga2` | Multi-objective evolutionary strategies   |
 | `OptunaGridOptimizer` | `optuna_grid`   | Exhaustive grid search via Optuna          |
 
-All optimisers reuse the existing `BaseOptimizer` interface. Switching from the
-legacy Bayesian optimiser is as simple as updating the `algorithm` attribute:
-
-```python
-from traigent.optimizers.registry import get_optimizer
-
-config_space = {
-    "model": ["gpt-4", "gpt-3.5"],
-    "temperature": (0.0, 1.0),
-    "max_tokens": (256, 1024),
-}
-
-optimizer = get_optimizer(
-    "optuna_tpe",
-    config_space=config_space,
-    objectives=["accuracy", "cost"],
-    max_trials=50,
-)
-
-config = optimizer.suggest_next_trial([])
-# ... evaluate configuration on your workload ...
-optimizer.report_trial_result(config["_optuna_trial_id"], [0.82, 0.12])
-```
+These optimisers are available through the Traigent cloud. The code examples below illustrate the API shape for reference; they require a cloud-connected run, not a local SDK call.
 
 ## Ask/Tell coordination for distributed workloads
 
@@ -131,12 +106,14 @@ optimizer constructor or coordinator `coordinator_kwargs`. Traigent forwards the
 string directly to `optuna.create_study`; consult Optuna's documentation for
 backend-specific prerequisites (migrations, credentials, network access).
 
-## Adapter for existing decorators
+## Adapter for existing decorators (cloud reference)
 
 Some code paths call Traigent's optimiser decorator directly instead of the
-registry. The `OptunaAdapter` translates those calls without requiring refactors:
+registry. The `OptunaAdapter` translates those calls without requiring refactors.
+**This runs via the Traigent cloud — it is not available in the local SDK.**
 
 ```python
+# Cloud-only: requires a cloud-connected Traigent session
 from traigent.optimizers.optuna_adapter import OptunaAdapter
 
 
@@ -150,15 +127,16 @@ result = OptunaAdapter.optimize(
     objective,
     config_space,
     ["accuracy", "cost"],
-    algorithm="nsga2",
+    algorithm="nsga2",   # cloud-only algorithm
     n_trials=75,
 )
 
 print("Best parameters", result["best_params"])
 ```
 
-## Dependency
+## Availability
 
-The Optuna features require the `optuna` package, which is included in Traigent's
-core dependencies and enabled by default. No additional installation or
-environment variables are required—Optuna optimizers are available out of the box.
+Optuna optimisers require a Traigent cloud connection. They are not part of
+the local SDK's registered algorithm set. For local optimization, use `"grid"`
+or `"random"` via `func.optimize(algorithm="grid")` or
+`func.optimize(algorithm="random")`.

@@ -1,6 +1,8 @@
 # Algorithm Reference
 
-Traigent supports four optimization algorithms. Pass the algorithm name as a string to `optimize()` or `optimize_sync()`.
+Traigent supports two optimization algorithms locally: `"grid"` and `"random"`. Smart algorithms (Bayesian, Optuna TPE, CMA-ES, NSGA-II, etc.) run in the **Traigent cloud** and are not available in the local SDK.
+
+Pass the algorithm name as a string to `optimize()` or `optimize_sync()`.
 
 ```python
 results = await func.optimize(max_trials=10, algorithm="grid")
@@ -8,12 +10,16 @@ results = await func.optimize(max_trials=10, algorithm="grid")
 
 ## Algorithm Comparison
 
+### Local algorithms (available in the SDK)
+
 | Algorithm | Strategy | Config Space Size | Trial Budget | Deterministic | Best For |
 |---|---|---|---|---|---|
 | `"grid"` | Exhaustive enumeration | Small (< 50 combos) | Must cover full space | Yes | Complete coverage, reproducibility |
 | `"random"` | Uniform random sampling | Any | Limited (10-50) | No | Large spaces, quick exploration |
-| `"bayesian"` | Surrogate model guided | Medium-Large | 15-100 | No | Expensive trials, continuous params |
-| `"optuna"` | Advanced TPE sampling | Large | 30+ | No | Advanced users, multi-objective |
+
+### Cloud algorithms (Traigent cloud only)
+
+Smart algorithms — Bayesian (GP surrogate), Optuna TPE, CMA-ES, NSGA-II, and others — run on the Traigent cloud. Calling `get_optimizer("bayesian")` or passing `algorithm="bayesian"` (or `"optuna"`, `"tpe"`, `"nsga2"`, `"cmaes"`) in a local run raises an error directing you to the cloud. To use these algorithms, connect to [Traigent Portal](https://portal.traigent.ai) and use `execution_mode="hybrid"` or the cloud path when it is available.
 
 ## Grid Search
 
@@ -61,7 +67,7 @@ results = await func.optimize(max_trials=20, algorithm="random")
 
 - Large configuration spaces where exhaustive search is impractical
 - You have a fixed trial budget and want broad coverage
-- Early exploration phase before switching to Bayesian
+- Starting point before using cloud-based smart algorithms
 - Parameters have similar importance (no strong interactions)
 
 ### Behavior
@@ -70,72 +76,21 @@ results = await func.optimize(max_trials=20, algorithm="random")
 - Stops when `max_trials` is reached
 - Provides good coverage of high-dimensional spaces with fewer trials than grid
 
-## Bayesian Optimization
-
-Uses adaptive search to focus trials on promising regions. Backed by Optuna's Tree-structured Parzen Estimator (TPE).
-
-```python
-results = await func.optimize(max_trials=30, algorithm="bayesian")
-```
-
-### When to Use
-
-- Trials are expensive (each trial costs real money via LLM API calls)
-- Configuration space has continuous parameters (temperature, top_p)
-- You want to find good configs with fewer trials than random/grid
-- Medium to large config spaces (50-10,000 combinations)
-
-### Behavior
-
-- First few trials are random (exploration phase)
-- Subsequent trials focus on promising regions (exploitation)
-- Balances exploration vs exploitation automatically
-- More sample-efficient than random search for smooth objective landscapes
-
-### Limitations
-
-- Requires several initial random trials before the model is useful (typically 5-10)
-- Less effective for purely categorical spaces with no ordinal structure
-- Non-deterministic: different runs may find different optima
-
-## Optuna (Advanced)
-
-Direct integration with the Optuna optimization framework. Provides access to Optuna's full feature set including advanced pruning, multi-objective optimization, and custom samplers.
-
-```python
-results = await func.optimize(max_trials=50, algorithm="optuna")
-```
-
-### When to Use
-
-- You need advanced Optuna features (pruning, custom samplers)
-- Very large or complex search spaces
-- Multi-objective optimization with Pareto frontier analysis
-- You are already familiar with Optuna and want fine-grained control
-
-### Behavior
-
-- Uses TPE sampler by default
-- Supports early stopping of unpromising trials (pruning)
-- Can handle mixed categorical/continuous/integer parameter spaces
-
 ## Choosing an Algorithm
 
 ### Decision Guide
 
 1. **Config space has < 50 combinations?** Use `"grid"` for complete coverage.
 2. **Limited budget, large space?** Use `"random"` for broad exploration.
-3. **Trials are expensive, want efficiency?** Use `"bayesian"` for adaptive search.
-4. **Need advanced features?** Use `"optuna"` for full Optuna access.
+3. **Need adaptive or multi-objective optimization?** Use the [Traigent cloud](https://portal.traigent.ai) — smart algorithms (Bayesian, TPE, CMA-ES, NSGA-II) run there.
 
-### Budget Guidelines
+### Budget Guidelines (local algorithms)
 
 | Config Space Size | Recommended Algorithm | Suggested max_trials |
 |---|---|---|
 | 1-10 | `"grid"` | Match space size |
 | 10-50 | `"grid"` or `"random"` | Match space size or 20-30 |
-| 50-500 | `"random"` or `"bayesian"` | 20-50 |
-| 500+ | `"bayesian"` or `"optuna"` | 30-100 |
+| 50+ | `"random"` | 20-50; consider cloud for smarter search |
 
 ### Runtime Override
 
@@ -151,5 +106,5 @@ def my_func(query: str) -> str:
     return call_llm(model=cfg["model"], prompt=query)
 
 # Override at runtime
-results = await my_func.optimize(algorithm="bayesian", max_trials=20)
+results = await my_func.optimize(algorithm="random", max_trials=20)
 ```

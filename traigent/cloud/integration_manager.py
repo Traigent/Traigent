@@ -268,7 +268,7 @@ class IntegrationManager:
 
         try:
             # Edge Analytics mode: client-side orchestration with optional metrics submission
-            # Using simple optimizers (grid, random, bayesian) locally
+            # Using local optimizers (grid, random); smart algorithms run in the Traigent cloud
 
             session_id = f"edge_analytics_{integration_id}"
 

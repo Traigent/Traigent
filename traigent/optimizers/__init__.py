@@ -19,14 +19,6 @@ from traigent.optimizers.optuna_coordinator import (
     OptunaCoordinator,
     RateLimitedOptimizer,
 )
-from traigent.optimizers.optuna_optimizer import (
-    OptunaBaseOptimizer,
-    OptunaCMAESOptimizer,
-    OptunaGridOptimizer,
-    OptunaNSGAIIOptimizer,
-    OptunaRandomOptimizer,
-    OptunaTPEOptimizer,
-)
 from traigent.optimizers.pruners import (
     CeilingPruner,
     CeilingPrunerConfig,
@@ -89,12 +81,6 @@ __all__ = [
     "ParallelBatchOptimizer",
     "MultiObjectiveBatchOptimizer",
     "AdaptiveBatchOptimizer",
-    "OptunaBaseOptimizer",
-    "OptunaTPEOptimizer",
-    "OptunaRandomOptimizer",
-    "OptunaCMAESOptimizer",
-    "OptunaNSGAIIOptimizer",
-    "OptunaGridOptimizer",
     "OptunaCoordinator",
     "BatchOptimizer",
     "RateLimitedOptimizer",
