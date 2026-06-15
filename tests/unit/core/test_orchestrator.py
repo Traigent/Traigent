@@ -583,6 +583,36 @@ class TestOptimizationOrchestrator:
         assert result.duration >= 0.5  # Should take at least timeout duration
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_wall_clock_watchdog_stops_a_hung_trial(
+        self, orchestrator, mock_function, sample_dataset
+    ):
+        """Regression for #1266: a trial that hangs far past the timeout must
+        not deadlock the run forever.
+
+        The per-trial ``_should_stop`` timeout is only checked *between* trials,
+        so a single trial whose evaluation never returns (here simulated by an
+        evaluation delay an order of magnitude longer than the timeout) would
+        otherwise run to completion (or hang forever) regardless of ``timeout``.
+        The hard wall-clock watchdog must cancel the run shortly after the
+        deadline and finalize with ``stop_reason == "timeout"``.
+        """
+        orchestrator.timeout = 0.5  # watchdog deadline = 0.5 + 1.0 grace = 1.5s
+        # 30s "hang" — 20x the watchdog deadline. Without the watchdog the run
+        # would block on this single trial well past the test's 10s timeout.
+        orchestrator.evaluator.set_evaluation_delay(30.0)
+        orchestrator.optimizer.set_max_suggestions(10)
+
+        start = time.monotonic()
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+        elapsed = time.monotonic() - start
+
+        # The watchdog must have fired well before the 30s trial could finish.
+        assert elapsed < 5.0, f"run took {elapsed:.1f}s — watchdog did not fire"
+        assert orchestrator._stop_reason == "timeout"
+        assert result.status == OptimizationStatus.CANCELLED
+
+    @pytest.mark.asyncio
     @pytest.mark.timeout(5)
     async def test_optimize_optimizer_suggests_no_configs(
         self, orchestrator, mock_function, sample_dataset

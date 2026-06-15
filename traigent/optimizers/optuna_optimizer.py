@@ -9,6 +9,7 @@ original optimizers remain available and unchanged.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -133,6 +134,15 @@ class OptunaBaseOptimizer(BaseOptimizer):
         self._synced_trials: set[str] = set()
         self._active_trials: dict[int, optuna.trial.Trial] = {}
         self._pending_configs: dict[int, dict[str, Any]] = {}
+        # Serialize every interaction with the shared Optuna study and its
+        # bookkeeping dicts. Optuna's in-memory storage is not safe for
+        # concurrent ask()/tell()/add_trial() from multiple threads — a
+        # native (pyo3) extension iterating the trial dict while another
+        # thread mutates it raises "dictionary changed size during iteration"
+        # and can abort a worker thread (see issue #1266). A reentrant lock
+        # lets nested helpers (e.g. _sync_history within suggest_next_trial)
+        # acquire it safely.
+        self._study_lock = threading.RLock()
         self._checkpoint_manager = checkpoint_manager
         self._metrics_emitter = metrics_emitter
         self._mock_mode = mock_mode
@@ -195,9 +205,11 @@ class OptunaBaseOptimizer(BaseOptimizer):
     def active_trials(self) -> dict[int, dict[str, Any]]:
         """Return a snapshot of currently active Optuna trials."""
 
-        return {
-            trial_id: dict(config) for trial_id, config in self._pending_configs.items()
-        }
+        with self._study_lock:
+            return {
+                trial_id: dict(config)
+                for trial_id, config in self._pending_configs.items()
+            }
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest the next configuration via Optuna's ask/tell interface."""
@@ -207,75 +219,80 @@ class OptunaBaseOptimizer(BaseOptimizer):
                 f"Maximum number of trials reached ({self.max_trials})."
             )
 
-        self._sync_history(history)
+        with self._study_lock:
+            self._sync_history(history)
 
-        if self._mock_mode and self._mock_config is not None:
-            self._study.enqueue_trial(params=self._mock_config.copy())
+            if self._mock_mode and self._mock_config is not None:
+                self._study.enqueue_trial(params=self._mock_config.copy())
 
-        trial = self._study.ask()
-        config = self._trial_to_config(trial)
-        config["_optuna_trial_id"] = trial.number
+            trial = self._study.ask()
+            config = self._trial_to_config(trial)
+            config["_optuna_trial_id"] = trial.number
 
-        self._active_trials[trial.number] = trial
-        self._pending_configs[trial.number] = config
-        self._trial_count += 1
+            self._active_trials[trial.number] = trial
+            self._pending_configs[trial.number] = config
+            self._trial_count += 1
 
-        # Track this config for exhaustion detection (exclude internal trial ID)
-        config_for_hash = {k: v for k, v in config.items() if k != "_optuna_trial_id"}
-        self.register_tried_config(config_for_hash)
+            # Track this config for exhaustion detection (exclude internal ID)
+            config_for_hash = {
+                k: v for k, v in config.items() if k != "_optuna_trial_id"
+            }
+            self.register_tried_config(config_for_hash)
 
-        logger.debug("Optuna suggested trial %s -> %s", trial.number, config)
+            logger.debug("Optuna suggested trial %s -> %s", trial.number, config)
 
-        self._emit_event(
-            "trial_suggested",
-            trial.number,
-            {"config": sanitize_config(config)},
-        )
-        self._persist_checkpoint()
+            self._emit_event(
+                "trial_suggested",
+                trial.number,
+                {"config": sanitize_config(config)},
+            )
+            self._persist_checkpoint()
 
-        return config
+            return config
 
     def report_intermediate_value(
         self, trial_id: int, step: int, value: float | Iterable[float]
     ) -> bool:
         """Report an intermediate metric to Optuna and return prune decision."""
 
-        trial = self._active_trials.get(trial_id)
-        if trial is None:
-            logger.warning(
-                "Attempted to report intermediate for unknown trial %s", trial_id
-            )
-            return False
+        with self._study_lock:
+            trial = self._active_trials.get(trial_id)
+            if trial is None:
+                logger.warning(
+                    "Attempted to report intermediate for unknown trial %s", trial_id
+                )
+                return False
 
-        if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
-            value_list = list(value)
-        else:
-            value_list = [float(value)]
+            if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+                value_list = list(value)
+            else:
+                value_list = [float(value)]
 
-        if len(self.objectives) > 1:
-            # Optuna does not currently support reporting intermediate values for
-            # multi-objective studies. We log and skip pruning in this case.
+            if len(self.objectives) > 1:
+                # Optuna does not currently support reporting intermediate values
+                # for multi-objective studies. We log and skip pruning here.
+                logger.debug(
+                    "Skipping intermediate report for multi-objective trial=%s",
+                    trial_id,
+                )
+                return False
+
+            trial.report(value_list[0], step)
+            should_prune = trial.should_prune()
             logger.debug(
-                "Skipping intermediate report for multi-objective trial=%s", trial_id
+                "Optuna intermediate report trial=%s step=%s value=%s prune=%s",
+                trial_id,
+                step,
+                value,
+                should_prune,
             )
-            return False
-
-        trial.report(value_list[0], step)
-        should_prune = trial.should_prune()
-        logger.debug(
-            "Optuna intermediate report trial=%s step=%s value=%s prune=%s",
-            trial_id,
-            step,
-            value,
-            should_prune,
-        )
-        self._emit_event(
-            "trial_intermediate",
-            trial_id,
-            {"step": step, "value": value_list[0]},
-        )
-        self._persist_checkpoint()
-        return cast(bool, should_prune)
+            self._emit_event(
+                "trial_intermediate",
+                trial_id,
+                {"step": step, "value": value_list[0]},
+            )
+            self._persist_checkpoint()
+            return cast(bool, should_prune)
 
     def report_trial_result(
         self,
@@ -285,115 +302,118 @@ class OptunaBaseOptimizer(BaseOptimizer):
     ) -> None:
         """Report a completed trial back to Optuna."""
 
-        trial = self._active_trials.get(trial_id)
-        if trial is None:
-            raise OptimizationError(f"Unknown Optuna trial id {trial_id}")
+        with self._study_lock:
+            trial = self._active_trials.get(trial_id)
+            if trial is None:
+                raise OptimizationError(f"Unknown Optuna trial id {trial_id}")
 
-        meta = metadata or {}
+            meta = metadata or {}
 
-        if objectives is None:
-            state_override = str(meta.get("state", "")).lower()
-            if state_override == "pruned":
-                step = int(meta.get("pruned_at_step", meta.get("step", 0)))
-                self.report_trial_pruned(trial_id, step=step)
+            if objectives is None:
+                state_override = str(meta.get("state", "")).lower()
+                if state_override == "pruned":
+                    step = int(meta.get("pruned_at_step", meta.get("step", 0)))
+                    self.report_trial_pruned(trial_id, step=step)
+                    return
+                if state_override in {"failed", "error", "cancelled"}:
+                    message = meta.get("error") or meta.get("message") or "Trial failed"
+                    self.report_trial_failure(trial_id, str(message))
+                    return
+                # If we reach here treat as failure with generic reason
+                self.report_trial_failure(trial_id, "Trial reported without objectives")
                 return
-            if state_override in {"failed", "error", "cancelled"}:
-                message = meta.get("error") or meta.get("message") or "Trial failed"
-                self.report_trial_failure(trial_id, str(message))
-                return
-            # If we reach here treat as failure with generic reason
-            self.report_trial_failure(trial_id, "Trial reported without objectives")
-            return
 
-        trial = self._active_trials.pop(trial_id, None)
-        if trial is None:  # pragma: no cover - defensive: race with concurrent pop
-            raise OptimizationError(f"Unknown Optuna trial id {trial_id}")
+            trial = self._active_trials.pop(trial_id, None)
+            if trial is None:  # pragma: no cover - defensive: race w/ concurrent pop
+                raise OptimizationError(f"Unknown Optuna trial id {trial_id}")
 
-        if isinstance(objectives, Iterable) and not isinstance(
-            objectives, (str, bytes)
-        ):
-            values = list(objectives)
-        else:
-            values = float(objectives)  # type: ignore[assignment]
+            if isinstance(objectives, Iterable) and not isinstance(
+                objectives, (str, bytes)
+            ):
+                values = list(objectives)
+            else:
+                values = float(objectives)  # type: ignore[assignment]
 
-        logger.debug("Telling Optuna about completion of trial %s", trial_id)
+            logger.debug("Telling Optuna about completion of trial %s", trial_id)
 
-        if isinstance(values, list):
-            self._study.tell(trial, values=values)
-            metrics = dict(zip(self.objectives, values, strict=False))
-        else:
-            self._study.tell(trial, values)
-            metrics = {self.objectives[0]: values}
+            if isinstance(values, list):
+                self._study.tell(trial, values=values)
+                metrics = dict(zip(self.objectives, values, strict=False))
+            else:
+                self._study.tell(trial, values)
+                metrics = {self.objectives[0]: values}
 
-        config = self._pending_configs.pop(trial_id, {}).copy()
-        config.pop("_optuna_trial_id", None)
+            config = self._pending_configs.pop(trial_id, {}).copy()
+            config.pop("_optuna_trial_id", None)
 
-        trial_result = TrialResult(
-            trial_id=str(trial_id),
-            config=config,
-            metrics=metrics,
-            status=TrialStatus.COMPLETED,
-            duration=0.0,
-            timestamp=datetime.now(UTC),
-            metadata=metadata or {},
-        )
-        self.update_best(trial_result)
+            trial_result = TrialResult(
+                trial_id=str(trial_id),
+                config=config,
+                metrics=metrics,
+                status=TrialStatus.COMPLETED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+                metadata=metadata or {},
+            )
+            self.update_best(trial_result)
 
-        self._emit_event(
-            "trial_completed",
-            trial_id,
-            {"metrics": metrics, "config": sanitize_config(config)},
-        )
-        self._persist_checkpoint()
-        self._synced_trials.add(str(trial_id))
+            self._emit_event(
+                "trial_completed",
+                trial_id,
+                {"metrics": metrics, "config": sanitize_config(config)},
+            )
+            self._persist_checkpoint()
+            self._synced_trials.add(str(trial_id))
 
     def report_trial_failure(self, trial_id: int, error_message: str) -> None:
         """Mark an Optuna trial as failed."""
 
-        trial = self._active_trials.pop(trial_id, None)
-        if trial is None:
-            logger.warning("Failed trial %s not tracked; ignoring", trial_id)
-            return
+        with self._study_lock:
+            trial = self._active_trials.pop(trial_id, None)
+            if trial is None:
+                logger.warning("Failed trial %s not tracked; ignoring", trial_id)
+                return
 
-        logger.warning("Marking trial %s as failed: %s", trial_id, error_message)
-        self._study.tell(
-            trial,
-            values=None,
-            state=optuna.trial.TrialState.FAIL,
-        )
-        config = self._pending_configs.pop(trial_id, {})
+            logger.warning("Marking trial %s as failed: %s", trial_id, error_message)
+            self._study.tell(
+                trial,
+                values=None,
+                state=optuna.trial.TrialState.FAIL,
+            )
+            config = self._pending_configs.pop(trial_id, {})
 
-        self._emit_event(
-            "trial_failed",
-            trial_id,
-            {"error": error_message, "config": sanitize_config(config)},
-        )
-        self._persist_checkpoint()
-        self._synced_trials.add(str(trial_id))
+            self._emit_event(
+                "trial_failed",
+                trial_id,
+                {"error": error_message, "config": sanitize_config(config)},
+            )
+            self._persist_checkpoint()
+            self._synced_trials.add(str(trial_id))
 
     def report_trial_pruned(self, trial_id: int, step: int) -> None:
         """Mark a trial as pruned and remove it from active tracking."""
 
-        trial = self._active_trials.pop(trial_id, None)
-        if trial is None:
-            logger.warning("Attempted to prune unknown trial %s", trial_id)
-            return
+        with self._study_lock:
+            trial = self._active_trials.pop(trial_id, None)
+            if trial is None:
+                logger.warning("Attempted to prune unknown trial %s", trial_id)
+                return
 
-        logger.info("Pruning trial %s at step %s", trial_id, step)
-        self._study.tell(
-            trial,
-            values=None,
-            state=optuna.trial.TrialState.PRUNED,
-        )
-        config = self._pending_configs.pop(trial_id, {})
+            logger.info("Pruning trial %s at step %s", trial_id, step)
+            self._study.tell(
+                trial,
+                values=None,
+                state=optuna.trial.TrialState.PRUNED,
+            )
+            config = self._pending_configs.pop(trial_id, {})
 
-        self._emit_event(
-            "trial_pruned",
-            trial_id,
-            {"step": step, "config": sanitize_config(config)},
-        )
-        self._persist_checkpoint()
-        self._synced_trials.add(str(trial_id))
+            self._emit_event(
+                "trial_pruned",
+                trial_id,
+                {"step": step, "config": sanitize_config(config)},
+            )
+            self._persist_checkpoint()
+            self._synced_trials.add(str(trial_id))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Stop when the configured maximum number of trials is reached or space exhausted.

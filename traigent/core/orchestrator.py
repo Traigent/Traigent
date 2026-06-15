@@ -2625,9 +2625,42 @@ class OptimizationOrchestrator:
                 self._status = OptimizationStatus.CANCELLED
                 return self._create_optimization_result()
 
-            await self._run_optimization_loop(
-                func, dataset, session_id, function_identifier
-            )
+            if self.timeout is not None and self.timeout > 0:
+                # Hard wall-clock watchdog (issue #1266). The per-trial
+                # _should_stop() timeout is only evaluated *between* trials, so a
+                # single hung trial — a deadlocked sampler, a stuck LLM call, or a
+                # worker thread aborted by a native (pyo3) panic whose future
+                # never resolves — would otherwise hang the run forever despite
+                # an explicit timeout. wait_for() enforces the deadline even when
+                # control never returns to the loop's own check, turning an
+                # indefinite deadlock into a clean, catchable stop that still
+                # finalizes with the best trial found so far. A bounded grace
+                # margin (25% of the budget, floored at 1s and capped at 5min)
+                # lets the normal between-trial check stop cleanly first, while
+                # still capping wasted LLM spend on a true hang.
+                grace = min(max(self.timeout * 0.25, 1.0), 300.0)
+                watchdog_deadline = self.timeout + grace
+                try:
+                    await asyncio.wait_for(
+                        self._run_optimization_loop(
+                            func, dataset, session_id, function_identifier
+                        ),
+                        timeout=watchdog_deadline,
+                    )
+                except TimeoutError:
+                    self._stop_reason = "timeout"
+                    logger.warning(
+                        "Optimization %s exceeded its wall-clock deadline "
+                        "(%.1fs incl. grace); a trial appears to have hung. "
+                        "Stopping and finalizing with %d completed trial(s).",
+                        self._optimization_id,
+                        watchdog_deadline,
+                        len(self._trials),
+                    )
+            else:
+                await self._run_optimization_loop(
+                    func, dataset, session_id, function_identifier
+                )
 
             # Set final status
             self._status = (
