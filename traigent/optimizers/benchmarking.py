@@ -1,4 +1,12 @@
-"""Benchmark utilities comparing Optuna optimizers against baselines."""
+"""Benchmark utilities comparing local optimizers against baselines.
+
+.. note::
+    The Optuna-based benchmark arm (``_run_optuna``) is cloud-only.  Calling
+    ``run_optuna_random_parity`` raises :class:`~traigent.utils.exceptions.OptimizationError`
+    because ``OptunaTPEOptimizer`` runs in the Traigent cloud and is not
+    available in the local SDK.  Connect to the Traigent backend to run the
+    full Optuna-vs-random parity benchmark.
+"""
 
 # Traceability: CONC-Layer-Tooling CONC-Quality-Performance CONC-Quality-Compatibility FUNC-OPT-ALGORITHMS REQ-OPT-ALG-004 SYNC-OptimizationFlow
 
@@ -10,11 +18,9 @@ from datetime import UTC, datetime
 from statistics import mean
 from typing import Any
 
-import optuna
-
 from traigent.api.types import TrialResult, TrialStatus
-from traigent.optimizers.optuna_optimizer import OptunaTPEOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
+from traigent.utils.exceptions import OptimizationError
 
 
 @dataclass
@@ -49,39 +55,17 @@ def _create_trial_result(
 
 
 def _run_optuna(n_trials: int, seed: int) -> BenchmarkRun:
-    startup_trials = max(1, n_trials // 3)
-    sampler = optuna.samplers.TPESampler(
-        seed=seed,
-        n_startup_trials=min(5, startup_trials),
-        consider_endpoints=True,
+    """Run the Optuna TPE arm.
+
+    Raises:
+        OptimizationError: Always — Optuna-based optimizers are cloud-only and
+            not available in the local SDK.
+    """
+    raise OptimizationError(
+        "Smart optimization ('optuna_tpe') runs in the Traigent cloud and is not "
+        "available in the local SDK (which supports 'grid' and 'random'). "
+        "Connect to the Traigent backend to use smart algorithms."
     )
-    optimizer = OptunaTPEOptimizer(
-        {
-            "model": ["alpha", "beta", "gamma"],
-            "temperature": (0.0, 1.0),
-        },
-        ["score"],
-        max_trials=n_trials,
-        sampler=sampler,
-    )
-
-    history: list[TrialResult] = []
-    best_score = float("-inf")
-    best_config: dict[str, Any] = {}
-    values: list[float] = []
-
-    for _ in range(n_trials):
-        config = optimizer.suggest_next_trial(history)
-        score = _objective(config)
-        values.append(score)
-        optimizer.report_trial_result(config["_optuna_trial_id"], score)
-        trial_result = _create_trial_result(config["_optuna_trial_id"], config, score)
-        history.append(trial_result)
-        if score > best_score:
-            best_score = score
-            best_config = config
-
-    return BenchmarkRun(best_value=best_score, best_config=best_config, values=values)
 
 
 def _run_random(n_trials: int, seed: int) -> BenchmarkRun:
@@ -116,18 +100,44 @@ def run_optuna_random_parity(
     runs: int = 5,
     seed_offset: int = 0,
 ) -> dict[str, Any]:
-    """Run multiple parity comparisons between Optuna and random search."""
+    """Run multiple parity comparisons between Optuna and random search.
 
-    optuna_runs: list[BenchmarkRun] = []
+    Raises:
+        OptimizationError: Optuna-based optimizers are cloud-only and not
+            available in the local SDK.  Connect to the Traigent backend to
+            run this benchmark.
+    """
+    raise OptimizationError(
+        "run_optuna_random_parity requires the Optuna TPE optimizer, which runs in "
+        "the Traigent cloud and is not available in the local SDK.  "
+        "Connect to the Traigent backend to use smart algorithms."
+    )
+
+
+def run_random_parity(
+    *,
+    n_trials: int = 20,
+    runs: int = 5,
+    seed_offset: int = 0,
+) -> dict[str, Any]:
+    """Run multiple random-search baseline runs (local-only benchmark arm).
+
+    Args:
+        n_trials: Number of trials per run.
+        runs: Number of independent runs.
+        seed_offset: Seed offset for reproducibility.
+
+    Returns:
+        Dictionary with ``random`` key containing aggregated metrics.
+    """
     random_runs: list[BenchmarkRun] = []
 
     for idx in range(runs):
         seed = seed_offset + idx
-        optuna_runs.append(_run_optuna(n_trials, seed))
         random_runs.append(_run_random(n_trials, seed))
 
-    def _aggregate(runs: Iterable[BenchmarkRun]) -> dict[str, Any]:
-        best_values = [run.best_value for run in runs]
+    def _aggregate(run_list: Iterable[BenchmarkRun]) -> dict[str, Any]:
+        best_values = [run.best_value for run in run_list]
         return {
             "average_best_value": mean(best_values),
             "max_best_value": max(best_values),
@@ -135,6 +145,5 @@ def run_optuna_random_parity(
         }
 
     return {
-        "optuna": _aggregate(optuna_runs),
         "random": _aggregate(random_runs),
     }

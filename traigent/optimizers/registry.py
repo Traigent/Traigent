@@ -61,8 +61,33 @@ _SMART_OPTIMIZER_NAMES: frozenset[str] = frozenset(
         "optuna_nsga2",
         "nsga2",
         "cmaes",
+        "nsgaii",
+        "nsga_ii",
+        "cma_es",
     }
 )
+
+
+def _is_smart_algorithm(name: str) -> bool:
+    """Return True if *name* refers to a cloud-only smart optimizer.
+
+    Normalizes the name by stripping whitespace, lowercasing, and replacing
+    hyphens and spaces with underscores before matching against the known set
+    of smart algorithm identifiers.  Also matches any name with an ``optuna_``
+    prefix (e.g. ``optuna_tpe``, ``optuna_foo``).
+
+    Args:
+        name: Algorithm name to test (raw, un-normalized).
+
+    Returns:
+        True if the name identifies a cloud-only smart algorithm.
+    """
+    normalized = name.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in _SMART_OPTIMIZER_NAMES:
+        return True
+    if normalized.startswith("optuna_"):
+        return True
+    return False
 
 
 def get_optimizer(
@@ -82,7 +107,7 @@ def get_optimizer(
     Raises:
         OptimizationError: If optimizer name not found or is a cloud-only smart algorithm
     """
-    if name in _SMART_OPTIMIZER_NAMES:
+    if _is_smart_algorithm(name):
         raise OptimizationError(
             f"Smart optimization ('{name}') runs in the Traigent cloud and is not "
             f"available in the local SDK (which supports 'grid' and 'random'). "

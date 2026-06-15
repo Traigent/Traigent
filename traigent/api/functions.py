@@ -21,7 +21,12 @@ from traigent.config.parallel import (
 )
 from traigent.config.types import TraigentConfig
 from traigent.optimizers import list_optimizers
-from traigent.utils.exceptions import ConfigAccessWarning, OptimizationStateError
+from traigent.optimizers.registry import _is_smart_algorithm
+from traigent.utils.exceptions import (
+    ConfigAccessWarning,
+    OptimizationError,
+    OptimizationStateError,
+)
 from traigent.utils.insights import (
     get_optimization_insights as _get_optimization_insights,
 )
@@ -750,6 +755,12 @@ def set_strategy(
         optimization behavior; see the warning above for runtime entry points.
     """
     # Validate algorithm
+    if _is_smart_algorithm(algorithm):
+        raise OptimizationError(
+            f"Smart optimization ('{algorithm}') runs in the Traigent cloud and is not "
+            f"available in the local SDK (which supports 'grid' and 'random'). "
+            f"Connect to the Traigent backend to use smart algorithms."
+        )
     available_algorithms = get_available_strategies()
     if algorithm not in available_algorithms:
         raise ValueError(
