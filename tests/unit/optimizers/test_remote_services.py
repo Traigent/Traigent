@@ -1147,7 +1147,7 @@ class TestMockRemoteService:
         session = await service.create_session(
             config_space=config_space,
             objectives=objectives,
-            algorithm="bayesian",
+            algorithm="random",
             max_trials=50,
             timeout=1800.0,
             optimization_strategy=sample_optimization_strategy,
@@ -1159,7 +1159,7 @@ class TestMockRemoteService:
         assert session.service_name == "MockTraigentService"
         assert session.config_space == config_space
         assert session.objectives == objectives
-        assert session.algorithm == "bayesian"
+        assert session.algorithm == "random"
         assert session.status == OptimizationSessionStatus.ACTIVE
         assert session.max_trials == 50
         assert session.timeout == 1800.0

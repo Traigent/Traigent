@@ -9,7 +9,6 @@ import pytest
 
 from traigent.api.decorators import optimize
 from traigent.api.types import OptimizationResult
-from traigent.optimizers.registry import register_optuna_optimizers
 
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4"],
@@ -37,13 +36,12 @@ def _trial_configs(result: OptimizationResult) -> list[dict[str, Any]]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("algorithm", ["grid", "optuna_tpe", "optuna_random"])
+@pytest.mark.parametrize("algorithm", ["grid", "random"])
 async def test_seeded_canonical_optimizer_runs_produce_identical_trial_configs(
     algorithm: str,
 ) -> None:
-    if algorithm.startswith("optuna"):
-        register_optuna_optimizers(force=True)
-
+    # Smart algorithms (optuna_*) are no longer available locally; the local
+    # SDK supports only grid and random, both of which must be reproducible.
     first = _build_decorated_target()
     second = _build_decorated_target()
 
