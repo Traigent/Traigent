@@ -259,6 +259,49 @@ class TestCreateTraigentSessionViaApi:
             assert "mock_exp_" in exp_id
             assert "mock_run_" in run_id
 
+    @pytest.mark.asyncio
+    async def test_auth_error_on_create_propagates_as_authentication_error(self):
+        """#1278: a 401/403 during session creation must reach the caller AS an
+        AuthenticationError — NOT be demoted to a plain CloudServiceError by the
+        generic ``except Exception`` ladder.
+
+        Before the fix, AuthenticationError (raised by ``_handle_session_error``
+        with the structured 403 detail) fell through to ``except Exception`` and
+        was re-wrapped as CloudServiceError, so session_operations classified it
+        SESSION_FAILED -> BACKEND_UNREACHABLE ("check your network/URL") instead
+        of an auth/permission error. This test fails on the pre-fix ladder
+        (raises CloudServiceError) and passes once the dedicated
+        ``except AuthenticationError: raise`` clause is in place.
+        """
+        from traigent.cloud.auth import AuthenticationError
+
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+        # Simulate the 403 path: _post_session_creation -> _handle_session_error
+        # raises AuthenticationError carrying the structured detail.
+        with (
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(
+                self.ops,
+                "_post_session_creation",
+                new=AsyncMock(
+                    side_effect=AuthenticationError(
+                        "Authentication failed: missing permission"
+                    )
+                ),
+            ),
+        ):
+            with pytest.raises(AuthenticationError):
+                await self.ops.create_traigent_session_via_api(request)
+
 
 class TestResolveMaxTrials:
     """Test _resolve_max_trials method."""
@@ -413,7 +456,7 @@ class TestHandleSessionError:
                 '"details":{"missing_permissions":["experiment.write"]}}',
             )
 
-        detail = getattr(exc.value, "session_creation_failure")
+        detail = exc.value.session_creation_failure
         assert detail.error_code == "INSUFFICIENT_PERMISSIONS"
         assert detail.message == "Missing required permissions: experiment.write"
         assert detail.missing_permissions == ("experiment.write",)
@@ -443,7 +486,7 @@ class TestHandleSessionError:
         with pytest.raises(CloudServiceError, match="Session creation failed") as exc:
             self.ops._handle_session_error(400, "Bad Request")
 
-        detail = getattr(exc.value, "session_creation_failure")
+        detail = exc.value.session_creation_failure
         assert detail.status_code == 400
         assert detail.raw_body == "Bad Request"
 

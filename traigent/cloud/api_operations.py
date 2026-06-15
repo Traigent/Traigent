@@ -293,6 +293,15 @@ class ApiOperations:
             # plain CloudServiceError and the local-fallback layer would
             # absorb them.
             raise
+        except AuthenticationError:
+            # #1278: a 401/403 on session creation must reach the caller AS
+            # ITSELF. _handle_session_error raises AuthenticationError with the
+            # structured 403 detail attached; the generic wrap below would
+            # demote it to a plain CloudServiceError (dropping the detail), so
+            # session_operations would classify it SESSION_FAILED →
+            # BACKEND_UNREACHABLE ("check your network/URL") instead of an
+            # auth/permission error (MISSING_PERMISSION / INVALID_OR_REVOKED_KEY).
+            raise
         except aiohttp.ClientConnectorError as e:
             self._handle_connector_error(e)
         except aiohttp.ClientError as e:
