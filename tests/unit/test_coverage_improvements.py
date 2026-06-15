@@ -332,6 +332,54 @@ def test_local_storage_lock_timeout_raises():
             lock_path.unlink()
 
 
+def test_local_storage_create_session_with_external_id():
+    """#1279: create_session accepts an externally-supplied id (a backend
+    session id) so connected hybrid runs persist trials under the same key the
+    backend uses. add_trial_result on that id must succeed, not raise
+    "session not found".
+    """
+    from traigent.storage.local_storage import LocalStorageManager
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        storage = LocalStorageManager(tmp_dir)
+        returned = storage.create_session("demo_func", session_id="backend-session-abc")
+        assert returned == "backend-session-abc"
+        assert storage.load_session("backend-session-abc") is not None
+
+        # The exact failure #1279 describes: a trial keyed to the backend id.
+        storage.add_trial_result(
+            session_id="backend-session-abc",
+            config={"model": "gpt-4o"},
+            score=0.5,
+        )
+        reloaded = storage.load_session("backend-session-abc")
+        assert reloaded.trials is not None
+        assert len(reloaded.trials) == 1
+
+
+def test_local_storage_create_session_external_id_is_idempotent():
+    """#1279: re-creating a session with an existing external id must not
+    clobber trials already recorded under it (connected runs may re-resolve the
+    same backend session)."""
+    from traigent.storage.local_storage import LocalStorageManager
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        storage = LocalStorageManager(tmp_dir)
+        storage.create_session("demo_func", session_id="backend-session-dup")
+        storage.add_trial_result(
+            session_id="backend-session-dup",
+            config={"model": "gpt-4o"},
+            score=0.5,
+        )
+
+        # Second create with the same id is a no-op (returns the id, keeps trials)
+        again = storage.create_session("demo_func", session_id="backend-session-dup")
+        assert again == "backend-session-dup"
+        reloaded = storage.load_session("backend-session-dup")
+        assert reloaded.trials is not None
+        assert len(reloaded.trials) == 1
+
+
 def test_local_storage_delete_session_validates_path():
     """Test delete_session uses path validation."""
     from traigent.storage.local_storage import LocalStorageManager

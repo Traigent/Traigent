@@ -317,6 +317,7 @@ class LocalStorageManager:
         function_name: str,
         optimization_config: dict[str, Any | None] | None = None,
         metadata: dict[str, Any | None] | None = None,
+        session_id: str | None = None,
     ) -> str:
         """
         Create a new optimization session.
@@ -325,13 +326,24 @@ class LocalStorageManager:
             function_name: Name of the function being optimized
             optimization_config: Configuration for the optimization
             metadata: Additional metadata
+            session_id: Optional externally-supplied id (e.g. a backend
+                session id, so connected hybrid runs can durably persist
+                trials under the same key the backend uses — see #1279). When
+                omitted, a local id is minted. If a session with this id
+                already exists it is returned unchanged (idempotent — existing
+                trials are never clobbered).
 
         Returns:
             session_id: Unique identifier for the session
         """
         timestamp = datetime.now(UTC)
-        safe_function = sanitize_identifier(function_name)
-        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{safe_function}_{uuid4().hex[:8]}"
+        if session_id is not None:
+            existing = self.load_session(session_id)
+            if existing is not None:
+                return session_id
+        else:
+            safe_function = sanitize_identifier(function_name)
+            session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{safe_function}_{uuid4().hex[:8]}"
 
         session = OptimizationSession(
             session_id=session_id,

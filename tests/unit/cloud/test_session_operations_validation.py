@@ -58,6 +58,10 @@ class FakeClient:
         self.backend_config = SimpleNamespace(api_base_url=None, backend_base_url=None)
         self.auth_manager = FakeAuthManager()
         self._register_security_session = MagicMock()
+        # Connected runs mirror the backend session into local_storage (#1279).
+        # Tests that care assign a real LocalStorageManager; default None keeps
+        # the connected path a no-op for unrelated tests.
+        self.local_storage = None
 
     async def _ensure_session(self):  # pragma: no cover - not used in validation tests
         return SimpleNamespace(post=AsyncMock(), get=AsyncMock())
@@ -143,6 +147,46 @@ def test_create_session_tracks_connected_session_locally(monkeypatch):
     assert tracked.max_trials == 3
     assert tracked.metadata["experiment_id"] == "experiment-123"
     assert tracked.metadata["experiment_run_id"] == "run-123"
+
+
+def test_connected_session_is_mirrored_to_local_storage(monkeypatch, tmp_path):
+    """#1279: the connected hybrid path must create a local_storage session
+    keyed to the backend session_id, so _persist_trial_locally has a durable
+    record on connected runs. Before the fix, local_storage never learned of the
+    connected session and add_trial_result raised "session not found".
+    """
+    from traigent.storage.local_storage import LocalStorageManager
+
+    client = FakeClient()
+    client.local_storage = LocalStorageManager(str(tmp_path))
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        return ("backend-session-xyz", "experiment-xyz", "run-xyz")
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    result = ops.create_session(
+        "demo-function",
+        {"model": ["gpt-4o"]},
+        metadata={"max_trials": 3},
+    )
+
+    assert result.session_id == "backend-session-xyz"
+    # The local mirror exists, keyed to the *backend* session id...
+    mirrored = client.local_storage.load_session("backend-session-xyz")
+    assert mirrored is not None
+    assert mirrored.metadata["execution_mode"] == "connected"
+    # ...so a trial keyed to the backend id now persists locally instead of
+    # raising TraigentStorageError("Session ... not found").
+    client.local_storage.add_trial_result(
+        session_id="backend-session-xyz",
+        config={"model": "gpt-4o"},
+        score=0.9,
+    )
+    reloaded = client.local_storage.load_session("backend-session-xyz")
+    assert reloaded.trials is not None
+    assert len(reloaded.trials) == 1
 
 
 def test_create_session_prunes_completed_sessions_with_aware_timestamps(monkeypatch):

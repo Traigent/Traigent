@@ -748,8 +748,12 @@ class BackendSessionManager:
                 metadata=metadata_payload,
             )
         except Exception as exc:
-            logger.debug(
-                "Local trial logging failed for session %s trial %s: %s",
+            # #1279: a failed local write means the trial's only record is the
+            # breaker-gated remote submit — if that also fails the completed
+            # (paid-for) trial is lost. This must never be silent.
+            logger.warning(
+                "Local trial logging failed for session %s trial %s — trial has "
+                "no durable local record if the remote submit also fails: %s",
                 session_id,
                 trial_result.trial_id,
                 exc,

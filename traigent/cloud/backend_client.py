@@ -1226,7 +1226,13 @@ class BackendIntegratedClient:
                     metadata=metadata or {},
                 )
             except Exception as exc:
-                logger.debug("Local storage trial result fallback failed: %s", exc)
+                # #1279: do not silently drop the local record — on connected
+                # runs this is the only durable trace if the remote submit fails.
+                logger.warning(
+                    "Local storage trial result persistence failed for session %s: %s",
+                    session_id,
+                    exc,
+                )
 
         session = self._active_sessions.get(session_id)
         if session:
