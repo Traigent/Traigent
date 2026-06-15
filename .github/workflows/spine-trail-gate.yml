@@ -1,0 +1,56 @@
+name: Spine Trail Gate
+
+# Server-side backstop for governed-work traceability: a product PR must carry a
+# validation-spine mark in its body. This is the CI layer of the spine-trail
+# defense-in-depth (skill rule + local hooks + this gate). It checks ONLY the PR
+# body for a marker line — it does not read the spine or block on posture, so it
+# stays fast and cannot be flaked by stale health.
+#
+# Accepted markers (any one):
+#   Spine-Trail: st_xxxxxxxxxxxx   (a Tier-0 WorkIntent)
+#   Spine: cs_xxxxxxxx             (a promoted ChangeSession)
+#   Spine: none (reason: ...)      (an explicit, owner-visible waiver)
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spine-trail-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  spine-trail:
+    name: spine-trail present
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body for a spine mark
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          # Valid markers (anchored to line start, tolerant of leading spaces).
+          trail='^[[:space:]]*Spine-Trail:[[:space:]]*st_[0-9a-f]{12}[[:space:]]*$'
+          session='^[[:space:]]*Spine:[[:space:]]*cs_[0-9a-z]{6,}[[:space:]]*$'
+          waiver='^[[:space:]]*Spine:[[:space:]]*none[[:space:]]*\(reason:.+\)[[:space:]]*$'
+
+          if printf '%s\n' "$PR_BODY" | grep -Eqi "$trail"; then
+            echo "✅ Spine-Trail present."
+          elif printf '%s\n' "$PR_BODY" | grep -Eqi "$session"; then
+            echo "✅ Promoted ChangeSession (Spine:) present."
+          elif printf '%s\n' "$PR_BODY" | grep -Eqi "$waiver"; then
+            echo "⚠️  Explicit governance waiver (Spine: none) accepted."
+          else
+            echo "::error title=Spine trail missing::This product PR has no validation-spine mark."
+            echo "Governed product work must leave a spine mark. Add ONE line to the PR body:"
+            echo "  Spine-Trail: st_xxxxxxxxxxxx   (a Tier-0 WorkIntent)"
+            echo "  Spine: cs_xxxxxxxx             (a promoted ChangeSession)"
+            echo "  Spine: none (reason: <why ungoverned>)"
+            echo "Open one with: python3 tools/spine-trail/spine_trail.py get-or-create ..."
+            echo "See tools/spine-trail/README.md"
+            exit 1
+          fi
