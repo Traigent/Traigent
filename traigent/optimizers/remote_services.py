@@ -21,7 +21,7 @@ from typing import Any, cast
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import EvaluationExample
-from traigent.utils.exceptions import ServiceError
+from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -759,6 +759,18 @@ class MockRemoteService(RemoteOptimizationService):
     ) -> OptimizationSession:
         """Create a mock optimization session."""
         request_start = time.time()
+
+        # Smart algorithms run in the Traigent cloud, not in this local mock
+        # service. Reject explicit smart names rather than silently running local
+        # random under a smart label (which would mislabel the run as smart).
+        from traigent.optimizers.registry import _is_smart_algorithm
+
+        if _is_smart_algorithm(algorithm):
+            raise OptimizationError(
+                f"Smart optimization ('{algorithm}') runs in the Traigent cloud and "
+                "is not available in the local SDK (which supports 'grid' and "
+                "'random'). Connect to the Traigent backend to use smart algorithms."
+            )
 
         try:
             await asyncio.sleep(0.1)  # Simulate session creation delay

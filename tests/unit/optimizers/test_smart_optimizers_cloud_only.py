@@ -172,3 +172,40 @@ class TestOptunaModulesDeleted:
                 del sys.modules[key]
         with pytest.raises(ModuleNotFoundError):
             import traigent.optimizers.optuna_coordinator  # noqa: F401
+
+
+class TestMockRemoteServiceRejectsSmart:
+    """The local mock remote service must not accept a smart algorithm name and
+    silently run local random under a smart label (fake completion)."""
+
+    @pytest.mark.parametrize("name", ["bayesian", "tpe", "optuna", "nsga-ii"])
+    def test_create_session_rejects_smart_algorithm(self, name: str):
+        import asyncio
+
+        from traigent.optimizers.remote_services import MockRemoteService
+
+        service = MockRemoteService(service_name="mock")
+        with pytest.raises(OptimizationError) as exc_info:
+            asyncio.run(
+                service.create_session(
+                    config_space={"x": [1, 2]},
+                    objectives=["score"],
+                    algorithm=name,
+                )
+            )
+        assert "cloud" in str(exc_info.value).lower()
+
+    def test_create_session_allows_random(self):
+        import asyncio
+
+        from traigent.optimizers.remote_services import MockRemoteService
+
+        service = MockRemoteService(service_name="mock")
+        session = asyncio.run(
+            service.create_session(
+                config_space={"x": [1, 2]},
+                objectives=["score"],
+                algorithm="random",
+            )
+        )
+        assert session.algorithm == "random"
