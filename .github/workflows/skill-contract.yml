@@ -12,6 +12,9 @@ on:
     paths:
       - "traigent/**/*.py"
       - "pyproject.toml"
+      # Self-test: changes to this workflow re-run the gate so a fix/regression
+      # is caught in-PR (the job otherwise only triggers on SDK-surface changes).
+      - ".github/workflows/skill-contract.yml"
 
 permissions:
   contents: read
@@ -65,10 +68,18 @@ jobs:
       - name: Run the skill contract against this PR's SDK
         if: steps.guard.outputs.armed == 'true'
         run: |
+          # Run from the SDK repo root so pytest resolves the SDK's pyproject as
+          # rootdir, but override addopts to empty: the repo's test addopts pin
+          # `-n auto --dist loadgroup` (pytest-xdist), which this self-contained
+          # job deliberately does NOT install. Without the override the contract
+          # run aborts with "unrecognized arguments: -n --dist" (exit 4) before a
+          # single contract test executes. The skill-contract harness is
+          # independent of the SDK suite's parallelism/marker/ignore config, so it
+          # carries only its own explicit flags below.
           python -m pytest \
             _skills/tests/contract/test_python_contracts.py \
             _skills/tests/contract/test_env_and_cli.py \
             _skills/tests/contract/test_skill_lints.py \
             _skills/tests/contract/test_text_requirements.py \
             _skills/tests/contract/test_harness_selftest.py \
-            -p no:cacheprovider --sdk-version=develop -q -rs
+            -o addopts= -p no:cacheprovider --sdk-version=develop -q -rs
