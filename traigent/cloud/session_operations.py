@@ -251,6 +251,61 @@ class SessionOperations:
         logger.debug("Using ephemeral session ID: %s", fallback_id)
         return fallback_id
 
+    def _persist_connected_session_locally(
+        self,
+        *,
+        session_id: str,
+        function_name: str,
+        search_space: dict[str, Any],
+        optimization_goal: str,
+        metadata: dict[str, Any] | None,
+    ) -> None:
+        """Mirror a connected backend session into local_storage (#1279).
+
+        On the connected hybrid path the session is registered only in the
+        in-memory ``_active_sessions``; ``local_storage`` never learns of it, so
+        ``_persist_trial_locally`` -> ``add_trial_result`` raises "session not
+        found" and the advertised "run locally, sync to backend" safety net does
+        not exist there. Creating a local session keyed to the backend
+        ``session_id`` gives every connected trial a durable local record, so a
+        completed (paid-for) trial survives a mid-run remote-submit failure.
+
+        Best-effort: a local-storage failure must never break the connected run,
+        but it is logged at WARNING — the safety net silently not existing is the
+        exact failure mode #1279 is about.
+        """
+        local_storage = getattr(self.client, "local_storage", None)
+        if not local_storage:
+            return
+        try:
+            optimization_config = {
+                "search_space": search_space,
+                "optimization_goal": optimization_goal,
+                "baseline_config": None,
+            }
+            connected_metadata = dict(metadata or {})
+            connected_metadata.update(
+                {
+                    "execution_mode": "connected",
+                    "backend_session": True,
+                    "created_with_version": "traigent-connected-mirror-1.0.0",
+                }
+            )
+            local_storage.create_session(
+                function_name=function_name,
+                optimization_config=optimization_config,
+                metadata=connected_metadata,
+                session_id=session_id,
+            )
+            logger.debug("Created local mirror for connected session: %s", session_id)
+        except Exception as storage_e:
+            logger.warning(
+                "Could not create local mirror for connected session %s; trials "
+                "on this run have no local-persistence safety net: %s",
+                session_id,
+                storage_e,
+            )
+
     def create_session(
         self,
         function_name: str,
@@ -444,6 +499,19 @@ class SessionOperations:
                     session_id,
                     experiment_id,
                     experiment_run_id,
+                )
+
+                # #1279: also mirror the connected session into local_storage
+                # keyed to the backend session_id, so _persist_trial_locally has
+                # a durable local record on connected runs too. Without this the
+                # only record of a completed (paid-for) trial is the breaker-gated
+                # remote submit; if that fails mid-run the trial is lost silently.
+                self._persist_connected_session_locally(
+                    session_id=session_id,
+                    function_name=function_name,
+                    search_space=search_space,
+                    optimization_goal=optimization_goal,
+                    metadata=metadata,
                 )
                 return SessionCreationResult.connected(session_id=session_id)
 
