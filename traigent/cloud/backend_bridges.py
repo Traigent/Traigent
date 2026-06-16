@@ -748,8 +748,11 @@ Response:"""
         ``success_rate`` -> ``accuracy``) are normalized to their canonical
         backend measure ID. Any other objective name is a user-defined custom
         metric (e.g. ``exec_accuracy``, ``sql_accuracy``) and is preserved
-        verbatim so it surfaces on the portal under its own name instead of
-        being silently coerced to ``accuracy`` (see issue #1292).
+        verbatim so it reaches the backend create-experiment request under its
+        own name instead of being silently coerced to ``accuracy`` (see issue
+        #1292). NOTE: this is the SDK half only — full portal visibility also
+        requires the backend to accept/register custom measure IDs (the BE
+        currently skips unknown measure IDs); tracked as a follow-up.
         """
         objective_mapping = {
             "accuracy": "accuracy",
@@ -766,7 +769,7 @@ Response:"""
         measures = []
         for objective in objectives:
             # Map only known aliases; pass custom names through unchanged so the
-            # user-defined metric reaches the backend/portal under its own name.
+            # user-defined metric reaches the backend request under its own name.
             measure_id = objective_mapping.get(objective.lower(), objective)
             if measure_id not in measures:
                 measures.append(measure_id)
