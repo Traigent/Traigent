@@ -742,7 +742,15 @@ Response:"""
             return value
 
     def _map_objectives_to_measures(self, objectives: list[str]) -> list[str]:
-        """Map SDK objectives to backend measure IDs."""
+        """Map SDK objectives to backend measure IDs.
+
+        Well-known objective aliases (e.g. ``cost_efficiency`` -> ``cost``,
+        ``success_rate`` -> ``accuracy``) are normalized to their canonical
+        backend measure ID. Any other objective name is a user-defined custom
+        metric (e.g. ``exec_accuracy``, ``sql_accuracy``) and is preserved
+        verbatim so it surfaces on the portal under its own name instead of
+        being silently coerced to ``accuracy`` (see issue #1292).
+        """
         objective_mapping = {
             "accuracy": "accuracy",
             "cost": "cost",
@@ -757,7 +765,9 @@ Response:"""
 
         measures = []
         for objective in objectives:
-            measure_id = objective_mapping.get(objective.lower(), "accuracy")
+            # Map only known aliases; pass custom names through unchanged so the
+            # user-defined metric reaches the backend/portal under its own name.
+            measure_id = objective_mapping.get(objective.lower(), objective)
             if measure_id not in measures:
                 measures.append(measure_id)
 
