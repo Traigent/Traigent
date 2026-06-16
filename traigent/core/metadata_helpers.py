@@ -14,6 +14,54 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Producer-side cap on the per-example ``measures[]`` array submitted to the
+# backend on ``POST /sessions/{id}/results``. The backend enforces
+# ``MAX_EXAMPLES_PER_RUN = 1000`` and, on overflow, rejects the WHOLE submission
+# (returning an empty list) -- which silently loses ALL of a trial's measures.
+# We mirror that cap here so the SDK never emits a payload the server rejects
+# wholesale: keep the first ``MAX_EXAMPLES_PER_RUN`` measures and WARN loudly
+# about what was dropped, rather than losing everything. Keep in sync with the
+# backend ``MAX_EXAMPLES_PER_RUN`` and ``configuration_run_schema`` maxItems.
+MAX_EXAMPLES_PER_RUN = 1000
+
+
+def _cap_measures(
+    measures: list[dict[str, Any]], execution_mode: str
+) -> list[dict[str, Any]]:
+    """Cap per-example measures to the backend limit with a loud warning.
+
+    The backend rejects the entire submission when ``measures`` exceeds
+    :data:`MAX_EXAMPLES_PER_RUN`, so an uncapped array would lose ALL measures
+    for the trial. Truncate to the limit (keeping the first
+    ``MAX_EXAMPLES_PER_RUN`` entries) and surface the truncation via a WARNING
+    so the data loss is never silent.
+
+    Args:
+        measures: Per-example measure dicts (may exceed the backend cap).
+        execution_mode: Execution mode label, for the warning message.
+
+    Returns:
+        The measures list, truncated to at most ``MAX_EXAMPLES_PER_RUN`` items.
+    """
+    if len(measures) <= MAX_EXAMPLES_PER_RUN:
+        return measures
+
+    dropped = len(measures) - MAX_EXAMPLES_PER_RUN
+    logger.warning(
+        "Per-example measures (%s) exceed the backend cap of %s for %s mode; "
+        "truncating to the first %s and dropping %s. The backend rejects the "
+        "whole submission above this cap, so the trial would otherwise lose "
+        "ALL measures. Set max_examples<=%s to control which examples are "
+        "kept.",
+        len(measures),
+        MAX_EXAMPLES_PER_RUN,
+        execution_mode,
+        MAX_EXAMPLES_PER_RUN,
+        dropped,
+        MAX_EXAMPLES_PER_RUN,
+    )
+    return measures[:MAX_EXAMPLES_PER_RUN]
+
 
 def _validate_example_id(measure: dict[str, Any], example_index: int) -> None:
     """Validate example_id field in measure dict."""
@@ -191,8 +239,9 @@ def _add_measures_to_metadata(
     }
 
     if include_full_measures:
-        measures = _build_measures_full(
-            example_results, primary_objective, dataset_name
+        measures = _cap_measures(
+            _build_measures_full(example_results, primary_objective, dataset_name),
+            execution_mode,
         )
         if measures:
             trial_metadata["measures"] = measures
@@ -205,8 +254,9 @@ def _add_measures_to_metadata(
         else:
             trial_metadata.pop("measures", None)
     elif privacy_on:
-        measures = _build_measures_privacy(
-            example_results, primary_objective, dataset_name
+        measures = _cap_measures(
+            _build_measures_privacy(example_results, primary_objective, dataset_name),
+            execution_mode,
         )
         if measures:
             trial_metadata["measures"] = measures
