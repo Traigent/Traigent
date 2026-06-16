@@ -322,6 +322,99 @@ class TestBuildBackendMetadataPrivacy:
         assert len(metadata["measures"]) == 1
 
 
+class TestMeasuresProducerCap:
+    """Regression tests for #1285: producer-side cap on per-example measures.
+
+    The backend rejects the WHOLE submission when ``measures`` exceeds 1000
+    examples, returning an empty list -- so an uncapped array silently loses ALL
+    measures. The SDK must cap to the backend limit (keeping the first 1000) and
+    warn loudly, never silently produce a payload the server rejects wholesale.
+    """
+
+    @staticmethod
+    def _make_example_results(count: int) -> list[Mock]:
+        results = []
+        for _ in range(count):
+            r = Mock()
+            r.metrics = {"accuracy": 0.9, "cost": 0.02}
+            r.execution_time = 0.5
+            r.expected_output = "expected"
+            r.actual_output = "expected"
+            results.append(r)
+        return results
+
+    def test_full_measures_capped_not_all_lost(
+        self, mock_trial_result, mock_config, caplog
+    ):
+        """>1000-example trial keeps first 1000 measures, not zero (non-privacy)."""
+        from traigent.core.metadata_helpers import MAX_EXAMPLES_PER_RUN
+
+        over = MAX_EXAMPLES_PER_RUN + 250
+        mock_config.execution_mode = "edge_analytics"
+        mock_trial_result.metadata = {
+            "example_results": self._make_example_results(over)
+        }
+
+        with caplog.at_level("WARNING"):
+            metadata = build_backend_metadata(
+                mock_trial_result, "accuracy", mock_config
+            )
+
+        # Measures must be present and capped -- NOT all lost, NOT over the cap.
+        assert "measures" in metadata
+        assert len(metadata["measures"]) == MAX_EXAMPLES_PER_RUN
+        # The first 1000 (not a random subset) are kept.
+        assert metadata["measures"][0]["example_id"].endswith("_0")
+        # The data loss is surfaced, not silent.
+        assert any(
+            "exceed the backend cap" in rec.message and rec.levelname == "WARNING"
+            for rec in caplog.records
+        )
+
+    def test_privacy_measures_capped_not_all_lost(
+        self, mock_trial_result, mock_config, caplog
+    ):
+        """>1000-example trial keeps first 1000 measures, not zero (privacy)."""
+        from traigent.core.metadata_helpers import MAX_EXAMPLES_PER_RUN
+
+        over = MAX_EXAMPLES_PER_RUN + 1
+        mock_config.privacy_enabled = True
+        mock_config.execution_mode = "edge_analytics"
+        mock_trial_result.metadata = {
+            "example_results": self._make_example_results(over)
+        }
+
+        with caplog.at_level("WARNING"):
+            metadata = build_backend_metadata(
+                mock_trial_result, "accuracy", mock_config
+            )
+
+        assert "measures" in metadata
+        assert len(metadata["measures"]) == MAX_EXAMPLES_PER_RUN
+        assert any("exceed the backend cap" in rec.message for rec in caplog.records)
+
+    def test_at_limit_not_capped_no_warning(
+        self, mock_trial_result, mock_config, caplog
+    ):
+        """Exactly 1000 examples passes through untouched with no warning."""
+        from traigent.core.metadata_helpers import MAX_EXAMPLES_PER_RUN
+
+        mock_config.execution_mode = "edge_analytics"
+        mock_trial_result.metadata = {
+            "example_results": self._make_example_results(MAX_EXAMPLES_PER_RUN)
+        }
+
+        with caplog.at_level("WARNING"):
+            metadata = build_backend_metadata(
+                mock_trial_result, "accuracy", mock_config
+            )
+
+        assert len(metadata["measures"]) == MAX_EXAMPLES_PER_RUN
+        assert not any(
+            "exceed the backend cap" in rec.message for rec in caplog.records
+        )
+
+
 class TestBuildMeasuresFull:
     """Test _build_measures_full function."""
 
