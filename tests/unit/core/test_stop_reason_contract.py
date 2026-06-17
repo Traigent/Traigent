@@ -138,7 +138,6 @@ def test_metric_limit_requires_metric_name():
         _orchestrator(metric_limit=0.2)
 
 
-
 def test_cost_enforcer_limit_maps_to_cost_limit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
     orchestrator = _orchestrator(cost_limit=0.5, cost_approved=True)
