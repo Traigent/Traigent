@@ -111,7 +111,6 @@ def test_presence_penalty_rejects_invalid_range(penalty):
             "hybrid",
             "hybrid_api",
             ExecutionMode.EDGE_ANALYTICS,
-            ExecutionMode.PRIVACY,
             ExecutionMode.HYBRID,
             ExecutionMode.HYBRID_API,
         ]
@@ -126,23 +125,25 @@ def test_execution_mode_accepts_valid_values(mode):
         assert config.privacy_enabled is True
     elif isinstance(mode, str) and mode == "local":
         assert config.execution_mode == "edge_analytics"
-    elif isinstance(mode, ExecutionMode) and mode == ExecutionMode.PRIVACY:
-        assert config.execution_mode == "hybrid"
-        assert config.privacy_enabled is True
     else:
         expected = mode.value if isinstance(mode, ExecutionMode) else mode
         assert config.execution_mode == expected
 
 
 @given(
-    st.sampled_from(["standard", "cloud", ExecutionMode.STANDARD, ExecutionMode.CLOUD])
+    st.sampled_from(["standard", "cloud"])
 )
-def test_execution_mode_rejects_removed_or_reserved_values(mode):
-    """Property: Removed and reserved modes should be rejected."""
-    from traigent.utils.exceptions import ConfigurationError
+def test_execution_mode_deprecated_values_warn_and_resolve(mode):
+    """Property: Deprecated string aliases emit DeprecationWarning and resolve to a canonical mode."""
+    import warnings
 
-    with pytest.raises(ConfigurationError):
-        TraigentConfig(execution_mode=mode)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        config = TraigentConfig(execution_mode=mode)
+
+    # "standard" → hybrid, "cloud" → edge_analytics
+    assert config.execution_mode in ("hybrid", "edge_analytics")
+    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 @given(

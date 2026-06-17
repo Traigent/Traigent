@@ -659,12 +659,15 @@ class TestOptimizedFunction:
             assert evaluator_arg.custom_evaluator is mock_custom_evaluator
 
     @pytest.mark.asyncio
-    async def test_optimize_with_cloud_service_fails_closed(
+    async def test_optimize_with_deprecated_cloud_resolves_to_edge_analytics(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Reserved cloud execution fails before local completion."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            OptimizedFunction(
+        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=mock_function,
                 config_space=sample_config_space,
                 objectives=sample_objectives,
@@ -672,22 +675,29 @@ class TestOptimizedFunction:
                 max_trials=5,
                 eval_dataset=sample_dataset,
             )
+        assert opt_func.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     @pytest.mark.asyncio
-    async def test_optimize_cloud_service_fallback_fails_closed(
+    async def test_optimize_cloud_service_fallback_policy_deprecated(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Auto fallback cannot make reserved cloud mode locally complete."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            OptimizedFunction(
+        """cloud_fallback_policy is deprecated and emits DeprecationWarning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=mock_function,
                 config_space=sample_config_space,
                 objectives=sample_objectives,
-                execution_mode="cloud",
+                execution_mode="edge_analytics",
                 cloud_fallback_policy="auto",
                 max_trials=3,
                 eval_dataset=sample_dataset,
             )
+        assert opt_func.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     @pytest.mark.asyncio
     async def test_optimize_with_none_dataset(
@@ -812,17 +822,22 @@ class TestOptimizedFunction:
             # This would happen during actual optimization call
             assert opt_func.algorithm == "random"  # Original value
 
-    def test_cloud_mode_activation_fails_closed(
+    def test_cloud_mode_deprecated_resolves_to_edge_analytics(
         self, mock_function, sample_config_space, sample_objectives
     ):
-        """Reserved cloud execution is rejected on direct construction."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            OptimizedFunction(
+        """Deprecated cloud mode is accepted and resolves to edge_analytics."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=mock_function,
                 config_space=sample_config_space,
                 objectives=sample_objectives,
                 execution_mode="cloud",
             )
+        assert opt_func.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     # Error Handling Tests
 

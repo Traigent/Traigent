@@ -88,6 +88,8 @@ class ParameterValidator:
 
     @staticmethod
     def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
+        if isinstance(execution_mode, str):
+            return execution_mode.strip().lower() == "privacy"
         return False
 
     def _validate_execution_mode(

@@ -1,5 +1,7 @@
 """Integration-level execution-mode contract tests for the decorator."""
 
+import warnings
+
 import pytest
 
 from traigent.api.decorators import ExecutionOptions, optimize
@@ -22,11 +24,12 @@ def _dataset() -> Dataset:
 
 
 class TestTraigentDecoratorCloudIntegration:
-    """Reserved cloud mode fails closed on the decorator surface."""
+    """Deprecated cloud mode resolves to edge_analytics; standard mode resolves to hybrid."""
 
-    def test_basic_decorator_with_cloud_mode_fails_closed(self):
-        """A cloud request should not produce a local OptimizedFunction."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
+    def test_basic_decorator_with_cloud_mode_deprecated(self):
+        """A cloud request emits DeprecationWarning and resolves to edge_analytics."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 eval_dataset=_dataset(),
@@ -37,9 +40,14 @@ class TestTraigentDecoratorCloudIntegration:
             def answer(question: str) -> str:
                 return question
 
-    def test_execution_bundle_with_cloud_mode_fails_closed(self):
-        """ExecutionOptions follows the same cloud contract."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        assert isinstance(answer, OptimizedFunction)
+        assert answer.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+    def test_execution_bundle_with_cloud_mode_deprecated(self):
+        """ExecutionOptions with cloud emits DeprecationWarning and resolves to edge_analytics."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 eval_dataset=_dataset(),
@@ -53,9 +61,14 @@ class TestTraigentDecoratorCloudIntegration:
             def answer(question: str) -> str:
                 return question
 
-    def test_standard_mode_fails_closed(self):
-        """The removed standard mode is rejected consistently."""
-        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+        assert isinstance(answer, OptimizedFunction)
+        assert answer.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+    def test_standard_mode_deprecated_resolves_to_hybrid(self):
+        """The deprecated standard mode resolves to hybrid with DeprecationWarning."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 eval_dataset=_dataset(),
@@ -65,6 +78,10 @@ class TestTraigentDecoratorCloudIntegration:
             )
             def answer(question: str) -> str:
                 return question
+
+        assert isinstance(answer, OptimizedFunction)
+        assert answer.execution_mode == ExecutionMode.HYBRID.value
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_privacy_alias_maps_to_hybrid_with_privacy_enabled(self):
         """Privacy remains a compatibility alias for hybrid."""

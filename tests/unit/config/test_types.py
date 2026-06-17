@@ -220,16 +220,20 @@ class TestValidateExecutionMode:
         assert validate_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
         assert TraigentConfig(execution_mode="local").execution_mode == "edge_analytics"
 
-    def test_removed_standard_mode_raises_configuration_error(self) -> None:
-        """The removed standard mode is rejected everywhere."""
-        with pytest.raises(ConfigurationError, match="No such mode 'standard'") as exc:
-            validate_execution_mode("standard")
+    def test_deprecated_standard_mode_warns_and_resolves_to_hybrid(self) -> None:
+        """The removed standard mode emits DeprecationWarning and maps to hybrid."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = validate_execution_mode("standard")
+        assert result is ExecutionMode.HYBRID
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
         assert list(accepted_execution_mode_values()) == [
             "edge_analytics",
             "hybrid",
             "hybrid_api",
             "local",
-            "privacy",
         ]
         for mode in accepted_execution_mode_values():
             assert validate_execution_mode(mode) in {
@@ -237,12 +241,16 @@ class TestValidateExecutionMode:
                 ExecutionMode.HYBRID,
                 ExecutionMode.HYBRID_API,
             }
-        assert str(list(accepted_execution_mode_values())) in str(exc.value)
 
-    def test_reserved_cloud_mode_raises_configuration_error(self) -> None:
-        """Cloud remote execution is reserved and fails closed."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            validate_execution_mode("cloud")
+    def test_deprecated_cloud_mode_warns_and_resolves_to_edge_analytics(self) -> None:
+        """The removed cloud mode emits DeprecationWarning and maps to edge_analytics."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = validate_execution_mode("cloud")
+        assert result is ExecutionMode.EDGE_ANALYTICS
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_config_privacy_alias_normalizes_to_hybrid(self) -> None:
         """TraigentConfig normalizes the privacy alias and enables privacy."""
@@ -251,10 +259,18 @@ class TestValidateExecutionMode:
         assert config.execution_mode == ExecutionMode.HYBRID.value
         assert config.privacy_enabled is True
 
-    def test_config_rejects_removed_and_reserved_modes(self) -> None:
-        """TraigentConfig follows the same execution-mode contract."""
-        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
-            TraigentConfig(execution_mode="standard")
+    def test_config_accepts_deprecated_modes_with_warning(self) -> None:
+        """TraigentConfig accepts deprecated mode strings (standard/cloud) with DeprecationWarning."""
+        import warnings
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            TraigentConfig(execution_mode="cloud")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = TraigentConfig(execution_mode="standard")
+        assert config.execution_mode == "hybrid"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = TraigentConfig(execution_mode="cloud")
+        assert config.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)

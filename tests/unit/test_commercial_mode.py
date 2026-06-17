@@ -22,12 +22,15 @@ def sample_dataset():
     return Dataset(examples=examples, name="test_dataset")
 
 
-class TestReservedCloudExecution:
-    """Public cloud mode is reserved and must fail closed."""
+class TestDeprecatedCloudMode:
+    """Public cloud mode is deprecated and emits DeprecationWarning, resolving to edge_analytics."""
 
-    def test_decorator_with_cloud_execution_fails_closed(self):
-        """The decorator must not create a cloud wrapper today."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
+    def test_decorator_with_cloud_execution_deprecated(self):
+        """The deprecated cloud mode emits DeprecationWarning and resolves to edge_analytics."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @traigent.optimize(
                 eval_dataset=None,
@@ -38,34 +41,47 @@ class TestReservedCloudExecution:
             def test_function(input_text: str) -> str:
                 return f"processed: {input_text}"
 
-    def test_decorator_cloud_execution_rejects_auto_fallback(self):
-        """Fallback policy cannot turn the reserved mode into local success."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+    def test_decorator_cloud_execution_with_fallback_policy_deprecated(self):
+        """cloud_fallback_policy is deprecated but accepted with DeprecationWarning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @traigent.optimize(
                 eval_dataset=None,
                 objectives=["accuracy"],
                 configuration_space={"param": [1, 2, 3]},
-                execution_mode="cloud",
+                execution_mode="edge_analytics",
                 cloud_fallback_policy="auto",
             )
             def test_function(input_text: str) -> str:
                 return f"processed: {input_text}"
 
-    def test_optimized_function_cloud_initialization_fails_closed(self, sample_dataset):
-        """Direct OptimizedFunction construction follows the same contract."""
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+    def test_optimized_function_cloud_deprecated_resolves_to_edge_analytics(
+        self, sample_dataset
+    ):
+        """Direct OptimizedFunction with cloud mode resolves to edge_analytics."""
+        import warnings
 
         def test_func(x: str) -> str:
             return x.upper()
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            OptimizedFunction(
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=test_func,
                 eval_dataset=sample_dataset,
                 objectives=["accuracy"],
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="cloud",
             )
+        assert opt_func.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 class TestSupportedExecutionModes:

@@ -242,10 +242,12 @@ class TestOptimizationScenarios(DecoratorTestBase):
         assert callable(test_func)
         assert test_func("hello") == "Response: hello"
 
-    def test_cloud_execution_mode_fails_closed(self):
-        """Reserved cloud execution is rejected at decoration time."""
+    def test_cloud_execution_mode_deprecated_resolves_to_edge_analytics(self):
+        """Deprecated cloud execution mode is accepted with DeprecationWarning."""
+        import warnings
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 configuration_space={"model": ["gpt-3.5", "gpt-4"]},
@@ -253,6 +255,8 @@ class TestOptimizationScenarios(DecoratorTestBase):
             )
             def test_func(text: str) -> str:
                 return f"Commercial response: {text}"
+
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_cache_enabled_optimization(self):
         """Test optimization with caching enabled."""

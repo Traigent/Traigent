@@ -153,7 +153,7 @@ class MockBackendClient:
             }
         )
 
-    def finalize_session_sync(self, session_id, succeeded=True):
+    def finalize_session_sync(self, session_id, succeeded=True, **kwargs):
         self.finalized.append({"id": session_id, "succeeded": succeeded})
         return {"status": "ok", "succeeded": succeeded}
 

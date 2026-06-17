@@ -79,6 +79,7 @@ class MockEvaluator(BaseEvaluator):
     """Evaluator that reports configurable cost."""
 
     def __init__(self, cost_per_eval: float = 0.05):
+        super().__init__()
         self.cost_per_eval = cost_per_eval
         self.eval_count = 0
 
@@ -224,23 +225,21 @@ INJECTION_MODES = [
     # SEAMLESS requires source code rewriting, skip for unit test
 ]
 
-# Currently supported execution modes to test. ``privacy`` is a legacy alias for
-# ``hybrid``; ``cloud`` is reserved; ``standard`` is removed.
+# Currently supported execution modes to test.
+# ``privacy`` and ``standard`` are legacy string aliases that now emit
+# DeprecationWarning and map to canonical modes (HYBRID and HYBRID respectively);
+# ``cloud`` maps to EDGE_ANALYTICS. They are no longer enum members.
 EXECUTION_MODES = [
     ExecutionMode.EDGE_ANALYTICS,
     ExecutionMode.HYBRID,
     ExecutionMode.HYBRID_API,
-    ExecutionMode.PRIVACY,
 ]
 
+# Modes that should raise ConfigurationError or ValueError: truly unknown strings.
 UNSUPPORTED_EXECUTION_MODES = [
     (
-        ExecutionMode.CLOUD,
-        "Cloud remote execution is not available yet",
-    ),
-    (
-        ExecutionMode.STANDARD,
-        "No such mode 'standard'",
+        "totally_unknown_mode",
+        "execution_mode must be one of|No such mode",
     ),
 ]
 
@@ -289,14 +288,14 @@ class TestCostEnforcerModeMatrix:
         ), f"[{context}] Unreleased reservation"
 
     @pytest.mark.parametrize(
-        "execution_mode,expected_message", UNSUPPORTED_EXECUTION_MODES
+        "execution_mode_str,expected_message", UNSUPPORTED_EXECUTION_MODES
     )
     def test_unsupported_execution_modes_are_rejected(
-        self, execution_mode: ExecutionMode, expected_message: str
+        self, execution_mode_str: str, expected_message: str
     ) -> None:
-        """Unsupported modes fail closed before cost-enforcer orchestration."""
-        with pytest.raises(ConfigurationError, match=expected_message):
-            TraigentConfig(execution_mode=execution_mode.value)
+        """Truly unknown mode strings fail closed before cost-enforcer orchestration."""
+        with pytest.raises((ConfigurationError, ValueError), match=expected_message):
+            TraigentConfig(execution_mode=execution_mode_str)
 
     @pytest.mark.parametrize("injection_mode", INJECTION_MODES)
     @pytest.mark.asyncio
@@ -354,7 +353,7 @@ class TestCostEnforcerModeMatrix:
             (ExecutionMode.HYBRID, InjectionMode.CONTEXT),  # ATTRIBUTE removed in v2.x
             (ExecutionMode.HYBRID_API, InjectionMode.CONTEXT),
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.PARAMETER),
-            (ExecutionMode.PRIVACY, InjectionMode.CONTEXT),  # Alias for HYBRID
+            (ExecutionMode.HYBRID, InjectionMode.CONTEXT),  # Was PRIVACY alias; now canonical HYBRID
         ],
     )
     @pytest.mark.asyncio

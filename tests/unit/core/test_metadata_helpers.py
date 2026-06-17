@@ -220,15 +220,16 @@ class TestBuildBackendMetadataSummaryStats:
         assert "metadata" in metadata["summary_stats"]
         assert metadata["summary_stats"]["metadata"]["aggregation_level"] == "trial"
 
-    def test_summary_stats_not_added_cloud(self, mock_trial_result, mock_config):
-        """Test summary_stats are not added in cloud mode."""
+    def test_summary_stats_always_added_when_available(self, mock_trial_result, mock_config):
+        """Test summary_stats are added for all supported modes (no cloud exclusion)."""
         mock_trial_result.summary_stats = {"mean": 0.85}
-        mock_config.execution_mode = "cloud"
-        mock_config.execution_mode_enum = ExecutionMode.CLOUD
+        mock_config.execution_mode = "hybrid"
+        mock_config.execution_mode_enum = ExecutionMode.HYBRID
 
         metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
 
-        assert "summary_stats" not in metadata
+        assert "summary_stats" in metadata
+        assert metadata["summary_stats"]["mean"] == 0.85
 
     def test_summary_stats_enhancement(self, mock_trial_result, mock_config):
         """Test summary_stats are enhanced with metadata."""
@@ -777,16 +778,17 @@ class TestBuildBackendMetadataIntegration:
         assert "cost" in metadata
         assert "latency" in metadata
 
-    def test_cloud_mode_restrictions(self, mock_trial_result, mock_config):
-        """Test cloud mode applies appropriate restrictions."""
-        mock_config.execution_mode = "cloud"
-        mock_config.execution_mode_enum = ExecutionMode.CLOUD
+    def test_hybrid_mode_includes_summary_stats(self, mock_trial_result, mock_config):
+        """Test hybrid mode includes summary_stats (all modes now include it)."""
+        mock_config.execution_mode = "hybrid"
+        mock_config.execution_mode_enum = ExecutionMode.HYBRID
         mock_trial_result.summary_stats = {"mean": 0.85}
 
         metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
 
-        # Summary stats should not be added in cloud mode
-        assert "summary_stats" not in metadata
+        # Summary stats are now included in all supported modes
+        assert "summary_stats" in metadata
+        assert metadata["summary_stats"]["mean"] == 0.85
 
     def test_empty_example_results(self, mock_trial_result, mock_config):
         """Test handling of empty example_results."""

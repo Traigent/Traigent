@@ -296,12 +296,12 @@ async def test_remote_adapter_raises_error_without_dataset_id():
 
 @pytest.mark.asyncio
 async def test_remote_adapter_get_execution_mode():
-    """Test RemoteExecutionAdapter returns cloud execution mode."""
+    """Test RemoteExecutionAdapter returns hybrid_api execution mode."""
     backend_client = Mock()
     adapter = RemoteExecutionAdapter(backend_client)
 
     mode = await adapter.get_execution_mode()
-    assert mode == "cloud"
+    assert mode == "hybrid_api"
 
 
 @pytest.mark.asyncio

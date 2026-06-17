@@ -292,22 +292,35 @@ class TestExecutionModeHandling:
         assert config.execution_mode == "hybrid"
         assert config.privacy_enabled is True
 
+        import warnings
+
         from traigent.config.types import validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="Cloud remote execution"):
-            validate_execution_mode("cloud")
+        # Deprecated aliases emit DeprecationWarning and resolve to canonical modes.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = validate_execution_mode("cloud")
+        assert result.value == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
         assert validate_execution_mode("hybrid").value == "hybrid"
         assert validate_execution_mode("privacy").value == "hybrid"
 
-        with pytest.raises(ConfigurationError, match="No such mode"):
-            validate_execution_mode("standard")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = validate_execution_mode("standard")
+        assert result.value == "hybrid"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_traigent_config_invalid_execution_mode(self):
-        """Test that TraigentConfig rejects invalid execution mode strings."""
-        for invalid_mode in ["invalid_mode", "local"]:
+        """Test that TraigentConfig rejects truly invalid execution mode strings."""
+        for invalid_mode in ["invalid_mode"]:
             with pytest.raises(ValueError, match="execution_mode must be one of"):
                 TraigentConfig(execution_mode=invalid_mode)
+
+        # "local" is a valid alias for edge_analytics
+        config = TraigentConfig(execution_mode="local")
+        assert config.execution_mode == "edge_analytics"
 
     def test_evaluator_execution_mode_initialization(self):
         """Test that evaluator correctly initializes with execution_mode."""

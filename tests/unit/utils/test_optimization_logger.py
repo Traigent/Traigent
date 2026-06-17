@@ -463,10 +463,16 @@ class TestLogTrialResult:
         # Buffer flushed → empty
         assert len(log._trial_buffer) == 0
 
-    def test_cloud_mode_skips(self, tmp_path: Path) -> None:
-        log = _make_logger(tmp_path, execution_mode="cloud")
+    def test_deprecated_cloud_mode_still_buffers(self, tmp_path: Path) -> None:
+        """Deprecated cloud mode resolves to edge_analytics and buffers trials normally."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            log = _make_logger(tmp_path, execution_mode="cloud")
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
         log.log_trial_result(_make_trial())
-        assert len(log._trial_buffer) == 0
+        assert len(log._trial_buffer) == 1
 
     def test_flush_creates_jsonl_file(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path, buffer_size=1)

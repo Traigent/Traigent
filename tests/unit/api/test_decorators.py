@@ -85,11 +85,14 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_rejects_cloud_fallback_policy(self):
-        """Reserved cloud mode fails closed even with an auto fallback policy."""
+    def test_execution_bundle_deprecated_cloud_resolves_to_edge_analytics(self):
+        """Deprecated cloud mode in ExecutionOptions resolves to edge_analytics with DeprecationWarning."""
+        import warnings
+
         from traigent.api.decorators import ExecutionOptions
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -100,6 +103,10 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
         """Direct runtime options should accept hybrid_api_transport."""
@@ -118,6 +125,8 @@ class TestOptimizeDecorator:
 
     def test_decorator_execution_mode_registry_matches_runtime(self):
         """Decorator validation accepts the same modes advertised by runtime."""
+        import warnings
+
         from traigent.config.types import accepted_execution_mode_values
 
         @optimize(configuration_space={"x": [1, 2]}, execution_mode="local")
@@ -127,13 +136,18 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.execution_mode == "edge_analytics"
 
-        with pytest.raises(ConfigurationError) as exc_info:
+        # "standard" is now a deprecated alias (emits DeprecationWarning, resolves to hybrid)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(configuration_space={"x": [1, 2]}, execution_mode="standard")
-            def removed_mode_function(x: int) -> int:
+            def deprecated_mode_function(x: int) -> int:
                 return x
 
-        assert str(list(accepted_execution_mode_values())) in str(exc_info.value)
+        assert isinstance(deprecated_mode_function, OptimizedFunction)
+        assert deprecated_mode_function.execution_mode == "hybrid"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
         for mode in accepted_execution_mode_values():
 
             @optimize(configuration_space={"x": [1, 2]}, execution_mode=mode)
@@ -365,10 +379,12 @@ class TestOptimizeDecorator:
         result = complex_function("test", 10, "extra", key="value")
         assert "test-10-1-1" in result
 
-    def test_decorator_with_cloud_execution_mode_fails_closed(self):
-        """Reserved cloud execution is rejected at decoration time."""
+    def test_decorator_with_cloud_execution_mode_deprecated(self):
+        """Deprecated cloud execution mode emits DeprecationWarning and resolves to edge_analytics."""
+        import warnings
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 configuration_space={"model": ["claude", "gpt-4"]},
@@ -376,6 +392,10 @@ class TestOptimizeDecorator:
             )
             def ai_function(model: str) -> str:
                 return f"Using {model}"
+
+        assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_decorator_accepts_cost_limit_runtime_override(self):
         """cost_limit should be accepted as a runtime override key."""
