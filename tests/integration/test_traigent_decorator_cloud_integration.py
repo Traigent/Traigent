@@ -2,13 +2,10 @@
 
 import warnings
 
-import pytest
-
 from traigent.api.decorators import ExecutionOptions, optimize
 from traigent.config.types import ExecutionMode
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.utils.exceptions import ConfigurationError
 
 
 def _dataset() -> Dataset:

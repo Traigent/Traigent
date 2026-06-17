@@ -11,7 +11,6 @@ from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.random import RandomSearchOptimizer
-from traigent.utils.exceptions import ConfigurationError
 
 
 class TestSummaryStatsIntegration:
