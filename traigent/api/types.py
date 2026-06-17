@@ -40,6 +40,10 @@ class OptimizationStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # Neutral fallback for statuses the SDK does not recognize (e.g. a newer
+    # backend member). Never assert success/failure on an unknown value
+    # (issue #1302, AC3).
+    UNKNOWN = "unknown"
 
 
 class TrialStatus(StrEnum):
@@ -52,6 +56,10 @@ class TrialStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     PRUNED = "pruned"
+    # Neutral fallback for statuses the SDK does not recognize. Used by inbound
+    # deserialization so an unrecognized status is never silently treated as
+    # COMPLETED (issue #1302, AC3).
+    UNKNOWN = "unknown"
 
 
 @dataclass(slots=True)

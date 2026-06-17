@@ -79,6 +79,120 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Canonical run / configuration-run wire status vocabulary (single source of
+# truth — issue #1302).
+#
+# The backend's ``ExperimentRunStatus`` / ``ConfigurationRunStatus`` enums use
+# the run-lifecycle vocabulary (RUNNING / PENDING / NOT_STARTED / ...), NOT the
+# session-lifecycle vocabulary (ACTIVE / CREATED / PRUNED). Earlier code mapped
+# in-flight SDK states onto ACTIVE / CREATED, which the backend 400-rejects, so
+# an SDK-driven run could never persist its in-flight state server-side.
+#
+# Keep the mapping, the validation gate, and the SDK enums all derived from the
+# constants below so they cannot drift apart again.
+# ---------------------------------------------------------------------------
+
+# Backend ExperimentRunStatus members (run-lifecycle). PRUNED / PENDING / PAUSED
+# specifics differ between experiment-runs and config-runs; see below.
+EXPERIMENT_RUN_WIRE_STATUSES: frozenset[str] = frozenset(
+    {
+        "NOT_STARTED",
+        "PENDING",
+        "PAUSED",
+        "RUNNING",
+        "FAILED",
+        "COMPLETED",
+        "CANCELLED",
+        "UNKNOWN",
+        "PARTIALLY_DELETED",
+    }
+)
+
+# Backend ConfigurationRunStatus members (run-lifecycle). Note: config-runs
+# accept PRUNED (early-stopping success) but lack PENDING / PAUSED /
+# PARTIALLY_DELETED that experiment-runs carry.
+CONFIGURATION_RUN_WIRE_STATUSES: frozenset[str] = frozenset(
+    {
+        "NOT_STARTED",
+        "RUNNING",
+        "COMPLETED",
+        "FAILED",
+        "UNKNOWN",
+        "CANCELLED",
+        "PRUNED",
+    }
+)
+
+# Neutral fallback emitted/validated when an input status is not recognized.
+# Both backend enums carry UNKNOWN, so it is always a safe wire value and never
+# fakes success on a failed/running run (issue #1302, AC3).
+UNKNOWN_WIRE_STATUS = "UNKNOWN"
+
+# Canonical SDK-lowercase -> run-lifecycle wire mapping. Keys are the SDK's
+# lowercase status tokens (and a couple of synonyms); values are the backend
+# run-lifecycle members. ``pruned`` is intentionally absent here and handled
+# per-endpoint by ``map_to_backend_status`` because experiment-runs do not
+# accept PRUNED while config-runs do.
+_RUN_STATUS_WIRE_MAP: dict[str, str] = {
+    "not_started": "NOT_STARTED",
+    "pending": "PENDING",
+    "paused": "PAUSED",
+    "running": "RUNNING",
+    "in_progress": "RUNNING",
+    "completed": "COMPLETED",
+    "failed": "FAILED",
+    "cancelled": "CANCELLED",
+    "canceled": "CANCELLED",
+    "unknown": "UNKNOWN",
+    "partially_deleted": "PARTIALLY_DELETED",
+}
+
+
+def map_status_to_wire(status: str, *, endpoint: str = "experiment_run") -> str:
+    """Pure mapper: SDK status token -> backend run-lifecycle wire status.
+
+    Single source of truth for the run / configuration-run status vocabulary
+    (issue #1302). The class method ``ApiOperations.map_to_backend_status`` and
+    any other caller that needs the wire vocab delegate here so the mapping and
+    the validation gate can never drift apart.
+
+    See ``ApiOperations.map_to_backend_status`` for the per-endpoint ``PRUNED``
+    handling and fallback semantics.
+    """
+    token = (status or "").strip().lower()
+    valid = (
+        CONFIGURATION_RUN_WIRE_STATUSES
+        if endpoint == "config_run"
+        else EXPERIMENT_RUN_WIRE_STATUSES
+    )
+
+    # PRUNED is endpoint-specific: config-runs keep it; the experiment-run enum
+    # has no PRUNED member. A pruned run is NOT a successful completion, so fold
+    # it to the neutral UNKNOWN rather than claiming COMPLETED — emitting
+    # COMPLETED here would be fake completion (no-fake-completion rule).
+    if token == "pruned":
+        mapped = "PRUNED" if endpoint == "config_run" else UNKNOWN_WIRE_STATUS
+    else:
+        mapped = _RUN_STATUS_WIRE_MAP.get(token, "")
+        if not mapped:
+            # Allow already-canonical wire values (any case) to pass through.
+            upper = (status or "").strip().upper()
+            mapped = upper if upper in valid else ""
+
+    if mapped not in valid:
+        logger.warning(
+            "Unrecognized %s status %r (resolved to %r); "
+            "sending neutral %r so the backend is not given a wrong status",
+            endpoint,
+            status,
+            mapped or None,
+            UNKNOWN_WIRE_STATUS,
+        )
+        mapped = UNKNOWN_WIRE_STATUS
+
+    return mapped
+
 
 def _typed_configuration_space(space: Any) -> Any:
     """Normalize the decorator's SHORTHAND configuration space to the typed
@@ -162,37 +276,45 @@ class ApiOperations:
 
         return clean_url.rstrip("/")
 
-    def map_to_backend_status(self, status: str) -> str:
-        """Map Traigent status values to backend-expected values.
+    def map_to_backend_status(
+        self, status: str, *, endpoint: str = "experiment_run"
+    ) -> str:
+        """Map Traigent SDK status values to the backend run-lifecycle wire vocab.
 
-        Traigent uses lowercase (pending, completed, failed)
-        Backend expects uppercase (CREATED, ACTIVE, COMPLETED, FAILED, PRUNED)
+        The SDK uses lowercase tokens (``pending``, ``running``, ``completed``,
+        ``not_started`` …). The backend's experiment-run and configuration-run
+        status endpoints expect the run-lifecycle enum (``RUNNING``, ``PENDING``,
+        ``NOT_STARTED``, ``COMPLETED``, ``FAILED``, ``CANCELLED`` …), NOT the
+        session-lifecycle vocab (``ACTIVE`` / ``CREATED`` / ``PRUNED``). Mapping
+        in-flight states onto ``ACTIVE`` / ``CREATED`` is exactly the bug from
+        issue #1302: the backend 400-rejects those on the run/config PUT path,
+        so in-flight states could never persist.
 
-        Note: PRUNED is a success case (early stopping for efficiency).
-        CANCELLED indicates the trial was abandoned before execution.
+        ``PRUNED`` is handled per-endpoint:
+
+        * ``endpoint="config_run"`` keeps ``pruned`` -> ``PRUNED`` (config-runs
+          accept early-stopping as a distinct success-ish outcome).
+        * ``endpoint="experiment_run"`` (the default) maps ``pruned`` ->
+          ``UNKNOWN`` because the backend ``ExperimentRunStatus`` enum has no
+          ``PRUNED`` member. A pruned run is NOT a successful completion, so it
+          folds to the neutral ``UNKNOWN`` rather than claiming ``COMPLETED``
+          (claiming completion would be fake completion); ``UNKNOWN`` is a valid
+          member, so this never produces a 400.
+
+        Unrecognized inputs map to ``UNKNOWN`` (a member of both backend enums),
+        never to ``FAILED`` — we must not assert failure on a status we simply
+        did not understand.
+
+        Args:
+            status: SDK status token (case-insensitive).
+            endpoint: ``"experiment_run"`` (default) or ``"config_run"`` —
+                selects the per-endpoint ``PRUNED`` handling and the validation
+                vocabulary.
+
+        Returns:
+            A backend run-lifecycle status member valid for the chosen endpoint.
         """
-        status_mapping = {
-            "pending": "ACTIVE",
-            "running": "ACTIVE",
-            "in_progress": "ACTIVE",
-            "completed": "COMPLETED",
-            "failed": "FAILED",
-            "not_started": "CREATED",
-            # Pruned is early stopping (success case)
-            "pruned": "PRUNED",
-            # Cancelled means trial didn't execute
-            "cancelled": "CANCELLED",
-            # Also handle if already uppercase
-            "PENDING": "ACTIVE",
-            "IN_PROGRESS": "ACTIVE",
-            "COMPLETED": "COMPLETED",
-            "FAILED": "FAILED",
-            "CREATED": "CREATED",
-            "ACTIVE": "ACTIVE",
-            "PRUNED": "PRUNED",
-            "CANCELLED": "CANCELLED",
-        }
-        return status_mapping.get(status, status.upper())
+        return map_status_to_wire(status, endpoint=endpoint)
 
     def sanitize_error_message(self, error_message: str | None) -> str | None:
         """Sanitize error message for transmission.
@@ -542,7 +664,11 @@ class ApiOperations:
 
         Args:
             config_run_id: Configuration run ID (same as trial_id)
-            status: Status to set (COMPLETED, FAILED, etc.)
+            status: Status to set. Accepts either an SDK token (``running``,
+                ``completed`` …) or an already-mapped wire value; it is always
+                normalized to the configuration-run wire vocab before sending so
+                the backend never receives a session-lifecycle value
+                (issue #1302).
 
         Returns:
             True if successful, False otherwise
@@ -551,6 +677,9 @@ class ApiOperations:
             return False
 
         try:
+            # Normalize to the configuration-run wire vocab (preserves PRUNED).
+            backend_status = self.map_to_backend_status(status, endpoint="config_run")
+
             connector = self._build_connector()
 
             # Prepare headers with API key
@@ -564,7 +693,7 @@ class ApiOperations:
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/configuration-runs/{config_run_id}/status"
-                status_data = {"status": status}
+                status_data = {"status": backend_status}
 
                 async with session.put(
                     url,
@@ -574,7 +703,8 @@ class ApiOperations:
                 ) as response:
                     if response.status in [200, 204]:
                         logger.debug(
-                            f"Updated configuration run {config_run_id} status to {status}"
+                            f"Updated configuration run {config_run_id} "
+                            f"status to {backend_status}"
                         )
                         return True
                     else:
@@ -780,29 +910,23 @@ class ApiOperations:
             return
 
         try:
-            # Map SDK status to backend status using the standard mapping
-            backend_status = self.map_to_backend_status(status)
+            # Map SDK status to the experiment-run wire vocab. The mapper is the
+            # single source of truth and already guarantees a member of
+            # EXPERIMENT_RUN_WIRE_STATUSES (UNKNOWN for anything it cannot
+            # resolve). The gate below is a defense-in-depth assertion against
+            # the same canonical set so the two can never drift (issue #1302).
+            backend_status = self.map_to_backend_status(
+                status, endpoint="experiment_run"
+            )
 
-            # Valid experiment run statuses that the backend should accept
-            # Note: PRUNED and CANCELLED are valid trial outcomes that the backend
-            # needs to support. If backend shows these as "UNKNOWN", the backend
-            # needs to be updated to recognize these statuses.
-            valid_statuses = [
-                "COMPLETED",
-                "FAILED",
-                "RUNNING",
-                "NOT_STARTED",
-                "ACTIVE",
-                "CREATED",
-                "PRUNED",
-                "CANCELLED",
-            ]
-            if backend_status not in valid_statuses:
+            if backend_status not in EXPERIMENT_RUN_WIRE_STATUSES:
                 logger.warning(
-                    f"Unexpected status '{status}' (mapped to '{backend_status}'), "
-                    "using FAILED as default"
+                    "Status %r mapped to non-canonical %r; sending neutral %r",
+                    status,
+                    backend_status,
+                    UNKNOWN_WIRE_STATUS,
                 )
-                backend_status = "FAILED"
+                backend_status = UNKNOWN_WIRE_STATUS
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(

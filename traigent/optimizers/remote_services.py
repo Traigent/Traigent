@@ -21,6 +21,13 @@ from typing import Any, cast
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import EvaluationExample
+
+# Single source of truth for session status (issue #1302 AC4): reuse the
+# canonical ``OptimizationSessionStatus`` from ``traigent.cloud.models`` rather
+# than defining a second, drifting copy here. The canonical enum is a superset
+# (it carries INITIALIZING plus PENDING/CREATED/UNKNOWN), so every member this
+# module uses (INITIALIZING/ACTIVE/PAUSED/COMPLETED/FAILED/CANCELLED) resolves.
+from traigent.cloud.models import OptimizationSessionStatus as OptimizationSessionStatus
 from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
 
@@ -36,17 +43,6 @@ class ServiceStatus(StrEnum):
     CONNECTED = "connected"
     ERROR = "error"
     UNAVAILABLE = "unavailable"
-
-
-class OptimizationSessionStatus(StrEnum):
-    """Status of an optimization session."""
-
-    INITIALIZING = "initializing"
-    ACTIVE = "active"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 @dataclass
