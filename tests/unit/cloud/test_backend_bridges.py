@@ -695,6 +695,25 @@ class TestSDKBackendBridge:
         backend_request = sdk_bridge.optimization_request_to_backend(request)
         assert backend_request.measures == ["exec_accuracy"]
 
+    def test_unsafe_objective_name_is_coerced_not_passed_through(self, sdk_bridge):
+        """Custom names that are not safe identifiers must not reach the backend.
+
+        Preserving custom names (#1292) must not reopen the code-injection vector
+        guarded by test_backend_bridges_security: only safe identifiers
+        (letter, then letters/digits/underscore) pass through; anything else is
+        coerced to ``accuracy`` so untrusted strings never reach the backend.
+        """
+        for unsafe in (
+            "__import__('os').system('rm -rf /')",
+            "eval('print(1)')",
+            "'; DROP TABLE experiments; --",
+            "metric with spaces",
+            "weird-dashes",
+        ):
+            measures = sdk_bridge._map_objectives_to_measures([unsafe])
+            assert measures == ["accuracy"], unsafe
+            assert unsafe not in measures
+
     def test_convert_dataset_to_examples_edge_cases(self, sdk_bridge):
         """Test dataset to examples conversion with edge cases."""
         # Test dataset without examples
