@@ -283,7 +283,7 @@ class TestReentrantRegistryDiscovery:
             # Only one thread should have done discovery
             starts = [x for x in discovery_order if x.startswith("start_")]
             assert len(starts) == 1, (
-                f"Expected 1 discovery, got {len(starts)}. " f"Order: {discovery_order}"
+                f"Expected 1 discovery, got {len(starts)}. Order: {discovery_order}"
             )
         finally:
             registry.discover_entry_points = original_discover

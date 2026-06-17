@@ -401,7 +401,8 @@ class TestAtomicWrite:
         log = _make_logger(tmp_path)
         target = log.run_path / "sanitized.json"
         log._atomic_write(
-            target, {"api_key": "sk-secret123456789"}  # pragma: allowlist secret
+            target,
+            {"api_key": "sk-secret123456789"},  # pragma: allowlist secret
         )
         data = json.loads(target.read_text())
         assert data["api_key"] != "sk-secret123456789"  # pragma: allowlist secret

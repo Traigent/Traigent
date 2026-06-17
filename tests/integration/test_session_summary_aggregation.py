@@ -215,9 +215,9 @@ async def test_hybrid_mode_includes_measures_when_privacy_off():
 
     # Check that submissions include measures (not privacy mode)
     trial_submissions = [s for s in backend.submissions if "measures" in s["metadata"]]
-    assert (
-        len(trial_submissions) == 2
-    ), "Each trial should submit measures in hybrid mode"
+    assert len(trial_submissions) == 2, (
+        "Each trial should submit measures in hybrid mode"
+    )
 
     for submission in trial_submissions:
         measures = submission["metadata"]["measures"]
@@ -477,9 +477,9 @@ async def test_privacy_mode_excludes_raw_data():
                 # Should only have numeric metrics
                 assert "metrics" in agg
                 for key, value in agg["metrics"].items():
-                    assert isinstance(
-                        value, (int, float)
-                    ), f"Metric {key} should be numeric in privacy mode"
+                    assert isinstance(value, (int, float)), (
+                        f"Metric {key} should be numeric in privacy mode"
+                    )
 
 
 @pytest.mark.asyncio
@@ -581,18 +581,18 @@ async def test_total_examples_calculation():
 
     # The samples_per_config counts TRIALS per config, not individual examples
     # With 3 unique configs (each trial has different config), we expect 3 total
-    assert (
-        expected_total == 3
-    ), f"Expected 3 total trials across configs, got {expected_total}"
+    assert expected_total == 3, (
+        f"Expected 3 total trials across configs, got {expected_total}"
+    )
 
     # Check that each config was tried once
-    assert (
-        len(samples_per_config) == 3
-    ), f"Expected 3 unique configs, got {len(samples_per_config)}"
+    assert len(samples_per_config) == 3, (
+        f"Expected 3 unique configs, got {len(samples_per_config)}"
+    )
     for config_hash, count in samples_per_config.items():
-        assert (
-            count == 1
-        ), f"Each config should be tried once, but {config_hash} was tried {count} times"
+        assert count == 1, (
+            f"Each config should be tried once, but {config_hash} was tried {count} times"
+        )
 
     # Also check in backend submissions
     session_submissions = [
@@ -610,9 +610,9 @@ async def test_total_examples_calculation():
         agg = session_meta["summary_stats"]["metadata"]["aggregation_summary"]
         backend_samples = agg.get("samples_per_config", {})
         backend_total = sum(backend_samples.values()) if backend_samples else 0
-        assert (
-            backend_total == 3
-        ), f"Backend should also show 3 total trials, got {backend_total}"
+        assert backend_total == 3, (
+            f"Backend should also show 3 total trials, got {backend_total}"
+        )
 
 
 @pytest.mark.asyncio
@@ -694,9 +694,9 @@ async def test_multiple_replicates_aggregation():
 
     # The single config should have 5 samples (replicates)
     config_hash = list(samples_per_config.keys())[0]
-    assert (
-        samples_per_config[config_hash] == 5
-    ), "Should have 5 replicates of the same config"
+    assert samples_per_config[config_hash] == 5, (
+        "Should have 5 replicates of the same config"
+    )
 
     # Check aggregated metrics are averages
     metrics = agg_summary["metrics"]
@@ -751,14 +751,14 @@ async def test_hybrid_mode_session_aggregation():
 
     # Hybrid mode now also creates session-level aggregations for consistency
     # This was changed to provide uniform behavior across all modes
-    assert (
-        len(session_submissions) >= 1
-    ), "Hybrid mode should create session aggregations for consistency"
+    assert len(session_submissions) >= 1, (
+        "Hybrid mode should create session aggregations for consistency"
+    )
 
     # Should have both trial and session submissions
-    assert len(backend.submissions) > len(
-        session_submissions
-    ), "Should have trial submissions in addition to session aggregation"
+    assert len(backend.submissions) > len(session_submissions), (
+        "Should have trial submissions in addition to session aggregation"
+    )
 
 
 if __name__ == "__main__":

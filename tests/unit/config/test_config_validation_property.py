@@ -130,9 +130,7 @@ def test_execution_mode_accepts_valid_values(mode):
         assert config.execution_mode == expected
 
 
-@given(
-    st.sampled_from(["standard", "cloud"])
-)
+@given(st.sampled_from(["standard", "cloud"]))
 def test_execution_mode_deprecated_values_warn_and_resolve(mode):
     """Property: Deprecated string aliases emit DeprecationWarning and resolve to a canonical mode."""
     import warnings
@@ -148,17 +146,19 @@ def test_execution_mode_deprecated_values_warn_and_resolve(mode):
 
 @given(
     st.text().filter(
-        lambda x: x.strip().lower()
-        not in [
-            "edge_analytics",
-            "local",
-            "privacy",
-            "hybrid",
-            "standard",
-            "cloud",
-            "hybrid_api",
-            "",
-        ]
+        lambda x: (
+            x.strip().lower()
+            not in [
+                "edge_analytics",
+                "local",
+                "privacy",
+                "hybrid",
+                "standard",
+                "cloud",
+                "hybrid_api",
+                "",
+            ]
+        )
     )
 )
 def test_execution_mode_rejects_invalid_values(mode):
@@ -234,17 +234,19 @@ def test_merge_takes_override_value_when_present(base_temp, override_temp):
 @given(
     st.dictionaries(
         keys=st.text(min_size=1, max_size=20).filter(
-            lambda k: k
-            not in {
-                "model",
-                "temperature",
-                "max_tokens",
-                "top_p",
-                "frequency_penalty",
-                "presence_penalty",
-                "execution_mode",
-                "local_storage_path",
-            }
+            lambda k: (
+                k
+                not in {
+                    "model",
+                    "temperature",
+                    "max_tokens",
+                    "top_p",
+                    "frequency_penalty",
+                    "presence_penalty",
+                    "execution_mode",
+                    "local_storage_path",
+                }
+            )
         ),
         values=st.one_of(
             st.integers(),

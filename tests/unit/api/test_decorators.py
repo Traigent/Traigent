@@ -170,9 +170,9 @@ class TestOptimizeDecorator:
             return x
 
         assert isinstance(sample_function, OptimizedFunction)
-        assert (
-            sample_function.max_trials == 10
-        ), f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
+        assert sample_function.max_trials == 10, (
+            f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
+        )
 
     def test_decorator_accepts_algorithm_runtime_default(self):
         """Decorator-level algorithm should become the optimize() default."""

@@ -220,7 +220,9 @@ class TestBuildBackendMetadataSummaryStats:
         assert "metadata" in metadata["summary_stats"]
         assert metadata["summary_stats"]["metadata"]["aggregation_level"] == "trial"
 
-    def test_summary_stats_always_added_when_available(self, mock_trial_result, mock_config):
+    def test_summary_stats_always_added_when_available(
+        self, mock_trial_result, mock_config
+    ):
         """Test summary_stats are added for all supported modes (no cloud exclusion)."""
         mock_trial_result.summary_stats = {"mean": 0.85}
         mock_config.execution_mode = "hybrid"
