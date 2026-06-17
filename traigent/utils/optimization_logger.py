@@ -522,8 +522,6 @@ class OptimizationLogger:
         logger.info(f"Logged objectives for {self.run_id}")
 
     def log_trial_result(self, trial_result: TrialResult) -> None:
-        if self.execution_mode_enum is ExecutionMode.CLOUD:
-            return
         with self._buffer_lock:
             self._trial_buffer.append(trial_result)
             if len(self._trial_buffer) >= self.buffer_size:
