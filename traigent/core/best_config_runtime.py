@@ -750,15 +750,22 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
         seen.remove(container_id)
         return normalized_list
 
-    # numpy scalar types (e.g. np.int64 from Optuna integer dimensions) coerce
-    # losslessly to a JSON-native Python value via .item(). The guard excludes
-    # str/bytes/dict/list so we never re-route already-handled containers, and
-    # multi-element numpy arrays raise inside .item() -> fall through to reject.
-    if hasattr(value, "item") and not isinstance(value, (str, bytes, dict, list)):
+    # numpy scalar types (e.g. np.int64 from Optuna integer dimensions) are not
+    # JSON-native and do not subclass Python int/bool. Coerce a genuine 0-d numpy
+    # scalar losslessly via .item(). We require ndim == 0 so size-one arrays
+    # (np.array([1]) / np.array([[1]]), ndim >= 1) keep their shape and fall through
+    # to reject instead of silently collapsing, and so arbitrary objects that merely
+    # expose .item() (no ndim) are not coerced. We then accept ONLY when .item()
+    # yields a plain JSON-native primitive; anything else (np.longdouble.item() ->
+    # np.longdouble, datetime64/complex.item(), a 0-d object array's dict) is
+    # rejected here rather than recursing without progress or passing silently.
+    if getattr(value, "ndim", None) == 0 and hasattr(value, "item"):
         try:
-            return _normalize_json_value(value.item(), seen)
+            coerced = value.item()
         except (ValueError, TypeError):
-            pass
+            coerced = value  # falls through to the reject below
+        if type(coerced) in (int, float, str, bool):
+            return _normalize_json_value(coerced, seen)
 
     raise ConfigurationError(
         f"Best config contains non-JSON-native value {type(value).__name__}"

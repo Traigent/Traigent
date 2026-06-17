@@ -106,6 +106,53 @@ def test_canonical_json_still_rejects_multi_element_numpy_arrays():
         canonical_json({"bad": np.array([1, 2, 3])})
 
 
+def test_canonical_json_rejects_size_one_arrays_keeping_shape():
+    """Size-one arrays are not scalars: ndim >= 1 means real shape that JSON
+    cannot represent. The coercion must NOT silently collapse np.array([1]) /
+    np.array([[1]]) to ``1`` (dropping shape) — it must reject.
+
+    Regression guard for TraigentBackend#1147 (codex review).
+    """
+    np = pytest.importorskip("numpy")
+
+    for arr in (np.array([1]), np.array([[1]])):
+        with pytest.raises(ConfigurationError, match="non-JSON-native"):
+            canonical_json(arr)
+
+
+def test_canonical_json_rejects_non_native_item_results():
+    """The guard accepts a 0-d numpy scalar only when .item() yields a plain
+    JSON-native primitive. A value whose .item() returns a non-native object
+    (extended-precision float that re-emits itself, a 0-d object array's dict,
+    or an arbitrary object) must be rejected — never recursed without progress
+    and never passed silently.
+
+    Regression guard for TraigentBackend#1147 (codex review).
+    """
+    np = pytest.importorskip("numpy")
+
+    # 0-d object array: .item() returns the dict -> non-native -> reject.
+    with pytest.raises(ConfigurationError, match="non-JSON-native"):
+        canonical_json(np.array({"silently": "accepted"}, dtype=object))
+
+    # Extended precision float, if the platform has it: .item() re-emits the same
+    # numpy type (no native Python equivalent) -> must reject, not RecursionError.
+    longdouble = getattr(np, "float128", None) or getattr(np, "longdouble", None)
+    if longdouble is not None:
+        value = longdouble("0.1")
+        if type(value.item()) not in (int, float, str, bool):
+            with pytest.raises(ConfigurationError, match="non-JSON-native"):
+                canonical_json(value)
+
+    # An arbitrary object that merely exposes .item() (no ndim) is not coerced.
+    class FakeScalar:
+        def item(self):
+            return {"silently": "accepted"}
+
+    with pytest.raises(ConfigurationError, match="non-JSON-native"):
+        canonical_json(FakeScalar())
+
+
 def test_snapshot_deep_freezes_config():
     snapshot = BestConfigSnapshot.from_config(
         {"nested": {"values": [1, 2]}},
