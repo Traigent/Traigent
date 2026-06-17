@@ -123,11 +123,6 @@ except ImportError:
     )
 
 
-def is_analytics_available() -> bool:
-    """Check if analytics is available (either via plugin or embedded)."""
-    return True  # Always available through embedded fallback
-
-
 def is_plugin_installed() -> bool:
     """Check if the analytics plugin is installed."""
     return _PLUGIN_AVAILABLE
@@ -175,6 +170,5 @@ __all__ = [
     "AlertSeverity",
     "AnomalyType",
     # Helpers
-    "is_analytics_available",
     "is_plugin_installed",
 ]
