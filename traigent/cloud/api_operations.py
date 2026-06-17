@@ -295,9 +295,11 @@ class ApiOperations:
         * ``endpoint="config_run"`` keeps ``pruned`` -> ``PRUNED`` (config-runs
           accept early-stopping as a distinct success-ish outcome).
         * ``endpoint="experiment_run"`` (the default) maps ``pruned`` ->
-          ``COMPLETED`` because the backend ``ExperimentRunStatus`` enum has no
-          ``PRUNED`` member; an experiment-run that early-stopped is treated as
-          a completed run rather than producing a 400.
+          ``UNKNOWN`` because the backend ``ExperimentRunStatus`` enum has no
+          ``PRUNED`` member. A pruned run is NOT a successful completion, so it
+          folds to the neutral ``UNKNOWN`` rather than claiming ``COMPLETED``
+          (claiming completion would be fake completion); ``UNKNOWN`` is a valid
+          member, so this never produces a 400.
 
         Unrecognized inputs map to ``UNKNOWN`` (a member of both backend enums),
         never to ``FAILED`` — we must not assert failure on a status we simply
