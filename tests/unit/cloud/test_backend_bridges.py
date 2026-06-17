@@ -709,6 +709,8 @@ class TestSDKBackendBridge:
             "'; DROP TABLE experiments; --",
             "metric with spaces",
             "weird-dashes",
+            "metric\n",
+            "metric\ttab",
         ):
             measures = sdk_bridge._map_objectives_to_measures([unsafe])
             assert measures == ["accuracy"], unsafe

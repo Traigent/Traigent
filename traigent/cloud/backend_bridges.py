@@ -775,14 +775,16 @@ Response:"""
         # canonical ID; other safe identifiers pass through verbatim (#1292);
         # anything else (injection payloads, garbage) is coerced to the default
         # so untrusted strings never reach the backend.
-        safe_name = r"^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        # fullmatch (not match) so a trailing newline can't sneak through a
+        # ``$``-anchored pattern, e.g. "metric\n".
+        safe_name = r"[A-Za-z][A-Za-z0-9_]{0,63}"
 
         measures = []
         for objective in objectives:
             key = objective.lower()
             if key in objective_mapping:
                 measure_id = objective_mapping[key]
-            elif re.match(safe_name, objective):
+            elif re.fullmatch(safe_name, objective):
                 measure_id = objective
             else:
                 measure_id = "accuracy"
