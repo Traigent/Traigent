@@ -83,6 +83,48 @@ class TestCollectOrchestratorKwargsInvocations:
         assert result["invocations_per_example"] == 1
 
 
+class TestCollectOrchestratorKwargsRemovedBudgetKeys:
+    """Regression: removed budget_* keys must raise TypeError, not be silently dropped."""
+
+    def _call(self, **extra: Any) -> dict[str, Any]:
+        algorithm_kwargs: dict[str, Any] = {"cache_policy": "allow_repeats"}
+        algorithm_kwargs.update(extra)
+        return collect_orchestrator_kwargs(
+            algorithm_kwargs,
+            samples_include_pruned_value=False,
+            default_config=None,
+            constraints=None,
+            agents=None,
+            agent_prefixes=None,
+            agent_measures=None,
+            global_measures=None,
+            promotion_gate=None,
+        )
+
+    def test_budget_limit_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="budget_limit"):
+            self._call(budget_limit=10)
+
+    def test_budget_metric_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="budget_metric"):
+            self._call(budget_metric="examples_attempted")
+
+    def test_budget_include_pruned_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="budget_include_pruned"):
+            self._call(budget_include_pruned=True)
+
+    def test_multiple_budget_keys_raise_together(self) -> None:
+        with pytest.raises(TypeError, match="budget_limit"):
+            self._call(budget_limit=5, budget_metric="total_cost")
+
+    def test_valid_keys_still_pass_through(self) -> None:
+        """Sanity check: cost_limit and metric_limit are the correct replacements."""
+        result = self._call(cost_limit=1.5, metric_limit=0.9, metric_name="accuracy")
+        assert result["cost_limit"] == 1.5
+        assert result["metric_limit"] == 0.9
+        assert result["metric_name"] == "accuracy"
+
+
 @pytest.fixture
 def workflow_trace_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example")

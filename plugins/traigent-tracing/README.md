@@ -36,9 +36,9 @@ export OTEL_SERVICE_NAME=my-optimization-service
 ```
 
 `TRAIGENT_TRACE_ENABLED` is the canonical tracing flag and defaults to
-`false`. The older plural spelling `TRAIGENT_TRACES_ENABLED` is still honored
-as a deprecated alias when the canonical flag is unset; if both are set,
-`TRAIGENT_TRACE_ENABLED` takes precedence.
+`false`. The older plural spelling `TRAIGENT_TRACES_ENABLED` is **no longer
+supported** as of 0.13.0 and is silently ignored. Migrate any use of
+`TRAIGENT_TRACES_ENABLED` to `TRAIGENT_TRACE_ENABLED`.
 
 Or configure programmatically:
 

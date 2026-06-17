@@ -37,6 +37,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TRAIGENT_CUSTOM_MODEL_PRICING_JSON`/`_FILE`. `TRAIGENT_STRICT_COST_ACCOUNTING=true`
   still hard-fails without prompting; mock runs are unaffected.
 
+### Removed
+- **`BudgetStopCondition` class removed.** The class is no longer exported from any
+  public module. Replace usage with `cost_limit=<value>` in `.optimize()` calls, or
+  use `metric_limit=<value>` + `metric_name=<name>` for metric-based stopping.
+- **`TRAIGENT_TRACES_ENABLED` environment variable removed.** The deprecated plural-form
+  alias is no longer read. Use `TRAIGENT_TRACE_ENABLED=true` (singular) instead. Setting
+  the old variable will have no effect and tracing will remain disabled.
+- **`OptimizedFunction.config_space` property removed.** The property has been removed
+  from the public API. Access the configuration space through the `TVLParameterAgent`
+  interface or via decorator introspection helpers.
+- **`strategy=` non-preset alias removed.** Passing an unrecognized string to `strategy=`
+  in `.optimize()` now raises `ValueError` immediately rather than falling back silently.
+  Use one of the documented preset names.
+- **`budget_limit`, `budget_metric`, `budget_include_pruned` runtime override keys
+  removed.** Passing any of these as keyword arguments to `.optimize()` now raises
+  `TypeError`. Migrate to `cost_limit=<value>` for cost-based stopping, or
+  `metric_limit=<value>` + `metric_name=<name>` for metric-based stopping.
+
 ## [0.12.0] - 2026-06-06
 
 ### Added
