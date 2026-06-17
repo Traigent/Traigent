@@ -57,6 +57,102 @@ def test_canonical_json_rejects_non_json_native_values():
         canonical_json(circular)
 
 
+def test_canonical_json_coerces_numpy_scalars_losslessly():
+    """Optuna integer dimensions return numpy scalars (e.g. np.int64) into
+    best_config; np.int64 does not subclass int, so the strict normalizer used
+    to reject it. They must coerce losslessly via .item() at the JSON boundary.
+
+    Regression for TraigentBackend#1147: best-config serialization crashed for
+    any bayesian run tuning integer knobs (fewshot_k / candidate_count).
+    """
+    np = pytest.importorskip("numpy")
+
+    # numpy integer / bool scalars coerce to JSON-native Python values.
+    assert canonical_json(np.int64(3)) == "3"
+    assert canonical_json(np.bool_(True)) == "true"
+
+    # A full best_config carrying numpy scalars serializes clean.
+    config = {
+        "fewshot_k": np.int64(3),
+        "candidate_count": np.int64(5),
+        "use_voting": np.bool_(True),
+    }
+    serialized = canonical_json(config)
+    # Round-trips to native Python values, JSON-parseable.
+    assert json.loads(serialized) == {
+        "fewshot_k": 3,
+        "candidate_count": 5,
+        "use_voting": True,
+    }
+
+    # numpy float / str scalars already passed (they subclass float / str) and
+    # must keep working untouched.
+    assert canonical_json(np.float64(0.5)) == "0.5"
+    assert json.loads(canonical_json({"name": np.str_("gpt-4o")})) == {"name": "gpt-4o"}
+
+
+def test_canonical_json_still_rejects_multi_element_numpy_arrays():
+    """The .item() coercion must NOT swallow multi-element numpy arrays:
+    array.item() raises on >1 element, so we fall through to the reject.
+
+    Regression guard for TraigentBackend#1147.
+    """
+    np = pytest.importorskip("numpy")
+
+    with pytest.raises(ConfigurationError, match="non-JSON-native"):
+        canonical_json(np.array([1, 2]))
+
+    with pytest.raises(ConfigurationError, match="non-JSON-native"):
+        canonical_json({"bad": np.array([1, 2, 3])})
+
+
+def test_canonical_json_rejects_size_one_arrays_keeping_shape():
+    """Size-one arrays are not scalars: ndim >= 1 means real shape that JSON
+    cannot represent. The coercion must NOT silently collapse np.array([1]) /
+    np.array([[1]]) to ``1`` (dropping shape) — it must reject.
+
+    Regression guard for TraigentBackend#1147 (codex review).
+    """
+    np = pytest.importorskip("numpy")
+
+    for arr in (np.array([1]), np.array([[1]])):
+        with pytest.raises(ConfigurationError, match="non-JSON-native"):
+            canonical_json(arr)
+
+
+def test_canonical_json_rejects_non_native_item_results():
+    """The guard accepts a 0-d numpy scalar only when .item() yields a plain
+    JSON-native primitive. A value whose .item() returns a non-native object
+    (extended-precision float that re-emits itself, a 0-d object array's dict,
+    or an arbitrary object) must be rejected — never recursed without progress
+    and never passed silently.
+
+    Regression guard for TraigentBackend#1147 (codex review).
+    """
+    np = pytest.importorskip("numpy")
+
+    # 0-d object array: .item() returns the dict -> non-native -> reject.
+    with pytest.raises(ConfigurationError, match="non-JSON-native"):
+        canonical_json(np.array({"silently": "accepted"}, dtype=object))
+
+    # Extended precision float, if the platform has it: .item() re-emits the same
+    # numpy type (no native Python equivalent) -> must reject, not RecursionError.
+    longdouble = getattr(np, "float128", None) or getattr(np, "longdouble", None)
+    if longdouble is not None:
+        value = longdouble("0.1")
+        if type(value.item()) not in (int, float, str, bool):
+            with pytest.raises(ConfigurationError, match="non-JSON-native"):
+                canonical_json(value)
+
+    # An arbitrary object that merely exposes .item() (no ndim) is not coerced.
+    class FakeScalar:
+        def item(self):
+            return {"silently": "accepted"}
+
+    with pytest.raises(ConfigurationError, match="non-JSON-native"):
+        canonical_json(FakeScalar())
+
+
 def test_snapshot_deep_freezes_config():
     snapshot = BestConfigSnapshot.from_config(
         {"nested": {"values": [1, 2]}},
