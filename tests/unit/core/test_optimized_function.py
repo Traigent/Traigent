@@ -136,7 +136,7 @@ class TestOptimizedFunction:
         )
 
         assert opt_func.func is mock_function
-        assert opt_func.config_space == sample_config_space
+        assert opt_func.configuration_space == sample_config_space
         assert opt_func.objectives == sample_objectives
         assert opt_func.algorithm == "random"  # default
         assert opt_func.max_trials == 50  # default

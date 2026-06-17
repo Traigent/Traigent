@@ -619,13 +619,21 @@ def collect_orchestrator_kwargs(
         "invocations_per_example": invocations_per_example,
     }
 
+    _removed_keys = frozenset(
+        ("budget_limit", "budget_metric", "budget_include_pruned")
+    )
+    invalid_keys = _removed_keys.intersection(algorithm_kwargs)
+    if invalid_keys:
+        raise TypeError(
+            f"Unknown keyword argument(s): {sorted(invalid_keys)}. "
+            "budget_limit/budget_metric/budget_include_pruned were removed in 0.13.0. "
+            "Use cost_limit=<value> and/or metric_limit=<value> with metric_name=<name> instead."
+        )
+
     optional_keys = [
         "metric_limit",
         "metric_name",
         "metric_include_pruned",
-        "budget_limit",
-        "budget_metric",
-        "budget_include_pruned",
         "plateau_window",
         "plateau_epsilon",
         "cost_limit",

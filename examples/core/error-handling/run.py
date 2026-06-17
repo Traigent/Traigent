@@ -169,28 +169,25 @@ async def demo_invalid_config():
 
 
 async def demo_budget_exceeded():
-    """Scenario 2: Sample-budget exceeded via budget_limit/budget_metric."""
-    print_scenario(2, "Sample-Budget Exceeded")
+    """Scenario 2: Cost limit exceeded via cost_limit."""
+    print_scenario(2, "Cost-Limit Exceeded")
 
     try:
-        # Use budget_limit with budget_metric="examples_attempted" to cap samples.
-        # The orchestrator maps "budget" to the internal cost_limit parameter.
+        # Use cost_limit to cap total spend for the optimization run.
         result = await explain_concept.optimize(
             max_trials=20,
-            budget_limit=2,
-            budget_metric="examples_attempted",
+            cost_limit=0.02,
         )
         print(f"  Optimization stopped: stop_reason={result.stop_reason}")
         print(f"  Trials completed: {len(result.trials)}")
-        # Budget stop is mapped to "cost_limit" by the orchestrator.
-        if result.stop_reason in ("budget", "cost_limit"):
-            print("  Budget/cost limit reached - optimization capped as expected.")
+        if result.stop_reason == "cost_limit":
+            print("  Cost limit reached - optimization capped as expected.")
         else:
             print(f"  Stopped for other reason: {result.stop_reason}")
-        print("  Resolution: Increase budget_limit or reduce dataset size.")
+        print("  Resolution: Increase cost_limit or reduce dataset size.")
     except Exception as e:
         print(f"  Caught error: {type(e).__name__}: {e}")
-        print("  Resolution: Check budget_metric matches a metric your trials produce.")
+        print("  Resolution: Check cost_limit value and model pricing.")
 
     print("  Status: HANDLED")
 

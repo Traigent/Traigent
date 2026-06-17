@@ -11,7 +11,6 @@ import math
 import sys
 import time
 import uuid
-import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -508,73 +507,22 @@ class OptimizationOrchestrator:
             raise ValueError(f"{name} must be a positive number")
         return limit
 
-    def _warn_deprecated_budget_limit(self) -> None:
-        warnings.warn(
-            "budget_limit is deprecated. Use metric_limit with metric_name for "
-            "soft cumulative metric stopping. For money spend, use cost_limit.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
     def _resolve_metric_limit_config(self) -> tuple[float | None, str | None, bool]:
-        """Resolve new metric_limit config plus deprecated budget_limit aliases."""
+        """Resolve metric_limit config."""
         raw_metric_limit = self.config.get("metric_limit")
-        raw_budget_limit = self.config.get("budget_limit")
-
-        if raw_metric_limit is not None and raw_budget_limit is not None:
-            raise ValueError("Specify only one of metric_limit or budget_limit")
-
-        metric_include_pruned = bool(
-            self.config.get(
-                "metric_include_pruned",
-                self.config.get("budget_include_pruned", True),
-            )
-        )
+        metric_include_pruned = bool(self.config.get("metric_include_pruned", True))
 
         if raw_metric_limit is not None:
             metric_name = self.config.get("metric_name")
-            if metric_name is None and "budget_metric" in self.config:
-                warnings.warn(
-                    "budget_metric is deprecated; use metric_name with metric_limit.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-                metric_name = self.config.get("budget_metric")
             if metric_name is None:
                 raise ValueError("metric_name is required when metric_limit is set")
-            if "budget_include_pruned" in self.config:
-                warnings.warn(
-                    "budget_include_pruned is deprecated; use metric_include_pruned.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
             return (
                 self._coerce_positive_limit(raw_metric_limit, name="metric_limit"),
                 str(metric_name),
                 metric_include_pruned,
             )
 
-        if raw_budget_limit is None:
-            return (None, None, metric_include_pruned)
-
-        self._warn_deprecated_budget_limit()
-        metric_name = self.config.get("metric_name")
-        if metric_name is None:
-            metric_name = self.config.get("budget_metric")
-        if metric_name is None:
-            warnings.warn(
-                "budget_limit without metric_name defaults to total_cost for "
-                "compatibility. If this is money spend control, use cost_limit.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            metric_name = "total_cost"
-
-        return (
-            self._coerce_positive_limit(raw_budget_limit, name="budget_limit"),
-            str(metric_name),
-            metric_include_pruned,
-        )
+        return (None, None, metric_include_pruned)
 
     def _setup_convergence_condition(self) -> None:
         """Configure hypervolume-based convergence if specified in config."""

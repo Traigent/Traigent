@@ -138,33 +138,6 @@ def test_metric_limit_requires_metric_name():
         _orchestrator(metric_limit=0.2)
 
 
-def test_legacy_budget_limit_alias_warns_and_maps_to_metric_limit():
-    with pytest.warns(DeprecationWarning, match="budget_limit is deprecated"):
-        orchestrator = _orchestrator(budget_limit=0.2, budget_metric="total_cost")
-    orchestrator._trials = [_trial("t1", {"total_cost": 0.2})]
-
-    assert orchestrator._should_stop(trial_count=1)
-    assert orchestrator._stop_reason == "metric_limit"
-
-
-def test_legacy_budget_limit_without_metric_warns_about_cost_limit():
-    with pytest.warns(DeprecationWarning) as warnings_record:
-        orchestrator = _orchestrator(budget_limit=0.2)
-
-    warning_messages = [str(warning.message) for warning in warnings_record]
-    assert any("budget_limit is deprecated" in msg for msg in warning_messages)
-    assert any("money spend control, use cost_limit" in msg for msg in warning_messages)
-
-    orchestrator._trials = [_trial("t1", {"cost": 0.2})]
-    assert orchestrator._should_stop(trial_count=1)
-    assert orchestrator._stop_reason == "metric_limit"
-
-
-def test_metric_limit_conflicts_with_legacy_budget_limit():
-    with pytest.raises(ValueError, match="only one of metric_limit or budget_limit"):
-        _orchestrator(metric_limit=0.2, budget_limit=0.2, metric_name="tokens")
-
-
 def test_cost_enforcer_limit_maps_to_cost_limit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
     orchestrator = _orchestrator(cost_limit=0.5, cost_approved=True)

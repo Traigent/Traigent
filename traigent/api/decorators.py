@@ -43,7 +43,6 @@ Examples:
 from __future__ import annotations
 
 import inspect
-import warnings
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -460,9 +459,6 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "metric_limit",
         "metric_name",
         "metric_include_pruned",
-        "budget_limit",
-        "budget_metric",
-        "budget_include_pruned",
         "plateau_window",
         "plateau_epsilon",
         "cost_limit",
@@ -803,33 +799,8 @@ def _extract_inline_params(
 def _normalize_runtime_override_aliases(
     overrides: dict[str, Any],
 ) -> dict[str, Any]:
-    """Normalize deprecated runtime override aliases."""
-    if "strategy" not in overrides:
-        return dict(overrides)
-
-    normalized = dict(overrides)
-    strategy_value = normalized.pop("strategy")
-    existing_algorithm = normalized.get("algorithm")
-    if (
-        existing_algorithm is not None
-        and strategy_value is not None
-        and existing_algorithm != strategy_value
-    ):
-        raise TypeError(
-            "Conflicting optimization selector: received both "
-            f"'algorithm={existing_algorithm}' and 'strategy={strategy_value}'. "
-            "Use only 'algorithm'."
-        )
-
-    warnings.warn(
-        "'strategy' is deprecated; use 'algorithm' instead.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-    normalized["algorithm"] = (
-        existing_algorithm if existing_algorithm is not None else strategy_value
-    )
-    return normalized
+    """Normalize runtime override keys."""
+    return dict(overrides)
 
 
 def _resolve_strategy_argument(
@@ -838,7 +809,7 @@ def _resolve_strategy_argument(
     strategy_params: Mapping[str, Any] | None,
     runtime_overrides: dict[str, Any],
 ) -> tuple[str | None, dict[str, Any]]:
-    """Split public ``strategy`` into preset selection or legacy algorithm alias."""
+    """Split public ``strategy`` into preset selection."""
     if strategy is None:
         if strategy_params is not None:
             normalize_strategy_preset(None, strategy_params)
@@ -847,22 +818,11 @@ def _resolve_strategy_argument(
     if is_strategy_preset_name(strategy) or strategy_params is not None:
         return strategy, runtime_overrides
 
-    normalized_overrides = dict(runtime_overrides)
-    existing_algorithm = normalized_overrides.get("algorithm")
-    if existing_algorithm is not None and existing_algorithm != strategy:
-        raise TypeError(
-            "Conflicting optimization selector: received both "
-            f"'algorithm={existing_algorithm}' and 'strategy={strategy}'. "
-            "Use only 'algorithm'."
-        )
-
-    warnings.warn(
-        "'strategy' as an optimizer selector is deprecated; use 'algorithm' instead.",
-        DeprecationWarning,
-        stacklevel=3,
+    raise ValueError(
+        f"Unknown strategy preset: {strategy!r}. "
+        "Use 'algorithm' to select an optimizer by name, or provide a valid "
+        "strategy preset name."
     )
-    normalized_overrides["algorithm"] = existing_algorithm or strategy
-    return None, normalized_overrides
 
 
 def _apply_strategy_preset_to_options(
@@ -1792,8 +1752,8 @@ def optimize(  # NOSONAR(S107)
             business-goal preset cannot silently override hand-set objectives.
         strategy: Optional advisory strategy preset name. Supported preset names
             are ``max_accuracy_then_cheapest_within_epsilon``,
-            ``quality_floor_min_cost``, and ``pareto_frontier``. Non-preset
-            values retain the deprecated optimizer-alias behavior.
+            ``quality_floor_min_cost``, and ``pareto_frontier``.
+            Use ``algorithm`` to select an optimizer by name.
         strategy_params: Typed parameters for the selected strategy preset.
             ``epsilon`` is required for
             ``max_accuracy_then_cheapest_within_epsilon`` and must be > 0 and
@@ -1903,10 +1863,7 @@ def optimize(  # NOSONAR(S107)
             **runtime_overrides: Stop-condition and budget knobs accepted by
                 the decorator. The currently supported keys are:
                 ``metric_limit``, ``metric_name``,
-                ``metric_include_pruned``,
-                ``budget_limit`` (deprecated alias for ``metric_limit``),
-                ``budget_metric``,
-                ``budget_include_pruned``, ``plateau_window``,
+                ``metric_include_pruned``, ``plateau_window``,
                 ``plateau_epsilon``, ``cost_limit``, ``cost_approved``,
                 ``tie_breakers``, and ``tvl_parameter_agents``.
                 Note: ``algorithm`` and ``max_trials`` are first-class

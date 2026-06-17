@@ -77,9 +77,9 @@ export TRAIGENT_TRACE_ENABLED=true
 
 `TRAIGENT_TRACE_ENABLED` is the canonical tracing flag and defaults to
 `false`. It controls SDK span emission and workflow trace tracker creation.
-The older plural spelling `TRAIGENT_TRACES_ENABLED` remains as a deprecated
-alias when the canonical flag is unset; if both are set,
-`TRAIGENT_TRACE_ENABLED` takes precedence.
+The older plural spelling `TRAIGENT_TRACES_ENABLED` is **no longer supported**
+as of 0.13.0 and is silently ignored. If you were using `TRAIGENT_TRACES_ENABLED`,
+migrate to `TRAIGENT_TRACE_ENABLED`.
 
 ### Agent Workflow Spans
 
