@@ -344,13 +344,27 @@ class TestOptimizationSessionStatus:
     """Test optimization session status enumeration."""
 
     def test_session_status_values(self):
-        """Test OptimizationSessionStatus enum values."""
-        assert OptimizationSessionStatus.INITIALIZING == "initializing"
-        assert OptimizationSessionStatus.ACTIVE == "active"
-        assert OptimizationSessionStatus.PAUSED == "paused"
-        assert OptimizationSessionStatus.COMPLETED == "completed"
-        assert OptimizationSessionStatus.FAILED == "failed"
-        assert OptimizationSessionStatus.CANCELLED == "cancelled"
+        """Test OptimizationSessionStatus enum values.
+
+        After the #1302 dedup, ``remote_services.OptimizationSessionStatus`` is
+        the single canonical ``traigent.cloud.models.OptimizationSessionStatus``
+        (a plain Enum), so compare ``.value`` rather than relying on the former
+        StrEnum string-equality.
+        """
+        assert OptimizationSessionStatus.INITIALIZING.value == "initializing"
+        assert OptimizationSessionStatus.ACTIVE.value == "active"
+        assert OptimizationSessionStatus.PAUSED.value == "paused"
+        assert OptimizationSessionStatus.COMPLETED.value == "completed"
+        assert OptimizationSessionStatus.FAILED.value == "failed"
+        assert OptimizationSessionStatus.CANCELLED.value == "cancelled"
+
+    def test_session_status_is_canonical_single_source(self):
+        """Issue #1302 AC4 — no second OptimizationSessionStatus copy exists."""
+        from traigent.cloud.models import (
+            OptimizationSessionStatus as CanonicalOSS,
+        )
+
+        assert OptimizationSessionStatus is CanonicalOSS
 
 
 class TestServiceInfo:

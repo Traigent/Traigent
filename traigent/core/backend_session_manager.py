@@ -901,18 +901,12 @@ class BackendSessionManager:
         if "score" not in metrics_payload and score is not None:
             metrics_payload["score"] = sanitized_score
 
-        # Map SDK TrialStatus to backend status string.
-        # PRUNED is a success case (early stopping for efficiency), not a failure.
-        status_mapping = {
-            TrialStatus.COMPLETED: "COMPLETED",
-            TrialStatus.FAILED: "FAILED",
-            TrialStatus.PRUNED: "PRUNED",
-            TrialStatus.CANCELLED: "CANCELLED",
-            TrialStatus.RUNNING: "RUNNING",
-            TrialStatus.PENDING: "PENDING",
-            TrialStatus.NOT_STARTED: "PENDING",
-        }
-        status = status_mapping.get(trial_result.status, "FAILED")
+        # Map SDK TrialStatus to the configuration-run wire vocab via the single
+        # canonical mapper (issue #1302). This is a configuration-run submission,
+        # so PRUNED (early-stopping success) is preserved rather than coerced.
+        from traigent.cloud.api_operations import map_status_to_wire
+
+        status = map_status_to_wire(trial_result.status.value, endpoint="config_run")
 
         try:
             # The backend binds a result to a session by the configuration_run

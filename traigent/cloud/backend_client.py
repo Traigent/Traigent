@@ -1240,10 +1240,12 @@ class BackendIntegratedClient:
             session.updated_at = datetime.now(UTC)
 
     # API Operations
-    def _map_to_backend_status(self, status: str) -> str:
+    def _map_to_backend_status(
+        self, status: str, *, endpoint: str = "experiment_run"
+    ) -> str:
         """Map Traigent status values to backend-expected values.
         Delegates to api_operations module."""
-        return cast(str, self._api_ops.map_to_backend_status(status))
+        return cast(str, self._api_ops.map_to_backend_status(status, endpoint=endpoint))
 
     def _normalize_execution_mode(self, execution_mode: str | None) -> str:
         """Translate SDK execution modes to backend-supported values."""

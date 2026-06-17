@@ -231,14 +231,19 @@ class TrialOperations:
             return False
 
         try:
-            # Map status to backend format (use ACTIVE for running state)
-            backend_status = self.client._map_to_backend_status("in_progress")
+            # Map status to backend format. This is a configuration-run
+            # submission (POST /sessions/{id}/results), so use the config-run
+            # wire vocab — a starting trial is RUNNING, not the session-lifecycle
+            # ACTIVE the backend would 400-reject (issue #1302).
+            backend_status = self.client._map_to_backend_status(
+                "in_progress", endpoint="config_run"
+            )
 
             # Prepare trial registration data
             registration_data = {
                 "trial_id": trial_id,
                 "config": config,
-                "status": backend_status,  # Use mapped status (ACTIVE)
+                "status": backend_status,  # Use mapped status (RUNNING)
                 "metrics": {},  # Empty metrics at start
             }
             registration_payload = self._sanitize_for_json(registration_data)
@@ -658,7 +663,11 @@ class TrialOperations:
             return False
 
         try:
-            backend_status = self.client._map_to_backend_status(status)
+            # Configuration-run submission path -> config-run wire vocab
+            # (preserves PRUNED for early-stopped trials; issue #1302).
+            backend_status = self.client._map_to_backend_status(
+                status, endpoint="config_run"
+            )
             mode = self.client._normalize_execution_mode(execution_mode)
 
             # Extract transport-only fields before validating trial metrics.
@@ -816,8 +825,11 @@ class TrialOperations:
             return False
 
         try:
-            # Map status to backend format
-            backend_status = self.client._map_to_backend_status(status)
+            # Configuration-run submission path -> config-run wire vocab
+            # (issue #1302).
+            backend_status = self.client._map_to_backend_status(
+                status, endpoint="config_run"
+            )
 
             # Prepare metadata - REQUIRED by backend to avoid NoneType errors
             submission_metadata = {
