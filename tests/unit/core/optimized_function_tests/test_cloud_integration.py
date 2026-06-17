@@ -2,7 +2,6 @@
 
 import warnings
 
-import pytest
 
 from traigent.config.types import ExecutionMode
 from traigent.core.optimized_function import OptimizedFunction

@@ -5,7 +5,6 @@ import pytest
 import traigent
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.utils.exceptions import ConfigurationError
 
 
 @pytest.fixture

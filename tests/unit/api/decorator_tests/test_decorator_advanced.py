@@ -12,7 +12,6 @@ import pytest
 from traigent.api.decorators import optimize
 from traigent.config.context import get_config, set_config
 from traigent.config.types import TraigentConfig
-from traigent.utils.exceptions import ConfigurationError
 
 from .mock_infrastructure import create_simple_dataset
 from .test_base import DecoratorTestBase

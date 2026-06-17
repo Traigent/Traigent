@@ -15,7 +15,6 @@ from traigent.api.strategy_presets import (
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
-from traigent.utils.exceptions import ConfigurationError
 
 
 class TestOptimizeDecorator:
