@@ -14,7 +14,7 @@ import pytest
 
 from traigent.config.types import ExecutionMode
 from traigent.traigent_client import TraigentClient
-from traigent.utils.exceptions import ConfigurationError, OptimizationError
+from traigent.utils.exceptions import OptimizationError
 
 
 class TestTraigentClientInitialization:
