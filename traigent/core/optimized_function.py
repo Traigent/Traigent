@@ -850,11 +850,6 @@ class OptimizedFunction:
         return total
 
     @property
-    def config_space(self) -> dict[str, Any]:
-        """Backward compatibility property for configuration_space."""
-        return self.configuration_space
-
-    @property
     def objectives(self) -> list[str]:
         """Objective names derived from the active objective schema."""
         result: list[str] = schema_to_objective_names(self.objective_schema)

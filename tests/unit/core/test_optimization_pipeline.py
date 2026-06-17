@@ -88,7 +88,6 @@ def workflow_trace_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example")
     monkeypatch.setenv("TRAIGENT_API_KEY", "api-key")
     monkeypatch.delenv("TRAIGENT_TRACE_ENABLED", raising=False)
-    monkeypatch.delenv("TRAIGENT_TRACES_ENABLED", raising=False)
 
 
 def _patch_workflow_traces_tracker(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
@@ -119,35 +118,6 @@ class TestCreateWorkflowTracesTrackerTraceEnv:
             backend_url="https://backend.example",
             auth_token="api-key",
         )
-
-    def test_alias_only_enabled_warns_and_creates_tracker(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        workflow_trace_backend_env: None,
-    ) -> None:
-        monkeypatch.setenv("TRAIGENT_TRACES_ENABLED", "true")
-        tracker, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
-
-        with pytest.warns(DeprecationWarning, match="TRAIGENT_TRACES_ENABLED"):
-            result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
-
-        assert result is tracker
-        tracker_factory.assert_called_once()
-
-    def test_both_set_canonical_takes_precedence(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        workflow_trace_backend_env: None,
-    ) -> None:
-        monkeypatch.setenv("TRAIGENT_TRACE_ENABLED", "false")
-        monkeypatch.setenv("TRAIGENT_TRACES_ENABLED", "true")
-        _, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
-
-        with pytest.warns(DeprecationWarning, match="ignored"):
-            result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
-
-        assert result is None
-        tracker_factory.assert_not_called()
 
     def test_neither_set_defaults_off(
         self,
