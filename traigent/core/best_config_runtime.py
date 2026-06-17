@@ -750,6 +750,16 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
         seen.remove(container_id)
         return normalized_list
 
+    # numpy scalar types (e.g. np.int64 from Optuna integer dimensions) coerce
+    # losslessly to a JSON-native Python value via .item(). The guard excludes
+    # str/bytes/dict/list so we never re-route already-handled containers, and
+    # multi-element numpy arrays raise inside .item() -> fall through to reject.
+    if hasattr(value, "item") and not isinstance(value, (str, bytes, dict, list)):
+        try:
+            return _normalize_json_value(value.item(), seen)
+        except (ValueError, TypeError):
+            pass
+
     raise ConfigurationError(
         f"Best config contains non-JSON-native value {type(value).__name__}"
     )
