@@ -648,10 +648,11 @@ class TestSDKBackendBridge:
         measures = sdk_bridge._map_objectives_to_measures(objectives)
         assert set(measures) == {"accuracy", "cost", "latency"}
 
-        # Test unknown objectives
+        # Custom / unknown objective names pass through unchanged (issue #1292)
+        # instead of being silently coerced to "accuracy".
         objectives = ["unknown_metric"]
         measures = sdk_bridge._map_objectives_to_measures(objectives)
-        assert measures == ["accuracy"]  # Default fallback
+        assert measures == ["unknown_metric"]
 
         # Test empty objectives
         objectives = []
@@ -662,6 +663,58 @@ class TestSDKBackendBridge:
         objectives = ["accuracy", "success_rate", "accuracy"]
         measures = sdk_bridge._map_objectives_to_measures(objectives)
         assert measures == ["accuracy"]  # No duplicates
+
+    def test_custom_objective_name_survives_to_backend_measures(
+        self, sdk_bridge, sample_dataset
+    ):
+        """A user-defined custom metric name must survive to the backend.
+
+        Regression for issue #1292: a custom objective such as ``exec_accuracy``
+        was silently coerced to the fixed measure vocabulary (defaulting to
+        ``accuracy``), so it never surfaced on the portal under its own name.
+        It must now be preserved verbatim, both at the mapping level and in the
+        assembled BackendExperimentRequest sent to the backend.
+        """
+        # Mapping level: custom name preserved verbatim, not coerced.
+        measures = sdk_bridge._map_objectives_to_measures(["exec_accuracy"])
+        assert measures == ["exec_accuracy"]
+
+        # Known aliases still map; custom names ride alongside unchanged.
+        mixed = sdk_bridge._map_objectives_to_measures(
+            ["exec_accuracy", "cost", "sql_accuracy"]
+        )
+        assert mixed == ["exec_accuracy", "cost", "sql_accuracy"]
+
+        # End-to-end: the custom name reaches the synced backend request.
+        request = OptimizationRequest(
+            function_name="text2sql_agent",
+            dataset=sample_dataset,
+            configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            objectives=["exec_accuracy"],
+        )
+        backend_request = sdk_bridge.optimization_request_to_backend(request)
+        assert backend_request.measures == ["exec_accuracy"]
+
+    def test_unsafe_objective_name_is_coerced_not_passed_through(self, sdk_bridge):
+        """Custom names that are not safe identifiers must not reach the backend.
+
+        Preserving custom names (#1292) must not reopen the code-injection vector
+        guarded by test_backend_bridges_security: only safe identifiers
+        (letter, then letters/digits/underscore) pass through; anything else is
+        coerced to ``accuracy`` so untrusted strings never reach the backend.
+        """
+        for unsafe in (
+            "__import__('os').system('rm -rf /')",
+            "eval('print(1)')",
+            "'; DROP TABLE experiments; --",
+            "metric with spaces",
+            "weird-dashes",
+            "metric\n",
+            "metric\ttab",
+        ):
+            measures = sdk_bridge._map_objectives_to_measures([unsafe])
+            assert measures == ["accuracy"], unsafe
+            assert unsafe not in measures
 
     def test_convert_dataset_to_examples_edge_cases(self, sdk_bridge):
         """Test dataset to examples conversion with edge cases."""
