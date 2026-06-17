@@ -167,10 +167,12 @@ def map_status_to_wire(status: str, *, endpoint: str = "experiment_run") -> str:
         else EXPERIMENT_RUN_WIRE_STATUSES
     )
 
-    # PRUNED is endpoint-specific: config-runs keep it; experiment-runs fold it
-    # into COMPLETED (the experiment-run enum has no PRUNED member).
+    # PRUNED is endpoint-specific: config-runs keep it; the experiment-run enum
+    # has no PRUNED member. A pruned run is NOT a successful completion, so fold
+    # it to the neutral UNKNOWN rather than claiming COMPLETED — emitting
+    # COMPLETED here would be fake completion (no-fake-completion rule).
     if token == "pruned":
-        mapped = "PRUNED" if endpoint == "config_run" else "COMPLETED"
+        mapped = "PRUNED" if endpoint == "config_run" else UNKNOWN_WIRE_STATUS
     else:
         mapped = _RUN_STATUS_WIRE_MAP.get(token, "")
         if not mapped:

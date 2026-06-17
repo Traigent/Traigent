@@ -203,15 +203,16 @@ class TestMapToBackendStatus:
             self.ops.map_to_backend_status("pruned", endpoint="config_run") == "PRUNED"
         )
 
-    def test_pruned_folds_to_completed_for_experiment_runs(self):
-        """pruned -> COMPLETED for experiment-runs (no PRUNED member).
+    def test_pruned_folds_to_unknown_for_experiment_runs(self):
+        """pruned -> UNKNOWN for experiment-runs (no PRUNED member).
 
-        Must NOT emit PRUNED on the experiment-run endpoint, and must NOT
-        fall back to UNKNOWN/FAILED.
+        Must NOT emit PRUNED on the experiment-run endpoint, and must NOT claim
+        COMPLETED — a pruned run is not a successful completion, so emitting
+        COMPLETED would be fake completion. UNKNOWN is the honest neutral fold.
         """
         assert (
             self.ops.map_to_backend_status("pruned", endpoint="experiment_run")
-            == "COMPLETED"
+            == "UNKNOWN"
         )
 
     def test_uppercase_status_preserved(self):
