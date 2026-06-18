@@ -174,16 +174,26 @@ class SyncManager:
             return False
         # Fallback guard for sessions left at "pending" by an older SDK
         # version that recorded trials but never called finalize_session.
+        # Any canonical StopReason value signals the optimization is done.
         if session.completed_trials > 0:
             stop_reason = (session.metadata or {}).get("stop_reason")
             if stop_reason in (
+                # All canonical StopReason values from traigent/api/types.py
                 "max_trials_reached",
-                "budget_exhausted",
-                "cost_limit",
-                "plateau",
-                "optimizer",
-                "condition",
+                "max_samples_reached",
                 "timeout",
+                "cost_limit",
+                "metric_limit",
+                "optimizer",
+                "plateau",
+                "convergence",
+                "user_cancelled",
+                "condition",
+                "error",
+                "vendor_error",
+                "network_error",
+                # Legacy alias retained for backward-compat with pre-1.0 sessions
+                "budget_exhausted",
             ):
                 return True
         return False
