@@ -11,7 +11,12 @@ from datetime import datetime
 
 import pytest
 
-from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult, TrialStatus
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.result_selection import select_best_configuration
 from traigent.utils.objectives import is_minimization_objective
