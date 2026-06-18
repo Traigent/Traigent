@@ -22,9 +22,13 @@ def cli() -> TraigentAuthCLI:
 
 def test_status_env_api_key_no_stored_creds(cli, monkeypatch):
     """status() returns True when TRAIGENT_API_KEY is set and no stored creds exist."""
-    monkeypatch.setenv("TRAIGENT_API_KEY", "trgnt-sk-test12345678-abcd")  # pragma: allowlist secret
-    with patch.object(cli, "_load_stored_credentials", return_value=None), \
-         patch("traigent.cli.auth_commands.console"):
+    monkeypatch.setenv(
+        "TRAIGENT_API_KEY", "trgnt-sk-test12345678-abcd"
+    )  # pragma: allowlist secret
+    with (
+        patch.object(cli, "_load_stored_credentials", return_value=None),
+        patch("traigent.cli.auth_commands.console"),
+    ):
         result = cli.status()
     assert result is True
 
@@ -32,21 +36,27 @@ def test_status_env_api_key_no_stored_creds(cli, monkeypatch):
 def test_status_no_creds_no_env_var(cli, monkeypatch):
     """status() returns False when neither stored creds nor env var exist."""
     monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
-    with patch.object(cli, "_load_stored_credentials", return_value=None), \
-         patch("traigent.cli.auth_commands.console"):
+    with (
+        patch.object(cli, "_load_stored_credentials", return_value=None),
+        patch("traigent.cli.auth_commands.console"),
+    ):
         result = cli.status()
     assert result is False
 
 
 def test_status_stored_creds_take_precedence(cli, monkeypatch):
     """status() returns True from stored creds (env var also present, both OK)."""
-    monkeypatch.setenv("TRAIGENT_API_KEY", "trgnt-sk-test12345678-abcd")  # pragma: allowlist secret
+    monkeypatch.setenv(
+        "TRAIGENT_API_KEY", "trgnt-sk-test12345678-abcd"
+    )  # pragma: allowlist secret
     stored = {
         "user": {"email": "u@example.com", "id": 1},
         "api_key": "stored-key",  # pragma: allowlist secret
         "backend_url": "http://localhost",
     }
-    with patch.object(cli, "_load_stored_credentials", return_value=stored), \
-         patch("traigent.cli.auth_commands.console"):
+    with (
+        patch.object(cli, "_load_stored_credentials", return_value=stored),
+        patch("traigent.cli.auth_commands.console"),
+    ):
         result = cli.status()
     assert result is True
