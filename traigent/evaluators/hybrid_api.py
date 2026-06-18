@@ -13,7 +13,6 @@ import asyncio
 import os
 import statistics
 import time
-import warnings
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -293,7 +292,6 @@ class HybridAPIEvaluator(BaseEvaluator):
         tunable_id: str | None = None,
         *,
         dataset_id: str | None = None,
-        benchmark_id: str | None = None,
     ) -> list[str]:
         """Discover available example IDs from the external service.
 
@@ -305,7 +303,6 @@ class HybridAPIEvaluator(BaseEvaluator):
                 Falls back to self._tunable_id if not provided.
             dataset_id: Explicit dataset to use. Required when
                 multiple datasets match the tunable.
-            benchmark_id: Deprecated alias for ``dataset_id``.
 
         Returns:
             List of example IDs from the selected dataset.
@@ -324,13 +321,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         transport = await self._get_transport()
         resp: BenchmarksResponse = await transport.benchmarks(tunable_id=tid)
-        if benchmark_id is not None:
-            warnings.warn(
-                "benchmark_id is deprecated; use dataset_id instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        selected_dataset_id = dataset_id or benchmark_id
+        selected_dataset_id = dataset_id
 
         # Filter datasets where this tunable is linked
         matching: list[BenchmarkEntry] = [

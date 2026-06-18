@@ -543,7 +543,7 @@ class TestDiscoverExampleIds:
     async def test_discover_example_ids_multiple_benchmarks_with_explicit_id(
         self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
     ) -> None:
-        """Selects correct benchmark when benchmark_id is provided explicitly."""
+        """Selects correct dataset when dataset_id is provided explicitly."""
         from traigent.hybrid.protocol import BenchmarkEntry, BenchmarksResponse
 
         mock_transport.benchmarks = AsyncMock(
@@ -564,8 +564,7 @@ class TestDiscoverExampleIds:
             )
         )
 
-        with pytest.warns(DeprecationWarning, match="benchmark_id is deprecated"):
-            ids = await evaluator.discover_example_ids(benchmark_id="bench_002")
+        ids = await evaluator.discover_example_ids(dataset_id="bench_002")
 
         assert ids == ["c", "d", "e"]
         assert evaluator._benchmark_id == "bench_002"
