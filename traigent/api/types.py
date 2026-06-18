@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import traceback as traceback_module
+import warnings
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -1097,7 +1098,17 @@ class OptimizationResult:
         minimize_lookup = set(minimize_objectives)
 
         for obj in self.objectives:
-            if obj not in trial.metrics or obj not in ranges:
+            if obj not in trial.metrics:
+                warnings.warn(
+                    f"Objective '{obj}' was not found in the evaluator's returned metrics "
+                    f"(got: {sorted(trial.metrics)}). Its weighted score defaults to 0. "
+                    "Return it explicitly from your custom_evaluator, e.g. "
+                    f"return {{'accuracy': ..., '{obj}': ...}}.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+                continue
+            if obj not in ranges:
                 continue
 
             min_val, max_val = ranges[obj]
