@@ -915,3 +915,146 @@ class TestRequestTrialSlot:
         ):
             assert await ops.request_trial_slot("sess-1") is None
         mock_client.auth_manager.augment_headers.assert_not_awaited()
+
+
+class TestHandle400NotFound:
+    """HTTP 400 'not found' from the results endpoint is a transient per-worker
+    session-storage condition (BE #1194) and must be handled gracefully:
+    - logged at INFO (not WARNING/ERROR) with the transient sync guidance
+    - submit_trial_result_via_session returns None (skipped) not False (hard failure)
+    - non-session "not found" 400s (e.g. "Trial not found") stay at WARNING/False
+    """
+
+    def _make_ops(self) -> "TrialOperations":
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://portal.traigent.ai"
+        mock_client.backend_config.api_base_url = "https://portal.traigent.ai/api/v1"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
+        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._sanitize_error_message = Mock(return_value="")
+        return TrialOperations(mock_client)
+
+    def test_handle_trial_error_response_400_session_not_found_logs_info(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """400 + session not found body → INFO log with transient guidance and
+        the backend detail in the log, not WARNING."""
+        ops = self._make_ops()
+        error_body = '{"error": "Session abc123 not found"}'
+
+        with caplog.at_level(logging.DEBUG, logger="traigent.cloud.trial_operations"):
+            is_transient = ops._handle_trial_error_response(
+                status=400,
+                trial_id="trial_xyz",
+                session_id="abc123",
+                url="https://portal.traigent.ai/api/v1/sessions/abc123/results",
+                error_text=error_body,
+            )
+
+        assert is_transient is True, (
+            "_handle_trial_error_response must return True for session not-found"
+        )
+
+        # Must log at INFO, not WARNING or ERROR
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        warn_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert info_records, (
+            "Expected at least one INFO log record for transient not-found"
+        )
+        assert not warn_records, (
+            "No WARNING or ERROR log records should be emitted for a transient "
+            f"session-not-found 400; got: {[r.getMessage() for r in warn_records]}"
+        )
+
+        combined = " ".join(r.getMessage() for r in info_records)
+        # Sync guidance must appear so users know how to recover
+        assert "sync" in combined, (
+            "INFO log should include sync guidance for transient not-found"
+        )
+        # The parsed backend detail must appear in the log so the body is not
+        # silently swallowed — this is the text extracted from the JSON "error" key.
+        assert "Session abc123 not found" in combined, (
+            "INFO log must include the backend detail from the response body; "
+            f"got: {combined!r}"
+        )
+
+    def test_handle_trial_error_response_400_trial_not_found_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """400 + 'Trial not found' body must NOT be treated as transient session
+        storage — it should stay at WARNING/False to avoid masking real errors."""
+        ops = self._make_ops()
+        # "Trial not found in session" is a different error class — not a transient
+        # per-worker session storage miss.
+        error_body = '{"error": "Trial trial_xyz not found in session sess_abc"}'
+
+        with caplog.at_level(logging.DEBUG, logger="traigent.cloud.trial_operations"):
+            is_transient = ops._handle_trial_error_response(
+                status=400,
+                trial_id="trial_xyz",
+                session_id="sess_abc",
+                url="https://portal.traigent.ai/api/v1/sessions/sess_abc/results",
+                error_text=error_body,
+            )
+
+        assert is_transient is False, (
+            "'Trial not found in session' is not a transient session storage miss"
+        )
+
+        warn_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warn_records, "Expected WARNING log for non-session not-found 400"
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_result_400_session_not_found_returns_none(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """submit_trial_result_via_session must return None (not False) for a
+        400 session-not-found so _log_trial_to_backend does not flag backend
+        degraded.  The backend detail must appear in the log."""
+        ops = self._make_ops()
+
+        mock_response = Mock()
+        mock_response.status = 400
+        error_json = '{"error": "Session sess_edge not found"}'
+        mock_response.text = AsyncMock(return_value=error_json)
+        mock_session_ctx, _ = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+            caplog.at_level(logging.DEBUG, logger="traigent.cloud.trial_operations"),
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="sess_edge",
+                trial_id="trial_001",
+                config={"temperature": 0.5},
+                metrics={"score": 0.8},
+                status="completed",
+                execution_mode="edge_analytics",
+            )
+
+        # Must return None (transient/skipped), not False (hard failure)
+        assert result is None, (
+            f"Expected None for 400 session-not-found (transient skip), got {result!r}"
+        )
+
+        # The backend detail from the response body must be visible in the log.
+        # This is the key fix: the error is not silently swallowed.
+        all_log_text = " ".join(r.getMessage() for r in caplog.records)
+        assert "Session sess_edge not found" in all_log_text, (
+            "Backend response body detail must appear in logs. "
+            f"All log text: {all_log_text!r}"
+        )
