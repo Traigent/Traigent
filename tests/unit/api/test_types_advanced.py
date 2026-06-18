@@ -856,7 +856,9 @@ class TestOptimizationResultNormalizationMethods:
         # Schema-aware path: ObjectiveSchema drives orientation + weights.
         schema = ObjectiveSchema.from_objectives(
             [
-                ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
+                ObjectiveDefinition(
+                    name="accuracy", orientation="maximize", weight=1.0
+                ),
                 ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
             ]
         )
