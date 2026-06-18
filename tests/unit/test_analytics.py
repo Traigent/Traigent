@@ -30,7 +30,7 @@ from traigent.analytics.cost_optimization import (
 from traigent.analytics.meta_learning import (
     AlgorithmSelector,
     AlgorithmType,
-    MetaLearningEngine,
+    HistoricalAnalyticsEngine,
     OptimizationHistory,
     OptimizationRecord,
     OptimizationStatus,
@@ -54,14 +54,14 @@ from traigent.analytics.scheduling import (
 )
 
 
-class TestMetaLearningEngine:
-    """Test meta-learning engine functionality."""
+class TestHistoricalAnalyticsEngine:
+    """Test historical analytics engine functionality."""
 
     def setup_method(self):
         """Setup test fixtures."""
         self.temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl")
         self.temp_file.close()
-        self.engine = MetaLearningEngine(storage_path=self.temp_file.name)
+        self.engine = HistoricalAnalyticsEngine(storage_path=self.temp_file.name)
 
     def teardown_method(self):
         """Clean up test fixtures."""

@@ -33,7 +33,6 @@ try:
         CostOptimizationAI,
         HistoricalAnalyticsEngine,
         JobPriority,
-        MetaLearningEngine,
         OptimizationHistory,
         OptimizationStrategy,
         PerformanceForecaster,
@@ -89,7 +88,6 @@ except ImportError:
     from .meta_learning import (
         AlgorithmSelector,
         HistoricalAnalyticsEngine,
-        MetaLearningEngine,
         OptimizationHistory,
         PerformancePredictor,
     )
@@ -134,7 +132,6 @@ __all__ = [
     "NextStepsClient",
     # Historical analytics
     "HistoricalAnalyticsEngine",
-    "MetaLearningEngine",
     "OptimizationHistory",
     "AlgorithmSelector",
     "PerformancePredictor",
