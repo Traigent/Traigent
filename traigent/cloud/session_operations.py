@@ -926,6 +926,21 @@ class SessionOperations:
             )  # Store in metadata since no dedicated attr
             completed_trials = getattr(session, "completed_trials", 0)
 
+        # Persist "completed" status to local storage so that
+        # `edge-analytics list` and `traigent sync` see the session as
+        # eligible for sync (fixes #1344: status stuck at "pending").
+        local_storage = getattr(self.client, "local_storage", None)
+        if local_storage is not None:
+            try:
+                local_storage.finalize_session(session_id, "completed")
+            except Exception as _ls_err:
+                logger.debug(
+                    "Could not persist completed status for session %s to "
+                    "local storage: %s",
+                    session_id,
+                    _ls_err,
+                )
+
         # Revoke security session
         self.client._revoke_security_session(session_id)
 

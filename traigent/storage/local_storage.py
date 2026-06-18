@@ -719,10 +719,17 @@ class LocalStorageManager:
         if not session.trials:
             return {
                 "session_id": session_id,
+                "function_name": session.function_name,
                 "status": session.status,
-                "trials": 0,
+                "total_trials": session.total_trials,
+                "completed_trials": session.completed_trials,
+                "successful_trials": 0,
                 "best_score": None,
+                "baseline_score": session.baseline_score,
                 "improvement": None,
+                "avg_score": None,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
             }
 
         scores = [
