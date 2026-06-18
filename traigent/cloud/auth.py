@@ -33,6 +33,7 @@ from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
+from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.env_config import is_truthy, treat_as_production
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 from traigent.utils.url_security import UnsafeUrlError
@@ -44,6 +45,7 @@ TOKEN_REFRESH_THRESHOLD = 300  # Refresh 5 minutes before expiry
 MAX_TOKEN_AGE = 86400  # Maximum token age in seconds (24 hours)
 MIN_TOKEN_LENGTH = 20  # Minimum acceptable token length
 API_KEY_TOKEN_TTL = 31536000  # 365 days
+SAFE_CREDENTIAL_METADATA_KEYS = {"mode", "auth_source", "expires_at", "scopes"}
 _LOOPBACK_BACKEND_DEV_HINT = (
     "backend validation URL host is not allowed for loopback HTTP. "
     "For local backend development, set ENVIRONMENT=development and "
@@ -71,6 +73,22 @@ def _allow_insecure_loopback_backend_validation() -> bool:
     return non_production and is_truthy(
         os.environ.get("TRAIGENT_ALLOW_INSECURE_BACKEND")
     )
+
+
+def _sanitize_credentials_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Return diagnostic-safe credential metadata without raw tokens or user PII."""
+    if not isinstance(metadata, dict) or not metadata:
+        return {}
+
+    safe_metadata = {
+        key: value
+        for key, value in metadata.items()
+        if key in SAFE_CREDENTIAL_METADATA_KEYS
+    }
+    if "auth_source" not in safe_metadata and isinstance(metadata.get("source"), str):
+        safe_metadata["auth_source"] = metadata["source"]
+
+    return cast(dict[str, Any], redact_sensitive_data(safe_metadata))
 
 
 class _AsyncBool:
@@ -1839,7 +1857,7 @@ class AuthManager:
             "has_refresh_token": bool(self._credentials.refresh_token),
             "expires_at": self._credentials.expires_at,
             "scopes": self._credentials.scopes,
-            "metadata": self._credentials.metadata,
+            "metadata": _sanitize_credentials_metadata(self._credentials.metadata),
         }
 
     def get_statistics(self) -> dict[str, Any]:

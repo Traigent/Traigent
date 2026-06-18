@@ -16,6 +16,7 @@ from .helpers import sanitize_email, sanitize_roles, sanitize_string
 from .models import User
 
 logger = get_logger(__name__)
+_OIDC_SUB_HASH_PREFIX = "sha256:"
 
 # Optional JWT dependency
 try:
@@ -131,6 +132,8 @@ class OIDCAuthProvider:
                 claims.get("preferred_username", claims.get("name", claims["sub"])),
                 max_length=32,
             )
+            # PII: email/profile claims are used for provisioning only; they are
+            # not stored in oidc_claims metadata after the User is created.
             email = sanitize_email(
                 claims.get("email", f"{claims['sub']}@oidc"),
                 default_domain="oidc.local",
@@ -199,27 +202,35 @@ class OIDCAuthProvider:
             self._revoked_tokens = set(list(self._revoked_tokens)[-5000:])
 
     def _sanitize_claims(self, claims: dict[str, Any]) -> dict[str, Any]:
-        """Sanitize OIDC claims dictionary."""
+        """Sanitize OIDC claims for storage/logging without profile PII."""
         if not isinstance(claims, dict):
             return {}
-        safe_claims = {}
-        safe_keys = [
-            "sub",
-            "iss",
-            "aud",
-            "exp",
-            "iat",
-            "nbf",
-            "email",
-            "name",
-            "given_name",
-            "family_name",
-            "preferred_username",
-            "locale",
-        ]
-        for key in safe_keys:
+
+        safe_claims: dict[str, Any] = {}
+        if isinstance(claims.get("sub"), str):
+            safe_claims["sub"] = self._claim_fingerprint(claims["sub"])
+
+        for key in ("iss", "exp", "iat", "nbf"):
             if key in claims:
                 value = claims[key]
                 if isinstance(value, (str, int, float, bool)):
                     safe_claims[key] = value
+
+        for key in ("roles", "groups"):
+            if key not in claims:
+                continue
+            claim_value = claims[key]
+            if isinstance(claim_value, list):
+                count = len(claim_value)
+            elif claim_value:
+                count = 1
+            else:
+                count = 0
+            safe_claims[key] = {"present": True, "count": count}
+
         return safe_claims
+
+    @staticmethod
+    def _claim_fingerprint(value: str) -> str:
+        """Return a stable one-way short fingerprint for sensitive claim values."""
+        return _OIDC_SUB_HASH_PREFIX + hashlib.sha256(value.encode()).hexdigest()[:16]
