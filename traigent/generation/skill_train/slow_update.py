@@ -36,7 +36,8 @@ def build_slow_update_probe(train: Dataset, probe_size: int, seed: int) -> Datas
     """Build the fixed train-probe dataset reused across epochs."""
 
     count = min(probe_size, len(train.examples))
-    indices = random.Random(seed).sample(range(len(train.examples)), count)
+    rng = random.Random(seed)  # NOSONAR - deterministic statistical sampling, no crypto
+    indices = rng.sample(range(len(train.examples)), count)
     return Dataset(
         examples=[train.examples[i] for i in indices],
         name=f"{train.name}__slow_update_probe",

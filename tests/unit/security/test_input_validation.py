@@ -2,10 +2,7 @@
 
 import pytest
 
-from traigent.security.input_validation import (
-    InputValidator,
-    SanitizationHelper,
-)
+from traigent.security.input_validation import InputValidator, SanitizationHelper
 from traigent.utils.exceptions import ValidationError
 
 
@@ -188,6 +185,13 @@ class TestURLValidation:
         url = "ftp://files.example.com"
         result = InputValidator.validate_url(url, allowed_schemes=["ftp"])
         assert result == url
+
+    def test_url_rejects_malformed_host_without_regex_backtracking(self):
+        """Malformed hosts should fail via bounded label validation."""
+        malformed_host = ("a." * 120) + "!"
+
+        with pytest.raises(ValidationError, match="Invalid URL host"):
+            InputValidator.validate_url(f"https://{malformed_host}/path")
 
     def test_url_none_value(self):
         """Test URL validation with None."""
