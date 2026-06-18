@@ -41,7 +41,7 @@ dependencies = [
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
-    "PyJWT[crypto]>=2.12.0,<3.0.0",  # CVE-2026-32597 floor; required by traigent.security.jwt_validator and traigent.cloud.auth at import time
+    "PyJWT[crypto]>=2.13.0,<3.0.0",  # >=2.13.0: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
     "litellm==1.87.1",  # Stable pin: 1.83.x python-dotenv==1.0.1 and 1.83.14 openai==2.24.0 sub-pins are gone from stable 1.84+ (1.87.1 ships openai>=2.20,<3 and python-dotenv>=1.0,<2, compatible with langchain-openai>=1.1.14). Keep pinned + verified on bumps; no need for RC/dev builds anymore.
     "rank-bm25",
@@ -263,6 +263,7 @@ traigent_validation = ["py.typed"]
 [tool.uv]
 constraint-dependencies = [
     "flask>=3.1.3",
+    "idna>=3.15",  # CVE-2024-3651 bypass in idna.encode()
     "langgraph>=1.0.10",
     "langsmith>=0.7.31",
     "mako>=1.3.11",
