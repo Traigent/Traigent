@@ -95,7 +95,9 @@ class TestKeyManager:
         self, tmp_path, monkeypatch
     ):
         """Configured key stores must survive process-local manager lifetimes."""
-        monkeypatch.setenv("TRAIGENT_KEY_MANAGER_MASTER_PASSWORD", "test-key-store-passphrase")
+        monkeypatch.setenv(
+            "TRAIGENT_KEY_MANAGER_MASTER_PASSWORD", "test-key-store-passphrase"
+        )
         storage_path = tmp_path / "keys.json"
         key_manager = KeyManager(storage_path=storage_path)
 
