@@ -290,6 +290,7 @@ def load_best_config_spec(
             raise ConfigurationError(
                 f"Failed to load best config {path}: {exc}"
             ) from exc
+        # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning("Ignoring invalid best config %s: %s", path, exc)
         return None
 
@@ -550,6 +551,7 @@ def resolve_repo_best_config(
             raise ConfigurationError(
                 f"Failed to resolve repo best config: {exc}"
             ) from exc
+        # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning(
             "Ignoring repo best config %s after validation failure: %s",
             safe_config_id,
@@ -611,6 +613,7 @@ def resolve_cloud_cache_best_config(
             if isinstance(exc, ConfigurationError):
                 raise
             raise ConfigurationError(f"Failed to resolve cloud cache: {exc}") from exc
+        # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning(
             "Ignoring cloud best-config cache for %s: %s", safe_config_id, exc
         )

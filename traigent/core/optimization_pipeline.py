@@ -571,7 +571,8 @@ def create_workflow_traces_tracker(
     except ImportError:
         logger.debug("Workflow traces module not available, skipping trace collection")
         return None
-    except Exception as exc:
+    # fail-open(intentional): tracing is non-blocking; init errors degrade gracefully
+    except (AttributeError, TypeError) as exc:
         logger.debug(f"Failed to initialize workflow traces tracker: {exc}")
         return None
 

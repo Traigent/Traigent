@@ -183,13 +183,25 @@ class TestLoadCached:
     async def test_load_cached_handles_other_errors(
         self, resolver: CredentialResolver
     ) -> None:
-        """Test load_cached handles other exceptions gracefully."""
+        """Test load_cached handles expected cache I/O exceptions gracefully."""
+        with patch(
+            "traigent.security.crypto_utils.SecureFileManager.read_secure_file",
+            side_effect=PermissionError("test error"),
+        ):
+            result = await resolver.load_cached()
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_load_cached_reraises_unexpected_errors(
+        self, resolver: CredentialResolver
+    ) -> None:
+        """Test load_cached propagates unexpected failures."""
         with patch(
             "traigent.security.crypto_utils.SecureFileManager.read_secure_file",
             side_effect=ValueError("test error"),
         ):
-            result = await resolver.load_cached()
-            assert result is None
+            with pytest.raises(ValueError, match="test error"):
+                await resolver.load_cached()
 
 
 class TestLoadFromEnv:
@@ -334,13 +346,25 @@ class TestLoadFromEnv:
 
     @pytest.mark.asyncio
     async def test_load_handles_exceptions(self, resolver: CredentialResolver) -> None:
-        """Test load_from_env handles exceptions gracefully."""
+        """Test load_from_env handles expected import/parsing exceptions gracefully."""
         with patch(
             "traigent.cloud.credential_manager.CredentialManager.get_credentials",
-            side_effect=Exception("test error"),
+            side_effect=AttributeError("test error"),
         ):
             result = await resolver.load_from_env(AuthMode.API_KEY)
             assert result is None
+
+    @pytest.mark.asyncio
+    async def test_load_from_env_reraises_unexpected_errors(
+        self, resolver: CredentialResolver
+    ) -> None:
+        """Test load_from_env propagates unexpected failures."""
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            side_effect=RuntimeError("test error"),
+        ):
+            with pytest.raises(RuntimeError, match="test error"):
+                await resolver.load_from_env(AuthMode.API_KEY)
 
 
 class TestCache:

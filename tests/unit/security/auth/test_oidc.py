@@ -749,9 +749,10 @@ class TestOIDCAuthProviderAccessToken:
         mock_jwt.decode.side_effect = Exception("Invalid token")
 
         provider = OIDCAuthProvider(valid_settings)
-        claims = provider.verify_access_token("invalid.access.token")
-
-        assert claims is None
+        with pytest.raises(
+            AuthenticationError, match="Access token verification failed"
+        ):
+            provider.verify_access_token("invalid.access.token")
 
     @patch("traigent.security.auth.oidc.PyJWKClient")
     @patch("traigent.security.auth.oidc.jwt")

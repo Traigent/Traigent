@@ -188,8 +188,7 @@ class OIDCAuthProvider:
             )
             return cast(dict[str, Any] | None, claims)
         except Exception as e:
-            logger.warning(f"Access token verification failed: {e}")
-            return None
+            raise AuthenticationError(f"Access token verification failed: {e}") from e
 
     def revoke_token(self, token: str) -> None:
         """Revoke a token to prevent further use."""
