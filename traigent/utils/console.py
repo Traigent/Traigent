@@ -30,7 +30,9 @@ import sys
 from typing import Any
 
 
-def _safe_print(*args: Any, sep: str = " ", end: str = "\n", flush: bool = False) -> None:
+def _safe_print(
+    *args: Any, sep: str = " ", end: str = "\n", flush: bool = False
+) -> None:
     """Print to stdout, replacing unencodable characters instead of crashing.
 
     This is a drop-in replacement for the built-in ``print()`` that gracefully
