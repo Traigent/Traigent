@@ -19,7 +19,7 @@ results = await func.optimize(max_trials=10, algorithm="grid")
 
 ### Cloud algorithms (Traigent cloud only)
 
-Smart algorithms — Bayesian (GP surrogate), Optuna TPE, CMA-ES, NSGA-II, and others — run on the Traigent cloud. Calling `get_optimizer("bayesian")` or passing `algorithm="bayesian"` (or `"optuna"`, `"tpe"`, `"nsga2"`, `"cmaes"`) in a local run raises an error directing you to the cloud. To use these algorithms, connect to [Traigent Portal](https://portal.traigent.ai) and use `execution_mode="hybrid"` or the cloud path when it is available.
+Smart algorithms — Bayesian (GP surrogate), Optuna TPE, CMA-ES, NSGA-II, and others — run on the Traigent cloud. Calling `get_optimizer("bayesian")` or passing `algorithm="bayesian"` (or `"optuna"`, `"tpe"`, `"nsga2"`, `"cmaes"`) in a local run raises an error directing you to the cloud. To use these algorithms, connect to [Traigent Portal](https://portal.traigent.ai) and set `TRAIGENT_API_KEY` for portal tracking (mode is auto-selected to `hybrid` for smart algorithms).
 
 ## Grid Search
 

@@ -2,7 +2,7 @@
 
 This guide describes the planned Model 2 agent-specification API.
 
-> **Current status:** Remote agent optimization in Traigent Cloud is not implemented yet. The `execution_mode="cloud"` path fails closed with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.” Use `execution_mode="hybrid"` for portal-visible SDK runs today; trials still execute locally.
+> **Current status:** Remote agent optimization in Traigent Cloud is not implemented yet. The `execution_mode="cloud"` path fails closed with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.” Mode is auto-selected; set `TRAIGENT_API_KEY` for portal-visible runs.
 
 ## Overview
 

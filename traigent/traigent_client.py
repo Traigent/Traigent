@@ -89,7 +89,7 @@ class TraigentClient:
         Args:
             api_key: API key for backend
             backend_url: Backend URL (defaults to centralized config)
-            execution_mode: 'auto', 'hybrid', 'cloud', 'edge_analytics'
+            execution_mode: 'auto', 'edge_analytics', 'hybrid', 'hybrid_api'
             agent_builder: Agent builder instance for local execution
 
         Note:
