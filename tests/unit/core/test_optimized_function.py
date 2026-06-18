@@ -131,7 +131,7 @@ class TestOptimizedFunction:
         """Test basic OptimizedFunction creation."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -148,7 +148,7 @@ class TestOptimizedFunction:
         """Test OptimizedFunction creation with all parameters."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             algorithm="bayesian",
             max_trials=100,
@@ -172,7 +172,7 @@ class TestOptimizedFunction:
         with pytest.raises((TypeError, ValidationError)):
             OptimizedFunction(
                 func="not_a_function",
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
             )
 
@@ -183,7 +183,7 @@ class TestOptimizedFunction:
         with pytest.raises((TypeError, ValueError, ValidationError)):
             OptimizedFunction(
                 func=mock_function,
-                config_space="not_a_dict",
+                configuration_space="not_a_dict",
                 objectives=sample_objectives,
             )
 
@@ -193,7 +193,7 @@ class TestOptimizedFunction:
         """Test OptimizedFunction creation with empty config space."""
         with pytest.raises((ValueError, ValidationError)):
             OptimizedFunction(
-                func=mock_function, config_space={}, objectives=sample_objectives
+                func=mock_function, configuration_space={}, objectives=sample_objectives
             )
 
     def test_optimized_function_creation_invalid_objectives(
@@ -203,7 +203,7 @@ class TestOptimizedFunction:
         with pytest.raises((TypeError, ValueError, ValidationError)):
             OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives="not_a_list",
             )
 
@@ -214,7 +214,7 @@ class TestOptimizedFunction:
         with pytest.raises(ValueError, match="optimization_history_limit must be >= 1"):
             OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 optimization_history_limit=0,
             )
@@ -225,7 +225,7 @@ class TestOptimizedFunction:
         """Test OptimizedFunction creation with empty objectives defaults to accuracy."""
         # Empty objectives list defaults to ["accuracy"] as fallback
         opt_func = OptimizedFunction(
-            func=mock_function, config_space=sample_config_space, objectives=[]
+            func=mock_function, configuration_space=sample_config_space, objectives=[]
         )
         # System defaults to accuracy when empty list provided
         assert opt_func.objectives == ["accuracy"]
@@ -254,7 +254,7 @@ class TestOptimizedFunction:
 
         opt_func = OptimizedFunction(
             func=qa_agent,
-            config_space={"temperature": [0.1]},
+            configuration_space={"temperature": [0.1]},
             objectives=["accuracy"],
             eval_dataset=dataset,
             scoring_function=contains_accuracy,
@@ -337,7 +337,7 @@ class TestOptimizedFunction:
         with pytest.raises((ValueError, ValidationError)):
             OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 max_trials=-1,
             )
@@ -349,7 +349,7 @@ class TestOptimizedFunction:
         with pytest.raises((ValueError, ValidationError)):
             OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 timeout=-1.0,
             )
@@ -362,7 +362,7 @@ class TestOptimizedFunction:
         """Test loading dataset from Dataset object."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
         )
@@ -385,7 +385,7 @@ class TestOptimizedFunction:
         try:
             opt_func = OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
             )
 
@@ -432,7 +432,7 @@ class TestOptimizedFunction:
         try:
             opt_func = OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
             )
 
@@ -465,7 +465,7 @@ class TestOptimizedFunction:
         """Test loading dataset with invalid type."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -479,7 +479,7 @@ class TestOptimizedFunction:
         """Test loading dataset from nonexistent file."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -496,7 +496,7 @@ class TestOptimizedFunction:
         """Test basic optimization workflow."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             max_trials=3,
             eval_dataset=sample_dataset,
@@ -558,7 +558,7 @@ class TestOptimizedFunction:
             if mock_get_optimizer.called:
                 mock_get_optimizer.assert_called_with(
                     algorithm="random",
-                    config_space=sample_config_space,
+                    configuration_space=sample_config_space,
                     objectives=sample_objectives,
                 )
 
@@ -578,7 +578,7 @@ class TestOptimizedFunction:
         """Ensure optimize(max_trials=0) fails fast before executing trials."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
         )
@@ -593,7 +593,7 @@ class TestOptimizedFunction:
         """Test optimization with custom evaluator."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             custom_evaluator=mock_custom_evaluator,
             max_trials=2,
@@ -669,7 +669,7 @@ class TestOptimizedFunction:
             warnings.simplefilter("always")
             opt_func = OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 execution_mode="cloud",
                 max_trials=5,
@@ -689,7 +689,7 @@ class TestOptimizedFunction:
             warnings.simplefilter("always")
             opt_func = OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 execution_mode="edge_analytics",
                 cloud_fallback_policy="auto",
@@ -706,7 +706,7 @@ class TestOptimizedFunction:
         """Test optimization with None dataset."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             eval_dataset=None,  # Explicitly set to None
         )
@@ -721,7 +721,7 @@ class TestOptimizedFunction:
         """Test optimization with unknown algorithm."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             algorithm="unknown_algorithm",
             eval_dataset=sample_dataset,  # Set dataset on instance
@@ -742,7 +742,7 @@ class TestOptimizedFunction:
         """Test optimization with framework override."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             auto_override_frameworks=True,
             framework_targets=["openai.OpenAI"],
@@ -805,7 +805,7 @@ class TestOptimizedFunction:
         """Test configuration injection from context."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -832,7 +832,7 @@ class TestOptimizedFunction:
             warnings.simplefilter("always")
             opt_func = OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 execution_mode="cloud",
             )
@@ -848,7 +848,7 @@ class TestOptimizedFunction:
         """Test handling of optimization errors."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             eval_dataset=sample_dataset,  # Set dataset on instance
         )
@@ -878,7 +878,7 @@ class TestOptimizedFunction:
         with pytest.raises((TypeError, ValidationError)):
             OptimizedFunction(
                 func=mock_function,
-                config_space="invalid_config_space",  # Should be dict, not string
+                configuration_space="invalid_config_space",  # Should be dict, not string
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
             )
@@ -903,7 +903,7 @@ class TestOptimizedFunction:
 
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=config_space,
+            configuration_space=config_space,
             objectives=objectives,
             custom_evaluator=mock_custom_evaluator,
             max_trials=2,
@@ -974,7 +974,9 @@ class TestOptimizedFunction:
             # Verify all components were called correctly if the optimization path was taken
             if mock_get_optimizer.called:
                 mock_get_optimizer.assert_called_with(
-                    algorithm="random", config_space=config_space, objectives=objectives
+                    algorithm="random",
+                    configuration_space=config_space,
+                    objectives=objectives,
                 )
             if mock_orchestrator_class.called:
                 mock_orchestrator_class.assert_called_once()
@@ -996,7 +998,7 @@ class TestOptimizedFunction:
         for i in range(100):
             opt_func = OptimizedFunction(
                 func=mock_function,
-                config_space=sample_config_space,
+                configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 max_trials=i + 1,
             )
@@ -1010,7 +1012,7 @@ class TestOptimizedFunction:
         # Create one more instance to verify memory was properly reclaimed
         final_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             max_trials=1,
         )
@@ -1057,7 +1059,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that OptimizedFunction starts in UNOPTIMIZED state."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1070,7 +1072,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that state property returns the internal state."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1092,7 +1094,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that current_config is accessible in UNOPTIMIZED state."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1106,7 +1108,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that current_config raises OptimizationStateError during optimization."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1125,7 +1127,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that current_config is accessible in OPTIMIZED state."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1142,7 +1144,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that current_config is accessible in ERROR state."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1158,7 +1160,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that current_config returns a copy, not the original."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1177,7 +1179,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that best_config is None before optimization."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1189,7 +1191,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that best_config returns the best configuration."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1203,7 +1205,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that best_config returns a copy, not the original."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1222,7 +1224,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that cleanup() clears optimization history."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1239,7 +1241,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that cleanup() preserves config by default."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1260,7 +1262,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that cleanup(preserve_config=False) resets config."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1282,7 +1284,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that cleanup() clears accumulated stats."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1302,7 +1304,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that reset() fully resets to initial state."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1325,7 +1327,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that calling reset() multiple times is safe."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -1344,7 +1346,7 @@ class TestOptimizedFunctionLifecycle:
         """Test that state transitions correctly during optimization."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
             max_trials=1,

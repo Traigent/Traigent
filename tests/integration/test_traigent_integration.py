@@ -117,7 +117,7 @@ class TestCoreAPIIntegration:
         # Create optimized function without dataset (which causes issues)
         opt_func = OptimizedFunction(
             func=test_function,
-            config_space={
+            configuration_space={
                 "model": ["gpt-4o-mini", "GPT-4o"],
                 "temperature": [0.1, 0.5, 0.9],
             },
@@ -253,7 +253,7 @@ class TestCoreAPIIntegration:
         # Step 1: Create optimized function
         opt_func = OptimizedFunction(
             func=customer_support_agent,
-            config_space={
+            configuration_space={
                 "model": ["gpt-4o-mini", "GPT-4o"],
                 "temperature": [0.1, 0.5, 0.9],
             },
@@ -480,9 +480,9 @@ class TestPlatformSupport:
         ]
 
         for platform in expected_platforms:
-            assert (
-                platform in manager._parameter_mappings
-            ), f"Missing mapping for {platform}"
+            assert platform in manager._parameter_mappings, (
+                f"Missing mapping for {platform}"
+            )
             mapping = manager._parameter_mappings[platform]
             assert isinstance(mapping, dict), f"Invalid mapping type for {platform}"
             assert len(mapping) > 0, f"Empty mapping for {platform}"
