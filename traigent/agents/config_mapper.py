@@ -532,7 +532,7 @@ class ConfigurationMapper:
                 ParameterMapping(
                     source_key="model",
                     target_key="model",
-                    description="Anthropic model name (claude-3-opus, claude-3-sonnet, claude-3-haiku)",
+                    description="Anthropic model name (claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5-20251001)",
                 ),
                 ParameterMapping(
                     source_key="temperature",
