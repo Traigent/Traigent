@@ -1225,9 +1225,13 @@ def _resolve_execution_mode_enum(
         raise ConfigurationError(str(exc)) from None
 
     if requested_privacy_alias:
-        logger.warning(
+        import warnings
+
+        warnings.warn(
             "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
-            "with privacy_enabled=True. Mapping automatically."
+            "with privacy_enabled=True. Mapping automatically.",
+            DeprecationWarning,
+            stacklevel=8,
         )
         if privacy_enabled is None:
             privacy_enabled = True
