@@ -463,16 +463,13 @@ class OptimizedFunction:
         self.framework_targets = framework_targets or []
 
         # Execution mode configuration
-        requested_mode = getattr(self, "_requested_execution_mode", None)
         try:
             requested_mode_enum = resolve_execution_mode(execution_mode)
             effective_mode_enum = validate_execution_mode(requested_mode_enum)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from None
 
-        privacy_alias_requested = requested_mode_enum is ExecutionMode.PRIVACY
-        if requested_mode and requested_mode.lower() == "privacy":
-            privacy_alias_requested = True
+        privacy_alias_requested = False
 
         self._effective_execution_mode = effective_mode_enum
         self.execution_mode = effective_mode_enum.value
@@ -487,15 +484,7 @@ class OptimizedFunction:
         self.effectuation = bool(effectuation)
 
     def _is_cloud_execution_mode(self) -> bool:
-        """Return True when configured for managed cloud execution."""
-        effective_mode = getattr(self, "_effective_execution_mode", None)
-        if isinstance(effective_mode, ExecutionMode):
-            mode_enum = effective_mode
-        else:
-            mode_enum = resolve_execution_mode(
-                effective_mode, default=resolve_execution_mode(self.execution_mode)
-            )
-        return mode_enum is ExecutionMode.CLOUD
+        return False
 
     def _setup_configuration_space(self, configuration_space, config_space) -> None:
         """Setup configuration space with backward compatibility."""
@@ -594,25 +583,20 @@ class OptimizedFunction:
         self.use_cloud_service = self._store_optional_param(
             kwargs, sentinel, "use_cloud_service", False, as_bool=True
         )
-        default_cloud_fallback_policy = (
-            "never"
-            if getattr(self, "_effective_execution_mode", None) is ExecutionMode.CLOUD
-            else "auto"
-        )
         raw_cloud_fallback_policy = kwargs.pop("cloud_fallback_policy", sentinel)
-        if raw_cloud_fallback_policy is sentinel or raw_cloud_fallback_policy is None:
-            self.cloud_fallback_policy = default_cloud_fallback_policy
-        else:
-            if not isinstance(raw_cloud_fallback_policy, str):
-                raise ValueError(
-                    "cloud_fallback_policy must be one of: auto, warn, never"
-                )
-            resolved_cloud_fallback_policy = raw_cloud_fallback_policy.strip().lower()
-            if resolved_cloud_fallback_policy not in _CLOUD_FALLBACK_POLICIES:
-                raise ValueError(
-                    "cloud_fallback_policy must be one of: auto, warn, never"
-                )
-            self.cloud_fallback_policy = resolved_cloud_fallback_policy
+        if (
+            raw_cloud_fallback_policy is not sentinel
+            and raw_cloud_fallback_policy is not None
+        ):
+            import warnings
+
+            warnings.warn(
+                "cloud_fallback_policy is deprecated and has no effect. "
+                "Remote cloud execution has been removed.",
+                DeprecationWarning,
+                stacklevel=6,
+            )
+        self.cloud_fallback_policy = "auto"
         kwargs["cloud_fallback_policy"] = self.cloud_fallback_policy
         self.framework_target = self._store_optional_param(
             kwargs, sentinel, "framework_target", None

@@ -14,7 +14,7 @@ import pytest
 
 from traigent.config.types import ExecutionMode
 from traigent.traigent_client import TraigentClient
-from traigent.utils.exceptions import ConfigurationError, OptimizationError
+from traigent.utils.exceptions import OptimizationError
 
 
 class TestTraigentClientInitialization:
@@ -97,15 +97,25 @@ class TestDetermineExecutionMode:
         client = TraigentClient(execution_mode="edge_analytics")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-    def test_explicit_standard_mode_raises(self) -> None:
-        """Test explicit standard mode raises ConfigurationError (removed mode)."""
-        with pytest.raises(ConfigurationError, match="No such mode"):
-            TraigentClient(execution_mode="standard")
+    def test_explicit_standard_mode_deprecated_resolves_to_hybrid(self) -> None:
+        """Deprecated standard mode emits DeprecationWarning and resolves to hybrid."""
+        import warnings
 
-    def test_explicit_cloud_mode_raises(self) -> None:
-        """Test explicit cloud mode raises ConfigurationError (not yet supported)."""
-        with pytest.raises(ConfigurationError, match="Cloud remote execution"):
-            TraigentClient(execution_mode="cloud")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = TraigentClient(execution_mode="standard")
+        assert client.execution_mode == ExecutionMode.HYBRID
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+    def test_explicit_cloud_mode_deprecated_resolves_to_edge_analytics(self) -> None:
+        """Deprecated cloud mode emits DeprecationWarning and resolves to edge_analytics."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = TraigentClient(execution_mode="cloud")
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")

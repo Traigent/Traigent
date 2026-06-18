@@ -283,7 +283,7 @@ class TestReentrantRegistryDiscovery:
             # Only one thread should have done discovery
             starts = [x for x in discovery_order if x.startswith("start_")]
             assert len(starts) == 1, (
-                f"Expected 1 discovery, got {len(starts)}. " f"Order: {discovery_order}"
+                f"Expected 1 discovery, got {len(starts)}. Order: {discovery_order}"
             )
         finally:
             registry.discover_entry_points = original_discover
@@ -850,14 +850,19 @@ class TestTraigentClientEdgeAnalyticsMode:
                 if module_obj is not None:
                     sys.modules[mod] = module_obj
 
-    def test_traigent_client_cloud_mode_requires_cloud(self):
-        """TraigentClient should raise ConfigurationError for cloud mode.
+    def test_traigent_client_cloud_mode_deprecated_resolves_to_edge_analytics(self):
+        """TraigentClient accepts deprecated cloud mode with DeprecationWarning.
 
-        Cloud mode is not yet supported, so TraigentClient raises
-        ConfigurationError before even checking for cloud dependencies.
+        Cloud mode is no longer reserved — it emits DeprecationWarning and
+        resolves to edge_analytics.
         """
-        from traigent.traigent_client import TraigentClient
-        from traigent.utils.exceptions import ConfigurationError
+        import warnings
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            TraigentClient(execution_mode="cloud", agent_builder=None)
+        from traigent.config.types import ExecutionMode
+        from traigent.traigent_client import TraigentClient
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = TraigentClient(execution_mode="cloud", agent_builder=None)
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)

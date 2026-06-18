@@ -1,41 +1,48 @@
-"""Contract tests for reserved OptimizedFunction cloud mode."""
+"""Contract tests for deprecated OptimizedFunction cloud mode aliases."""
 
-import pytest
+import warnings
+
 
 from traigent.config.types import ExecutionMode
 from traigent.core.optimized_function import OptimizedFunction
-from traigent.utils.exceptions import ConfigurationError
 
 
 class TestCloudIntegration:
-    """Cloud is reserved; supported modes continue to initialize."""
+    """Cloud mode is deprecated; it resolves to edge_analytics with a DeprecationWarning."""
 
-    def test_cloud_mode_fails_closed_at_initialization(
+    def test_cloud_mode_deprecated_resolves_to_edge_analytics(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Public cloud mode must not construct a locally completing wrapper."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            OptimizedFunction(
+        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
                 execution_mode="cloud",
             )
+        assert opt_func.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        assert opt_func._effective_execution_mode is ExecutionMode.EDGE_ANALYTICS
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_cloud_mode_fails_closed_even_with_auto_fallback(
+    def test_cloud_mode_with_fallback_policy_emits_deprecation(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Fallback policy cannot make the reserved cloud mode available."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            OptimizedFunction(
+        """cloud_fallback_policy param is deprecated and emits DeprecationWarning."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
-                execution_mode="cloud",
+                execution_mode="edge_analytics",
                 cloud_fallback_policy="auto",
             )
+        assert opt_func.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_hybrid_mode_remains_supported(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
@@ -55,15 +62,19 @@ class TestCloudIntegration:
     def test_invalid_cloud_fallback_policy_still_rejected(
         self, simple_function, sample_config_space, sample_objectives
     ):
-        """Fallback policy values are validated even while cloud mode is reserved."""
-        with pytest.raises(ValueError, match="cloud_fallback_policy"):
-            OptimizedFunction(
+        """Unknown cloud_fallback_policy values are warned (no longer raise ValueError)."""
+        # cloud_fallback_policy is fully deprecated; any value just emits DeprecationWarning
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 execution_mode="hybrid",
                 cloud_fallback_policy="sometimes",
             )
+        assert opt_func.execution_mode == ExecutionMode.HYBRID.value
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_edge_mode_remains_supported(
         self, simple_function, sample_config_space, sample_objectives

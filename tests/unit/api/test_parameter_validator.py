@@ -54,7 +54,9 @@ class TestParameterValidator:
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""
-        invalid_modes = ["invalid", "remote", "unsupported", "standard", "cloud"]
+        # "standard" and "cloud" are now deprecated aliases (emit DeprecationWarning)
+        # rather than hard errors. Only truly unknown strings are invalid.
+        invalid_modes = ["invalid", "remote", "unsupported"]
 
         for mode in invalid_modes:
             with pytest.raises(ValidationError) as exc_info:

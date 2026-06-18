@@ -1300,13 +1300,6 @@ def _log_execution_mode_warnings(
     minimal_logging: bool,
 ) -> None:
     """Log warnings for incompatible execution mode settings."""
-    if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
-        logger.warning(
-            "local_storage_path is ignored when execution_mode='cloud'. "
-            "Cloud remote execution is not available yet; use hybrid for "
-            "portal-tracked optimization."
-        )
-
     if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
         logger.warning(
             "minimal_logging is only effective in Edge Analytics mode. "

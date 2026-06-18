@@ -828,20 +828,23 @@ class TestOptimization:
             opt_func.apply_best_config()
 
     @pytest.mark.asyncio
-    async def test_optimization_with_cloud_execution_fails_closed(
+    async def test_optimization_with_deprecated_cloud_resolves_to_edge_analytics(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Reserved cloud execution fails before optimization can start."""
-        from traigent.utils.exceptions import ConfigurationError
+        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        import warnings
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            OptimizedFunction(
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            opt_func = OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
                 execution_mode="cloud",
             )
+        assert opt_func.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_get_optimization_results(
         self, simple_function, sample_config_space, sample_objectives

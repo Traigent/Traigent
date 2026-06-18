@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from traigent.core.meta_types import TraigentMetadata
 
-from traigent.config.types import ExecutionMode, resolve_execution_mode
+from traigent.config.types import resolve_execution_mode
 from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
@@ -1462,12 +1462,9 @@ class LocalEvaluator(BaseEvaluator):
             extra_reserved=self._evaluator_computable_metric_names(),
         )
 
-        # Generate summary_stats for all modes except CLOUD (needed for insights)
+        # Generate summary_stats (needed for insights)
         summary_stats = None
-        if (
-            self.execution_mode_enum
-            and self.execution_mode_enum is not ExecutionMode.CLOUD
-        ):
+        if self.execution_mode_enum:
             summary_stats = metrics_tracker.format_as_summary_stats()
             logger.debug(f"Generated summary_stats for {self.execution_mode} mode")
 

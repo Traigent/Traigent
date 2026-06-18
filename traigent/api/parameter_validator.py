@@ -11,11 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
-from traigent.config.types import (
-    ExecutionMode,
-    InjectionMode,
-    validate_execution_mode,
-)
+from traigent.config.types import ExecutionMode, InjectionMode, validate_execution_mode
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
@@ -50,7 +46,6 @@ class ParameterValidator:
 
     VALID_EXECUTION_MODES = {
         ExecutionMode.EDGE_ANALYTICS.value,
-        ExecutionMode.PRIVACY.value,
         ExecutionMode.HYBRID.value,
         ExecutionMode.HYBRID_API.value,
     }
@@ -85,9 +80,7 @@ class ParameterValidator:
 
         # Normalize parameters
         params.injection_mode = self._normalize_injection_mode(params.injection_mode)
-        if (
-            privacy_alias_requested and params.privacy_enabled is None
-        ):
+        if privacy_alias_requested and params.privacy_enabled is None:
             params.privacy_enabled = True
         params.execution_mode = execution_mode_enum.value
 
@@ -95,10 +88,8 @@ class ParameterValidator:
 
     @staticmethod
     def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
-        if isinstance(execution_mode, ExecutionMode):
-            return execution_mode is ExecutionMode.PRIVACY
         if isinstance(execution_mode, str):
-            return execution_mode.strip().lower() == ExecutionMode.PRIVACY.value
+            return execution_mode.strip().lower() == "privacy"
         return False
 
     def _validate_execution_mode(

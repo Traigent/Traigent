@@ -177,13 +177,6 @@ class TraigentClient:
                 optimization_config or {},
                 config_defaults,
             )
-        elif self.execution_mode == ExecutionMode.CLOUD:
-            from traigent.cloud.client import CLOUD_REMOTE_EXECUTION_UNAVAILABLE
-
-            raise OptimizationError(
-                f"{CLOUD_REMOTE_EXECUTION_UNAVAILABLE} "
-                "Cloud mode will be enabled when remote agent execution is implemented."
-            )
         else:
             # Edge Analytics mode
             return await self._optimize_local(

@@ -203,7 +203,7 @@ def _add_summary_stats(
     summary_stats_available = (
         hasattr(trial_result, "summary_stats") and trial_result.summary_stats  # type: ignore[attr-defined]
     )
-    if not summary_stats_available or mode_enum is ExecutionMode.CLOUD:
+    if not summary_stats_available:
         return
 
     enhanced_summary_stats = trial_result.summary_stats.copy()  # type: ignore[attr-defined]
@@ -234,7 +234,6 @@ def _add_measures_to_metadata(
 
     include_full_measures = not privacy_on and mode_enum in {
         ExecutionMode.EDGE_ANALYTICS,
-        ExecutionMode.STANDARD,
         ExecutionMode.HYBRID,
     }
 
@@ -415,9 +414,7 @@ def build_backend_metadata(
     if isinstance(comparability_payload, dict):
         trial_metadata["comparability"] = comparability_payload
 
-    privacy_on = getattr(traigent_config, "privacy_enabled", False) or (
-        mode_enum is ExecutionMode.PRIVACY
-    )
+    privacy_on = getattr(traigent_config, "privacy_enabled", False)
     example_results = trial_result.metadata.get("example_results")
 
     _add_measures_to_metadata(
