@@ -2080,7 +2080,10 @@ class OptimizationOrchestrator:
 
         if session_id:
             self._initialize_logger(
-                session_id, func, dataset, experiment_display_name=experiment_display_name
+                session_id,
+                func,
+                dataset,
+                experiment_display_name=experiment_display_name,
             )
 
         self.callback_manager.on_optimization_start(

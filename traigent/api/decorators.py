@@ -2460,7 +2460,9 @@ def optimize(  # NOSONAR(S107)
         )
 
         effective_name = experiment_name_value or func.__name__
-        logger.info(f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})")
+        logger.info(
+            f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})"
+        )
 
         return optimized_func
 

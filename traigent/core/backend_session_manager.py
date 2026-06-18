@@ -569,7 +569,9 @@ class BackendSessionManager:
         function_identifier = function_descriptor.identifier
         # experiment_display_name (from @traigent.optimize(experiment_name=...)) overrides
         # the descriptor's __qualname__-derived display_name in portal/storage.
-        function_display_name = experiment_display_name or function_descriptor.display_name
+        function_display_name = (
+            experiment_display_name or function_descriptor.display_name
+        )
         function_slug = function_descriptor.slug
 
         if self._backend_client:
