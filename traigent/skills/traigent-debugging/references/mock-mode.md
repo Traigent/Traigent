@@ -64,10 +64,10 @@ When `TRAIGENT_MOCK_LLM=true`:
 
 ### What Gets Mocked
 
-- OpenAI API calls (`openai.chat.completions.create`)
-- Anthropic API calls (`anthropic.messages.create`)
-- LiteLLM completion calls made inside optimized/evaluated Traigent runs after the SDK installs its LiteLLM interceptor
-- Any provider accessed through Traigent's integration layer
+- LiteLLM completion calls (`litellm.completion(...)`) made inside optimized/evaluated Traigent runs after the SDK installs its interceptor
+- LangChain model invocations made via Traigent's framework integration layer (e.g. `ChatOpenAI`, `ChatAnthropic` when `traigent[integrations]` is installed)
+
+**Important:** Raw `openai.chat.completions.create(...)` and `anthropic.messages.create(...)` calls made directly (outside the LiteLLM or LangChain integration layer) are **not** intercepted and will attempt to reach real provider APIs. Stub those calls explicitly (e.g. with `unittest.mock`) for a guaranteed $0 rehearsal.
 
 ### What Is NOT Mocked
 

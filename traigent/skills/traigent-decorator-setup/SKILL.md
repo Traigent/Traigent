@@ -53,8 +53,8 @@ from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 
 schema = ObjectiveSchema(
     objectives=[
-        ObjectiveDefinition(name="accuracy", weight=0.7, direction="maximize"),
-        ObjectiveDefinition(name="cost", weight=0.3, direction="minimize"),
+        ObjectiveDefinition(name="accuracy", weight=0.7, orientation="maximize"),
+        ObjectiveDefinition(name="cost", weight=0.3, orientation="minimize"),
     ],
     weights_sum=1.0,
     weights_normalized={"accuracy": 0.7, "cost": 0.3},
