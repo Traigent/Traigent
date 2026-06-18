@@ -42,6 +42,7 @@ from ..utils.secure_path import (
     safe_write_text,
     validate_path,
 )
+from .credentials import SecurityError
 
 logger = get_logger(__name__)
 
@@ -876,8 +877,7 @@ class SecureStorage:
         try:
             data_bytes = self.encryption_manager.decrypt(encrypted_payload)
         except Exception as e:
-            logger.error(f"Failed to decrypt data record {record_id}: {e}")
-            return None
+            raise SecurityError(f"Decryption failed for {record_id}: {e}") from e
 
         data = data_bytes.decode("utf-8")
 

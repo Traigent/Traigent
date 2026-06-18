@@ -137,7 +137,8 @@ class BackendConfig:
                     "Using backend URL from stored CLI credentials: %s", stored_url
                 )
                 return stored_url
-        except Exception:
+        except (ImportError, AttributeError):
+            # narrow: only expected on missing optional dep
             pass
 
         return None
@@ -265,7 +266,8 @@ class BackendConfig:
             if stored_key:
                 logger.debug("Using API key from stored CLI credentials")
                 return stored_key
-        except Exception:
+        except (ImportError, AttributeError):
+            # narrow: only expected on missing optional dep
             pass
 
         # Missing credentials are expected for local/mock runs. Keep the
@@ -295,7 +297,8 @@ class BackendConfig:
             from traigent.cloud.credential_manager import CredentialManager
 
             stored_creds = CredentialManager.get_credentials()
-        except Exception:
+        except (ImportError, OSError):
+            # narrow: import/IO errors mean no stored creds
             return False
 
         return bool(stored_creds.get("api_key") or stored_creds.get("jwt_token"))
