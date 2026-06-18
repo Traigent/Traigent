@@ -5006,7 +5006,7 @@ or custom) is unchanged — there is no fabricated random-score path.</p>
 <p>The <code>**runtime_overrides</code> parameter accepts additional settings:</p>
 <p><strong>Optimization Algorithm</strong>:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;optuna&quot;</span><span class="p">,</span>  <span class="c1"># &quot;grid&quot;, &quot;random&quot;, &quot;bayesian&quot;, &quot;optuna&quot;</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>  <span class="c1"># &quot;grid&quot; or &quot;random&quot; (local); smart algorithms run in the Traigent cloud</span>
     <span class="o">...</span>
 <span class="p">)</span>
 </code></pre></div>

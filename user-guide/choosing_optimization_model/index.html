@@ -2184,10 +2184,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#supported-hybrid-approach" class="md-nav__link">
+  <a href="#portal-tracked-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Supported Hybrid Approach
+        Portal-Tracked Runs
       
     </span>
   </a>
@@ -4236,10 +4236,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#supported-hybrid-approach" class="md-nav__link">
+  <a href="#portal-tracked-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Supported Hybrid Approach
+        Portal-Tracked Runs
       
     </span>
   </a>
@@ -4480,7 +4480,7 @@
 <h1 id="choosing-the-right-optimization-model">Choosing the Right Optimization Model<a class="headerlink" href="#choosing-the-right-optimization-model" title="Permanent link">&para;</a></h1>
 <p>Traigent SDK currently supports local execution and portal-tracked local execution. This guide separates supported modes from future remote execution paths.</p>
 <blockquote>
-<p><strong>Current status:</strong> Use <code>execution_mode="edge_analytics"</code> for fully local runs and <code>execution_mode="hybrid"</code> for portal-tracked runs where trials still execute locally. <code>execution_mode="cloud"</code> and managed remote agent execution are not implemented yet and fail closed with guidance to use <code>hybrid</code>.</p>
+<p><strong>Current status (0.13+):</strong> The SDK auto-selects <code>execution_mode</code> — you do not need to set it. Portal tracking is enabled by having <code>TRAIGENT_API_KEY</code> set. For fully offline runs, set <code>TRAIGENT_OFFLINE_MODE=true</code>. <code>execution_mode="cloud"</code> is not implemented yet.</p>
 </blockquote>
 <h2 id="quick-decision-guide">Quick Decision Guide<a class="headerlink" href="#quick-decision-guide" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>graph TD
@@ -4666,11 +4666,13 @@
 
 <span class="c1"># response includes optimization details and best configuration</span>
 </code></pre></div>
-<h3 id="supported-hybrid-approach">Supported Hybrid Approach<a class="headerlink" href="#supported-hybrid-approach" title="Permanent link">&para;</a></h3>
-<p>Use <code>execution_mode="hybrid"</code> when you want the supported portal-tracked path:
-- Trials execute locally.
-- The backend stores session metadata and trial metrics.
-- Results appear in the Traigent portal without using the unavailable remote cloud execution path.</p>
+<h3 id="portal-tracked-runs">Portal-Tracked Runs<a class="headerlink" href="#portal-tracked-runs" title="Permanent link">&para;</a></h3>
+<p>To get results in the Traigent portal: set <code>TRAIGENT_API_KEY</code> and run normally. The SDK sends session/trial metrics to the backend automatically. <strong>No <code>execution_mode</code> change needed.</strong></p>
+<ul>
+<li>For grid/random search: auto-selected mode is <code>edge_analytics</code>; portal tracking is on when API key is present.</li>
+<li>For smart algorithms (Bayesian, TPE, CMA-ES): auto-selected mode is <code>hybrid</code>.</li>
+<li>For external REST agent services: configure <code>hybrid_api_endpoint</code>; auto-selected mode is <code>hybrid_api</code>.</li>
+</ul>
 <h2 id="decision-factors">Decision Factors<a class="headerlink" href="#decision-factors" title="Permanent link">&para;</a></h2>
 <h3 id="choose-edge_analytics-when">Choose <code>edge_analytics</code> When:<a class="headerlink" href="#choose-edge_analytics-when" title="Permanent link">&para;</a></h3>
 <ol>
@@ -4743,14 +4745,14 @@
 <h3 id="from-local-only-to-portal-tracked">From Local-Only to Portal-Tracked:<a class="headerlink" href="#from-local-only-to-portal-tracked" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Keep the optimized function and dataset unchanged.</li>
-<li>Authenticate with <code>traigent auth device-login</code>, run <code>traigent onboard</code> for guided setup, or set <code>TRAIGENT_API_KEY</code> in CI/non-interactive environments.</li>
-<li>Set <code>execution_mode="hybrid"</code>.</li>
+<li>Authenticate: run <code>traigent auth device-login</code>, <code>traigent onboard</code>, or set <code>TRAIGENT_API_KEY</code> in CI/non-interactive environments.</li>
+<li>Run normally — the SDK sends metrics to the portal automatically.</li>
 <li>Confirm the run appears in Traigent Portal.</li>
 </ol>
 <h3 id="from-accidental-cloud-usage">From Accidental Cloud Usage:<a class="headerlink" href="#from-accidental-cloud-usage" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Replace <code>execution_mode="cloud"</code> with <code>execution_mode="hybrid"</code> when you want website results.</li>
-<li>Use <code>execution_mode="edge_analytics"</code> and <code>TRAIGENT_OFFLINE_MODE=true</code> when you want no backend dependency.</li>
+<li>Remove <code>execution_mode="cloud"</code> — set <code>TRAIGENT_API_KEY</code> for portal-tracked runs (mode is auto-selected).</li>
+<li>Use <code>TRAIGENT_OFFLINE_MODE=true</code> when you want no backend dependency.</li>
 <li>Treat cloud remote execution docs and APIs as roadmap/reference material until the product path is released.</li>
 </ol>
 <h2 id="performance-tips">Performance Tips<a class="headerlink" href="#performance-tips" title="Permanent link">&para;</a></h2>
@@ -4779,11 +4781,10 @@
 <h2 id="conclusion">Conclusion<a class="headerlink" href="#conclusion" title="Permanent link">&para;</a></h2>
 <p>Choose based on your primary constraints:</p>
 <ul>
-<li><strong>Privacy/local-only</strong>: <code>edge_analytics</code></li>
-<li><strong>Website-visible results</strong>: <code>hybrid</code></li>
+<li><strong>Privacy/local-only (no portal)</strong>: <code>edge_analytics</code> + <code>TRAIGENT_OFFLINE_MODE=true</code></li>
+<li><strong>Portal-visible results</strong>: set <code>TRAIGENT_API_KEY</code>; mode auto-selected (<code>edge_analytics</code> for grid/random, <code>hybrid</code> for smart algorithms)</li>
 <li><strong>Remote cloud execution</strong>: reserved for a future release</li>
 </ul>
-<p>For now, users wanting website results should use <code>hybrid</code>, not <code>cloud</code>.</p>
 
 
 

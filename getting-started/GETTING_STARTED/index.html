@@ -4139,10 +4139,9 @@ traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w
     <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="execution-model">🔒 Execution Model<a class="headerlink" href="#execution-model" title="Permanent link">&para;</a></h2>
-<p>Traigent executes your code locally. The default is <code>execution_mode="edge_analytics"</code> (local).</p>
-<p><code>execution_mode="hybrid"</code> runs trials locally while sending session and trial metrics to the backend so results appear in the Traigent portal.</p>
-<p><code>execution_mode="cloud"</code> is reserved for future remote execution. It is not available yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”</p>
-<p>If you want website-visible results today, use <code>hybrid</code>; do not switch to <code>cloud</code>.</p>
+<p>Traigent executes your code locally. <strong>You do not need to set <code>execution_mode</code></strong> — the SDK auto-selects it based on your algorithm and configuration.</p>
+<p>Portal tracking (results visible in the Traigent portal) is enabled automatically when <code>TRAIGENT_API_KEY</code> is set. For grid/random search, the auto-selected mode is <code>edge_analytics</code>; for smart algorithms (Bayesian, TPE), it is <code>hybrid</code>.</p>
+<p><code>execution_mode=”cloud”</code> is reserved for future remote execution and is not available yet.</p>
 <p>To run fully local (no Traigent backend communication), set <code>TRAIGENT_OFFLINE_MODE=true</code>.</p>
 <hr />
 <p>Ready for more? Dive into the <a href="../examples/">examples</a> and the <a href="../../api-reference/complete-function-specification/">API reference</a>.</p>

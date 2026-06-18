@@ -4556,7 +4556,7 @@
 <h1 id="interactive-optimization-guide">Interactive Optimization Guide<a class="headerlink" href="#interactive-optimization-guide" title="Permanent link">&para;</a></h1>
 <p>This guide documents Traigent's interactive optimization model for client-side execution with remote guidance.</p>
 <blockquote>
-<p><strong>Current status:</strong> The generic <code>InteractiveOptimizer</code> can be used with a real <code>RemoteGuidanceService</code> implementation, but Traigent Cloud remote guidance is not a supported production path yet. Use <code>execution_mode="hybrid"</code> for portal-tracked SDK optimization today; use <code>execution_mode="edge_analytics"</code> for fully local runs.</p>
+<p><strong>Current status:</strong> The generic <code>InteractiveOptimizer</code> can be used with a real <code>RemoteGuidanceService</code> implementation, but Traigent Cloud remote guidance is not a supported production path yet. Mode is auto-selected; set <code>TRAIGENT_API_KEY</code> for portal-tracked runs, or <code>TRAIGENT_OFFLINE_MODE=true</code> for fully local runs.</p>
 </blockquote>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>The interactive optimization model enables a remote-guidance approach where:</p>
@@ -4627,7 +4627,7 @@ and name the result-submission method <code>submit_trial_result</code>. Use
 signature differences into your code.</p>
 <blockquote>
 <p>Backend availability: the Traigent Cloud remote-guidance endpoints back
-these adapter calls. Use <code>execution_mode="hybrid"</code> if you only need
+these adapter calls. Use <code>edge_analytics</code> mode (auto-selected) if you only need
 portal-tracked SDK runs with local trial execution.</p>
 </blockquote>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.cloud</span><span class="w"> </span><span class="kn">import</span> <span class="n">TraigentCloudClient</span><span class="p">,</span> <span class="n">TraigentCloudRemoteGuidanceAdapter</span>

@@ -1785,17 +1785,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#migration-note" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Migration Note
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#modes-at-a-glance" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1879,10 +1868,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#hybrid-mode" class="md-nav__link">
+  <a href="#hybrid-mode-hybrid" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Hybrid Mode
+        Hybrid Mode (hybrid)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hybrid-api-mode-hybrid_api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hybrid API Mode (hybrid_api)
       
     </span>
   </a>
@@ -3973,17 +3973,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#migration-note" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Migration Note
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#modes-at-a-glance" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4067,10 +4056,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#hybrid-mode" class="md-nav__link">
+  <a href="#hybrid-mode-hybrid" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Hybrid Mode
+        Hybrid Mode (hybrid)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hybrid-api-mode-hybrid_api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hybrid API Mode (hybrid_api)
       
     </span>
   </a>
@@ -4121,41 +4121,46 @@
 
 <h1 id="traigent-execution-modes-guide">Traigent Execution Modes Guide<a class="headerlink" href="#traigent-execution-modes-guide" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p><strong>Current status:</strong> Traigent executes trials locally. The default is <code>execution_mode="edge_analytics"</code> (local-only). Use <code>execution_mode="hybrid"</code> when you want local execution plus backend/portal tracking. <code>execution_mode="cloud"</code> is reserved for future remote execution and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”</p>
+<p><strong>Current status (0.13+):</strong> Traigent auto-selects the execution mode — you do not need to set <code>execution_mode</code> explicitly. Portal tracking is enabled automatically when <code>TRAIGENT_API_KEY</code> is set, regardless of mode. <code>execution_mode=”cloud”</code> is reserved for future remote execution and is not available yet.</p>
 </blockquote>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>Use <code>edge_analytics</code> (default) to run locally. Use <code>hybrid</code> for website-visible results while keeping trials on your machine. Do not use <code>cloud</code> yet; remote agent execution is not implemented.</p>
-<p>To run fully local (no Traigent backend communication), set <code>TRAIGENT_OFFLINE_MODE=true</code>.</p>
-<h2 id="migration-note">Migration Note<a class="headerlink" href="#migration-note" title="Permanent link">&para;</a></h2>
-<p>If you want optimization results in the Traigent website, use <code>execution_mode="hybrid"</code>, not <code>execution_mode="cloud"</code>. Hybrid is the supported production path for portal-tracked SDK optimization. Cloud is reserved for a future product path where Traigent Cloud runs the remote agent execution itself.</p>
+<p><strong>You do not need to set <code>execution_mode</code>.</strong> The SDK picks the right mode automatically:</p>
+<ul>
+<li><strong>Grid/random search (typical Python decorator use)</strong> → <code>edge_analytics</code> (local execution; portal-tracked when <code>TRAIGENT_API_KEY</code> is present)</li>
+<li><strong>Smart algorithms (Bayesian, TPE, CMA-ES)</strong> → <code>hybrid</code> (cloud-assisted orchestration; requires API key)</li>
+<li><strong>External REST agent service</strong> → <code>hybrid_api</code> (your service receives suggestions via the Hybrid Mode REST API)</li>
+</ul>
+<p>Portal tracking (results visible in the Traigent portal) is a function of having <code>TRAIGENT_API_KEY</code> set, not of the execution mode.</p>
+<p>To run fully local (no Traigent backend communication), set <code>TRAIGENT_OFFLINE_MODE=true</code> or omit <code>TRAIGENT_API_KEY</code>.</p>
 <h2 id="modes-at-a-glance">Modes at a Glance<a class="headerlink" href="#modes-at-a-glance" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>Mode</th>
-<th>OSS availability</th>
-<th>Status</th>
+<th>When auto-selected</th>
 <th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>edge_analytics</code></td>
-<td>Available</td>
-<td>Supported</td>
-<td>Local execution and local results</td>
+<td>Grid/random search</td>
+<td>Local execution; portal-visible when API key is set</td>
 </tr>
 <tr>
 <td><code>hybrid</code></td>
-<td>Available</td>
-<td>Supported</td>
-<td>Local execution plus backend session/trial tracking</td>
+<td>Smart algorithms (Bayesian, TPE, …)</td>
+<td>Cloud-assisted orchestration; API key required</td>
+</tr>
+<tr>
+<td><code>hybrid_api</code></td>
+<td>External REST agent service configured</td>
+<td>Your agent receives suggestions via REST</td>
 </tr>
 <tr>
 <td><code>cloud</code></td>
-<td>Reserved</td>
-<td>Not implemented</td>
-<td>Remote execution path fails closed</td>
+<td>(reserved)</td>
+<td>Remote execution — not implemented yet; fails closed</td>
 </tr>
 </tbody>
 </table>
@@ -4198,9 +4203,11 @@
 <li>CI smoke tests and demos (<code>TRAIGENT_MOCK_LLM=true</code>)</li>
 <li>Budget-conscious experiments</li>
 </ul>
-<h2 id="hybrid-mode">Hybrid Mode<a class="headerlink" href="#hybrid-mode" title="Permanent link">&para;</a></h2>
-<p>Hybrid mode is the production path for portal-tracked SDK runs today. The SDK creates a backend session, runs each trial locally, and submits trial metrics to the backend session/result endpoints so the run appears in the portal.</p>
-<p>Use <code>hybrid</code> when you want results to appear in the Traigent website. Use <code>edge_analytics</code> when you want fully local runs with no backend dependency.</p>
+<h2 id="hybrid-mode-hybrid">Hybrid Mode (<code>hybrid</code>)<a class="headerlink" href="#hybrid-mode-hybrid" title="Permanent link">&para;</a></h2>
+<p>Auto-selected when a smart algorithm (Bayesian, TPE, CMA-ES, NSGA-II) is requested. The SDK uses cloud-assisted orchestration for suggestion generation while running each trial locally.</p>
+<p><code>hybrid</code> is <strong>not</strong> the mode to set for "I want portal visibility with grid/random search" — that is <code>edge_analytics</code> with <code>TRAIGENT_API_KEY</code> set. Use <code>hybrid</code> only if you explicitly need smart cloud-assisted optimization algorithms.</p>
+<h2 id="hybrid-api-mode-hybrid_api">Hybrid API Mode (<code>hybrid_api</code>)<a class="headerlink" href="#hybrid-api-mode-hybrid_api" title="Permanent link">&para;</a></h2>
+<p>Auto-selected when a Hybrid Mode REST endpoint or transport is configured (<code>hybrid_api_endpoint</code> / <code>hybrid_api_transport</code>). Your external agent service receives trial suggestions via the Traigent Hybrid Mode REST API.</p>
 <h2 id="cloud-roadmap">Cloud Roadmap<a class="headerlink" href="#cloud-roadmap" title="Permanent link">&para;</a></h2>
 <p>Fully managed remote execution, including cloud-executed trials and remote agent optimization, is reserved for <code>execution_mode="cloud"</code>. That path is not implemented yet and must not return synthetic session IDs, trial suggestions, agent outputs, or completed statuses.</p>
 <h2 id="privacy-safe-analytics">Privacy-Safe Analytics<a class="headerlink" href="#privacy-safe-analytics" title="Permanent link">&para;</a></h2>

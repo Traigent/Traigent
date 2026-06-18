@@ -4790,7 +4790,7 @@
 <h1 id="agent-optimization-guide">Agent Optimization Guide<a class="headerlink" href="#agent-optimization-guide" title="Permanent link">&para;</a></h1>
 <p>This guide describes the planned Model 2 agent-specification API.</p>
 <blockquote>
-<p><strong>Current status:</strong> Remote agent optimization in Traigent Cloud is not implemented yet. The <code>execution_mode="cloud"</code> path fails closed with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.” Use <code>execution_mode="hybrid"</code> for portal-visible SDK runs today; trials still execute locally.</p>
+<p><strong>Current status:</strong> Remote agent optimization in Traigent Cloud is not implemented yet. The <code>execution_mode="cloud"</code> path fails closed with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.” Mode is auto-selected; set <code>TRAIGENT_API_KEY</code> for portal-visible runs.</p>
 </blockquote>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>Agent optimization is reserved for a future remote execution path where complete agent specifications can be optimized by Traigent Cloud. When available, this approach will be ideal when:</p>

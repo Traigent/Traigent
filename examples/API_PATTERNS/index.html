@@ -2956,6 +2956,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#multi-field-evaluation-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-Field Evaluation Inputs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multi-Field Evaluation Inputs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-extra-jsonl-fields-are-routed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How extra JSONL fields are routed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accessing-metadata-in-a-custom-evaluator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing metadata in a custom evaluator
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-field-input-dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-field input dict
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#mock-smoke-tests" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4020,6 +4070,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#multi-field-evaluation-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-Field Evaluation Inputs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multi-Field Evaluation Inputs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-extra-jsonl-fields-are-routed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How extra JSONL fields are routed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accessing-metadata-in-a-custom-evaluator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing metadata in a custom evaluator
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-field-input-dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-field input dict
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#mock-smoke-tests" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4203,6 +4303,110 @@ service that implements the Traigent Hybrid API contract.</p>
 
 
 <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">external_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="multi-field-evaluation-inputs">Multi-Field Evaluation Inputs<a class="headerlink" href="#multi-field-evaluation-inputs" title="Permanent link">&para;</a></h2>
+<p>Many tasks need more than a single input string. A text2SQL task, for example,
+requires both the natural-language question (<code>input</code>) and the database name
+(<code>db_id</code>) and ground-truth SQL (<code>gold_sql</code>) for evaluation. The SDK supports
+this through <code>example.metadata</code>.</p>
+<h3 id="how-extra-jsonl-fields-are-routed">How extra JSONL fields are routed<a class="headerlink" href="#how-extra-jsonl-fields-are-routed" title="Permanent link">&para;</a></h3>
+<p>When the SDK loads a JSONL dataset it applies the following mapping for each row:</p>
+<table>
+<thead>
+<tr>
+<th>JSONL key</th>
+<th>Maps to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>input</code> (or <code>input_data</code>)</td>
+<td><code>example.input_data</code></td>
+</tr>
+<tr>
+<td><code>expected_output</code> (or <code>expected</code>, <code>output</code>, <code>answer</code>, <code>target</code>, <code>label</code>)</td>
+<td><code>example.expected_output</code></td>
+</tr>
+<tr>
+<td><strong>every other key</strong></td>
+<td><code>example.metadata</code> (a <code>dict</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>A row like:</p>
+<div class="highlight"><pre><span></span><code>{&quot;input&quot;: &quot;How many employees live in each city?&quot;, &quot;expected_output&quot;: &quot;3 rows&quot;, &quot;db_id&quot;: &quot;company&quot;, &quot;gold_sql&quot;: &quot;SELECT city, COUNT(*) FROM employees GROUP BY city&quot;}
+</code></pre></div>
+<p>produces an <code>EvaluationExample</code> where:
+- <code>example.input_data</code> → <code>"How many employees live in each city?"</code>
+- <code>example.expected_output</code> → <code>"3 rows"</code>
+- <code>example.metadata</code> → <code>{"db_id": "company", "gold_sql": "SELECT city, COUNT(*) FROM employees GROUP BY city"}</code></p>
+<h3 id="accessing-metadata-in-a-custom-evaluator">Accessing metadata in a custom evaluator<a class="headerlink" href="#accessing-metadata-in-a-custom-evaluator" title="Permanent link">&para;</a></h3>
+<p>Use <code>custom_evaluator</code> to read extra fields alongside the function output.
+The evaluator receives the raw <code>EvaluationExample</code> and must return an
+<code>ExampleResult</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.api.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExampleResult</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sql_evaluator</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">example</span><span class="p">):</span>
+    <span class="n">db_id</span> <span class="o">=</span> <span class="n">example</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;db_id&quot;</span><span class="p">,</span> <span class="s2">&quot;default&quot;</span><span class="p">)</span>
+    <span class="n">gold_sql</span> <span class="o">=</span> <span class="n">example</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;gold_sql&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+    <span class="n">predicted_sql</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="n">example</span><span class="o">.</span><span class="n">input_data</span><span class="p">)</span>
+    <span class="n">correct</span> <span class="o">=</span> <span class="n">predicted_sql</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">gold_sql</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">ExampleResult</span><span class="p">(</span>
+        <span class="n">actual_output</span><span class="o">=</span><span class="n">predicted_sql</span><span class="p">,</span>
+        <span class="n">score</span><span class="o">=</span><span class="mf">1.0</span> <span class="k">if</span> <span class="n">correct</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">success</span><span class="o">=</span><span class="n">correct</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/text2sql.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">custom_evaluator</span><span class="o">=</span><span class="n">sql_evaluator</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;claude-3-haiku-20240307&quot;</span><span class="p">],</span>
+        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">],</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">text2sql_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
+</code></pre></div>
+<blockquote>
+<p><strong>Note:</strong> a plain <code>scoring_function(output, expected)</code> does not receive
+<code>example.metadata</code>. Use <code>custom_evaluator</code> whenever the task needs extra
+fields beyond the predicted and expected outputs.</p>
+</blockquote>
+<h3 id="multi-field-input-dict">Multi-field input dict<a class="headerlink" href="#multi-field-input-dict" title="Permanent link">&para;</a></h3>
+<p>When the optimized function itself needs multiple inputs, set <code>input</code> to a
+JSON object:</p>
+<div class="highlight"><pre><span></span><code>{&quot;input&quot;: {&quot;question&quot;: &quot;Find all cities with more than 100 employees&quot;, &quot;schema&quot;: &quot;employees(id, city, dept)&quot;}, &quot;expected_output&quot;: &quot;SELECT city FROM employees GROUP BY city HAVING COUNT(*) &gt; 100&quot;}
+</code></pre></div>
+<p>The SDK passes the dict's keys as keyword arguments if the function signature
+matches (either via named parameters or <code>**kwargs</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/text2sql.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">scoring_function</span><span class="o">=</span><span class="n">my_score</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;claude-3-haiku-20240307&quot;</span><span class="p">],</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]},</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">text2sql_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Schema: </span><span class="si">{</span><span class="n">schema</span><span class="si">}</span><span class="se">\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">],</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p>Alternatively, accept <code>**kwargs</code> to keep the signature flexible:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">text2sql_agent</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
+    <span class="n">question</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;question&quot;</span><span class="p">]</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;schema&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Schema: </span><span class="si">{</span><span class="n">schema</span><span class="si">}</span><span class="se">\n</span><span class="s2">Q: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">])</span>
 </code></pre></div>
 <h2 id="mock-smoke-tests">Mock Smoke Tests<a class="headerlink" href="#mock-smoke-tests" title="Permanent link">&para;</a></h2>
 <p>For tutorials and CI smoke tests, call mock mode explicitly near the top of the

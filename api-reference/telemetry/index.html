@@ -4739,9 +4739,9 @@ opt-out:</p>
 </code></pre></div>
 <p><code>TRAIGENT_TRACE_ENABLED</code> is the canonical tracing flag and defaults to
 <code>false</code>. It controls SDK span emission and workflow trace tracker creation.
-The older plural spelling <code>TRAIGENT_TRACES_ENABLED</code> remains as a deprecated
-alias when the canonical flag is unset; if both are set,
-<code>TRAIGENT_TRACE_ENABLED</code> takes precedence.</p>
+The older plural spelling <code>TRAIGENT_TRACES_ENABLED</code> is <strong>no longer supported</strong>
+as of 0.13.0 and is silently ignored. If you were using <code>TRAIGENT_TRACES_ENABLED</code>,
+migrate to <code>TRAIGENT_TRACE_ENABLED</code>.</p>
 <h3 id="agent-workflow-spans">Agent Workflow Spans<a class="headerlink" href="#agent-workflow-spans" title="Permanent link">&para;</a></h3>
 <p>0.12.0 exposes a public helper for adding sanitized agent/node spans to the
 active optimization workflow trace:</p>
