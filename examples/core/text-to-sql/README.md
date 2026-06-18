@@ -22,11 +22,19 @@ Four tables live in `schema.sql`:
 TRAIGENT_MOCK_LLM=true python examples/core/text-to-sql/run.py
 ```
 
-**Real LLM mode** — requires `ANTHROPIC_API_KEY`:
+**Real LLM mode — Anthropic** (requires `ANTHROPIC_API_KEY`):
 
 ```bash
 python examples/core/text-to-sql/run.py
 ```
+
+**Real LLM mode — OpenRouter** (requires `OPENROUTER_API_KEY`):
+
+See [`run-plan.txt2sql-example.md`](run-plan.txt2sql-example.md) for a
+pre-filled run plan. Use a **paid** model (e.g. `openai/gpt-4o-mini`) —
+free-tier OpenRouter slots (`:free` suffix) hit 429 rate limits under the
+optimizer's trial concurrency and will silently score 0% accuracy for all
+their trials.
 
 Traigent explores the configuration space (model, temperature, include_schema)
 and reports the best-scoring combination according to the `sql_accuracy` metric.
