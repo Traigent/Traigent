@@ -853,10 +853,20 @@ class ResponseHandler(ABC):
         pass
 
     def extract_metadata_cost(self, response: Any) -> CostMetrics:
-        """Extract cost information from response metadata if available."""
+        """Extract cost information from response metadata if available.
+
+        Checks the following sources in order:
+        1. ``response.cost`` — generic cost attribute (dict or scalar).
+        2. ``response._hidden_params['response_cost']`` — LiteLLM sets this for
+           OpenRouter and other providers that return per-call cost directly.
+           OpenRouter models are often missing from LiteLLM's pricing table, so
+           their ``_hidden_params['response_cost']`` is the only reliable source.
+        3. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost`` when
+           the provider (e.g. OpenRouter) includes it in the usage block.
+        """
         cost_metrics = CostMetrics()
 
-        # Check for existing cost information in response
+        # 1. Generic ``response.cost`` attribute (dict or scalar).
         if hasattr(response, "cost"):
             try:
                 if isinstance(response.cost, dict):
@@ -867,6 +877,46 @@ class ResponseHandler(ABC):
                     cost_metrics.total_cost = float(response.cost)
             except (TypeError, ValueError) as e:
                 logger.debug(f"Failed to parse cost from response: {e}")
+
+        if cost_metrics.total_cost > 0.0:
+            return cost_metrics
+
+        # 2. LiteLLM hidden params — OpenRouter and other providers that report
+        #    per-call cost populate ``_hidden_params['response_cost']``.
+        hidden_params = getattr(response, "_hidden_params", None)
+        if hidden_params is not None:
+            try:
+                response_cost = (
+                    hidden_params.get("response_cost")
+                    if hasattr(hidden_params, "get")
+                    else getattr(hidden_params, "response_cost", None)
+                )
+                if isinstance(response_cost, (int, float)) and response_cost > 0:
+                    cost_metrics.total_cost = float(response_cost)
+                    logger.debug(
+                        "Extracted cost $%.6f from _hidden_params.response_cost "
+                        "(OpenRouter/LiteLLM provider-reported cost).",
+                        cost_metrics.total_cost,
+                    )
+                    return cost_metrics
+            except Exception as e:  # pragma: no cover
+                logger.debug(f"Failed to parse cost from _hidden_params: {e}")
+
+        # 3. LiteLLM Usage.cost field — set for some provider responses.
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            try:
+                usage_cost = getattr(usage, "cost", None)
+                if isinstance(usage_cost, (int, float)) and usage_cost > 0:
+                    cost_metrics.total_cost = float(usage_cost)
+                    logger.debug(
+                        "Extracted cost $%.6f from usage.cost "
+                        "(LiteLLM provider-reported cost).",
+                        cost_metrics.total_cost,
+                    )
+                    return cost_metrics
+            except Exception as e:  # pragma: no cover
+                logger.debug(f"Failed to parse cost from usage.cost: {e}")
 
         return cost_metrics
 
