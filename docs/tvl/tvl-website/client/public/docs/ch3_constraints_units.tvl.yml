@@ -1,0 +1,60 @@
+spec:
+  id: constraints-lab
+  version: 0.1.0
+metadata:
+  owner: "qa@traigent.ai"
+  description: "Explores CEL constraints and unit typing."
+units:
+  time: [milliseconds, seconds]
+  currency: [USD]
+  ratio: [dimensionless]
+  percentage: [percent]
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    unit: ratio
+  max_tokens:
+    type: integer
+    range: [128, 1024]
+    unit: tokens
+  cache_ttl_hours:
+    type: continuous
+    range: [0.5, 12.0]
+    unit: hours
+  rerank_weight:
+    type: continuous
+    range: [0.0, 1.0]
+    unit: ratio
+objectives:
+  - name: stability
+    direction: maximize
+  - name: cost
+    direction: minimize
+constraints:
+  - id: cache-ttl-unit-check
+    type: expression
+    rule: 'params.cache_ttl_hours >= 1.0'
+    error_message: "Cache needs at least 1 hour TTL."
+  - id: token-temperature-budget
+    type: expression
+    rule: 'params.temperature * params.max_tokens <= 600'
+    error_message: "Token-temperature product keeps hallucinations manageable."
+  - id: rerank-mandate
+    type: conditional
+    when: 'params.max_tokens >= 512'
+    then: 'params.rerank_weight >= 0.4'
+    error_message: "Long answers must lean on reranking."
+  - id: rerank-cap
+    type: forbidden
+    rule: 'params.rerank_weight > 0.8'
+    error_message: "Rerank weight above 0.8 is unstable."
+evaluation:
+  workloads:
+    - name: stability_suite
+      dataset: dvl://qa/stability-suite
+  metrics:
+    stability:
+      aggregation: mean
+    cost:
+      aggregation: mean

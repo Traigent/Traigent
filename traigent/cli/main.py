@@ -49,7 +49,7 @@ from traigent.utils.secure_path import (
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
 
-console = Console()
+console = Console(safe_box=True)
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
 # Style constant for table headers
@@ -479,7 +479,7 @@ def info() -> None:
     features_table.add_column("Status")
 
     for feature, enabled in version_info["features"].items():
-        status = "[green]✓ Enabled[/green]" if enabled else "[red]✗ Disabled[/red]"
+        status = "[green]+ Enabled[/green]" if enabled else "[red]- Disabled[/red]"
         features_table.add_row(feature.replace("_", " ").title(), status)
 
     console.print(features_table)
@@ -492,7 +492,7 @@ def info() -> None:
 
     for framework, enabled in version_info["integrations"].items():
         status = (
-            "[green]✓ Available[/green]" if enabled else "[yellow]○ Planned[/yellow]"
+            "[green]+ Available[/green]" if enabled else "[yellow]~ Planned[/yellow]"
         )
         integrations_table.add_row(framework.title(), status)
 

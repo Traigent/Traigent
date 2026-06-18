@@ -50,7 +50,7 @@ from traigent.security.credentials import (
 )
 from traigent.utils.logging import get_logger
 
-console = Console()
+console = Console(safe_box=True)
 logger = get_logger(__name__)
 
 # Constants
@@ -1030,7 +1030,7 @@ class TraigentAuthCLI:
                     raise AuthenticationError("No access_token in response") from None
 
                 # Show truncated token
-                console.print("[green]✓ JWT Token received[/green]")
+                console.print("[green]+ JWT Token received[/green]")
 
         # Step 2: Create API key using JWT token
         api_key = None
@@ -1079,7 +1079,7 @@ class TraigentAuthCLI:
                     try:
                         api_key_data = json.loads(response_text)
                         api_key = api_key_data["data"]["key"]
-                        console.print("[green]✓ API key created[/green]")
+                        console.print("[green]+ API key created[/green]")
                     except (json.JSONDecodeError, KeyError) as e:
                         console.print("\n[yellow]--- API Key Response ---[/yellow]")
                         console.print(f"[yellow]Status: {response.status}[/yellow]")

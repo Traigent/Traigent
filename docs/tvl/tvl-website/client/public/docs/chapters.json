@@ -1,0 +1,184 @@
+{
+  "chapters": [
+    {
+      "id": 1,
+      "title": "Why TVL Exists",
+      "slug": "why-tvl-exists",
+      "description": "Understanding the motivation behind TVL and how it addresses the challenges of governed adaptation in AI pipelines.",
+      "sections": [
+        {
+          "title": "LLM Pipelines Refuse to Sit Still",
+          "content": "Large language model development today is notoriously under-specified. Prompts, retrieval depth, model choice, and safety filters often live in ad-hoc notebooks or scattered YAML fragments. TVL addresses the volatility in AI systems where model catalogs shift, latencies spike with traffic bursts, and price lists change without warning."
+        },
+        {
+          "title": "Design Goals",
+          "content": "TVL is a specification language that captures the semantics needed for safe optimization: type-safe tuning variables, deterministic exports, constraint grammar via CEL, and governed evolution with promotion gates and audit trails."
+        },
+        {
+          "title": "From Hard-Coding to Tuned Variables",
+          "content": "Instead of manually adjusting configurations during emergencies, TVL lets you express the feasible configuration space, define goals, and let the optimizer search within guardrails. When conditions shift, you rerun the same playbook without rewriting application code."
+        },
+        {
+          "title": "Running Example: Campus Orientation RAG",
+          "content": "A retrieval-augmented generation assistant that answers questions from incoming students, demonstrating how TVL handles traffic spikes, budget constraints, and latency requirements."
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Getting Fluent in TVL",
+      "slug": "getting-fluent-in-tvl",
+      "description": "Hands-on introduction to TVL syntax, basic constructs, and validation workflows.",
+      "sections": [
+        {
+          "title": "First Contact",
+          "content": "Your first TVL specification: understanding the basic structure and syntax."
+        },
+        {
+          "title": "A Minimal Working Spec",
+          "content": "Building a complete, minimal TVL specification that demonstrates core concepts."
+        },
+        {
+          "title": "Line-by-Line Walkthrough",
+          "content": "Detailed explanation of each component in a TVL specification."
+        },
+        {
+          "title": "Typing Your Variables",
+          "content": "Understanding TVL's type system for tuning variables, including categorical and continuous ranges."
+        },
+        {
+          "title": "Validation Warm-Up",
+          "content": "Introduction to TVL validation tools and workflows."
+        },
+        {
+          "title": "Common Pitfalls",
+          "content": "Avoiding common mistakes when writing TVL specifications."
+        },
+        {
+          "title": "Objectives and Budgets",
+          "content": "Defining optimization objectives and resource constraints."
+        },
+        {
+          "title": "Promotion as a First-Class Citizen",
+          "content": "Understanding how configuration promotion works in TVL."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Constraints, Units, and Safety Nets",
+      "slug": "constraints-units-safety-nets",
+      "description": "Defining structural constraints, type systems, and domain-specific units for AI parameters.",
+      "sections": [
+        {
+          "title": "Why Units Matter",
+          "content": "Understanding the importance of units in AI pipeline configurations."
+        },
+        {
+          "title": "CEL in Plain English",
+          "content": "Introduction to Common Expression Language (CEL) for encoding business and safety rules."
+        },
+        {
+          "title": "Worked Example",
+          "content": "Practical example demonstrating constraint usage."
+        },
+        {
+          "title": "Constraint Playbook",
+          "content": "Best practices and patterns for writing effective constraints."
+        },
+        {
+          "title": "Making Constraints Testable",
+          "content": "Strategies for testing and validating your constraints."
+        },
+        {
+          "title": "Debugging Failures Fast",
+          "content": "Tools and techniques for troubleshooting constraint violations."
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Patterns for Real Deployments",
+      "slug": "patterns-for-real-deployments",
+      "description": "Real-world integration pathways for incorporating TVL into existing AI pipelines and CI/CD workflows.",
+      "sections": [
+        {
+          "title": "Inheritance Without Surprises",
+          "content": "Managing configuration inheritance across environments."
+        },
+        {
+          "title": "Staging vs. Production, Codified",
+          "content": "Best practices for managing multiple deployment environments."
+        },
+        {
+          "title": "Constraint-Aware Overlays",
+          "content": "Applying configuration overlays that respect structural constraints."
+        },
+        {
+          "title": "When to Extend vs. Duplicate",
+          "content": "Deciding between extending existing specifications or creating new ones."
+        },
+        {
+          "title": "Optimization Playbooks",
+          "content": "Reusable patterns for common optimization scenarios."
+        },
+        {
+          "title": "Hotfix Overlays",
+          "content": "Emergency configuration patterns for production incidents."
+        },
+        {
+          "title": "Provenance and Promotion",
+          "content": "Tracking configuration history and managing promotion workflows."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Integration Patterns",
+      "slug": "integration-patterns",
+      "description": "Integration with Traigent's optimization platform, Data Validation Language (DVL), and NVIDIA NeMo Optimizer.",
+      "sections": [
+        {
+          "title": "Unifying the Stack",
+          "content": "How TVL integrates with the broader Traigent ecosystem."
+        },
+        {
+          "title": "NeMo Optimizer Integration",
+          "content": "Integrating TVL with NVIDIA's NeMo Agent Toolkit Optimizer."
+        },
+        {
+          "title": "Deterministic Artifacts",
+          "content": "Ensuring reproducible configurations across the optimization lifecycle."
+        },
+        {
+          "title": "Handing Off to Traigent",
+          "content": "Connecting TVL specifications to Traigent's optimization engine."
+        },
+        {
+          "title": "Lifecycle of a Promotion",
+          "content": "Understanding the complete promotion workflow from optimization to production."
+        },
+        {
+          "title": "DVL Keeps the Data Honest",
+          "content": "Using Data Validation Language to ensure measurement integrity."
+        },
+        {
+          "title": "A Manifest That Glues It Together",
+          "content": "Configuration manifests for CI/CD integration."
+        },
+        {
+          "title": "Automation Recipe",
+          "content": "End-to-end automation patterns for TVL-based pipelines."
+        },
+        {
+          "title": "TVL Tooling and Plug-ins",
+          "content": "Available tools and integrations for TVL development."
+        },
+        {
+          "title": "Looking Ahead",
+          "content": "Future directions for TVL and the Traigent platform."
+        }
+      ]
+    }
+  ]
+}

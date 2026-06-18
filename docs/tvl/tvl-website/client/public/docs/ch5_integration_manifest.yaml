@@ -1,0 +1,26 @@
+# Generated deployment manifest linking TVL, Triagent (TVO), and DVL.
+manifest:
+  spec_path: tvl/spec/rag-campus-orientation.tvl.yml
+  spec_sha: 7c2f31be
+  tvl_lock: tvl.lock
+  provenance: provenance.json
+triagent:
+  pipeline: RAGOrientation
+  optimizer: TVO
+  deployment_target: production
+  evaluation_job: dvc repro deploy-rag-orientation
+  promotion_gate: strict_dominance
+  rollback_on:
+    - latency_regression
+    - constraint_violation
+dvl:
+  dataset_version: faq/v2024.10
+  drift_tests:
+    - faq-topic-shift
+    - forbidden-pii
+  validation_suite: dvl suites/faq-orientation.json
+integration_checks:
+  - tvl validate tvl/spec/rag-campus-orientation.tvl.yml
+  - tvl export --lock tvl/spec/rag-campus-orientation.tvl.yml
+  - dvl validate suites/faq-orientation.json
+  - triagent deploy --dry-run RAGOrientation
