@@ -614,13 +614,55 @@ class TrialOperations:
         trial_id: str,
         session_id: str,
         url: str,
-    ) -> None:
-        """Handle error response from trial submission."""
-        logger.error("❌ Failed to submit trial result: HTTP %s", status)
-        logger.error("   Trial ID: %s", trial_id)
-        logger.error("   Session ID: %s", session_id)
-        logger.error("   URL: %s", url)
-        logger.debug("Backend error response suppressed from logs")
+        error_text: str = "",
+    ) -> bool:
+        """Handle error response from trial submission.
+
+        Logs the HTTP status and response body so callers can diagnose backend
+        rejections without inspecting raw network traffic.  When the backend
+        returns 400 with a "not found" body the error is downgraded to INFO
+        with a user-friendly note about transient per-worker session storage
+        (see BE #1194).
+
+        Returns:
+            True if the error is a transient session-not-found (400 + "not found")
+            that the caller should treat as a skipped upload rather than a hard
+            failure, False for all other errors.
+        """
+        # Extract a concise user-facing message from the response body when
+        # the backend returned JSON with an "error" or "message" field.
+        detail: str = error_text.strip()
+        if detail:
+            try:
+                import json as _json
+
+                parsed = _json.loads(detail)
+                if isinstance(parsed, dict):
+                    detail = parsed.get("error") or parsed.get("message") or detail
+            except (ValueError, KeyError):
+                pass
+
+        is_not_found = status == 400 and "not found" in error_text.lower()
+
+        if is_not_found:
+            logger.info(
+                "Session %s not found on backend — trial result could not be "
+                "uploaded (likely transient; run `traigent sync` after "
+                "optimization completes to upload offline). Trial ID: %s",
+                session_id,
+                trial_id,
+            )
+            return True
+        else:
+            logger.warning(
+                "❌ Failed to submit trial result: HTTP %s — %s",
+                status,
+                detail or "(no response body)",
+            )
+            logger.warning(
+                "   Trial ID: %s  Session ID: %s  URL: %s", trial_id, session_id, url
+            )
+            return False
 
     async def submit_trial_result_via_session(
         self,
@@ -770,10 +812,16 @@ class TrialOperations:
                         )
                         return False
                     else:
-                        self._handle_trial_error_response(
-                            response.status, trial_id, session_id, url
+                        error_text = await response.text()
+                        is_transient = self._handle_trial_error_response(
+                            response.status, trial_id, session_id, url, error_text
                         )
-                        return False
+                        # Return None for transient session-not-found (400 +
+                        # "not found") so _log_trial_to_backend treats this as
+                        # a skipped upload
+                        # rather than a hard backend failure and does not flag
+                        # the backend as degraded (BE #1194 per-worker storage).
+                        return None if is_transient else False
 
         except Exception as exc:
             if is_backend_offline():

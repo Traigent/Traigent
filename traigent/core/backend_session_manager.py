@@ -976,10 +976,17 @@ class BackendSessionManager:
                 if inspect.isawaitable(submitted_result)
                 else submitted_result
             )
-            if not submitted:
-                # A False return covers both a backend rejection and a network
-                # failure swallowed by the trial-submit layer; either way this
-                # trial is not cloud-tracked, so degrade to local-only (#1265).
+            if submitted is None:
+                # None signals a transient, non-fatal skip (e.g. 400 session-not-found
+                # from per-worker session storage — BE #1194).  The trial-operations
+                # layer already logged an INFO message; don't flag backend degraded
+                # and don't re-log here so the user isn't flooded with warnings for
+                # a known transient condition.  Recover via `traigent sync`.
+                pass
+            elif not submitted:
+                # False covers a real backend rejection (non-2xx that is not a
+                # transient not-found) or a network failure; degrade to local-only
+                # (#1265) so subsequent trials don't keep hitting a broken endpoint.
                 self._flag_backend_degraded("trial submission")
                 logger.warning(
                     "Backend session endpoint did not accept trial %s for session %s",
