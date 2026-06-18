@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import statistics
 import threading
-import warnings
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -813,15 +812,3 @@ class HistoricalAnalyticsEngine:
             ),
             "functions_optimized": len({r.function_name for r in records}),
         }
-
-
-class MetaLearningEngine(HistoricalAnalyticsEngine):
-    """Deprecated compatibility alias for HistoricalAnalyticsEngine."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        warnings.warn(
-            "MetaLearningEngine is deprecated; use HistoricalAnalyticsEngine instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(*args, **kwargs)
