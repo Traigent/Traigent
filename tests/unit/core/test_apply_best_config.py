@@ -131,7 +131,7 @@ class TestApplyBestConfig:
         """Test basic successful application of best config."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -158,7 +158,7 @@ class TestApplyBestConfig:
         """Test applying best config with explicitly provided results."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -174,7 +174,7 @@ class TestApplyBestConfig:
         """Test error when no optimization results are available."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -190,7 +190,7 @@ class TestApplyBestConfig:
         """Test error when optimization result has no best config."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -224,7 +224,7 @@ class TestApplyBestConfig:
         """Test that old config is preserved for potential rollback."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -251,7 +251,7 @@ class TestApplyBestConfig:
         """Test that applying best config is properly logged."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -273,7 +273,7 @@ class TestApplyBestConfig:
         """Test that _setup_function_wrapper is called after config update."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -292,7 +292,7 @@ class TestApplyBestConfig:
         # Test Edge Analytics mode
         opt_func_local = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="edge_analytics",
             use_cloud_service=False,
@@ -304,7 +304,7 @@ class TestApplyBestConfig:
         # Test hybrid mode
         opt_func_commercial = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="hybrid",
             use_cloud_service=False,
@@ -318,7 +318,7 @@ class TestApplyBestConfig:
         # Test hybrid mode with service flag
         opt_func_hybrid = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="hybrid",
             use_cloud_service=True,
@@ -341,7 +341,7 @@ class TestApplyBestConfig:
 
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
             custom_evaluator=custom_evaluator,
         )
@@ -358,7 +358,7 @@ class TestApplyBestConfig:
 
         opt_func = OptimizedFunction(
             func=config_dependent_func,
-            config_space={
+            configuration_space={
                 "model": ["gpt-3.5-turbo", "GPT-4o"],
                 "temperature": [0.1, 0.5, 0.9],
             },
@@ -412,7 +412,7 @@ class TestApplyBestConfig:
         """Test handling of empty/minimal optimization results."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -442,7 +442,7 @@ class TestApplyBestConfig:
         """Test applying config that doesn't cover all parameters in config space."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -483,7 +483,7 @@ class TestApplyBestConfig:
         """Test that applied config is properly validated if validation is enabled."""
         opt_func = OptimizedFunction(
             func=mock_function,
-            config_space=sample_config_space,
+            configuration_space=sample_config_space,
             objectives=sample_objectives,
         )
 
@@ -561,7 +561,7 @@ class TestApplyBestConfigIntegration:
 
         opt_func = OptimizedFunction(
             func=test_function,
-            config_space={
+            configuration_space={
                 "model": ["gpt-3.5-turbo", "GPT-4o"],
                 "temperature": [0.1, 0.5, 0.9],
             },
@@ -577,7 +577,6 @@ class TestApplyBestConfigIntegration:
                 "traigent.core.optimized_function.OptimizationOrchestrator"
             ) as mock_orchestrator_class,
         ):
-
             mock_orchestrator = Mock()
             mock_orchestrator_class.return_value = mock_orchestrator
 

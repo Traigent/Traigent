@@ -51,7 +51,7 @@ def test_load_from_beats_env_path(tmp_path, monkeypatch):
 
     opt_func = OptimizedFunction(
         func=plain_answer,
-        config_space={"temperature": [0.2, 0.9]},
+        configuration_space={"temperature": [0.2, 0.9]},
         load_from=str(explicit),
         default_config={"temperature": 0.1},
     )
@@ -70,7 +70,7 @@ def test_load_from_canonical_config_id_mismatch_does_not_legacy_fallback(tmp_pat
 
     opt_func = OptimizedFunction(
         func=plain_answer,
-        config_space={"temperature": [0.1, 0.9]},
+        configuration_space={"temperature": [0.1, 0.9]},
         config_id="expected-answerer",
         load_from=str(spec_path),
         default_config={"temperature": 0.1},
@@ -91,7 +91,7 @@ def test_repo_best_config_source_loads_at_init(tmp_path, monkeypatch):
 
     opt_func = OptimizedFunction(
         func=context_answer,
-        config_space={"temperature": [0.1, 0.3]},
+        configuration_space={"temperature": [0.1, 0.3]},
         config_id="answerer",
         best_config_source="repo",
         default_config={"temperature": 0.1},
@@ -112,7 +112,7 @@ def test_set_config_sticky_until_clear_override(tmp_path, monkeypatch):
     )
     opt_func = OptimizedFunction(
         func=context_answer,
-        config_space={"temperature": [0.1, 0.3, 0.8]},
+        configuration_space={"temperature": [0.1, 0.3, 0.8]},
         config_id="answerer",
         best_config_source="repo",
         default_config={"temperature": 0.1},
@@ -131,7 +131,7 @@ def test_set_config_sticky_until_clear_override(tmp_path, monkeypatch):
 def test_auto_load_does_not_overwrite_override_set_during_resolution(monkeypatch):
     opt_func = OptimizedFunction(
         func=context_answer,
-        config_space={"temperature": [0.1, 0.3, 0.8]},
+        configuration_space={"temperature": [0.1, 0.3, 0.8]},
         config_id="answerer",
         default_config={"temperature": 0.1},
     )
@@ -164,7 +164,7 @@ def test_off_source_does_not_read_repo_or_cloud(tmp_path, monkeypatch):
 
     opt_func = OptimizedFunction(
         func=plain_answer,
-        config_space={"temperature": [0.1, 0.3]},
+        configuration_space={"temperature": [0.1, 0.3]},
         config_id="answerer",
         best_config_source="off",
         best_config_cache_dir=str(tmp_path / "cache"),
@@ -191,7 +191,7 @@ def test_cloud_fetch_failure_fails_closed_for_cloud_mode(tmp_path, monkeypatch):
     with pytest.raises(CloudPublishUnavailable) as exc_info:
         OptimizedFunction(
             func=plain_answer,
-            config_space={"temperature": [0.1, 0.3]},
+            configuration_space={"temperature": [0.1, 0.3]},
             config_id="answerer",
             best_config_source="cloud",
             best_config_cache_dir=str(tmp_path / "missing-cache"),
@@ -211,7 +211,7 @@ def test_invocation_does_not_re_resolve_repo(tmp_path, monkeypatch):
     )
     opt_func = OptimizedFunction(
         func=context_answer,
-        config_space={"temperature": [0.1, 0.3]},
+        configuration_space={"temperature": [0.1, 0.3]},
         config_id="answerer",
         best_config_source="repo",
         default_config={"temperature": 0.1},
@@ -226,7 +226,7 @@ def test_invocation_does_not_re_resolve_repo(tmp_path, monkeypatch):
 def test_export_best_config_writes_repo_spec(tmp_path):
     opt_func = OptimizedFunction(
         func=plain_answer,
-        config_space={"temperature": [0.1, 0.3]},
+        configuration_space={"temperature": [0.1, 0.3]},
         config_id="answerer",
     )
     opt_func.set_config({"temperature": 0.3})
@@ -330,9 +330,7 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
         """)
     backend_url = "http://127.0.0.1:9"
     api_key = FAKE_TRAIGENT_API_KEY
-    publish_script = (
-        fake_backend_script
-        + textwrap.dedent("""
+    publish_script = fake_backend_script + textwrap.dedent("""
             import json
 
             from traigent.cloud.auth import AuthManager
@@ -348,7 +346,7 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
 
             wrapped = OptimizedFunction(
                 func=fresh_answer,
-                config_space={"temperature": [0.1, 0.77]},
+                configuration_space={"temperature": [0.1, 0.77]},
                 config_id="fresh-promote",
                 best_config_environment="staging",
                 default_config={"temperature": 0.1},
@@ -360,10 +358,7 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
                 "version": result["version"],
             }, sort_keys=True))
             """)
-    )
-    fetch_script = (
-        fake_backend_script
-        + textwrap.dedent("""
+    fetch_script = fake_backend_script + textwrap.dedent("""
             import json
             import os
 
@@ -380,7 +375,7 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
 
             wrapped = OptimizedFunction(
                 func=fresh_answer,
-                config_space={"temperature": [0.1, 0.77]},
+                configuration_space={"temperature": [0.1, 0.77]},
                 config_id="fresh-promote",
                 best_config_source="cloud",
                 best_config_cache_dir=os.environ["TRAIGENT_BEST_CONFIG_CACHE"],
@@ -392,7 +387,6 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
                 "source": wrapped.best_config_snapshot.source,
             }, sort_keys=True))
             """)
-    )
     env = os.environ.copy()
     env.update(
         {
@@ -449,7 +443,7 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
 def test_publish_best_config_fails_without_active_best_config():
     opt_func = OptimizedFunction(
         func=plain_answer,
-        config_space={"temperature": [0.1, 0.3]},
+        configuration_space={"temperature": [0.1, 0.3]},
         best_config_source="repo",
     )
 
@@ -537,7 +531,7 @@ def test_repo_best_config_source_survives_stream_iteration(tmp_path, monkeypatch
     )
     opt_func = OptimizedFunction(
         func=streaming_context_answer,
-        config_space={"temperature": [0.1, 0.6]},
+        configuration_space={"temperature": [0.1, 0.6]},
         config_id="streaming-answerer",
         best_config_source="repo",
         default_config={"temperature": 0.1},
@@ -557,7 +551,7 @@ async def test_repo_best_config_source_supports_async_invocation(tmp_path, monke
     )
     opt_func = OptimizedFunction(
         func=async_context_answer,
-        config_space={"temperature": [0.1, 0.7]},
+        configuration_space={"temperature": [0.1, 0.7]},
         config_id="async-answerer",
         best_config_source="repo",
         default_config={"temperature": 0.1},
@@ -577,7 +571,7 @@ async def test_repo_best_config_source_supports_async_streaming(tmp_path, monkey
     )
     opt_func = OptimizedFunction(
         func=async_streaming_context_answer,
-        config_space={"temperature": [0.1, 0.8]},
+        configuration_space={"temperature": [0.1, 0.8]},
         config_id="async-streaming-answerer",
         best_config_source="repo",
         default_config={"temperature": 0.1},
@@ -594,7 +588,7 @@ async def test_repo_best_config_source_supports_async_streaming(tmp_path, monkey
 async def test_optimization_completion_refreshes_best_config_snapshot():
     opt_func = OptimizedFunction(
         func=context_answer,
-        config_space={"temperature": [0.1, 0.9]},
+        configuration_space={"temperature": [0.1, 0.9]},
         default_config={"temperature": 0.1},
     )
 

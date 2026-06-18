@@ -42,7 +42,7 @@ try:
     print("\n1. Testing with context-based function:")
     opt_func1 = OptimizedFunction(
         func=context_test_function,
-        config_space={
+        configuration_space={
             "model": ["gpt-4o-mini", "GPT-4o"],
             "temperature": [0.1, 0.5, 0.9],
         },

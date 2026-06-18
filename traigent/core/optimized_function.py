@@ -323,7 +323,6 @@ class OptimizedFunction:
         ) = None,
         objectives: list[str] | ObjectiveSchema | None = None,
         configuration_space: dict[str, Any] | None = None,
-        config_space: dict[str, Any] | None = None,  # Backward compatibility
         default_config: dict[str, Any] | None = None,
         constraints: list[Callable[..., bool]] | None = None,
         injection_mode: str = "context",
@@ -403,8 +402,8 @@ class OptimizedFunction:
             effectuation,
         )
 
-        # Handle configuration space with backward compatibility
-        self._setup_configuration_space(configuration_space, config_space)
+        # Handle configuration space
+        self._setup_configuration_space(configuration_space)
 
         # Store additional parameters from kwargs
         self._store_additional_parameters(kwargs)
@@ -486,24 +485,15 @@ class OptimizedFunction:
     def _is_cloud_execution_mode(self) -> bool:
         return False
 
-    def _setup_configuration_space(self, configuration_space, config_space) -> None:
-        """Setup configuration space with backward compatibility."""
-        # Backward compatibility: support both config_space and configuration_space
-        if config_space is not None and configuration_space is None:
-            try:
-                self.configuration_space = config_space
-            except ValidationError as e:
-                if _CONFIG_SPACE_TYPE_ERROR in str(e):
-                    raise TypeError(str(e)) from None
+    def _setup_configuration_space(self, configuration_space) -> None:
+        """Setup configuration space."""
+        try:
+            self.configuration_space = configuration_space or {}
+        except ValidationError as e:
+            if _CONFIG_SPACE_TYPE_ERROR in str(e):
+                raise TypeError(str(e)) from None
+            else:
                 raise
-        else:
-            try:
-                self.configuration_space = configuration_space or {}
-            except ValidationError as e:
-                if _CONFIG_SPACE_TYPE_ERROR in str(e):
-                    raise TypeError(str(e)) from None
-                else:
-                    raise
 
     def _store_callbacks(self, kwargs: dict[str, Any], sentinel: object) -> None:
         """Store callbacks parameter, normalizing to a list."""

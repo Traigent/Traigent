@@ -77,9 +77,7 @@ class TestStrictModeDetection:
         assert not _orchestrator(None)._is_strict_evidence_mode()
 
     def test_disabled_require_calibration_is_not_strict(self):
-        policy = PromotionPolicy(
-            require_calibration=RequireCalibration(enabled=False)
-        )
+        policy = PromotionPolicy(require_calibration=RequireCalibration(enabled=False))
         assert not _orchestrator(policy)._is_strict_evidence_mode()
 
 
@@ -211,8 +209,8 @@ class TestCertifiedPromotionChain:
         orchestrator._best_trial_cached = None
         orchestrator._incumbent_config_hash = None
         orchestrator._certified_promotions = 0
-        orchestrator._track_trial_metrics = lambda t: "hash-" + str(
-            t.config.get("model")
+        orchestrator._track_trial_metrics = lambda t: (
+            "hash-" + str(t.config.get("model"))
         )
         return orchestrator
 
@@ -319,9 +317,7 @@ class TestResultWinnerClaimGuards:
 
     def test_weighted_scores_omit_winner_claim_when_no_winner(self):
         result = self._result({})
-        scores = result.calculate_weighted_scores(
-            objective_weights={"accuracy": 1.0}
-        )
+        scores = result.calculate_weighted_scores(objective_weights={"accuracy": 1.0})
         # the winner-claim KEY is omitted entirely on a no-winner result
         assert "best_weighted_config" not in scores
         # descriptive per-trial statistics are still computed
@@ -348,11 +344,8 @@ class TestResultWinnerClaimGuards:
             timestamp=0.0,
         )
         assert result.best_metrics  # winner metrics preserved
-        scores = result.calculate_weighted_scores(
-            objective_weights={"accuracy": 1.0}
-        )
+        scores = result.calculate_weighted_scores(objective_weights={"accuracy": 1.0})
         assert "best_weighted_config" in scores
-
 
     def test_weighted_scores_early_branch_also_omits_winner_key(self):
         """Round-3 residual: the no-successful-trials early return must obey
@@ -417,7 +410,7 @@ class TestBestConfigRuntimeInterplay:
 
         fn = OptimizedFunction(
             func=answer,
-            config_space={"model": ["a", "b"]},
+            configuration_space={"model": ["a", "b"]},
             default_config={"model": "a"},
         )
         fn.traigent_config = SimpleNamespace(is_edge_analytics_mode=lambda: False)
@@ -470,7 +463,7 @@ class TestBestConfigRuntimeInterplay:
         )
         fn = OptimizedFunction(
             func=answer,
-            config_space={"model": ["a", "b"]},
+            configuration_space={"model": ["a", "b"]},
             default_config={"model": "a"},
         )
         fn.traigent_config = SimpleNamespace(is_edge_analytics_mode=lambda: False)
