@@ -2,7 +2,7 @@
 
 Traigent SDK currently supports local execution and portal-tracked local execution. This guide separates supported modes from future remote execution paths.
 
-> **Current status:** Use `execution_mode="edge_analytics"` for fully local runs and `execution_mode="hybrid"` for portal-tracked runs where trials still execute locally. `execution_mode="cloud"` and managed remote agent execution are not implemented yet and fail closed with guidance to use `hybrid`.
+> **Current status (0.13+):** The SDK auto-selects `execution_mode` — you do not need to set it. Portal tracking is enabled by having `TRAIGENT_API_KEY` set. For fully offline runs, set `TRAIGENT_OFFLINE_MODE=true`. `execution_mode="cloud"` is not implemented yet.
 
 ## Quick Decision Guide
 
@@ -164,12 +164,13 @@ async with cloud_client:
 # response includes optimization details and best configuration
 ```
 
-### Supported Hybrid Approach
+### Portal-Tracked Runs
 
-Use `execution_mode="hybrid"` when you want the supported portal-tracked path:
-- Trials execute locally.
-- The backend stores session metadata and trial metrics.
-- Results appear in the Traigent portal without using the unavailable remote cloud execution path.
+To get results in the Traigent portal: set `TRAIGENT_API_KEY` and run normally. The SDK sends session/trial metrics to the backend automatically. **No `execution_mode` change needed.**
+
+- For grid/random search: auto-selected mode is `edge_analytics`; portal tracking is on when API key is present.
+- For smart algorithms (Bayesian, TPE, CMA-ES): auto-selected mode is `hybrid`.
+- For external REST agent services: configure `hybrid_api_endpoint`; auto-selected mode is `hybrid_api`.
 
 ## Decision Factors
 
@@ -231,14 +232,14 @@ Use `execution_mode="hybrid"` when you want the supported portal-tracked path:
 ### From Local-Only to Portal-Tracked:
 
 1. Keep the optimized function and dataset unchanged.
-2. Authenticate with `traigent auth device-login`, run `traigent onboard` for guided setup, or set `TRAIGENT_API_KEY` in CI/non-interactive environments.
-3. Set `execution_mode="hybrid"`.
+2. Authenticate: run `traigent auth device-login`, `traigent onboard`, or set `TRAIGENT_API_KEY` in CI/non-interactive environments.
+3. Run normally — the SDK sends metrics to the portal automatically.
 4. Confirm the run appears in Traigent Portal.
 
 ### From Accidental Cloud Usage:
 
-1. Replace `execution_mode="cloud"` with `execution_mode="hybrid"` when you want website results.
-2. Use `execution_mode="edge_analytics"` and `TRAIGENT_OFFLINE_MODE=true` when you want no backend dependency.
+1. Remove `execution_mode="cloud"` — set `TRAIGENT_API_KEY` for portal-tracked runs (mode is auto-selected).
+2. Use `TRAIGENT_OFFLINE_MODE=true` when you want no backend dependency.
 3. Treat cloud remote execution docs and APIs as roadmap/reference material until the product path is released.
 
 ## Performance Tips
@@ -270,8 +271,6 @@ Use `execution_mode="hybrid"` when you want the supported portal-tracked path:
 
 Choose based on your primary constraints:
 
-- **Privacy/local-only**: `edge_analytics`
-- **Website-visible results**: `hybrid`
+- **Privacy/local-only (no portal)**: `edge_analytics` + `TRAIGENT_OFFLINE_MODE=true`
+- **Portal-visible results**: set `TRAIGENT_API_KEY`; mode auto-selected (`edge_analytics` for grid/random, `hybrid` for smart algorithms)
 - **Remote cloud execution**: reserved for a future release
-
-For now, users wanting website results should use `hybrid`, not `cloud`.

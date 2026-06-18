@@ -21,7 +21,14 @@ from typing import Any, cast
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import EvaluationExample
-from traigent.utils.exceptions import ServiceError
+
+# Single source of truth for session status (issue #1302 AC4): reuse the
+# canonical ``OptimizationSessionStatus`` from ``traigent.cloud.models`` rather
+# than defining a second, drifting copy here. The canonical enum is a superset
+# (it carries INITIALIZING plus PENDING/CREATED/UNKNOWN), so every member this
+# module uses (INITIALIZING/ACTIVE/PAUSED/COMPLETED/FAILED/CANCELLED) resolves.
+from traigent.cloud.models import OptimizationSessionStatus as OptimizationSessionStatus
+from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -36,17 +43,6 @@ class ServiceStatus(StrEnum):
     CONNECTED = "connected"
     ERROR = "error"
     UNAVAILABLE = "unavailable"
-
-
-class OptimizationSessionStatus(StrEnum):
-    """Status of an optimization session."""
-
-    INITIALIZING = "initializing"
-    ACTIVE = "active"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -273,7 +269,7 @@ class RemoteOptimizationService(ABC):
         self,
         config_space: dict[str, Any],
         objectives: list[str],
-        algorithm: str = "tpe",
+        algorithm: str = "random",
         max_trials: int | None = None,
         timeout: float | None = None,
         optimization_strategy: OptimizationStrategy | None = None,
@@ -704,7 +700,7 @@ class MockRemoteService(RemoteOptimizationService):
         self._service_info = ServiceInfo(
             name=self.service_name,
             version="1.0.0-mock",
-            supported_algorithms=["random", "grid", "bayesian"],
+            supported_algorithms=["random", "grid"],
             max_concurrent_sessions=10,
             capabilities={
                 "batch_suggestions": True,
@@ -750,7 +746,7 @@ class MockRemoteService(RemoteOptimizationService):
         self,
         config_space: dict[str, Any],
         objectives: list[str],
-        algorithm: str = "tpe",
+        algorithm: str = "random",
         max_trials: int | None = None,
         timeout: float | None = None,
         optimization_strategy: OptimizationStrategy | None = None,
@@ -759,6 +755,18 @@ class MockRemoteService(RemoteOptimizationService):
     ) -> OptimizationSession:
         """Create a mock optimization session."""
         request_start = time.time()
+
+        # Smart algorithms run in the Traigent cloud, not in this local mock
+        # service. Reject explicit smart names rather than silently running local
+        # random under a smart label (which would mislabel the run as smart).
+        from traigent.optimizers.registry import _is_smart_algorithm
+
+        if _is_smart_algorithm(algorithm):
+            raise OptimizationError(
+                f"Smart optimization ('{algorithm}') runs in the Traigent cloud and "
+                "is not available in the local SDK (which supports 'grid' and "
+                "'random'). Connect to the Traigent backend to use smart algorithms."
+            )
 
         try:
             await asyncio.sleep(0.1)  # Simulate session creation delay
@@ -845,9 +853,9 @@ class MockRemoteService(RemoteOptimizationService):
             await asyncio.sleep(0.01)  # Simulate network delay
 
             if session_id in self._active_sessions:
-                self._active_sessions[session_id].status = (
-                    OptimizationSessionStatus.COMPLETED
-                )
+                self._active_sessions[
+                    session_id
+                ].status = OptimizationSessionStatus.COMPLETED
                 del self._active_sessions[session_id]
                 logger.info(f"Closed mock session: {session_id}")
 

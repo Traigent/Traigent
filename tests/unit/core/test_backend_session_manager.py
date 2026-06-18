@@ -1551,3 +1551,54 @@ class TestHandleSessionCreationResult:
         assert session_id == "real-session-123"
         assert manager.backend_tracking_enabled
         assert any("real-session-123" in msg for msg in caplog.messages)
+
+
+class TestRuntimeDegradationSourceMarker:
+    """Issue #1265: a backend that becomes unreachable mid-run degrades to
+    local-only, warns once, and marks the result source='local'."""
+
+    def test_result_source_backend_when_healthy(self, backend_session_manager):
+        manager = backend_session_manager
+        manager._backend_tracking_enabled = True
+        manager._acknowledged_trials.add(("session", "trial"))
+        assert manager.result_source(trial_count=1) == "backend"
+        assert manager.backend_degraded is False
+
+    def test_result_source_local_when_no_trial_acknowledged(
+        self, backend_session_manager
+    ):
+        # Tracking enabled but the backend never acknowledged a single trial
+        # despite the run producing trials => the run was not cloud-tracked.
+        manager = backend_session_manager
+        manager._backend_tracking_enabled = True
+        assert manager.result_source(trial_count=3) == "local"
+
+    def test_result_source_local_when_tracking_disabled(self, backend_session_manager):
+        manager = backend_session_manager
+        manager._backend_tracking_enabled = False
+        assert manager.result_source(trial_count=0) == "local"
+
+    def test_flag_degraded_marks_local_and_warns_once(
+        self, backend_session_manager, caplog
+    ):
+        manager = backend_session_manager
+        manager._backend_tracking_enabled = True
+        manager._acknowledged_trials.add(("session", "trial"))
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            # Simulate the outage firing on several trials in a row.
+            manager._flag_backend_degraded("trial submission")
+            manager._flag_backend_degraded("trial submission")
+            manager._flag_backend_degraded("trial submission")
+
+        assert manager.backend_degraded is True
+        # Even with previously-acknowledged trials, a mid-run degradation pins
+        # the result to local provenance.
+        assert manager.result_source(trial_count=5) == "local"
+
+        local_only_warnings = [
+            record for record in caplog.records if "LOCAL-ONLY" in record.getMessage()
+        ]
+        assert len(local_only_warnings) == 1, "should warn once, not per trial"

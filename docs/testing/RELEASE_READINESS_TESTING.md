@@ -268,7 +268,7 @@ echo '{"query": "test", "answer": "response"}' > bad_dataset.jsonl
 |------|-----------|----------|--------|----------|
 | Grid | `algorithm="grid"` | Exhaustive search | | |
 | Random | `algorithm="random"` | Random sampling | | |
-| Bayesian | `algorithm="bayesian"` | Works if optuna installed | | |
+| Bayesian | `algorithm="bayesian"` | Raises error (cloud-only algorithm) | | |
 | Invalid | `algorithm="invalid"` | Clear error | | |
 | Grid + continuous | Grid with `(0.0, 1.0)` range | Error or auto-discretize | | |
 

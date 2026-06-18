@@ -344,13 +344,27 @@ class TestOptimizationSessionStatus:
     """Test optimization session status enumeration."""
 
     def test_session_status_values(self):
-        """Test OptimizationSessionStatus enum values."""
-        assert OptimizationSessionStatus.INITIALIZING == "initializing"
-        assert OptimizationSessionStatus.ACTIVE == "active"
-        assert OptimizationSessionStatus.PAUSED == "paused"
-        assert OptimizationSessionStatus.COMPLETED == "completed"
-        assert OptimizationSessionStatus.FAILED == "failed"
-        assert OptimizationSessionStatus.CANCELLED == "cancelled"
+        """Test OptimizationSessionStatus enum values.
+
+        After the #1302 dedup, ``remote_services.OptimizationSessionStatus`` is
+        the single canonical ``traigent.cloud.models.OptimizationSessionStatus``
+        (a plain Enum), so compare ``.value`` rather than relying on the former
+        StrEnum string-equality.
+        """
+        assert OptimizationSessionStatus.INITIALIZING.value == "initializing"
+        assert OptimizationSessionStatus.ACTIVE.value == "active"
+        assert OptimizationSessionStatus.PAUSED.value == "paused"
+        assert OptimizationSessionStatus.COMPLETED.value == "completed"
+        assert OptimizationSessionStatus.FAILED.value == "failed"
+        assert OptimizationSessionStatus.CANCELLED.value == "cancelled"
+
+    def test_session_status_is_canonical_single_source(self):
+        """Issue #1302 AC4 — no second OptimizationSessionStatus copy exists."""
+        from traigent.cloud.models import (
+            OptimizationSessionStatus as CanonicalOSS,
+        )
+
+        assert OptimizationSessionStatus is CanonicalOSS
 
 
 class TestServiceInfo:
@@ -1089,7 +1103,8 @@ class TestMockRemoteService:
         assert info.version == "1.0.0-mock"
         assert "random" in info.supported_algorithms
         assert "grid" in info.supported_algorithms
-        assert "bayesian" in info.supported_algorithms
+        # bayesian is cloud-only and no longer in the local mock service's supported list
+        assert "bayesian" not in info.supported_algorithms
         assert info.max_concurrent_sessions == 10
         assert info.capabilities["batch_suggestions"] is True
         assert info.capabilities["session_persistence"] is False
@@ -1146,7 +1161,7 @@ class TestMockRemoteService:
         session = await service.create_session(
             config_space=config_space,
             objectives=objectives,
-            algorithm="bayesian",
+            algorithm="random",
             max_trials=50,
             timeout=1800.0,
             optimization_strategy=sample_optimization_strategy,
@@ -1158,7 +1173,7 @@ class TestMockRemoteService:
         assert session.service_name == "MockTraigentService"
         assert session.config_space == config_space
         assert session.objectives == objectives
-        assert session.algorithm == "bayesian"
+        assert session.algorithm == "random"
         assert session.status == OptimizationSessionStatus.ACTIVE
         assert session.max_trials == 50
         assert session.timeout == 1800.0
@@ -1391,7 +1406,8 @@ class TestMockRemoteService:
 
         # Should stop with 5 trials
         should_stop = await service.should_stop_optimization(
-            session.session_id, sample_trial_results * 2  # 8 trials
+            session.session_id,
+            sample_trial_results * 2,  # 8 trials
         )
         assert should_stop is True
 
@@ -1690,9 +1706,9 @@ class TestRemoteOptimizationServiceHelpers:
         session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
 
         # Mark session as completed
-        service._active_sessions[session.session_id].status = (
-            OptimizationSessionStatus.COMPLETED
-        )
+        service._active_sessions[
+            session.session_id
+        ].status = OptimizationSessionStatus.COMPLETED
 
         with pytest.raises(ServiceError, match="not active"):
             await service._validate_session(session.session_id)
@@ -1706,9 +1722,9 @@ class TestRemoteOptimizationServiceHelpers:
         session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
 
         # Mark session as failed
-        service._active_sessions[session.session_id].status = (
-            OptimizationSessionStatus.FAILED
-        )
+        service._active_sessions[
+            session.session_id
+        ].status = OptimizationSessionStatus.FAILED
 
         with pytest.raises(ServiceError, match="not active"):
             await service._validate_session(session.session_id)
@@ -1730,9 +1746,9 @@ class TestRemoteOptimizationServiceHelpers:
 
         # Create a 4th session - should trigger cleanup
         # Mark first session as completed
-        service._active_sessions[sessions[0].session_id].status = (
-            OptimizationSessionStatus.COMPLETED
-        )
+        service._active_sessions[
+            sessions[0].session_id
+        ].status = OptimizationSessionStatus.COMPLETED
 
         # Now try to create a new session that will trigger cleanup
         # This will trigger the limit enforcement in create_session

@@ -655,7 +655,21 @@ class TestDataLeakage:
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
             api_key=_fake_api_key(61),
-            metadata={"sensitive": "very_secret_data"},
+            metadata={
+                "mode": "api_key",
+                "source": "cli",
+                "auth_source": "device",
+                "expires_at": 1234567890,
+                "scopes": ["read"],
+                "dev_token": _DEV_TOKEN,
+                "sensitive": "very_secret_data",
+                "user": {
+                    "email": "user@example.com",
+                    "name": "Test User",
+                    "sub": "subject-123",
+                    "owner_id": "owner-123",
+                },
+            },
         )
 
         auth_manager._credentials = credentials
@@ -668,7 +682,15 @@ class TestDataLeakage:
 
         # Metadata should be included but possibly sanitized
         assert "metadata" in info
-        # In this case, metadata is passed through - may need sanitization
+        assert info["metadata"] == {
+            "mode": "api_key",
+            "auth_source": "device",
+            "expires_at": 1234567890,
+            "scopes": ["read"],
+        }
+        assert _DEV_TOKEN not in str(info)
+        assert "user@example.com" not in str(info)
+        assert "subject-123" not in str(info)
 
 
 class TestEnvironmentSecurity:

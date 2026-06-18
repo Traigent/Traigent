@@ -15,7 +15,6 @@ from traigent.api.strategy_presets import (
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
-from traigent.utils.exceptions import ConfigurationError
 
 
 class TestOptimizeDecorator:
@@ -85,11 +84,14 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_rejects_cloud_fallback_policy(self):
-        """Reserved cloud mode fails closed even with an auto fallback policy."""
+    def test_execution_bundle_deprecated_cloud_resolves_to_edge_analytics(self):
+        """Deprecated cloud mode in ExecutionOptions resolves to edge_analytics with DeprecationWarning."""
+        import warnings
+
         from traigent.api.decorators import ExecutionOptions
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -100,6 +102,10 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
         """Direct runtime options should accept hybrid_api_transport."""
@@ -118,6 +124,8 @@ class TestOptimizeDecorator:
 
     def test_decorator_execution_mode_registry_matches_runtime(self):
         """Decorator validation accepts the same modes advertised by runtime."""
+        import warnings
+
         from traigent.config.types import accepted_execution_mode_values
 
         @optimize(configuration_space={"x": [1, 2]}, execution_mode="local")
@@ -127,13 +135,18 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.execution_mode == "edge_analytics"
 
-        with pytest.raises(ConfigurationError) as exc_info:
+        # "standard" is now a deprecated alias (emits DeprecationWarning, resolves to hybrid)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(configuration_space={"x": [1, 2]}, execution_mode="standard")
-            def removed_mode_function(x: int) -> int:
+            def deprecated_mode_function(x: int) -> int:
                 return x
 
-        assert str(list(accepted_execution_mode_values())) in str(exc_info.value)
+        assert isinstance(deprecated_mode_function, OptimizedFunction)
+        assert deprecated_mode_function.execution_mode == "hybrid"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
         for mode in accepted_execution_mode_values():
 
             @optimize(configuration_space={"x": [1, 2]}, execution_mode=mode)
@@ -157,9 +170,9 @@ class TestOptimizeDecorator:
             return x
 
         assert isinstance(sample_function, OptimizedFunction)
-        assert (
-            sample_function.max_trials == 10
-        ), f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
+        assert sample_function.max_trials == 10, (
+            f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
+        )
 
     def test_decorator_accepts_algorithm_runtime_default(self):
         """Decorator-level algorithm should become the optimize() default."""
@@ -174,9 +187,9 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.algorithm == "grid"
 
-    def test_decorator_accepts_deprecated_strategy_alias(self):
-        """strategy=... should map to algorithm=... with deprecation warning."""
-        with pytest.warns(DeprecationWarning, match="strategy"):
+    def test_decorator_rejects_unknown_strategy_name(self):
+        """Non-preset strategy values should raise ValueError."""
+        with pytest.raises(ValueError, match="Unknown strategy preset"):
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -184,9 +197,6 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
-
-        assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.algorithm == "grid"
 
     def test_decorator_accepts_strategy_preset(self):
         """Registered strategy names should configure advisory preset metadata."""
@@ -365,10 +375,12 @@ class TestOptimizeDecorator:
         result = complex_function("test", 10, "extra", key="value")
         assert "test-10-1-1" in result
 
-    def test_decorator_with_cloud_execution_mode_fails_closed(self):
-        """Reserved cloud execution is rejected at decoration time."""
+    def test_decorator_with_cloud_execution_mode_deprecated(self):
+        """Deprecated cloud execution mode emits DeprecationWarning and resolves to edge_analytics."""
+        import warnings
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
 
             @optimize(
                 configuration_space={"model": ["claude", "gpt-4"]},
@@ -376,6 +388,10 @@ class TestOptimizeDecorator:
             )
             def ai_function(model: str) -> str:
                 return f"Using {model}"
+
+        assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.execution_mode == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_decorator_accepts_cost_limit_runtime_override(self):
         """cost_limit should be accepted as a runtime override key."""
@@ -768,8 +784,10 @@ class TestOptimizedFunctionIntegration:
             "Decorating function test_func with @traigent.optimize"
         )
 
-        # Check info log for creation
-        mock_logger.info.assert_called_with("Created optimizable function: test_func")
+        # Check info log for creation (message includes experiment_name)
+        mock_logger.info.assert_called_with(
+            "Created optimizable function: test_func (experiment_name='test_func')"
+        )
 
     def test_decorator_factory_pattern(self):
         """Test that optimize returns a decorator function."""
@@ -1071,3 +1089,84 @@ class TestRemovedExecutionRuntimeOptions:
             return x
 
         assert isinstance(py_func_with_config, OptimizedFunction)
+
+
+class TestExperimentName:
+    """Tests for experiment_name parameter and TRAIGENT_EXPERIMENT_NAME env var."""
+
+    def test_experiment_name_default_is_func_name(self):
+        """When no experiment_name is passed, experiment_name == func.__name__."""
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "my_pipeline"
+
+    def test_experiment_name_override(self):
+        """Explicit experiment_name is used instead of func.__name__."""
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            experiment_name="Amir txt2sql v1 (ACL 0.8, 0.15, 0.05)",
+        )
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "Amir txt2sql v1 (ACL 0.8, 0.15, 0.05)"
+        # __name__ still reflects the real function name
+        assert my_pipeline.__name__ == "my_pipeline"
+
+    def test_experiment_name_env_var(self, monkeypatch):
+        """TRAIGENT_EXPERIMENT_NAME env var is used when no explicit name is passed."""
+        monkeypatch.setenv("TRAIGENT_EXPERIMENT_NAME", "env_experiment")
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "env_experiment"
+
+    def test_experiment_name_param_beats_env_var(self, monkeypatch):
+        """Explicit experiment_name takes precedence over TRAIGENT_EXPERIMENT_NAME."""
+        monkeypatch.setenv("TRAIGENT_EXPERIMENT_NAME", "env_experiment")
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            experiment_name="explicit name",
+        )
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "explicit name"
+
+    def test_experiment_name_env_var_cleared(self, monkeypatch):
+        """After env var is removed, falls back to func.__name__."""
+        monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME", raising=False)
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "my_pipeline"
+
+    def test_experiment_name_stored_on_optimized_function(self):
+        """_experiment_name is stored on the OptimizedFunction instance."""
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            experiment_name="stored name",
+        )
+        def my_func(x: int) -> int:
+            return x
+
+        assert my_func._experiment_name == "stored name"
+
+    def test_experiment_name_none_stores_none(self):
+        """When experiment_name=None (default), _experiment_name is None."""
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_func(x: int) -> int:
+            return x
+
+        assert my_func._experiment_name is None

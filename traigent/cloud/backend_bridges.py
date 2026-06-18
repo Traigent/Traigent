@@ -9,6 +9,7 @@ client-side optimization and backend session/result tracking.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -742,7 +743,21 @@ Response:"""
             return value
 
     def _map_objectives_to_measures(self, objectives: list[str]) -> list[str]:
-        """Map SDK objectives to backend measure IDs."""
+        """Map SDK objectives to backend measure IDs.
+
+        Well-known objective aliases (e.g. ``cost_efficiency`` -> ``cost``,
+        ``success_rate`` -> ``accuracy``) are normalized to their canonical
+        backend measure ID. Any other objective name is a user-defined custom
+        metric (e.g. ``exec_accuracy``, ``sql_accuracy``); if it is a safe
+        identifier it is preserved verbatim so it reaches the backend
+        create-experiment request under its own name instead of being coerced
+        to ``accuracy`` (see issue #1292). Names that are not safe identifiers
+        (e.g. code-injection payloads) are coerced to ``accuracy`` so untrusted
+        strings never reach the backend. NOTE: this is the SDK half only — full
+        portal visibility also
+        requires the backend to accept/register custom measure IDs (the BE
+        currently skips unknown measure IDs); tracked as a follow-up.
+        """
         objective_mapping = {
             "accuracy": "accuracy",
             "cost": "cost",
@@ -755,9 +770,24 @@ Response:"""
             "ragas": "ragas",
         }
 
+        # A safe custom-metric name starts with a letter, then only
+        # letters/digits/underscore, max 64 chars. Known aliases map to their
+        # canonical ID; other safe identifiers pass through verbatim (#1292);
+        # anything else (injection payloads, garbage) is coerced to the default
+        # so untrusted strings never reach the backend.
+        # fullmatch (not match) so a trailing newline can't sneak through a
+        # ``$``-anchored pattern, e.g. "metric\n".
+        safe_name = r"[A-Za-z][A-Za-z0-9_]{0,63}"
+
         measures = []
         for objective in objectives:
-            measure_id = objective_mapping.get(objective.lower(), "accuracy")
+            key = objective.lower()
+            if key in objective_mapping:
+                measure_id = objective_mapping[key]
+            elif re.fullmatch(safe_name, objective):
+                measure_id = objective
+            else:
+                measure_id = "accuracy"
             if measure_id not in measures:
                 measures.append(measure_id)
 

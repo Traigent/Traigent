@@ -126,7 +126,8 @@ class TestSyncManager:
 
         measures = results[0]["measures"]
         assert measures["score"] == 0.91
-        assert measures["accuracy"] == 0.91
+        # No "accuracy" alias when no all_metrics in metadata (bug #1319 fix)
+        assert "accuracy" not in measures
         assert measures["cost"] == 0.03
         assert measures["total_cost"] == 0.03
         assert measures["input_cost"] == 0.01
@@ -157,6 +158,46 @@ class TestSyncManager:
         assert measures["total_cost"] == 0.04
         assert measures["input_cost"] == 0.015
         assert measures["output_cost"] == 0.025
+
+    def test_convert_trials_real_per_objective_metrics_not_clobbered(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Real per-objective metrics (accuracy, latency) survive into measures.
+
+        Regression test for bug #1319: previously ``accuracy`` was aliased to the
+        composite ``score``, clobbering the actual accuracy metric recorded by the
+        evaluator.  Per-objective metrics are stored under
+        ``trial.metadata["all_metrics"]``; they must appear in the synced measures
+        at their real values and must not be overwritten by the composite score.
+        """
+        trial = TrialResult(
+            trial_id=1,
+            config={"model": "gpt-4", "temperature": 0.3},
+            score=0.7,
+            timestamp="2026-06-18T10:00:00Z",
+            metadata={
+                "all_metrics": {
+                    "accuracy": 0.85,
+                    "latency": 120.0,
+                }
+            },
+        )
+
+        results = sync_manager._convert_trials_to_results([trial])
+
+        measures = results[0]["measures"]
+        # Real accuracy from evaluator — must NOT be clobbered by composite score
+        assert measures["accuracy"] == 0.85, (
+            f"accuracy should be 0.85 (real metric), got {measures['accuracy']}"
+        )
+        # Latency should be synced as a first-class measure
+        assert measures["latency"] == 120.0, (
+            f"latency should be 120.0, got {measures.get('latency')}"
+        )
+        # Composite score is preserved for backward compatibility
+        assert measures["score"] == 0.7, (
+            f"composite score should be 0.7, got {measures['score']}"
+        )
 
     # Initialization Tests
 
@@ -505,7 +546,8 @@ class TestSyncManager:
         assert results[0]["trial_id"] == 1
         assert results[0]["experiment_parameters"]["model"] == "gpt-3.5-turbo"
         assert results[0]["measures"]["score"] == 0.85
-        assert results[0]["measures"]["accuracy"] == 0.85
+        # "accuracy" is no longer aliased from score (bug #1319 fix)
+        assert "accuracy" not in results[0]["measures"]
         assert results[0]["status"] == "completed"
         assert "error" not in results[0]
 
@@ -782,7 +824,7 @@ class TestSyncManager:
         sync_manager.storage.list_sessions.return_value = mock_sessions
 
         # Mock dry run results
-        def mock_sync(session_id, dry_run=False):
+        def mock_sync(session_id, dry_run=False, force=False):
             return {
                 "session_id": session_id,
                 "status": "success",
@@ -801,8 +843,8 @@ class TestSyncManager:
     def test_sync_all_sessions_no_completed(self, sync_manager: SyncManager) -> None:
         """Test sync all sessions when no completed sessions exist."""
         mock_sessions = [
-            Mock(status="running", session_id="s1"),
-            Mock(status="pending", session_id="s2"),
+            Mock(status="running", session_id="s1", completed_trials=0, metadata={}),
+            Mock(status="pending", session_id="s2", completed_trials=0, metadata={}),
         ]
 
         sync_manager.storage.list_sessions.return_value = mock_sessions
@@ -823,7 +865,7 @@ class TestSyncManager:
 
         sync_manager.storage.list_sessions.return_value = mock_sessions
 
-        def mock_sync(session_id, dry_run=False):
+        def mock_sync(session_id, dry_run=False, force=False):
             if session_id == "s1":
                 return {"session_id": session_id, "status": "success"}
             else:

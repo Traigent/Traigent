@@ -193,6 +193,115 @@ def external_agent(_query: str) -> str:
 results = await external_agent.optimize(max_trials=10)
 ```
 
+## Multi-Field Evaluation Inputs
+
+Many tasks need more than a single input string. A text2SQL task, for example,
+requires both the natural-language question (`input`) and the database name
+(`db_id`) and ground-truth SQL (`gold_sql`) for evaluation. The SDK supports
+this through `example.metadata`.
+
+### How extra JSONL fields are routed
+
+When the SDK loads a JSONL dataset it applies the following mapping for each row:
+
+| JSONL key | Maps to |
+|---|---|
+| `input` (or `input_data`) | `example.input_data` |
+| `expected_output` (or `expected`, `output`, `answer`, `target`, `label`) | `example.expected_output` |
+| **every other key** | `example.metadata` (a `dict`) |
+
+A row like:
+
+```jsonl
+{"input": "How many employees live in each city?", "expected_output": "3 rows", "db_id": "company", "gold_sql": "SELECT city, COUNT(*) FROM employees GROUP BY city"}
+```
+
+produces an `EvaluationExample` where:
+- `example.input_data` → `"How many employees live in each city?"`
+- `example.expected_output` → `"3 rows"`
+- `example.metadata` → `{"db_id": "company", "gold_sql": "SELECT city, COUNT(*) FROM employees GROUP BY city"}`
+
+### Accessing metadata in a custom evaluator
+
+Use `custom_evaluator` to read extra fields alongside the function output.
+The evaluator receives the raw `EvaluationExample` and must return an
+`ExampleResult`:
+
+```python
+import traigent
+from traigent.api.types import ExampleResult
+
+
+def sql_evaluator(func, config, example):
+    db_id = example.metadata.get("db_id", "default")
+    gold_sql = example.metadata.get("gold_sql", "")
+
+    predicted_sql = func(example.input_data)
+    correct = predicted_sql.strip().lower() == gold_sql.strip().lower()
+    return ExampleResult(
+        actual_output=predicted_sql,
+        score=1.0 if correct else 0.0,
+        success=correct,
+    )
+
+
+@traigent.optimize(
+    eval_dataset="data/text2sql.jsonl",
+    custom_evaluator=sql_evaluator,
+    objectives=["accuracy"],
+    configuration_space={
+        "model": ["claude-3-haiku-20240307"],
+        "temperature": [0.0, 0.3],
+    },
+)
+def text2sql_agent(question: str) -> str:
+    cfg = traigent.get_config()
+    return call_llm(question, model=cfg["model"], temperature=cfg["temperature"])
+```
+
+> **Note:** a plain `scoring_function(output, expected)` does not receive
+> `example.metadata`. Use `custom_evaluator` whenever the task needs extra
+> fields beyond the predicted and expected outputs.
+
+### Multi-field input dict
+
+When the optimized function itself needs multiple inputs, set `input` to a
+JSON object:
+
+```jsonl
+{"input": {"question": "Find all cities with more than 100 employees", "schema": "employees(id, city, dept)"}, "expected_output": "SELECT city FROM employees GROUP BY city HAVING COUNT(*) > 100"}
+```
+
+The SDK passes the dict's keys as keyword arguments if the function signature
+matches (either via named parameters or `**kwargs`):
+
+```python
+@traigent.optimize(
+    eval_dataset="data/text2sql.jsonl",
+    scoring_function=my_score,
+    objectives=["accuracy"],
+    configuration_space={"model": ["claude-3-haiku-20240307"], "temperature": [0.0]},
+)
+def text2sql_agent(question: str, schema: str) -> str:
+    cfg = traigent.get_config()
+    return call_llm(
+        f"Schema: {schema}\nQuestion: {question}",
+        model=cfg["model"],
+        temperature=cfg["temperature"],
+    )
+```
+
+Alternatively, accept `**kwargs` to keep the signature flexible:
+
+```python
+@traigent.optimize(...)
+def text2sql_agent(**kwargs) -> str:
+    cfg = traigent.get_config()
+    question = kwargs["question"]
+    schema = kwargs.get("schema", "")
+    return call_llm(f"Schema: {schema}\nQ: {question}", model=cfg["model"])
+```
+
 ## Mock Smoke Tests
 
 For tutorials and CI smoke tests, call mock mode explicitly near the top of the

@@ -21,7 +21,12 @@ from traigent.config.parallel import (
 )
 from traigent.config.types import TraigentConfig
 from traigent.optimizers import list_optimizers
-from traigent.utils.exceptions import ConfigAccessWarning, OptimizationStateError
+from traigent.optimizers.registry import _is_smart_algorithm
+from traigent.utils.exceptions import (
+    ConfigAccessWarning,
+    OptimizationError,
+    OptimizationStateError,
+)
 from traigent.utils.insights import (
     get_optimization_insights as _get_optimization_insights,
 )
@@ -707,7 +712,7 @@ def configure_for_budget(
 
 
 def set_strategy(
-    algorithm: str = "tpe",
+    algorithm: str = "random",
     algorithm_config: dict[str, Any] | None = None,
     parallel_workers: int | None = None,
     resource_limits: dict[str, Any] | None = None,
@@ -738,10 +743,9 @@ def set_strategy(
         ``StrategyConfig`` to the optimization pipeline.
 
     Args:
-        algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
-            Default is "tpe" (Tree-structured Parzen Estimator) which is always
-            available with Optuna. "bayesian" adaptive optimization requires
-            the traigent-advanced-algorithms plugin.
+        algorithm: Optimization algorithm ("grid" or "random").
+            Smart algorithms (Bayesian, Optuna TPE/CMA-ES/NSGA-II, etc.) run in
+            the Traigent cloud and are not available in the local SDK.
         algorithm_config: Algorithm-specific parameters.
         parallel_workers: Number of parallel evaluation workers.
         resource_limits: Memory, time, and compute constraints.
@@ -751,6 +755,12 @@ def set_strategy(
         optimization behavior; see the warning above for runtime entry points.
     """
     # Validate algorithm
+    if _is_smart_algorithm(algorithm):
+        raise OptimizationError(
+            f"Smart optimization ('{algorithm}') runs in the Traigent cloud and is not "
+            f"available in the local SDK (which supports 'grid' and 'random'). "
+            f"Connect to the Traigent backend to use smart algorithms."
+        )
     available_algorithms = get_available_strategies()
     if algorithm not in available_algorithms:
         raise ValueError(
@@ -787,8 +797,8 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
 
     Example:
         >>> strategies = traigent.get_available_strategies()
-        >>> strategies["bayesian"]["description"]
-        'Adaptive optimization for sample-efficient search'
+        >>> strategies["random"]["description"]
+        'Random sampling from parameter space'
     """
     algorithms = list_optimizers()
 
@@ -826,58 +836,9 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                 "best_for": "Quick exploration, continuous parameters",
             }
 
-        elif algorithm == "bayesian":
-            strategies[algorithm] = {
-                "name": "Bayesian Optimization",
-                "description": "Adaptive optimization for sample-efficient search",
-                "supports_continuous": True,
-                "supports_categorical": True,
-                "deterministic": False,
-                "parameters": {
-                    "acquisition_function": "expected_improvement or upper_confidence_bound",
-                    "initial_random_samples": "Number of random trials before adaptive selection (default: 5)",
-                    "xi": "Exploration parameter for EI (default: 0.01)",
-                    "kappa": "Exploration parameter for UCB (default: 2.576)",
-                    "random_seed": "Random seed for reproducibility",
-                },
-                "best_for": "Expensive evaluations, continuous optimization, sample efficiency",
-            }
-
-        elif algorithm in {
-            "optuna",
-            "optuna_tpe",
-            "tpe",
-            "optuna_random",
-            "optuna_grid",
-            "optuna_cmaes",
-            "optuna_nsga2",
-            "nsga2",
-        }:
-            optuna_names = {
-                "optuna": "Optuna TPE Optimization",
-                "optuna_tpe": "Optuna TPE Optimization",
-                "tpe": "Optuna TPE Optimization",
-                "optuna_random": "Optuna Random Search",
-                "optuna_grid": "Optuna Grid Search",
-                "optuna_cmaes": "Optuna CMA-ES Optimization",
-                "optuna_nsga2": "Optuna NSGA-II Optimization",
-                "nsga2": "Optuna NSGA-II Optimization",
-            }
-            strategies[algorithm] = {
-                "name": optuna_names[algorithm],
-                "description": "Optuna-backed optimization strategy",
-                "supports_continuous": algorithm not in {"optuna_grid"},
-                "supports_categorical": True,
-                "deterministic": algorithm in {"optuna_grid"},
-                "parameters": {
-                    "max_trials": "Maximum number of trials",
-                    "random_seed": "Random seed for reproducibility when supported",
-                    "objective_weights": "Weights for multi-objective aggregation",
-                },
-                "best_for": "Advanced search strategies and multi-objective optimization",
-            }
-
-        # Add more algorithms as they are implemented
+        # Smart algorithms (bayesian, optuna family) are not registered locally;
+        # they run in the Traigent cloud.  If they somehow appear in the registry
+        # list (e.g. via a plugin), render them as custom rather than crashing.
 
         else:
             strategies[algorithm] = {
@@ -980,7 +941,6 @@ def get_version_info() -> dict[str, Any]:
 
     # Query plugin registry for available features
     from traigent.plugins import (
-        FEATURE_ADVANCED_ALGORITHMS,
         FEATURE_ANALYTICS,
         FEATURE_CLOUD,
         FEATURE_MULTI_OBJECTIVE,
@@ -1001,15 +961,14 @@ def get_version_info() -> dict[str, Any]:
             # Base features (always available)
             "grid_search": True,
             "random_search": True,
-            "tpe_optimization": True,  # TPE is default, always available with Optuna
+            # Smart algorithms (TPE, Bayesian, Optuna family) run in the Traigent cloud
+            "tpe_optimization": False,
             "constraint_handling": True,
             "async_evaluation": True,
             "result_persistence": True,
             # Plugin-provided features (query registry)
-            "bayesian_optimization": (
-                registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
-                or "bayesian" in algorithms  # Fallback: check if registered
-            ),
+            # bayesian_optimization is cloud-only; local SDK always reports False
+            "bayesian_optimization": False,
             # Batch 2 fix: removed `or True` bypasses. These three features
             # were unconditionally advertised as available regardless of
             # whether the registry actually registered them. If a downstream

@@ -66,6 +66,44 @@ def _session_is_closed(session: Any) -> bool:
     return False
 
 
+def _coerce_enum(enum_cls: Any, raw: Any, *, fallback: Any) -> Any:
+    """Case/format-tolerant enum coercion for inbound backend status fields.
+
+    The backend may send a status in upper case (``RUNNING``), lower case
+    (``running``), or — for forward/backward compatibility — a value not in the
+    SDK's enum at all. The strict ``EnumCls(raw)`` construction raises
+    ``ValueError`` on any of these, which previously crashed deserialization of
+    an otherwise-valid response (issue #1302, AC3).
+
+    This helper tries, in order:
+      1. the raw value as-is (handles already-correct lowercase enum values),
+      2. the lower-cased value (handles backend UPPER -> SDK lowercase enums),
+      3. matching by member *name* (handles UPPER name like ``RUNNING``),
+    and otherwise returns ``fallback`` — a neutral default, never silently
+    ``COMPLETED``, so a failed/running run is never reported as succeeded.
+    """
+    if isinstance(raw, enum_cls):
+        return raw
+    for candidate in (raw, str(raw).lower() if raw is not None else raw):
+        try:
+            return enum_cls(candidate)
+        except (ValueError, KeyError):
+            continue
+    # Try matching by member name (e.g. backend "RUNNING" -> EnumCls.RUNNING).
+    if raw is not None:
+        name = str(raw).upper()
+        member = enum_cls.__members__.get(name)
+        if member is not None:
+            return member
+    logger.warning(
+        "Unrecognized %s value %r from backend; using neutral fallback %r",
+        getattr(enum_cls, "__name__", "status"),
+        raw,
+        fallback,
+    )
+    return fallback
+
+
 class BaseTraigentClient(ABC):
     """Base interface for all Traigent clients.
 
@@ -1279,11 +1317,10 @@ class TraigentCloudClient(BaseTraigentClient):
 
         from traigent.cloud.models import TrialStatus
 
-        # Convert string status to enum
-        try:
-            trial_status = TrialStatus(status)
-        except ValueError:
-            trial_status = TrialStatus.COMPLETED
+        # Convert string status to enum, tolerating case / out-of-set values.
+        # NEVER silently default to COMPLETED — that would assert success on a
+        # failed/running trial (issue #1302, AC3). Fall back to UNKNOWN instead.
+        trial_status = _coerce_enum(TrialStatus, status, fallback=TrialStatus.UNKNOWN)
 
         result = TrialResultSubmission(
             session_id=session_id,
@@ -1443,7 +1480,11 @@ class TraigentCloudClient(BaseTraigentClient):
         """Deserialize session creation response."""
         return SessionCreationResponse(
             session_id=data["session_id"],
-            status=OptimizationSessionStatus(data["status"]),
+            status=_coerce_enum(
+                OptimizationSessionStatus,
+                data["status"],
+                fallback=OptimizationSessionStatus.UNKNOWN,
+            ),
             optimization_strategy=data.get("optimization_strategy", {}),
             estimated_duration=data.get("estimated_duration"),
             billing_estimate=data.get("billing_estimate"),
@@ -1499,8 +1540,10 @@ class TraigentCloudClient(BaseTraigentClient):
             should_continue=data["should_continue"],
             reason=data.get("reason"),
             stop_reason=data.get("stop_reason"),
-            session_status=OptimizationSessionStatus(
-                data.get("session_status", "active")
+            session_status=_coerce_enum(
+                OptimizationSessionStatus,
+                data.get("session_status", "active"),
+                fallback=OptimizationSessionStatus.UNKNOWN,
             ),
             metadata=data.get("metadata", {}),
         )
@@ -1563,7 +1606,9 @@ class TraigentCloudClient(BaseTraigentClient):
             trial_id=data["trial_id"],
             metrics=data["metrics"],
             duration=data["duration"],
-            status=TrialStatus(data["status"]),
+            status=_coerce_enum(
+                TrialStatus, data["status"], fallback=TrialStatus.UNKNOWN
+            ),
             outputs_sample=data.get("outputs_sample"),
             error_message=data.get("error_message"),
             metadata=data.get("metadata", {}),
@@ -1945,7 +1990,11 @@ class TraigentCloudClient(BaseTraigentClient):
 
         return AgentOptimizationStatus(
             optimization_id=data["optimization_id"],
-            status=OptimizationSessionStatus(data["status"]),
+            status=_coerce_enum(
+                OptimizationSessionStatus,
+                data["status"],
+                fallback=OptimizationSessionStatus.UNKNOWN,
+            ),
             progress=data["progress"],
             completed_trials=data["completed_trials"],
             total_trials=data["total_trials"],

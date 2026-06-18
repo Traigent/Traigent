@@ -198,9 +198,7 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
             )
     except Exception as e:
         console.print(f"[red]Error loading configuration: {e}[/red]")
-        if exit_code:
-            raise SystemExit(1) from e
-        return
+        raise SystemExit(1) from e
 
     # Check if validation is enabled
     if not hooks_config.enabled:

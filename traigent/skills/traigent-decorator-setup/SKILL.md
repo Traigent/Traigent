@@ -53,8 +53,8 @@ from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 
 schema = ObjectiveSchema(
     objectives=[
-        ObjectiveDefinition(name="accuracy", weight=0.7, direction="maximize"),
-        ObjectiveDefinition(name="cost", weight=0.3, direction="minimize"),
+        ObjectiveDefinition(name="accuracy", weight=0.7, orientation="maximize"),
+        ObjectiveDefinition(name="cost", weight=0.3, orientation="minimize"),
     ],
     weights_sum=1.0,
     weights_normalized={"accuracy": 0.7, "cost": 0.3},
@@ -290,7 +290,7 @@ def answer_question(question: str) -> str:
     )
 
 # Run optimization
-results = await answer_question.optimize(max_trials=10, algorithm="bayesian")
+results = await answer_question.optimize(max_trials=10, algorithm="random")
 
 # Apply best configuration for production
 answer_question.apply_best_config(results)

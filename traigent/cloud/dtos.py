@@ -931,7 +931,7 @@ def create_local_experiment(
             "configuration_space": configuration_space,
         },
         metadata={
-            "mode": "local",
+            "execution_mode": "edge_analytics",
             "privacy_mode": True,
             "dataset_size": dataset_size,
             "created_with": "traigent-local",
@@ -968,7 +968,7 @@ def create_local_experiment_run(
             },
             "metadata": {"dataset_size": dataset_size, "privacy_mode": True},
         },
-        metadata={"mode": "local", "privacy_mode": True},
+        metadata={"execution_mode": "edge_analytics", "privacy_mode": True},
         status="not_started",  # Set correct status for backend compatibility
     )
 

@@ -83,12 +83,53 @@ class TestCollectOrchestratorKwargsInvocations:
         assert result["invocations_per_example"] == 1
 
 
+class TestCollectOrchestratorKwargsRemovedBudgetKeys:
+    """Regression: removed budget_* keys must raise TypeError, not be silently dropped."""
+
+    def _call(self, **extra: Any) -> dict[str, Any]:
+        algorithm_kwargs: dict[str, Any] = {"cache_policy": "allow_repeats"}
+        algorithm_kwargs.update(extra)
+        return collect_orchestrator_kwargs(
+            algorithm_kwargs,
+            samples_include_pruned_value=False,
+            default_config=None,
+            constraints=None,
+            agents=None,
+            agent_prefixes=None,
+            agent_measures=None,
+            global_measures=None,
+            promotion_gate=None,
+        )
+
+    def test_budget_limit_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="budget_limit"):
+            self._call(budget_limit=10)
+
+    def test_budget_metric_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="budget_metric"):
+            self._call(budget_metric="examples_attempted")
+
+    def test_budget_include_pruned_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="budget_include_pruned"):
+            self._call(budget_include_pruned=True)
+
+    def test_multiple_budget_keys_raise_together(self) -> None:
+        with pytest.raises(TypeError, match="budget_limit"):
+            self._call(budget_limit=5, budget_metric="total_cost")
+
+    def test_valid_keys_still_pass_through(self) -> None:
+        """Sanity check: cost_limit and metric_limit are the correct replacements."""
+        result = self._call(cost_limit=1.5, metric_limit=0.9, metric_name="accuracy")
+        assert result["cost_limit"] == 1.5
+        assert result["metric_limit"] == 0.9
+        assert result["metric_name"] == "accuracy"
+
+
 @pytest.fixture
 def workflow_trace_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example")
     monkeypatch.setenv("TRAIGENT_API_KEY", "api-key")
     monkeypatch.delenv("TRAIGENT_TRACE_ENABLED", raising=False)
-    monkeypatch.delenv("TRAIGENT_TRACES_ENABLED", raising=False)
 
 
 def _patch_workflow_traces_tracker(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
@@ -119,35 +160,6 @@ class TestCreateWorkflowTracesTrackerTraceEnv:
             backend_url="https://backend.example",
             auth_token="api-key",
         )
-
-    def test_alias_only_enabled_warns_and_creates_tracker(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        workflow_trace_backend_env: None,
-    ) -> None:
-        monkeypatch.setenv("TRAIGENT_TRACES_ENABLED", "true")
-        tracker, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
-
-        with pytest.warns(DeprecationWarning, match="TRAIGENT_TRACES_ENABLED"):
-            result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
-
-        assert result is tracker
-        tracker_factory.assert_called_once()
-
-    def test_both_set_canonical_takes_precedence(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        workflow_trace_backend_env: None,
-    ) -> None:
-        monkeypatch.setenv("TRAIGENT_TRACE_ENABLED", "false")
-        monkeypatch.setenv("TRAIGENT_TRACES_ENABLED", "true")
-        _, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
-
-        with pytest.warns(DeprecationWarning, match="ignored"):
-            result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
-
-        assert result is None
-        tracker_factory.assert_not_called()
 
     def test_neither_set_defaults_off(
         self,

@@ -560,7 +560,7 @@ The `**runtime_overrides` parameter accepts additional settings:
 
 ```python
 @traigent.optimize(
-    algorithm="optuna",  # "grid", "random", "bayesian", "optuna"
+    algorithm="grid",  # "grid" or "random" (local); smart algorithms run in the Traigent cloud
     ...
 )
 ```

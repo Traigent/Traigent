@@ -15,29 +15,34 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+# Single source of truth for trial status (issue #1302 AC4): the public SDK
+# enum lives in ``traigent.api.types``. Re-export it here so the cloud layer and
+# the public API can never drift into two disagreeing ``TrialStatus`` enums.
+from traigent.api.types import TrialStatus as TrialStatus
 from traigent.evaluators.base import Dataset
 
 
 class OptimizationSessionStatus(Enum):
-    """Status of an optimization session."""
+    """Status of an optimization session (session-lifecycle vocabulary).
+
+    NOTE: This is the SESSION lifecycle, distinct from the run-lifecycle vocab
+    the backend expects on the experiment-run / configuration-run status PUT
+    endpoints (see ``traigent.cloud.api_operations`` — issue #1302). Do not send
+    these members on a run/config status update.
+
+    Values are lowercase, but the inbound deserializers tolerate the backend's
+    UPPER-case responses via ``traigent.cloud.client._coerce_enum``.
+    """
 
     PENDING = "pending"
     CREATED = "created"
+    INITIALIZING = "initializing"
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-
-
-class TrialStatus(Enum):
-    """Status of an individual trial."""
-
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SKIPPED = "skipped"
+    UNKNOWN = "unknown"
 
 
 @dataclass

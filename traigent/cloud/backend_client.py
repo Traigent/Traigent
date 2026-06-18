@@ -1226,7 +1226,13 @@ class BackendIntegratedClient:
                     metadata=metadata or {},
                 )
             except Exception as exc:
-                logger.debug("Local storage trial result fallback failed: %s", exc)
+                # #1279: do not silently drop the local record — on connected
+                # runs this is the only durable trace if the remote submit fails.
+                logger.warning(
+                    "Local storage trial result persistence failed for session %s: %s",
+                    session_id,
+                    exc,
+                )
 
         session = self._active_sessions.get(session_id)
         if session:
@@ -1234,10 +1240,12 @@ class BackendIntegratedClient:
             session.updated_at = datetime.now(UTC)
 
     # API Operations
-    def _map_to_backend_status(self, status: str) -> str:
+    def _map_to_backend_status(
+        self, status: str, *, endpoint: str = "experiment_run"
+    ) -> str:
         """Map Traigent status values to backend-expected values.
         Delegates to api_operations module."""
-        return cast(str, self._api_ops.map_to_backend_status(status))
+        return cast(str, self._api_ops.map_to_backend_status(status, endpoint=endpoint))
 
     def _normalize_execution_mode(self, execution_mode: str | None) -> str:
         """Translate SDK execution modes to backend-supported values."""

@@ -127,7 +127,8 @@ def build_tvl_governance(config_space: Any) -> dict[str, Any] | None:
 
     try:
         from traigent.knobs.bindings import Calibrated, is_governed
-    except Exception:  # pragma: no cover - knobs is a hard dep of ConfigSpace
+    except ImportError:  # pragma: no cover - knobs is a hard dep of ConfigSpace
+        # fail-open(intentional): knobs optional dep absent; TVL governance omitted from session
         logger.warning("knobs bindings unavailable; omitting tvl_governance")
         return None
 

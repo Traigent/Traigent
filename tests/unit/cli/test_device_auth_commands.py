@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import types
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +209,11 @@ def _install_device_test_fakes(
         auth_commands.aiohttp,
         "ClientSession",
         lambda *args, **kwargs: session,
+    )
+    monkeypatch.setattr(
+        auth_commands.aiohttp,
+        "ClientTimeout",
+        lambda total=None, **kwargs: types.SimpleNamespace(total=total, **kwargs),
     )
     return store, session
 

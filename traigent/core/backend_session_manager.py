@@ -151,10 +151,19 @@ def _format_untracked_warning_block(
             "permission middleware that returned this structured response."
         )
     elif classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY:
-        lines.append(
-            "Remedy: re-authenticate with `traigent auth login` or provide a "
-            "valid, non-revoked API key."
-        )
+        raw = (result.failure_detail or "").lower()
+        if "invalid api key format" in raw or "invalid_api_key_format" in raw:
+            lines.append(
+                "Remedy: your API key does not match the expected format. "
+                "Portal keys start with 'uk_' (46 chars) or 'tg_' (64 chars). "
+                "Copy the full key from Settings → API Keys and set "
+                "TRAIGENT_API_KEY to that exact value."
+            )
+        else:
+            lines.append(
+                "Remedy: re-authenticate with `traigent auth login` or provide a "
+                "valid, non-revoked API key."
+            )
     elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
         lines.append(
             "Remedy: configure a valid Traigent API key or run `traigent auth login`."
@@ -241,10 +250,60 @@ class BackendSessionManager:
         # never acknowledged).
         self._acknowledged_trials: set[tuple[str, str]] = set()
 
+        # Issue #1265: a backend that becomes unreachable *mid-run* (transient
+        # outage / maintenance window) is distinct from the explicit
+        # TRAIGENT_OFFLINE_MODE air-gap. When it happens in a backend-tracking
+        # mode we degrade to local-only: trials are still optimized and
+        # persisted locally, but the run is no longer cloud-tracked. We record
+        # that here so the run's result can be marked source="local" and a
+        # single prominent warning is emitted (instead of one per trial).
+        self._runtime_degraded: bool = False
+        self._degraded_warning_emitted: bool = False
+
     @property
     def backend_tracking_enabled(self) -> bool:
         """Whether remote backend tracking is active for this run."""
         return self._backend_tracking_enabled
+
+    @property
+    def backend_degraded(self) -> bool:
+        """Whether the backend became unreachable mid-run (issue #1265)."""
+        return self._runtime_degraded
+
+    def _flag_backend_degraded(self, context: str) -> None:
+        """Mark the run as degraded to local-only and warn once (issue #1265).
+
+        Called when a backend-tracking interaction fails at runtime. The first
+        call emits a single, prominent warning; subsequent calls are quiet so a
+        long run doesn't spam one warning per trial.
+        """
+        self._runtime_degraded = True
+        if self._degraded_warning_emitted:
+            return
+        self._degraded_warning_emitted = True
+        logger.warning(
+            "⚠️  Traigent backend tracking became unavailable during %s — "
+            "continuing in LOCAL-ONLY mode. Trials are still optimized and "
+            "saved to local storage, but this run is NOT tracked on the cloud "
+            "backend; its result is marked source='local'. Locally-stored "
+            "results sync to the cloud on the next successful run.",
+            context,
+        )
+
+    def result_source(self, trial_count: int) -> str:
+        """Return the provenance of this run's result: 'backend' or 'local'.
+
+        'backend' only when remote tracking stayed healthy *and* at least one
+        trial was acknowledged by the backend. A run that degraded mid-flight,
+        never had tracking, or produced trials that the backend never
+        acknowledged is reported as 'local' so callers (and the UI) can tell a
+        cloud-tracked run from a locally-computed one (issue #1265).
+        """
+        if not self._backend_tracking_enabled or self._runtime_degraded:
+            return "local"
+        if trial_count > 0 and not self._acknowledged_trials:
+            return "local"
+        return "backend"
 
     def disable_backend_tracking(self, reason: SessionCreationFailureReason) -> None:
         """Disable backend tracking for this run. Idempotent — keeps first reason."""
@@ -490,6 +549,7 @@ class BackendSessionManager:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        experiment_display_name: str | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -507,7 +567,11 @@ class BackendSessionManager:
         """
         session_id = None
         function_identifier = function_descriptor.identifier
-        function_display_name = function_descriptor.display_name
+        # experiment_display_name (from @traigent.optimize(experiment_name=...)) overrides
+        # the descriptor's __qualname__-derived display_name in portal/storage.
+        function_display_name = (
+            experiment_display_name or function_descriptor.display_name
+        )
         function_slug = function_descriptor.slug
 
         if self._backend_client:
@@ -698,8 +762,12 @@ class BackendSessionManager:
                 metadata=metadata_payload,
             )
         except Exception as exc:
-            logger.debug(
-                "Local trial logging failed for session %s trial %s: %s",
+            # #1279: a failed local write means the trial's only record is the
+            # breaker-gated remote submit — if that also fails the completed
+            # (paid-for) trial is lost. This must never be silent.
+            logger.warning(
+                "Local trial logging failed for session %s trial %s — trial has "
+                "no durable local record if the remote submit also fails: %s",
                 session_id,
                 trial_result.trial_id,
                 exc,
@@ -847,18 +915,12 @@ class BackendSessionManager:
         if "score" not in metrics_payload and score is not None:
             metrics_payload["score"] = sanitized_score
 
-        # Map SDK TrialStatus to backend status string.
-        # PRUNED is a success case (early stopping for efficiency), not a failure.
-        status_mapping = {
-            TrialStatus.COMPLETED: "COMPLETED",
-            TrialStatus.FAILED: "FAILED",
-            TrialStatus.PRUNED: "PRUNED",
-            TrialStatus.CANCELLED: "CANCELLED",
-            TrialStatus.RUNNING: "RUNNING",
-            TrialStatus.PENDING: "PENDING",
-            TrialStatus.NOT_STARTED: "PENDING",
-        }
-        status = status_mapping.get(trial_result.status, "FAILED")
+        # Map SDK TrialStatus to the configuration-run wire vocab via the single
+        # canonical mapper (issue #1302). This is a configuration-run submission,
+        # so PRUNED (early-stopping success) is preserved rather than coerced.
+        from traigent.cloud.api_operations import map_status_to_wire
+
+        status = map_status_to_wire(trial_result.status.value, endpoint="config_run")
 
         try:
             # The backend binds a result to a session by the configuration_run
@@ -873,6 +935,9 @@ class BackendSessionManager:
                 # Fail closed: no acknowledged backend slot ⇒ NO submission and
                 # NO acknowledgment. The certified-selection report will then
                 # withhold for this incumbent (never attest an unbound winner).
+                # A missing slot in a tracking-enabled run is the first symptom
+                # of a backend outage — degrade to local-only (issue #1265).
+                self._flag_backend_degraded("trial submission")
                 logger.warning(
                     "No backend trial slot acquired for session %s "
                     "(client trial %s); skipping submission (fail closed)",
@@ -911,9 +976,20 @@ class BackendSessionManager:
                 if inspect.isawaitable(submitted_result)
                 else submitted_result
             )
-            if not submitted:
+            if submitted is None:
+                # None signals a transient, non-fatal skip (e.g. 400 session-not-found
+                # from per-worker session storage — BE #1194).  The trial-operations
+                # layer already logged an INFO message; don't flag backend degraded
+                # and don't re-log here so the user isn't flooded with warnings for
+                # a known transient condition.  Recover via `traigent sync`.
+                pass
+            elif not submitted:
+                # False covers a real backend rejection (non-2xx that is not a
+                # transient not-found) or a network failure; degrade to local-only
+                # (#1265) so subsequent trials don't keep hitting a broken endpoint.
+                self._flag_backend_degraded("trial submission")
                 logger.warning(
-                    "Backend session endpoint rejected trial %s for session %s",
+                    "Backend session endpoint did not accept trial %s for session %s",
                     backend_trial_id,
                     session_id,
                 )
@@ -929,6 +1005,10 @@ class BackendSessionManager:
                     sorted(metrics_payload.keys()),
                 )
         except Exception as exc:
+            # A raised error here is a backend interaction failure; the run is
+            # no longer cloud-tracked for this trial, so degrade to local-only
+            # (issue #1265) rather than retrying the backend every trial.
+            self._flag_backend_degraded("trial submission")
             logger.warning(
                 "Failed to submit trial %s for session %s to backend: %s",
                 trial_result.trial_id,

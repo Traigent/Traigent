@@ -55,11 +55,12 @@ def parallel_processing(data_batch: list) -> list:
 
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = []
-        for item in data_batch:
-            # Each worker inherits the trial config
-            future = executor.submit(snapshot.run, process_item, item, cfg)
-            futures.append(future)
+        def worker(item):
+            # Restore Traigent context in the worker thread
+            with snapshot.restore():
+                return process_item(item, cfg)
+
+        futures = [executor.submit(worker, item) for item in data_batch]
         return [f.result() for f in futures]
 ```
 

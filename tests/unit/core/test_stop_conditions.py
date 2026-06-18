@@ -4,7 +4,6 @@ import traigent.core.stop_conditions as stop_conditions
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.stop_conditions import (
-    BudgetStopCondition,
     HypervolumeConvergenceStopCondition,
     MaxSamplesStopCondition,
     MaxTrialsStopCondition,
@@ -197,29 +196,8 @@ def test_metric_limit_stop_condition_rejects_non_numeric_metric():
         stop_condition.should_stop([_make_trial("t1", {"total_cost": "free"})])
 
 
-def test_budget_stop_condition_alias_warns_and_uses_metric_limit_reason():
-    with pytest.warns(DeprecationWarning, match="BudgetStopCondition"):
-        stop_condition = BudgetStopCondition(budget=0.1, metric_name="tokens")
-
-    assert stop_condition.reason == "metric_limit"
-    assert stop_condition.should_stop([_make_trial("t1", {"tokens": 0.1})])
-
-
-def test_budget_stop_condition_without_metric_warns_to_use_cost_limit():
-    with pytest.warns(DeprecationWarning) as warnings_record:
-        stop_condition = BudgetStopCondition(budget=0.1)
-
-    warning_messages = [str(warning.message) for warning in warnings_record]
-    assert any("BudgetStopCondition" in msg for msg in warning_messages)
-    assert any("money spend control, use cost_limit" in msg for msg in warning_messages)
-
-    assert stop_condition.reason == "metric_limit"
-    assert stop_condition.should_stop([_make_trial("t1", {"cost": 0.1})])
-
-
 def test_stop_conditions_exports_are_explicit():
     assert set(stop_conditions.__all__) == {
-        "BudgetStopCondition",
         "CostLimitStopCondition",
         "HypervolumeConvergenceStopCondition",
         "MaxSamplesStopCondition",

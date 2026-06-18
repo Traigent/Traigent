@@ -205,14 +205,14 @@ The walkthrough examples use local mock mode through the quickstart/testing help
 
 ### ☁️ Traigent Portal & Hybrid Tracking
 
-Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate. The supported portal-visible SDK path today is `execution_mode="hybrid"`: trials run locally, while session and trial metrics are stored in the backend for portal tracking.
+Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate. Portal tracking is enabled automatically when `TRAIGENT_API_KEY` is set — you do not need to set `execution_mode`. The SDK auto-selects the mode based on algorithm and transport.
 
-`execution_mode="cloud"` is reserved for future remote agent execution. It is not available yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
+`execution_mode=”cloud”` is reserved for future remote agent execution and is not available yet.
 
 1. **Sign up** at [portal.traigent.ai](https://portal.traigent.ai) — verify your email to activate
 2. **Create an API key** — click your name (top-right) → **API Keys** → **+ Create API Key**
-3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY="sk_..."`  <!-- pragma: allowlist secret -->
-4. **Run with hybrid tracking** — set `execution_mode="hybrid"` for portal-visible optimization
+3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY=”sk_...”`  <!-- pragma: allowlist secret -->
+4. **Run** — portal tracking is automatic; no `execution_mode` needed
 
 <details>
 <summary>Credential priority and multi-provider setup</summary>
@@ -254,7 +254,7 @@ def multi_provider_agent(question: str) -> str:
 | Feature | Description |
 |---------|-------------|
 | **Zero-code integration** | Add `@traigent.optimize()` to existing code — no refactoring |
-| **Multi-algorithm** | Random, Grid, Bayesian (TPE, NSGA-II, CMA-ES) via Optuna |
+| **Multi-algorithm** | Random and Grid locally; Bayesian (TPE, NSGA-II, CMA-ES) via the Traigent cloud |
 | **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
 | **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
 | **Cost tracking** | Integrated tokencost library with 500+ model pricing |
@@ -279,7 +279,7 @@ Python 3.11+ on Linux, macOS, or Windows. The published package on [PyPI](https:
 | `[recommended]` | All user-facing features (default) |
 | `[integrations]` | LangChain, OpenAI, Anthropic adapters |
 | `[analytics]` | Visualization and analytics |
-| `[bayesian]` | Bayesian optimization (TPE, NSGA-II) |
+| `[bayesian]` | Bayesian optimization dependencies (used by the Traigent cloud; not available locally) |
 | `[all]` | Everything |
 
 **[Full installation guide →](docs/getting-started/installation.md)**
@@ -329,8 +329,8 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 | Mode | Status | Privacy | Algorithm | Best For |
 |------|--------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | All (Random/Grid/Bayesian/Optuna) | Local/private runs |
-| **Hybrid** (`hybrid`) | ✅ Available | ✅ Trial execution local | All (Random/Grid/Bayesian/Optuna) | Portal-tracked runs |
+| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | Random, Grid | Local/private runs |
+| **Hybrid** (`hybrid`) | ✅ Available | ✅ Trial execution local | Random, Grid + cloud smart algorithms | Portal-tracked runs |
 | **Cloud** (`cloud`) | 🚧 Reserved | Not available | Future remote execution | Do not use yet |
 
 **[Execution modes guide →](docs/guides/execution-modes.md)** — mode comparisons, privacy details, migration path
@@ -342,7 +342,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 | `configuration_space` | `@traigent.optimize()` | Parameters to test (required) |
 | `objectives` | `@traigent.optimize()` | Metrics to optimize for |
 | `eval_dataset` | `@traigent.optimize()` | Dataset for evaluation |
-| `algorithm` | `.optimize()` call | `"random"`, `"grid"`, `"bayesian"` |
+| `algorithm` | `.optimize()` call | `"random"`, `"grid"` (local); smart algorithms run in the Traigent cloud |
 | `max_trials` | `.optimize()` call | Number of configurations to test |
 | `progress_bar` | `.optimize()` call | `True` / `False` / `None` (auto) — live progress bar |
 

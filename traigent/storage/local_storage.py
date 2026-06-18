@@ -10,7 +10,7 @@ import os
 import time
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields as dataclass_fields
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -134,6 +134,10 @@ class OptimizationSession:
     trials: list[TrialResult] | None = None
     optimization_config: dict[str, Any | None] | None = None
     metadata: dict[str, Any | None] | None = None
+    # Cloud-sync provenance & progress (Sync v2). Absent on never-synced
+    # sessions; populated by the syncer so re-sync is idempotent/resumable and
+    # `traigent sync` can report status. See traigent/cloud/session_sync.py.
+    sync_state: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.trials is None:
@@ -156,6 +160,17 @@ class OptimizationSession:
 
         data["trials"] = trials
         return cls(**data)
+
+
+def _dataclass_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only keys that ``cls`` (a dataclass) accepts.
+
+    Lets a session file written by a newer SDK — with fields this version
+    doesn't know about — still load instead of raising ``TypeError`` from an
+    unexpected keyword argument.
+    """
+    allowed = {f.name for f in dataclass_fields(cls)}
+    return {key: value for key, value in data.items() if key in allowed}
 
 
 class LocalStorageManager:
@@ -302,6 +317,7 @@ class LocalStorageManager:
         function_name: str,
         optimization_config: dict[str, Any | None] | None = None,
         metadata: dict[str, Any | None] | None = None,
+        session_id: str | None = None,
     ) -> str:
         """
         Create a new optimization session.
@@ -310,13 +326,24 @@ class LocalStorageManager:
             function_name: Name of the function being optimized
             optimization_config: Configuration for the optimization
             metadata: Additional metadata
+            session_id: Optional externally-supplied id (e.g. a backend
+                session id, so connected hybrid runs can durably persist
+                trials under the same key the backend uses — see #1279). When
+                omitted, a local id is minted. If a session with this id
+                already exists it is returned unchanged (idempotent — existing
+                trials are never clobbered).
 
         Returns:
             session_id: Unique identifier for the session
         """
         timestamp = datetime.now(UTC)
-        safe_function = sanitize_identifier(function_name)
-        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{safe_function}_{uuid4().hex[:8]}"
+        if session_id is not None:
+            existing = self.load_session(session_id)
+            if existing is not None:
+                return session_id
+        else:
+            safe_function = sanitize_identifier(function_name)
+            session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{safe_function}_{uuid4().hex[:8]}"
 
         session = OptimizationSession(
             session_id=session_id,
@@ -509,6 +536,41 @@ class LocalStorageManager:
         logger.info(f"Finalized session {session_id} with status {status}")
         return session
 
+    def update_sync_state(
+        self,
+        session_id: str,
+        patch: dict[str, Any],
+        *,
+        trial_updates: dict[str, dict[str, Any]] | None = None,
+    ) -> OptimizationSession | None:
+        """Merge a patch into a session's ``sync_state`` and persist atomically.
+
+        ``patch`` is shallow-merged into the top level of ``sync_state``.
+        ``trial_updates`` (keyed by the local trial id as a string) is merged
+        into ``sync_state["trials"]`` so per-trial upload progress accumulates
+        across resumable sync attempts. Returns the updated session, or None if
+        the session is missing.
+        """
+        session = self.load_session(session_id)
+        if not session:
+            logger.warning("Cannot update sync_state: session %s not found", session_id)
+            return None
+
+        state: dict[str, Any] = dict(session.sync_state or {})
+        state.update(patch)
+        if trial_updates:
+            trials_state: dict[str, Any] = dict(state.get("trials") or {})
+            for trial_key, trial_patch in trial_updates.items():
+                merged = dict(trials_state.get(trial_key) or {})
+                merged.update(trial_patch)
+                trials_state[trial_key] = merged
+            state["trials"] = trials_state
+
+        session.sync_state = state
+        session.updated_at = datetime.now(UTC).isoformat()
+        self._save_session(session)
+        return session
+
     def load_session(self, session_id: str) -> OptimizationSession | None:
         """Load a session from storage."""
         session_file = validate_path(
@@ -524,10 +586,11 @@ class LocalStorageManager:
             with safe_open(session_file, self.storage_path, mode="r") as f:
                 data = json.load(f)
 
-            # Convert trial data back to TrialResult objects
+            # Convert trial data back to TrialResult objects. Drop unknown keys
+            # so a file written by a newer SDK (with extra fields) still loads.
             trials = []
             for trial_data in data.get("trials", []):
-                trials.append(TrialResult(**trial_data))
+                trials.append(TrialResult(**_dataclass_kwargs(TrialResult, trial_data)))
 
             data["trials"] = trials
 
@@ -542,7 +605,7 @@ class LocalStorageManager:
             if "updated_at" not in data:
                 data["updated_at"] = current_time
 
-            return OptimizationSession(**data)
+            return OptimizationSession(**_dataclass_kwargs(OptimizationSession, data))
 
         except Exception as e:
             logger.error(f"Failed to load session {session_id}: {e}")
@@ -656,10 +719,17 @@ class LocalStorageManager:
         if not session.trials:
             return {
                 "session_id": session_id,
+                "function_name": session.function_name,
                 "status": session.status,
-                "trials": 0,
+                "total_trials": session.total_trials,
+                "completed_trials": session.completed_trials,
+                "successful_trials": 0,
                 "best_score": None,
+                "baseline_score": session.baseline_score,
                 "improvement": None,
+                "avg_score": None,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
             }
 
         scores = [
@@ -831,6 +901,10 @@ class LocalStorageManager:
         Returns:
             Normalized value with floats rounded and dicts sorted
         """
+        from traigent.utils.numpy_compat import convert_numpy_value, is_numpy_type
+
+        if is_numpy_type(value):
+            return self._normalize_config(convert_numpy_value(value))
         if isinstance(value, float):
             # Round floats to 8 decimal places for consistency
             return round(value, 8)

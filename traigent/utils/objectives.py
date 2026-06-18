@@ -28,15 +28,27 @@ _OPERATIONAL_OBJECTIVE_NAMES = {
 }
 
 
-def is_minimization_objective(objective_name: str) -> bool:
-    """Infer objective direction from objective name patterns.
+def is_minimization_objective(
+    objective_name: str,
+    orientation: str | None = None,
+) -> bool:
+    """Return True when the objective should be minimized.
 
-    This is a heuristic fallback for legacy objective-name-only flows.
-    It performs substring matching and can misclassify compound names like
-    ``"accuracy_cost_ratio"`` as minimization objectives.
+    When *orientation* is supplied (the value from an
+    ``ObjectiveDefinition.orientation`` field), it is used directly and
+    name-pattern heuristics are bypassed:
 
-    Prefer explicit objective orientation metadata when available.
+    * ``"minimize"`` → ``True``
+    * ``"maximize"`` → ``False``
+    * ``"band"``     → ``False`` (banded objectives use deviation, not direction)
+
+    When *orientation* is ``None`` this falls back to substring matching of
+    *objective_name* against ``_MINIMIZE_OBJECTIVE_PATTERNS``.  This heuristic
+    is retained for backward compatibility with legacy string-only objective
+    flows and can misclassify compound names like ``"accuracy_cost_ratio"``.
     """
+    if orientation is not None:
+        return orientation == "minimize"
     lowered = objective_name.lower()
     return any(pattern in lowered for pattern in _MINIMIZE_OBJECTIVE_PATTERNS)
 

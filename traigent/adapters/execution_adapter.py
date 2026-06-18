@@ -423,7 +423,7 @@ class RemoteExecutionAdapter(ExecutionAdapter):
 
     async def get_execution_mode(self) -> str:
         """Get execution mode."""
-        return ExecutionMode.CLOUD.value
+        return ExecutionMode.HYBRID_API.value
 
 
 class HybridPlatformAdapter(ExecutionAdapter):

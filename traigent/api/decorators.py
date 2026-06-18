@@ -43,7 +43,6 @@ Examples:
 from __future__ import annotations
 
 import inspect
-import warnings
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -385,6 +384,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "eval_dataset": None,
     "objectives": None,
     "configuration_space": None,
+    "experiment_name": None,
     "default_config": None,
     "constraints": None,
     "safety_constraints": None,
@@ -460,9 +460,6 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "metric_limit",
         "metric_name",
         "metric_include_pruned",
-        "budget_limit",
-        "budget_metric",
-        "budget_include_pruned",
         "plateau_window",
         "plateau_epsilon",
         "cost_limit",
@@ -495,6 +492,7 @@ class LegacyOptimizeArgs:
         str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
     ) = None
     objectives: list[str] | ObjectiveSchema | None = None
+    experiment_name: str | None = None
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
     constraints: list[Callable[..., Any]] | None = None
@@ -586,6 +584,7 @@ class LegacyOptimizeArgs:
         return [
             ("eval_dataset", self.eval_dataset),
             ("objectives", self.objectives),
+            ("experiment_name", self.experiment_name),
             ("configuration_space", self.configuration_space),
             ("default_config", self.default_config),
             ("constraints", self.constraints),
@@ -803,33 +802,8 @@ def _extract_inline_params(
 def _normalize_runtime_override_aliases(
     overrides: dict[str, Any],
 ) -> dict[str, Any]:
-    """Normalize deprecated runtime override aliases."""
-    if "strategy" not in overrides:
-        return dict(overrides)
-
-    normalized = dict(overrides)
-    strategy_value = normalized.pop("strategy")
-    existing_algorithm = normalized.get("algorithm")
-    if (
-        existing_algorithm is not None
-        and strategy_value is not None
-        and existing_algorithm != strategy_value
-    ):
-        raise TypeError(
-            "Conflicting optimization selector: received both "
-            f"'algorithm={existing_algorithm}' and 'strategy={strategy_value}'. "
-            "Use only 'algorithm'."
-        )
-
-    warnings.warn(
-        "'strategy' is deprecated; use 'algorithm' instead.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-    normalized["algorithm"] = (
-        existing_algorithm if existing_algorithm is not None else strategy_value
-    )
-    return normalized
+    """Normalize runtime override keys."""
+    return dict(overrides)
 
 
 def _resolve_strategy_argument(
@@ -838,7 +812,7 @@ def _resolve_strategy_argument(
     strategy_params: Mapping[str, Any] | None,
     runtime_overrides: dict[str, Any],
 ) -> tuple[str | None, dict[str, Any]]:
-    """Split public ``strategy`` into preset selection or legacy algorithm alias."""
+    """Split public ``strategy`` into preset selection."""
     if strategy is None:
         if strategy_params is not None:
             normalize_strategy_preset(None, strategy_params)
@@ -847,22 +821,11 @@ def _resolve_strategy_argument(
     if is_strategy_preset_name(strategy) or strategy_params is not None:
         return strategy, runtime_overrides
 
-    normalized_overrides = dict(runtime_overrides)
-    existing_algorithm = normalized_overrides.get("algorithm")
-    if existing_algorithm is not None and existing_algorithm != strategy:
-        raise TypeError(
-            "Conflicting optimization selector: received both "
-            f"'algorithm={existing_algorithm}' and 'strategy={strategy}'. "
-            "Use only 'algorithm'."
-        )
-
-    warnings.warn(
-        "'strategy' as an optimizer selector is deprecated; use 'algorithm' instead.",
-        DeprecationWarning,
-        stacklevel=3,
+    raise ValueError(
+        f"Unknown strategy preset: {strategy!r}. "
+        "Use 'algorithm' to select an optimizer by name, or provide a valid "
+        "strategy preset name."
     )
-    normalized_overrides["algorithm"] = existing_algorithm or strategy
-    return None, normalized_overrides
 
 
 def _apply_strategy_preset_to_options(
@@ -1265,9 +1228,13 @@ def _resolve_execution_mode_enum(
         raise ConfigurationError(str(exc)) from None
 
     if requested_privacy_alias:
-        logger.warning(
+        import warnings
+
+        warnings.warn(
             "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
-            "with privacy_enabled=True. Mapping automatically."
+            "with privacy_enabled=True. Mapping automatically.",
+            DeprecationWarning,
+            stacklevel=8,
         )
         if privacy_enabled is None:
             privacy_enabled = True
@@ -1340,13 +1307,6 @@ def _log_execution_mode_warnings(
     minimal_logging: bool,
 ) -> None:
     """Log warnings for incompatible execution mode settings."""
-    if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
-        logger.warning(
-            "local_storage_path is ignored when execution_mode='cloud'. "
-            "Cloud remote execution is not available yet; use hybrid for "
-            "portal-tracked optimization."
-        )
-
     if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
         logger.warning(
             "minimal_logging is only effective in Edge Analytics mode. "
@@ -1737,6 +1697,7 @@ def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
+    experiment_name: str | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
@@ -1792,8 +1753,8 @@ def optimize(  # NOSONAR(S107)
             business-goal preset cannot silently override hand-set objectives.
         strategy: Optional advisory strategy preset name. Supported preset names
             are ``max_accuracy_then_cheapest_within_epsilon``,
-            ``quality_floor_min_cost``, and ``pareto_frontier``. Non-preset
-            values retain the deprecated optimizer-alias behavior.
+            ``quality_floor_min_cost``, and ``pareto_frontier``.
+            Use ``algorithm`` to select an optimizer by name.
         strategy_params: Typed parameters for the selected strategy preset.
             ``epsilon`` is required for
             ``max_accuracy_then_cheapest_within_epsilon`` and must be > 0 and
@@ -1802,6 +1763,13 @@ def optimize(  # NOSONAR(S107)
         configuration_space: Dictionary describing the search space. Keys are
             parameter names; values can be discrete lists, numeric tuples, or nested
             dicts for composite parameters.
+        experiment_name: Human-readable display name for this experiment shown in
+            the Traigent portal and local storage. When ``None`` (default), the
+            decorated function's ``__name__`` is used. Falls back to the
+            ``TRAIGENT_EXPERIMENT_NAME`` environment variable if set and no
+            explicit value is passed. Allows names with spaces, punctuation, and
+            other characters not valid in Python identifiers, for example
+            ``"Amir txt2sql v1 (ACL 0.8)"``.
         default_config: Baseline configuration materialized before the first trial.
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
@@ -1903,10 +1871,7 @@ def optimize(  # NOSONAR(S107)
             **runtime_overrides: Stop-condition and budget knobs accepted by
                 the decorator. The currently supported keys are:
                 ``metric_limit``, ``metric_name``,
-                ``metric_include_pruned``,
-                ``budget_limit`` (deprecated alias for ``metric_limit``),
-                ``budget_metric``,
-                ``budget_include_pruned``, ``plateau_window``,
+                ``metric_include_pruned``, ``plateau_window``,
                 ``plateau_epsilon``, ``cost_limit``, ``cost_approved``,
                 ``tie_breakers``, and ``tvl_parameter_agents``.
                 Note: ``algorithm`` and ``max_trials`` are first-class
@@ -2053,6 +2018,7 @@ def optimize(  # NOSONAR(S107)
     direct_inputs = {
         "objectives": objectives,
         "configuration_space": configuration_space,
+        "experiment_name": experiment_name,
         "default_config": default_config,
         "constraints": constraints,
         "safety_constraints": safety_constraints,
@@ -2183,6 +2149,8 @@ def optimize(  # NOSONAR(S107)
     max_trials_value = combined_settings["max_trials"]
     if max_trials_value is not None and max_trials_value <= 0:
         raise ValueError("max_trials must be a positive integer")
+    # Experiment display name (decorator > env var > func.__name__ at decoration time)
+    experiment_name_value = combined_settings["experiment_name"]
     # Tuned variable auto-detection
     auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
     auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
@@ -2482,6 +2450,8 @@ def optimize(  # NOSONAR(S107)
             strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
+            # Experiment display name (overrides func.__name__ in portal/storage)
+            experiment_name=experiment_name_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
             prompt_rewrite=prompt_rewrite,
             grow_dataset=grow_dataset,
@@ -2489,7 +2459,10 @@ def optimize(  # NOSONAR(S107)
             **combined_runtime_overrides,
         )
 
-        logger.info(f"Created optimizable function: {func.__name__}")
+        effective_name = experiment_name_value or func.__name__
+        logger.info(
+            f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})"
+        )
 
         return optimized_func
 

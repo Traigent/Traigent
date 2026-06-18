@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import warnings
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Iterable, Sequence
@@ -209,42 +208,6 @@ class MetricLimitStopCondition(StopCondition):
 
         self._last_index = len(trial_seq)
         return self._running_total >= self._limit
-
-
-class BudgetStopCondition(MetricLimitStopCondition):
-    """Deprecated alias for ``MetricLimitStopCondition``."""
-
-    def __init__(
-        self,
-        *,
-        budget: float,
-        metric_name: str | None = None,
-        include_pruned: bool = True,
-    ) -> None:
-        if metric_name is None:
-            warnings.warn(
-                "BudgetStopCondition and budget_limit are deprecated. "
-                "BudgetStopCondition without metric_name defaults to total_cost for "
-                "compatibility. If this is money spend control, use cost_limit; "
-                "otherwise use MetricLimitStopCondition(limit=..., metric_name=...) "
-                "or metric_limit with metric_name.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            metric_name = "total_cost"
-        else:
-            warnings.warn(
-                "BudgetStopCondition and budget_limit are deprecated for cumulative "
-                "metrics. Use MetricLimitStopCondition(limit=..., metric_name=...) "
-                "or metric_limit with metric_name. For money spend, use cost_limit.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        super().__init__(
-            limit=budget,
-            metric_name=metric_name,
-            include_pruned=include_pruned,
-        )
 
 
 class MaxSamplesStopCondition(StopCondition):
@@ -689,7 +652,6 @@ class HypervolumeConvergenceStopCondition(StopCondition):
 
 
 __all__ = [
-    "BudgetStopCondition",
     "CostLimitStopCondition",
     "HypervolumeConvergenceStopCondition",
     "MaxSamplesStopCondition",

@@ -89,6 +89,7 @@ class MockCostAwareEvaluator(BaseEvaluator):
             should_fail_at: Trial number to fail at (0-indexed)
             unknown_cost_mode: If True, don't include cost in results
         """
+        super().__init__()
         self.cost_per_eval = cost_per_eval
         self.should_fail_at = should_fail_at
         self.unknown_cost_mode = unknown_cost_mode

@@ -5,6 +5,8 @@ Handles migration of local data to Traigent backend when users upgrade.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
+import hashlib
+import json
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -148,18 +150,84 @@ class SyncManager:
 
         return default_timeout
 
+    @staticmethod
+    def _session_sync_status(session: OptimizationSession) -> str:
+        """Classify a local session's cloud-sync status from its sync_state."""
+        state = session.sync_state or {}
+        status = state.get("status")
+        if status in {"synced", "partial", "failed"}:
+            return str(status)
+        return "unsynced"
+
+    @staticmethod
+    def _is_finished_session(session: OptimizationSession) -> bool:
+        """Return True for sessions that are definitively finished.
+
+        A session is finished when its status is "completed" OR when it is
+        stuck at "pending" but has completed trials and a terminal stop reason
+        stored in its metadata (edge case: #1344 — old SDK wrote trials but
+        forgot to flip the status flag).
+        """
+        if session.status == "completed":
+            return True
+        if session.status in ("failed", "cancelled"):
+            return False
+        # Fallback guard for sessions left at "pending" by an older SDK
+        # version that recorded trials but never called finalize_session.
+        # Any canonical StopReason value signals the optimization is done.
+        if session.completed_trials > 0:
+            stop_reason = (session.metadata or {}).get("stop_reason")
+            if stop_reason in (
+                # All canonical StopReason values from traigent/api/types.py
+                "max_trials_reached",
+                "max_samples_reached",
+                "timeout",
+                "cost_limit",
+                "metric_limit",
+                "optimizer",
+                "plateau",
+                "convergence",
+                "user_cancelled",
+                "condition",
+                "error",
+                "vendor_error",
+                "network_error",
+                # Legacy alias retained for backward-compat with pre-1.0 sessions
+                "budget_exhausted",
+            ):
+                return True
+        return False
+
     def get_sync_status(self) -> dict[str, Any]:
-        """Get status of local sessions and sync eligibility."""
+        """Get status of local sessions and cloud-sync state.
+
+        Reports how many completed runs are already synced vs. still pending,
+        wandb-style, by reading each session's persisted ``sync_state``.
+        """
         sessions = self.storage.list_sessions()
-        completed_sessions = [s for s in sessions if s.status == "completed"]
+        # Include sessions that are definitively finished even if stuck at
+        # "pending" due to the pre-fix #1344 status-persistence bug.
+        completed_sessions = [s for s in sessions if self._is_finished_session(s)]
 
         total_trials = sum(s.completed_trials for s in sessions)
+
+        # Per-status counts across completed (sync-eligible) sessions.
+        counts = {"unsynced": 0, "synced": 0, "partial": 0, "failed": 0}
+        for session in completed_sessions:
+            counts[self._session_sync_status(session)] += 1
+        # Anything not already fully synced is eligible to (re)sync.
+        pending = counts["unsynced"] + counts["partial"] + counts["failed"]
 
         sync_status = {
             "total_sessions": len(sessions),
             "completed_sessions": len(completed_sessions),
             "total_trials": total_trials,
-            "sync_eligible": len(completed_sessions),
+            "synced": counts["synced"],
+            "unsynced": counts["unsynced"],
+            "partial": counts["partial"],
+            "failed": counts["failed"],
+            # Backwards-compatible field: count still pending an upload.
+            "sync_eligible": pending,
             "estimated_cloud_value": self._estimate_cloud_value(completed_sessions),
             "storage_info": self.storage.get_storage_info(),
         }
@@ -324,13 +392,25 @@ class SyncManager:
                 if value is not None
             }
 
+            # Build measures from real per-objective metrics first so that
+            # user-provided values (e.g. "accuracy", "latency") are never
+            # clobbered by the composite score alias.  Per-objective metrics
+            # are stored by the evaluator under metadata["all_metrics"].  Cost
+            # fields come last so they also don't overwrite objective metrics
+            # that happen to share a name with a cost field.
+            all_metrics: dict[str, Any] = (trial.metadata or {}).get(
+                "all_metrics"
+            ) or {}
+            trial_metrics = {
+                k: v for k, v in all_metrics.items() if self._is_numeric(v)
+            }
             result = {
                 "id": f"config_run_{trial.trial_id}",
                 "trial_id": trial.trial_id,
                 "experiment_parameters": trial.config,
                 "measures": {
+                    **trial_metrics,
                     "score": trial.score,
-                    "accuracy": trial.score,  # Map score to accuracy for compatibility
                     **cost_measures,
                 },
                 "timestamp": trial.timestamp,
@@ -347,165 +427,310 @@ class SyncManager:
 
         return results
 
+    @staticmethod
+    def _compute_payload_hash(traigent_data: dict[str, Any]) -> str:
+        """Stable fingerprint of a session's syncable content.
+
+        Used as the idempotency key: re-syncing an unchanged session is a no-op
+        (so we never create duplicate cloud experiments), while a changed
+        session is detected and re-synced.
+        """
+        canonical = json.dumps(traigent_data, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
     def sync_session_to_cloud(
-        self, session_id: str, dry_run: bool = False
+        self, session_id: str, dry_run: bool = False, force: bool = False
     ) -> dict[str, Any]:
         """
         Sync a single session to cloud.
 
+        Idempotent: a session already synced with identical content is skipped
+        (status ``already_synced``) so re-running ``traigent sync`` never creates
+        duplicate cloud experiments. Pass ``force=True`` to re-upload anyway.
+
         Args:
             session_id: Local session ID to sync
             dry_run: If True, only validate data without uploading
+            force: If True, re-upload even when an unchanged sync already exists
 
         Returns:
             Sync result with status and details
         """
-        session = self.storage.load_session(session_id)
-        if not session:
-            raise TraigentStorageError(f"Session {session_id} not found") from None
+        # Serialize per-session sync so two concurrent `traigent sync` processes
+        # can't both pass the "unsynced" check and create duplicate cloud
+        # resources. We re-read state inside the lock so we observe another
+        # process's just-written marker.
+        with self.storage.acquire_lock(f"sync_{session_id}"):
+            session = self.storage.load_session(session_id)
+            if not session:
+                raise TraigentStorageError(f"Session {session_id} not found") from None
 
-        # Convert to Traigent format
-        traigent_data = self.convert_session_to_traigent_format(session)
+            # Convert to Traigent format
+            traigent_data = self.convert_session_to_traigent_format(session)
+            payload_hash = self._compute_payload_hash(traigent_data)
+            prior_state = dict(session.sync_state or {})
+            already_synced = (
+                prior_state.get("status") == "synced"
+                and prior_state.get("payload_hash") == payload_hash
+            )
 
-        sync_result: dict[str, Any] = {
-            "session_id": session_id,
-            "function_name": session.function_name,
-            "status": "success",
-            "dry_run": dry_run,
-            "data_converted": True,
-            "cloud_experiment_id": None,
-            "trials_converted": len(traigent_data["configuration_runs"]),
-            "errors": [],
-        }
-
-        if dry_run:
-            sync_result["preview"] = {
-                "experiment_name": traigent_data["experiment"]["name"],
-                "agent_name": traigent_data["agent"]["name"],
-                "benchmark_name": traigent_data["benchmark"]["name"],
-                "trial_count": len(traigent_data["configuration_runs"]),
-                "best_score": session.best_score,
+            sync_result: dict[str, Any] = {
+                "session_id": session_id,
+                "function_name": session.function_name,
+                "status": "success",
+                "dry_run": dry_run,
+                "data_converted": True,
+                "cloud_experiment_id": prior_state.get("cloud_experiment_id"),
+                "trials_converted": len(traigent_data["configuration_runs"]),
+                "payload_hash": payload_hash,
+                "errors": [],
             }
+
+            # Idempotency: an unchanged, already-synced session is a no-op.
+            if already_synced and not force:
+                sync_result["status"] = "already_synced"
+                sync_result["cloud_url"] = prior_state.get("cloud_url")
+                sync_result["cloud_experiment_id"] = prior_state.get(
+                    "cloud_experiment_id"
+                )
+                return sync_result
+
+            if dry_run:
+                # Preserve the legacy "success" status for an un-synced
+                # validation run; only flag the already-synced case distinctly.
+                sync_result["status"] = (
+                    "already_synced" if already_synced else "success"
+                )
+                sync_result["preview"] = {
+                    "experiment_name": traigent_data["experiment"]["name"],
+                    "agent_name": traigent_data["agent"]["name"],
+                    "benchmark_name": traigent_data["benchmark"]["name"],
+                    "trial_count": len(traigent_data["configuration_runs"]),
+                    "best_score": session.best_score,
+                    "already_synced": already_synced,
+                }
+                return sync_result
+
+            # Actually sync to backend.
+            if not self.api_key:
+                msg = (
+                    "No API key provided for backend sync. " + get_no_credentials_hint()
+                )
+                logger.warning(msg)
+                sync_result["status"] = "error"
+                sync_result["errors"].append(msg)
+                return sync_result
+
+            # Resume (reuse cloud ids) only when re-trying the SAME content
+            # after a partial/failed attempt — that is what prevents duplicate
+            # experiments. A changed run, or --force, starts a fresh experiment.
+            resume = (
+                prior_state.get("payload_hash") == payload_hash
+                and prior_state.get("status") in {"partial", "failed"}
+                and not force
+            )
+            try:
+                self._upload_session(
+                    traigent_data, sync_result, prior_state, resume=resume
+                )
+            except Exception as e:
+                sync_result["status"] = "error"
+                sync_result["errors"].append(f"Sync failed: {str(e)}")
+                logger.error(f"Failed to sync session {session_id}: {e}")
+
+            # Record the outcome on EVERY non-trivial exit (success, partial, or
+            # error) so a retry can reuse the cloud ids a prior attempt created
+            # instead of minting a fresh, duplicate experiment.
+            self._record_sync_state(session_id, sync_result, payload_hash)
             return sync_result
 
-        # Actually sync to backend.
-        if not self.api_key:
-            msg = "No API key provided for backend sync. " + get_no_credentials_hint()
-            logger.warning(msg)
-            sync_result["status"] = "error"
-            sync_result["errors"].append(msg)
-            return sync_result
+    def _upload_session(
+        self,
+        traigent_data: dict[str, Any],
+        sync_result: dict[str, Any],
+        prior_state: dict[str, Any],
+        *,
+        resume: bool,
+    ) -> None:
+        """Upload a converted session to the backend resource endpoints.
 
-        try:
-            successful_steps = 0
-            total_steps = 4 + len(traigent_data["configuration_runs"])
+        When ``resume`` is True, reuses any cloud ids a prior attempt already
+        created so a retry resumes rather than minting a duplicate experiment.
+        Mutates ``sync_result`` in place and returns early on a failed step.
+        """
+        reuse = resume
+        configuration_runs = traigent_data["configuration_runs"]
+        total_steps = 4 + len(configuration_runs)
+        successful_steps = 0
 
+        # Agent + benchmark dedup by name; reuse a saved id when present.
+        agent_id = prior_state.get("cloud_agent_id") if reuse else None
+        if not agent_id:
             agent_result = self._sync_agent(traigent_data["agent"])
             if not agent_result["success"]:
+                sync_result["status"] = "error"
                 sync_result["errors"].append(
                     f"Agent sync failed: {agent_result['error']}"
                 )
-                sync_result["status"] = "error"
-                return sync_result
-
-            successful_steps += 1
+                return
             agent_id = agent_result["agent_id"]
+        sync_result["cloud_agent_id"] = agent_id
+        successful_steps += 1
 
+        benchmark_id = prior_state.get("cloud_benchmark_id") if reuse else None
+        if not benchmark_id:
             benchmark_result = self._sync_benchmark(traigent_data["benchmark"])
             if not benchmark_result["success"]:
+                sync_result["status"] = "partial"
                 sync_result["errors"].append(
                     f"Benchmark sync failed: {benchmark_result['error']}"
                 )
-                sync_result["status"] = "partial"
-                return sync_result
-
-            successful_steps += 1
+                return
             benchmark_id = benchmark_result["benchmark_id"]
+        sync_result["cloud_benchmark_id"] = benchmark_id
+        successful_steps += 1
 
+        # The experiment is NOT name-deduped by the backend, so reusing a saved
+        # id is what prevents duplicate experiments on a retry (BLOCKER fix).
+        experiment_id = prior_state.get("cloud_experiment_id") if reuse else None
+        if not experiment_id:
             experiment_payload = self._build_experiment_payload(
                 traigent_data["experiment"], agent_id, benchmark_id
             )
             experiment_result = self._sync_experiment(experiment_payload)
             if not experiment_result["success"]:
+                sync_result["status"] = "partial"
                 sync_result["errors"].append(
                     f"Experiment sync failed: {experiment_result['error']}"
                 )
-                sync_result["status"] = "partial"
-                return sync_result
-
-            successful_steps += 1
+                return
             experiment_id = experiment_result["experiment_id"]
-            sync_result["cloud_experiment_id"] = experiment_id
+        sync_result["cloud_experiment_id"] = experiment_id
+        successful_steps += 1
 
+        experiment_run_id = (
+            prior_state.get("cloud_experiment_run_id") if reuse else None
+        )
+        if not experiment_run_id:
             run_payload = self._build_experiment_run_payload(
                 traigent_data["experiment_run"], agent_id, benchmark_id
             )
             run_result = self._sync_experiment_run(experiment_id, run_payload)
             if not run_result["success"]:
+                sync_result["status"] = "partial"
                 sync_result["errors"].append(
                     f"Experiment run sync failed: {run_result['error']}"
                 )
-                sync_result["status"] = "partial"
-                return sync_result
-
-            successful_steps += 1
+                return
             experiment_run_id = run_result["experiment_run_id"]
+        sync_result["cloud_experiment_run_id"] = experiment_run_id
+        successful_steps += 1
 
-            configuration_result = self._sync_configuration_runs(
-                experiment_run_id, traigent_data["configuration_runs"]
+        configuration_result = self._sync_configuration_runs(
+            experiment_run_id, configuration_runs
+        )
+        successful_steps += configuration_result["synced"]
+        if not configuration_result["success"]:
+            sync_result["errors"].extend(
+                f"Configuration run sync failed: {error}"
+                for error in configuration_result["errors"]
             )
-            successful_steps += configuration_result["synced"]
-            if not configuration_result["success"]:
-                sync_result["errors"].extend(
-                    [
-                        f"Configuration run sync failed: {error}"
-                        for error in configuration_result["errors"]
-                    ]
-                )
 
-            if successful_steps == 0:
-                sync_result["status"] = "error"  # Complete failure
-            elif successful_steps == total_steps:
-                sync_result["status"] = "success"
-                sync_result["cloud_url"] = build_experiment_url(
-                    self.base_url, experiment_id
-                )
-            else:
-                sync_result["status"] = "partial"  # Some steps succeeded
+        if successful_steps == 0:
+            sync_result["status"] = "error"  # Complete failure
+        elif successful_steps == total_steps:
+            sync_result["status"] = "success"
+            sync_result["cloud_url"] = build_experiment_url(
+                self.base_url, experiment_id
+            )
+        else:
+            sync_result["status"] = "partial"  # Some steps succeeded
 
-        except Exception as e:
-            # Override any partial status with error for complete failures
-            sync_result["status"] = "error"
-            sync_result["errors"].append(f"Sync failed: {str(e)}")
-            logger.error(f"Failed to sync session {session_id}: {e}")
+    def _record_sync_state(
+        self, session_id: str, sync_result: dict[str, Any], payload_hash: str
+    ) -> None:
+        """Persist the outcome of a sync attempt onto the local session.
 
-        return sync_result
+        Records a durable ``synced`` marker (with the cloud ids + payload hash)
+        so a later ``traigent sync`` is idempotent, and a ``partial``/``failed``
+        marker otherwise so status reporting reflects reality. Best-effort:
+        never let a bookkeeping failure mask the sync result.
+        """
+        status = sync_result.get("status")
+        marker_status = {
+            "success": "synced",
+            "partial": "partial",
+            "error": "failed",
+        }.get(str(status), "failed")
 
-    def sync_all_sessions(self, dry_run: bool = False) -> dict[str, Any]:
+        patch: dict[str, Any] = {
+            "status": marker_status,
+            "source": "offline_sync",
+            "payload_hash": payload_hash,
+            # Persist all cloud ids so a retry of a partial sync reuses them
+            # instead of creating duplicate resources.
+            "cloud_agent_id": sync_result.get("cloud_agent_id"),
+            "cloud_benchmark_id": sync_result.get("cloud_benchmark_id"),
+            "cloud_experiment_id": sync_result.get("cloud_experiment_id"),
+            "cloud_experiment_run_id": sync_result.get("cloud_experiment_run_id"),
+            "cloud_url": sync_result.get("cloud_url"),
+            "synced_at": datetime.now(UTC).isoformat(),
+            "last_error": "; ".join(sync_result.get("errors", [])) or None,
+        }
+        prior_attempts = 0
+        existing = self.storage.load_session(session_id)
+        prior_sync_state = getattr(existing, "sync_state", None)
+        if isinstance(prior_sync_state, dict):
+            try:
+                prior_attempts = int(prior_sync_state.get("attempts", 0) or 0)
+            except (TypeError, ValueError):
+                prior_attempts = 0
+        patch["attempts"] = prior_attempts + 1
+
+        try:
+            self.storage.update_sync_state(session_id, patch)
+        except Exception as exc:  # pragma: no cover - bookkeeping must not break sync
+            logger.warning(
+                "Failed to persist sync_state for session %s: %s", session_id, exc
+            )
+
+    def sync_all_sessions(
+        self, dry_run: bool = False, force: bool = False
+    ) -> dict[str, Any]:
         """
         Sync all eligible local sessions to cloud.
 
         Args:
             dry_run: If True, only validate data without uploading
+            force: If True, re-upload even runs already synced unchanged
 
         Returns:
             Overall sync result
         """
         sessions = self.storage.list_sessions()
-        completed_sessions = [s for s in sessions if s.status == "completed"]
+        # Include sessions that are definitively finished even if stuck at
+        # "pending" due to the pre-fix #1344 status-persistence bug.
+        completed_sessions = [s for s in sessions if self._is_finished_session(s)]
 
         session_results: list[dict[str, Any]] = []
         synced_successfully = 0
+        skipped = 0
         sync_errors = 0
         overall_status = "success"
 
         for session in completed_sessions:
             try:
-                result = self.sync_session_to_cloud(session.session_id, dry_run)
+                result = self.sync_session_to_cloud(
+                    session.session_id, dry_run, force=force
+                )
                 session_results.append(result)
 
-                if result["status"] == "success":
+                status = result.get("status")
+                if status == "success":
                     synced_successfully += 1
+                elif status in ("already_synced", "ready"):
+                    # Idempotent no-op: an unchanged, already-synced run.
+                    skipped += 1
                 else:
                     sync_errors += 1
 
@@ -526,6 +751,7 @@ class SyncManager:
             "total_sessions": len(sessions),
             "eligible_sessions": len(completed_sessions),
             "synced_successfully": synced_successfully,
+            "skipped": skipped,
             "sync_errors": sync_errors,
             "dry_run": dry_run,
             "session_results": session_results,
@@ -893,6 +1119,9 @@ class SyncManager:
         sessions_deleted = 0
         errors: list[str] = []
 
+        # When backups are requested, only sessions whose backup succeeded are
+        # eligible for deletion — never delete a run we failed to back up.
+        deletable: list[str] = list(session_ids)
         if keep_backup:
             backup_dir = (
                 self.storage.storage_path
@@ -901,6 +1130,7 @@ class SyncManager:
             )
             backup_dir.mkdir(parents=True, exist_ok=True)
 
+            backed_up: list[str] = []
             for session_id in session_ids:
                 try:
                     backup_success = self.storage.export_session(
@@ -908,11 +1138,20 @@ class SyncManager:
                     )
                     if backup_success:
                         sessions_backed_up += 1
+                        backed_up.append(session_id)
+                    else:
+                        errors.append(
+                            f"Backup failed for {session_id}: export returned False; "
+                            "skipping deletion"
+                        )
                 except Exception as e:
-                    errors.append(f"Backup failed for {session_id}: {e}")
+                    errors.append(
+                        f"Backup failed for {session_id}: {e}; skipping deletion"
+                    )
+            deletable = backed_up
 
-        # Delete sessions
-        for session_id in session_ids:
+        # Delete sessions (only those safely backed up when backups are on).
+        for session_id in deletable:
             try:
                 if self.storage.delete_session(session_id):
                     sessions_deleted += 1

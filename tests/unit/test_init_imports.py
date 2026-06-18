@@ -339,7 +339,6 @@ class TestAnalyticsInit:
             from traigent import analytics
 
             # Helper functions should be available
-            assert hasattr(analytics, "is_analytics_available")
             assert hasattr(analytics, "is_plugin_installed")
 
     def test_analytics_availability_check(self) -> None:
@@ -348,10 +347,8 @@ class TestAnalyticsInit:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            from traigent.analytics import is_analytics_available, is_plugin_installed
+            from traigent.analytics import is_plugin_installed
 
-            # is_analytics_available should always return True (embedded fallback)
-            assert is_analytics_available() is True
             # is_plugin_installed depends on whether plugin is installed
             assert isinstance(is_plugin_installed(), bool)
 
@@ -365,7 +362,7 @@ class TestAnalyticsInit:
 
             assert hasattr(analytics, "__all__")
             assert isinstance(analytics.__all__, list)
-            assert "is_analytics_available" in analytics.__all__
+            assert "is_plugin_installed" in analytics.__all__
 
 
 class TestOptimizersInit:

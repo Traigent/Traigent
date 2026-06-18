@@ -633,19 +633,23 @@ class TestSetStrategy:
         _GLOBAL_CONFIG.update(self.original_config)
 
     def test_set_strategy_bayesian(self):
-        """Test set_strategy with bayesian algorithm."""
-        strategy = set_strategy(algorithm="bayesian")
+        """set_strategy with 'bayesian' must raise OptimizationError (cloud-only)."""
+        from traigent.utils.exceptions import OptimizationError
 
-        assert strategy.algorithm == "bayesian"
-        assert isinstance(strategy.algorithm_config, dict)
-        assert strategy.parallel_workers == 1  # Default from global config
+        with pytest.raises(OptimizationError) as exc_info:
+            set_strategy(algorithm="bayesian")
+        msg = str(exc_info.value)
+        assert "cloud" in msg.lower()
 
     def test_set_strategy_with_config(self):
-        """Test set_strategy with algorithm config."""
-        config = {"acquisition_function": "ei", "initial_random_samples": 10}
-        strategy = set_strategy(algorithm="bayesian", algorithm_config=config)
+        """set_strategy with 'bayesian' and config must raise OptimizationError (cloud-only)."""
+        from traigent.utils.exceptions import OptimizationError
 
-        assert strategy.algorithm_config == config
+        config = {"acquisition_function": "ei", "initial_random_samples": 10}
+        with pytest.raises(OptimizationError) as exc_info:
+            set_strategy(algorithm="bayesian", algorithm_config=config)
+        msg = str(exc_info.value)
+        assert "cloud" in msg.lower()
 
     def test_set_strategy_with_parallel_workers(self):
         """Test set_strategy with custom parallel workers."""

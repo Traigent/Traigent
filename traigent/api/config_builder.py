@@ -12,11 +12,7 @@ from typing import Any
 from traigent.api.decorators import get_optimize_default
 from traigent.api.parameter_validator import OptimizeParameters
 from traigent.config.parallel import coerce_parallel_config
-from traigent.config.types import (
-    ExecutionMode,
-    InjectionMode,
-    validate_execution_mode,
-)
+from traigent.config.types import ExecutionMode, InjectionMode, validate_execution_mode
 from traigent.core.objectives import normalize_objectives
 from traigent.utils.exceptions import ConfigurationError
 
@@ -144,10 +140,8 @@ class ConfigurationBuilder:
 
     @staticmethod
     def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
-        if isinstance(execution_mode, ExecutionMode):
-            return execution_mode is ExecutionMode.PRIVACY
         if isinstance(execution_mode, str):
-            return execution_mode.strip().lower() == ExecutionMode.PRIVACY.value
+            return execution_mode.strip().lower() == "privacy"
         return False
 
     def _resolve_injection_mode(

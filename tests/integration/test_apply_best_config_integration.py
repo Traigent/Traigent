@@ -116,7 +116,7 @@ class TestApplyBestConfigIntegration:
         # Create optimized function in Edge Analytics mode with parameter injection
         opt_func = OptimizedFunction(
             func=test_function,
-            config_space={
+            configuration_space={
                 "model": ["gpt-4o-mini", "GPT-4o"],
                 "temperature": [0.1, 0.3, 0.7],
                 "max_tokens": [100, 150, 200, 300],
@@ -178,7 +178,7 @@ class TestApplyBestConfigIntegration:
             # Create optimized function in standard mode
             opt_func = OptimizedFunction(
                 func=test_function,
-                config_space={
+                configuration_space={
                     "model": ["gpt-4o-mini", "GPT-4o"],
                     "temperature": [0.1, 0.5, 0.9],
                 },
@@ -224,7 +224,7 @@ class TestApplyBestConfigIntegration:
             # Create optimized function in SaaS mode
             opt_func = OptimizedFunction(
                 func=test_function,
-                config_space={
+                configuration_space={
                     "model": ["gpt-4o-mini", "GPT-4o"],
                 },
                 objectives=["accuracy"],
@@ -252,7 +252,7 @@ class TestApplyBestConfigIntegration:
 
         opt_func = OptimizedFunction(
             func=test_function,
-            config_space={"temperature": [0.1, 0.5, 0.9]},
+            configuration_space={"temperature": [0.1, 0.5, 0.9]},
             objectives=["accuracy"],
             eval_dataset=sample_dataset_file,
         )
@@ -312,7 +312,7 @@ class TestApplyBestConfigIntegration:
         for mode_config in modes:
             opt_func = OptimizedFunction(
                 func=test_function,
-                config_space={"model": ["gpt-4o-mini", "GPT-4o"]},
+                configuration_space={"model": ["gpt-4o-mini", "GPT-4o"]},
                 objectives=["accuracy"],
                 execution_mode=mode_config["execution_mode"],
                 use_cloud_service=mode_config["use_cloud_service"],
@@ -332,9 +332,9 @@ class TestApplyBestConfigIntegration:
         # All modes should succeed
         for mode_name, result in results.items():
             assert result["apply_result"] is True, f"Mode {mode_name} failed"
-            assert (
-                result["config"] == sample_optimization_result.best_config
-            ), f"Mode {mode_name} config mismatch"
+            assert result["config"] == sample_optimization_result.best_config, (
+                f"Mode {mode_name} config mismatch"
+            )
 
         # Generate insights (should be identical regardless of mode)
         insights = get_optimization_insights(sample_optimization_result)
@@ -366,7 +366,7 @@ class TestApplyBestConfigIntegration:
         # Step 1: Create optimized function
         opt_func = OptimizedFunction(
             func=customer_support_agent,
-            config_space={
+            configuration_space={
                 "model": ["gpt-3.5-turbo", "gpt-4o-mini", "GPT-4o"],
                 "temperature": [0.1, 0.5, 0.9],
             },
@@ -436,7 +436,7 @@ class TestApplyBestConfigIntegration:
         ):
             opt_func = OptimizedFunction(
                 func=async_compatible_function,
-                config_space={"model": ["gpt-4o-mini", "GPT-4o"]},
+                configuration_space={"model": ["gpt-4o-mini", "GPT-4o"]},
                 objectives=["accuracy"],
                 eval_dataset=sample_dataset_file,
             )
@@ -505,7 +505,7 @@ class TestModeSpecificBehavior:
 
         opt_func = OptimizedFunction(
             func=sensitive_function,
-            config_space={"model": ["gpt-4o-mini", "GPT-4o"]},
+            configuration_space={"model": ["gpt-4o-mini", "GPT-4o"]},
             objectives=["accuracy"],
             use_cloud_service=False,
         )
@@ -538,7 +538,7 @@ class TestModeSpecificBehavior:
         ):
             opt_func = OptimizedFunction(
                 func=cloud_optimized_function,
-                config_space={"model": ["gpt-4o-mini", "GPT-4o"]},
+                configuration_space={"model": ["gpt-4o-mini", "GPT-4o"]},
                 objectives=["accuracy"],
                 execution_mode="hybrid",
                 use_cloud_service=True,  # Standard mode

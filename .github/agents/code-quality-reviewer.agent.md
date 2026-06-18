@@ -12,7 +12,7 @@ You are an expert code reviewer for the Traigent SDK - a Python SDK for zero-cod
 ### 1. Decorator Usage (`@traigent.optimize`)
 - Verify `@traigent.optimize` decorator has required parameters: `eval_dataset`, `objectives`
 - Check that `configuration_space` defines valid parameter ranges
-- Ensure `execution_mode` is appropriate (`edge_analytics`, `mock`, or `cloud`)
+- Ensure `execution_mode` is appropriate (`edge_analytics`, `hybrid`, or `hybrid_api`)
 - Validate that decorated functions return appropriate types
 
 ### 2. Configuration & Environment

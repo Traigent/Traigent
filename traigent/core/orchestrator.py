@@ -11,7 +11,6 @@ import math
 import sys
 import time
 import uuid
-import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -508,73 +507,22 @@ class OptimizationOrchestrator:
             raise ValueError(f"{name} must be a positive number")
         return limit
 
-    def _warn_deprecated_budget_limit(self) -> None:
-        warnings.warn(
-            "budget_limit is deprecated. Use metric_limit with metric_name for "
-            "soft cumulative metric stopping. For money spend, use cost_limit.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
     def _resolve_metric_limit_config(self) -> tuple[float | None, str | None, bool]:
-        """Resolve new metric_limit config plus deprecated budget_limit aliases."""
+        """Resolve metric_limit config."""
         raw_metric_limit = self.config.get("metric_limit")
-        raw_budget_limit = self.config.get("budget_limit")
-
-        if raw_metric_limit is not None and raw_budget_limit is not None:
-            raise ValueError("Specify only one of metric_limit or budget_limit")
-
-        metric_include_pruned = bool(
-            self.config.get(
-                "metric_include_pruned",
-                self.config.get("budget_include_pruned", True),
-            )
-        )
+        metric_include_pruned = bool(self.config.get("metric_include_pruned", True))
 
         if raw_metric_limit is not None:
             metric_name = self.config.get("metric_name")
-            if metric_name is None and "budget_metric" in self.config:
-                warnings.warn(
-                    "budget_metric is deprecated; use metric_name with metric_limit.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-                metric_name = self.config.get("budget_metric")
             if metric_name is None:
                 raise ValueError("metric_name is required when metric_limit is set")
-            if "budget_include_pruned" in self.config:
-                warnings.warn(
-                    "budget_include_pruned is deprecated; use metric_include_pruned.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
             return (
                 self._coerce_positive_limit(raw_metric_limit, name="metric_limit"),
                 str(metric_name),
                 metric_include_pruned,
             )
 
-        if raw_budget_limit is None:
-            return (None, None, metric_include_pruned)
-
-        self._warn_deprecated_budget_limit()
-        metric_name = self.config.get("metric_name")
-        if metric_name is None:
-            metric_name = self.config.get("budget_metric")
-        if metric_name is None:
-            warnings.warn(
-                "budget_limit without metric_name defaults to total_cost for "
-                "compatibility. If this is money spend control, use cost_limit.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            metric_name = "total_cost"
-
-        return (
-            self._coerce_positive_limit(raw_budget_limit, name="budget_limit"),
-            str(metric_name),
-            metric_include_pruned,
-        )
+        return (None, None, metric_include_pruned)
 
     def _setup_convergence_condition(self) -> None:
         """Configure hypervolume-based convergence if specified in config."""
@@ -1310,12 +1258,17 @@ class OptimizationOrchestrator:
 
     # --- Consolidated logging helpers (V2 + legacy) ---
     def _initialize_logger(
-        self, session_id: str | None, func: Callable[..., Any], dataset: Dataset
+        self,
+        session_id: str | None,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        *,
+        experiment_display_name: str | None = None,
     ) -> None:
         if not session_id:
             return
 
-        experiment_name = (
+        experiment_name = experiment_display_name or (
             func.__name__ if hasattr(func, "__name__") else "unknown_function"
         )
 
@@ -2091,12 +2044,19 @@ class OptimizationOrchestrator:
 
         self._dataset_name = getattr(dataset, "name", "dataset")
 
+        # function_name may carry the user-supplied experiment_name override (from
+        # @traigent.optimize(experiment_name=...)). The fully-qualified descriptor
+        # identifier is still used for session keying; the override becomes the
+        # human-readable display name forwarded to the portal.
+        experiment_display_name: str | None = None
         if function_name and function_name != descriptor.identifier:
             logger.debug(
-                "Ignoring supplied function_name '%s' in favour of fully-qualified identifier '%s'",
+                "function_name='%s' supplied — using as experiment display name "
+                "(session keyed by descriptor identifier '%s')",
                 function_name,
                 descriptor.identifier,
             )
+            experiment_display_name = function_name
 
         # Create backend session using manager. Governance crosses the wire
         # content-free (Phase 8): the declared promotion policy and the
@@ -2113,12 +2073,18 @@ class OptimizationOrchestrator:
             objectives=list(self.optimizer.objectives or []),
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
+            experiment_display_name=experiment_display_name,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
 
         if session_id:
-            self._initialize_logger(session_id, func, dataset)
+            self._initialize_logger(
+                session_id,
+                func,
+                dataset,
+                experiment_display_name=experiment_display_name,
+            )
 
         self.callback_manager.on_optimization_start(
             config_space=self.optimizer.config_space,
@@ -2599,6 +2565,18 @@ class OptimizationOrchestrator:
 
         self.callback_manager.on_optimization_complete(result)
 
+        # Issue #1265: if a backend-tracking run degraded to local-only, say so
+        # prominently at the end (the per-trial warning fired once mid-run; this
+        # is the final, unmissable summary tied to the result's source marker).
+        if self.backend_session_manager.backend_degraded:
+            logger.warning(
+                "⚠️  Optimization %s finished in LOCAL-ONLY mode (source='local'): "
+                "the Traigent backend was unreachable during the run, so results "
+                "were computed and stored locally and are NOT on the cloud "
+                "backend. They will sync on the next successful run.",
+                self._optimization_id,
+            )
+
         cost_status = self.cost_enforcer.get_status()
         logger.info(
             f"Optimization {self._optimization_id} completed: "
@@ -2625,9 +2603,42 @@ class OptimizationOrchestrator:
                 self._status = OptimizationStatus.CANCELLED
                 return self._create_optimization_result()
 
-            await self._run_optimization_loop(
-                func, dataset, session_id, function_identifier
-            )
+            if self.timeout is not None and self.timeout > 0:
+                # Hard wall-clock watchdog (issue #1266). The per-trial
+                # _should_stop() timeout is only evaluated *between* trials, so a
+                # single hung trial — a deadlocked sampler, a stuck LLM call, or a
+                # worker thread aborted by a native (pyo3) panic whose future
+                # never resolves — would otherwise hang the run forever despite
+                # an explicit timeout. wait_for() enforces the deadline even when
+                # control never returns to the loop's own check, turning an
+                # indefinite deadlock into a clean, catchable stop that still
+                # finalizes with the best trial found so far. A bounded grace
+                # margin (25% of the budget, floored at 1s and capped at 5min)
+                # lets the normal between-trial check stop cleanly first, while
+                # still capping wasted LLM spend on a true hang.
+                grace = min(max(self.timeout * 0.25, 1.0), 300.0)
+                watchdog_deadline = self.timeout + grace
+                try:
+                    await asyncio.wait_for(
+                        self._run_optimization_loop(
+                            func, dataset, session_id, function_identifier
+                        ),
+                        timeout=watchdog_deadline,
+                    )
+                except TimeoutError:
+                    self._stop_reason = "timeout"
+                    logger.warning(
+                        "Optimization %s exceeded its wall-clock deadline "
+                        "(%.1fs incl. grace); a trial appears to have hung. "
+                        "Stopping and finalizing with %d completed trial(s).",
+                        self._optimization_id,
+                        watchdog_deadline,
+                        len(self._trials),
+                    )
+            else:
+                await self._run_optimization_loop(
+                    func, dataset, session_id, function_identifier
+                )
 
             # Set final status
             self._status = (
@@ -2992,6 +3003,14 @@ class OptimizationOrchestrator:
                 if primary and hasattr(incumbent, "get_metric")
                 else None
             )
+        # Build objective orientation map from ObjectiveSchema when available
+        # (F-B fix: honour declared orientation, not name-pattern heuristics).
+        _obj_orientations: dict[str, str] | None = None
+        if self.objective_schema and self.objective_schema.objectives:
+            _obj_orientations = {
+                obj.name: str(obj.orientation)
+                for obj in self.objective_schema.objectives
+            }
         selection = select_best_configuration(
             trials=self._trials,
             # Objectives-free runs are supported (weighted scoring disabled,
@@ -3011,6 +3030,7 @@ class OptimizationOrchestrator:
             require_certified=strict_mode,
             certified_config=certified_config,
             certified_score=certified_score,
+            objective_orientations=_obj_orientations,
         )
         best_config = selection.best_config
         best_score = selection.best_score
@@ -3080,6 +3100,12 @@ class OptimizationOrchestrator:
         if selection.best_trial_id:
             result_metadata["best_trial_id"] = selection.best_trial_id
 
+        # Provenance marker (issue #1265): "backend" only when remote tracking
+        # stayed healthy; "local" when an intentionally-local mode ran or a
+        # backend-tracking run degraded to local-only mid-flight.
+        source = self.backend_session_manager.result_source(len(self._trials))
+        result_metadata["source"] = source
+
         # Create optimization result
         optimization_result = OptimizationResult(
             trials=self._trials.copy(),
@@ -3099,6 +3125,7 @@ class OptimizationOrchestrator:
             preset_selection=preset_selection,
             stop_reason=self._stop_reason,
             run_label=run_label,
+            source=source,
         )
 
         # Log optimization completion

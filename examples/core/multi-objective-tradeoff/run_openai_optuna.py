@@ -616,7 +616,7 @@ _OPTIMIZE_KWARGS: dict[str, Any] = {
 }
 
 if BUDGET_LIMIT is not None and BUDGET_LIMIT > 0:
-    _OPTIMIZE_KWARGS["budget_limit"] = BUDGET_LIMIT
+    _OPTIMIZE_KWARGS["cost_limit"] = BUDGET_LIMIT
 
 
 # ==============================================================================
@@ -689,8 +689,7 @@ async def main() -> None:
     if runtime_budget is not None and runtime_budget > 0:
         optimize_kwargs.update(
             {
-                "budget_limit": runtime_budget,
-                "budget_metric": "total_cost",
+                "cost_limit": runtime_budget,
                 "algorithm": "random",
                 "objectives": ["cost"],
             }

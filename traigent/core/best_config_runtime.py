@@ -290,6 +290,7 @@ def load_best_config_spec(
             raise ConfigurationError(
                 f"Failed to load best config {path}: {exc}"
             ) from exc
+        # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning("Ignoring invalid best config %s: %s", path, exc)
         return None
 
@@ -550,6 +551,7 @@ def resolve_repo_best_config(
             raise ConfigurationError(
                 f"Failed to resolve repo best config: {exc}"
             ) from exc
+        # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning(
             "Ignoring repo best config %s after validation failure: %s",
             safe_config_id,
@@ -611,6 +613,7 @@ def resolve_cloud_cache_best_config(
             if isinstance(exc, ConfigurationError):
                 raise
             raise ConfigurationError(f"Failed to resolve cloud cache: {exc}") from exc
+        # fail-open(intentional): non-strict callers accept degraded fallback; strict callers re-raise
         logger.warning(
             "Ignoring cloud best-config cache for %s: %s", safe_config_id, exc
         )
@@ -749,6 +752,23 @@ def _normalize_json_value(value: Any, seen: set[int] | None = None) -> Any:
         normalized_list = [_normalize_json_value(item, seen) for item in value]
         seen.remove(container_id)
         return normalized_list
+
+    # numpy scalar types (e.g. np.int64 from Optuna integer dimensions) are not
+    # JSON-native and do not subclass Python int/bool. Coerce a genuine 0-d numpy
+    # scalar losslessly via .item(). We require ndim == 0 so size-one arrays
+    # (np.array([1]) / np.array([[1]]), ndim >= 1) keep their shape and fall through
+    # to reject instead of silently collapsing, and so arbitrary objects that merely
+    # expose .item() (no ndim) are not coerced. We then accept ONLY when .item()
+    # yields a plain JSON-native primitive; anything else (np.longdouble.item() ->
+    # np.longdouble, datetime64/complex.item(), a 0-d object array's dict) is
+    # rejected here rather than recursing without progress or passing silently.
+    if getattr(value, "ndim", None) == 0 and hasattr(value, "item"):
+        try:
+            coerced = value.item()
+        except (ValueError, TypeError):
+            coerced = value  # falls through to the reject below
+        if type(coerced) in (int, float, str, bool):
+            return _normalize_json_value(coerced, seen)
 
     raise ConfigurationError(
         f"Best config contains non-JSON-native value {type(value).__name__}"

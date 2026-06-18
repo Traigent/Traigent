@@ -1,24 +1,27 @@
 # Traigent Execution Modes Guide
 
-> **Current status:** Traigent executes trials locally. The default is `execution_mode="edge_analytics"` (local-only). Use `execution_mode="hybrid"` when you want local execution plus backend/portal tracking. `execution_mode="cloud"` is reserved for future remote execution and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
+> **Current status (0.13+):** Traigent auto-selects the execution mode — you do not need to set `execution_mode` explicitly. Portal tracking is enabled automatically when `TRAIGENT_API_KEY` is set, regardless of mode. `execution_mode=”cloud”` is reserved for future remote execution and is not available yet.
 
 ## Overview
 
-Use `edge_analytics` (default) to run locally. Use `hybrid` for website-visible results while keeping trials on your machine. Do not use `cloud` yet; remote agent execution is not implemented.
+**You do not need to set `execution_mode`.** The SDK picks the right mode automatically:
 
-To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
+- **Grid/random search (typical Python decorator use)** → `edge_analytics` (local execution; portal-tracked when `TRAIGENT_API_KEY` is present)
+- **Smart algorithms (Bayesian, TPE, CMA-ES)** → `hybrid` (cloud-assisted orchestration; requires API key)
+- **External REST agent service** → `hybrid_api` (your service receives suggestions via the Hybrid Mode REST API)
 
-## Migration Note
+Portal tracking (results visible in the Traigent portal) is a function of having `TRAIGENT_API_KEY` set, not of the execution mode.
 
-If you want optimization results in the Traigent website, use `execution_mode="hybrid"`, not `execution_mode="cloud"`. Hybrid is the supported production path for portal-tracked SDK optimization. Cloud is reserved for a future product path where Traigent Cloud runs the remote agent execution itself.
+To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true` or omit `TRAIGENT_API_KEY`.
 
 ## Modes at a Glance
 
-| Mode | OSS availability | Status | Notes |
-| --- | --- | --- | --- |
-| `edge_analytics` | Available | Supported | Local execution and local results |
-| `hybrid` | Available | Supported | Local execution plus backend session/trial tracking |
-| `cloud` | Reserved | Not implemented | Remote execution path fails closed |
+| Mode | When auto-selected | Notes |
+| --- | --- | --- |
+| `edge_analytics` | Grid/random search | Local execution; portal-visible when API key is set |
+| `hybrid` | Smart algorithms (Bayesian, TPE, …) | Cloud-assisted orchestration; API key required |
+| `hybrid_api` | External REST agent service configured | Your agent receives suggestions via REST |
+| `cloud` | (reserved) | Remote execution — not implemented yet; fails closed |
 
 ## Local Mode (`edge_analytics`)
 
@@ -64,11 +67,15 @@ def my_agent(query: str) -> str:
 - CI smoke tests and demos (`TRAIGENT_MOCK_LLM=true`)
 - Budget-conscious experiments
 
-## Hybrid Mode
+## Hybrid Mode (`hybrid`)
 
-Hybrid mode is the production path for portal-tracked SDK runs today. The SDK creates a backend session, runs each trial locally, and submits trial metrics to the backend session/result endpoints so the run appears in the portal.
+Auto-selected when a smart algorithm (Bayesian, TPE, CMA-ES, NSGA-II) is requested. The SDK uses cloud-assisted orchestration for suggestion generation while running each trial locally.
 
-Use `hybrid` when you want results to appear in the Traigent website. Use `edge_analytics` when you want fully local runs with no backend dependency.
+`hybrid` is **not** the mode to set for "I want portal visibility with grid/random search" — that is `edge_analytics` with `TRAIGENT_API_KEY` set. Use `hybrid` only if you explicitly need smart cloud-assisted optimization algorithms.
+
+## Hybrid API Mode (`hybrid_api`)
+
+Auto-selected when a Hybrid Mode REST endpoint or transport is configured (`hybrid_api_endpoint` / `hybrid_api_transport`). Your external agent service receives trial suggestions via the Traigent Hybrid Mode REST API.
 
 ## Cloud Roadmap
 

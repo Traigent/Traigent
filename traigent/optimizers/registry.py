@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from traigent.config.feature_flags import FlagNames, flag_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import OptimizationError, PluginError
 from traigent.utils.logging import get_logger
@@ -50,6 +49,47 @@ def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
     logger.debug(f"Registered optimizer '{name}': {optimizer_class}")
 
 
+_SMART_OPTIMIZER_NAMES: frozenset[str] = frozenset(
+    {
+        "bayesian",
+        "optuna",
+        "tpe",
+        "optuna_tpe",
+        "optuna_random",
+        "optuna_grid",
+        "optuna_cmaes",
+        "optuna_nsga2",
+        "nsga2",
+        "cmaes",
+        "nsgaii",
+        "nsga_ii",
+        "cma_es",
+    }
+)
+
+
+def _is_smart_algorithm(name: str) -> bool:
+    """Return True if *name* refers to a cloud-only smart optimizer.
+
+    Normalizes the name by stripping whitespace, lowercasing, and replacing
+    hyphens and spaces with underscores before matching against the known set
+    of smart algorithm identifiers.  Also matches any name with an ``optuna_``
+    prefix (e.g. ``optuna_tpe``, ``optuna_foo``).
+
+    Args:
+        name: Algorithm name to test (raw, un-normalized).
+
+    Returns:
+        True if the name identifies a cloud-only smart algorithm.
+    """
+    normalized = name.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in _SMART_OPTIMIZER_NAMES:
+        return True
+    if normalized.startswith("optuna_"):
+        return True
+    return False
+
+
 def get_optimizer(
     name: str, config_space: dict[str, Any], objectives: list[str], **kwargs: Any
 ) -> BaseOptimizer:
@@ -65,8 +105,15 @@ def get_optimizer(
         Initialized optimizer instance
 
     Raises:
-        OptimizationError: If optimizer name not found
+        OptimizationError: If optimizer name not found or is a cloud-only smart algorithm
     """
+    if _is_smart_algorithm(name):
+        raise OptimizationError(
+            f"Smart optimization ('{name}') runs in the Traigent cloud and is not "
+            f"available in the local SDK (which supports 'grid' and 'random'). "
+            f"Connect to the Traigent backend to use smart algorithms."
+        )
+
     if name not in _OPTIMIZER_REGISTRY:
         available = list(_OPTIMIZER_REGISTRY.keys())
         raise OptimizationError(
@@ -125,27 +172,21 @@ def clear_registry() -> None:
 
 
 def _register_builtin_optimizers() -> None:
-    """Register built-in optimization algorithms."""
+    """Register built-in optimization algorithms (grid and random only).
+
+    Smart algorithms (Bayesian, Optuna family) run in the Traigent cloud
+    and are not registered locally.
+    """
     from traigent.optimizers.grid import GridSearchOptimizer
     from traigent.optimizers.random import RandomSearchOptimizer
 
     register_optimizer("grid", GridSearchOptimizer)
     register_optimizer("random", RandomSearchOptimizer)
 
-    # Try to register Bayesian optimizer (requires scikit-learn)
-    try:
-        from traigent.optimizers.bayesian import BayesianOptimizer
-
-        register_optimizer("bayesian", BayesianOptimizer)
-        logger.debug("Registered Bayesian optimizer")
-    except ImportError:
-        logger.debug("Bayesian optimizer not available (requires scikit-learn)")
-
     _register_batch_optimizers()
     _register_remote_optimizer()
 
-    # Optuna optimizers will be registered after the function is defined
-    logger.debug("Registered built-in optimizers")
+    logger.debug("Registered built-in optimizers (grid and random)")
 
 
 def _register_batch_optimizers() -> None:
@@ -180,47 +221,18 @@ def _register_remote_optimizer() -> None:
 
 
 def register_optuna_optimizers(force: bool = False) -> None:
-    """Register Optuna-backed optimizers, honoring rollout feature flags."""
+    """No-op: Optuna/smart optimizers run in the Traigent cloud, not locally.
 
-    if not force and not flag_registry.is_enabled(FlagNames.OPTUNA_ROLLOUT):
-        logger.debug(
-            "Optuna optimizers disabled via feature flag '%s'",
-            FlagNames.OPTUNA_ROLLOUT,
-        )
-        return
-
-    try:
-        from traigent.optimizers.optuna_optimizer import (
-            OptunaCMAESOptimizer,
-            OptunaGridOptimizer,
-            OptunaNSGAIIOptimizer,
-            OptunaRandomOptimizer,
-            OptunaTPEOptimizer,
-        )
-    except OptimizationError as exc:
-        logger.debug("Optuna optimizers not registered: %s", exc)
-        return
-    except ImportError:
-        logger.debug("Optuna optimizers not available (requires Optuna)")
-        return
-
-    # Base package optimizers (always available with Optuna)
-    register_optimizer("optuna_tpe", OptunaTPEOptimizer)
-    register_optimizer("optuna_random", OptunaRandomOptimizer)
-    register_optimizer("optuna_grid", OptunaGridOptimizer)
-
-    # Advanced optimizers (future: traigent-advanced-algorithms plugin)
-    # TODO: Gate these with plugin feature flag when extracted
-    register_optimizer("optuna_cmaes", OptunaCMAESOptimizer)
-    register_optimizer("optuna_nsga2", OptunaNSGAIIOptimizer)
-
-    # Backwards-compatible aliases (used by TVL strategy mapping and legacy configs)
-    register_optimizer("optuna", OptunaTPEOptimizer)
-    register_optimizer("tpe", OptunaTPEOptimizer)
-    register_optimizer(
-        "nsga2", OptunaNSGAIIOptimizer
-    )  # TODO: Gate with multi-obj plugin
-    logger.debug("Registered Optuna optimizers (force=%s)", force)
+    This function is retained so existing call sites and imports do not break,
+    but it intentionally does not register any algorithms.  Smart optimization
+    (Bayesian, Optuna TPE/CMA-ES/NSGA-II, etc.) is available when the SDK is
+    connected to the Traigent backend.
+    """
+    logger.debug(
+        "Smart optimizers run in the Traigent cloud; not registered locally"
+        " (force=%s ignored)",
+        force,
+    )
 
 
 # Register built-in optimizers on module import

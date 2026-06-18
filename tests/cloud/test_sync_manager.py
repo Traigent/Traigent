@@ -983,3 +983,76 @@ class TestSyncManager:
         traigent_data = self.sync_manager.convert_session_to_traigent_format(session)
         assert traigent_data is not None
         assert "experiment" in traigent_data
+
+    # --- #1344 regression tests ---
+
+    def test_is_finished_session_completed(self):
+        """Completed sessions are always eligible for sync."""
+        session = self._create_test_session()
+        assert self.sync_manager._is_finished_session(session) is True
+
+    def test_is_finished_session_pending_no_trials(self):
+        """Pending sessions with no trials are not eligible."""
+        storage = self.sync_manager.storage
+        sid = storage.create_session("no_trials_func")
+        s = storage.load_session(sid)
+        assert s is not None
+        assert self.sync_manager._is_finished_session(s) is False
+
+    def test_is_finished_session_failed(self):
+        """Failed sessions are not eligible (they may be retried separately)."""
+        storage = self.sync_manager.storage
+        sid = storage.create_session("failed_func")
+        storage.add_trial_result(sid, {"p": 1}, 0.5)
+        storage.finalize_session(sid, "failed")
+        s = storage.load_session(sid)
+        assert s is not None
+        assert self.sync_manager._is_finished_session(s) is False
+
+    def test_is_finished_session_pending_with_stop_reason(self):
+        """Pending session with completed_trials + stop_reason is treated as finished (pre-fix compat)."""
+        storage = self.sync_manager.storage
+        sid = storage.create_session(
+            "stuck_func",
+            metadata={"stop_reason": "max_trials_reached"},
+        )
+        storage.add_trial_result(sid, {"p": 1}, 0.7)
+        storage.add_trial_result(sid, {"p": 2}, 0.8)
+        # Do NOT call finalize_session — simulate pre-fix SDK leaving status="pending"
+        s = storage.load_session(sid)
+        assert s is not None
+        assert s.status == "pending"
+        assert s.completed_trials == 2
+        assert self.sync_manager._is_finished_session(s) is True
+
+    def test_get_sync_status_includes_stuck_pending_sessions(self):
+        """get_sync_status counts stuck-pending finished sessions in sync_eligible (#1344)."""
+        storage = self.sync_manager.storage
+        # Stuck session: pending status but has trials and stop_reason
+        sid = storage.create_session(
+            "stuck_session",
+            metadata={"stop_reason": "max_trials_reached"},
+        )
+        storage.add_trial_result(sid, {"p": 1}, 0.9)
+
+        status = self.sync_manager.get_sync_status()
+        assert status["sync_eligible"] >= 1
+        assert status["completed_sessions"] >= 1
+
+    def test_sync_all_includes_stuck_pending_sessions(self):
+        """sync_all_sessions picks up stuck-pending sessions as eligible (#1344)."""
+        storage = self.sync_manager.storage
+        sid = storage.create_session(
+            "stuck_sync_func",
+            metadata={"stop_reason": "budget_exhausted"},
+        )
+        storage.add_trial_result(sid, {"p": 1}, 0.75)
+        # status remains "pending"
+
+        result = self.sync_all_with_no_api_key()
+        session_ids = [r["session_id"] for r in result["session_results"]]
+        assert sid in session_ids
+
+    def sync_all_with_no_api_key(self) -> dict:
+        """Helper: run sync_all in dry_run to capture which sessions are picked up."""
+        return self.sync_manager.sync_all_sessions(dry_run=True)

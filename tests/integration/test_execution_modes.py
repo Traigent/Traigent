@@ -108,14 +108,19 @@ class TestExecutionModes:
         client = TraigentClient(execution_mode="edge_analytics")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-    def test_standard_mode_raises_configuration_error(self, mock_agent_builder):
-        """Test that 'standard' mode (removed) raises ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
-            TraigentClient(
+    def test_standard_mode_deprecated_resolves_to_hybrid(self, mock_agent_builder):
+        """Test that 'standard' mode (deprecated) emits DeprecationWarning and resolves to hybrid."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = TraigentClient(
                 execution_mode="standard",
                 agent_builder=mock_agent_builder,
                 api_key="test_key",
             )
+        assert client.execution_mode == ExecutionMode.HYBRID
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_hybrid_mode_initializes_backend_tracking(self, mock_agent_builder):
         """Test that 'hybrid' mode is supported for portal-tracked local runs."""
@@ -128,10 +133,15 @@ class TestExecutionModes:
 
         assert client.execution_mode == ExecutionMode.HYBRID
 
-    def test_cloud_mode_raises_configuration_error(self):
-        """Test that 'cloud' mode (not yet supported) raises ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="Cloud remote execution"):
-            TraigentClient(execution_mode="cloud", api_key="test_key")
+    def test_cloud_mode_deprecated_resolves_to_edge_analytics(self):
+        """Test that 'cloud' mode (deprecated) emits DeprecationWarning and resolves to edge_analytics."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = TraigentClient(execution_mode="cloud", api_key="test_key")
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_execution_mode_auto_detection(self):
         """Test automatic execution mode detection.
@@ -271,12 +281,19 @@ class TestPrivacyCompliance:
             ],
         }
 
-    def test_standard_mode_raises_configuration_error_in_privacy_context(
+    def test_standard_mode_deprecated_resolves_in_privacy_context(
         self, mock_agent_builder
     ):
-        """Verify that standard mode (removed) raises ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
-            TraigentClient(execution_mode="standard", agent_builder=mock_agent_builder)
+        """Verify that standard mode (deprecated) emits DeprecationWarning and resolves to hybrid."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = TraigentClient(
+                execution_mode="standard", agent_builder=mock_agent_builder
+            )
+        assert client.execution_mode == ExecutionMode.HYBRID
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     @pytest.mark.asyncio
     async def test_cloud_mode_data_encryption(self):

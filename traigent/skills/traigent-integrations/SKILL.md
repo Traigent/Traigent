@@ -85,6 +85,7 @@ The `auto_override_frameworks` flag lets Traigent automatically intercept LangCh
     objectives=["accuracy"],
     max_trials=12,
     auto_override_frameworks=True,
+    framework_targets=["langchain_openai.ChatOpenAI"],
 )
 def summarize_document(text):
     # LangChain model instantiation is intercepted by Traigent
@@ -92,6 +93,8 @@ def summarize_document(text):
     response = llm.invoke(text)
     return response.content
 ```
+
+**Note:** `auto_override_frameworks=True` alone is a no-op — you must also set `framework_targets` to specify which classes to intercept. The flag without targets is silently ignored.
 
 For finer control, use `framework_targets` to specify exactly which classes to override:
 
@@ -159,8 +162,8 @@ for trial in results.successful_trials:
 LiteLLM handles API key routing automatically based on the model prefix. Set provider API keys in environment variables:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."  # pragma: allowlist secret
+export ANTHROPIC_API_KEY="sk-ant-..."  # pragma: allowlist secret
 export GEMINI_API_KEY="..."
 ```
 
@@ -215,6 +218,13 @@ def dspy_qa(question):
 See [DSPy reference](references/dspy.md) for BootstrapFewShot patterns and advanced configuration.
 
 ## Observability Integrations
+
+MLflow and Weights & Biases are not included in the base `traigent` package. Install them separately:
+
+```bash
+pip install mlflow           # MLflow tracking
+pip install wandb            # Weights & Biases
+```
 
 ### MLflow
 

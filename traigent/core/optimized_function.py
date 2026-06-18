@@ -323,7 +323,6 @@ class OptimizedFunction:
         ) = None,
         objectives: list[str] | ObjectiveSchema | None = None,
         configuration_space: dict[str, Any] | None = None,
-        config_space: dict[str, Any] | None = None,  # Backward compatibility
         default_config: dict[str, Any] | None = None,
         constraints: list[Callable[..., bool]] | None = None,
         injection_mode: str = "context",
@@ -403,8 +402,8 @@ class OptimizedFunction:
             effectuation,
         )
 
-        # Handle configuration space with backward compatibility
-        self._setup_configuration_space(configuration_space, config_space)
+        # Handle configuration space
+        self._setup_configuration_space(configuration_space)
 
         # Store additional parameters from kwargs
         self._store_additional_parameters(kwargs)
@@ -463,16 +462,13 @@ class OptimizedFunction:
         self.framework_targets = framework_targets or []
 
         # Execution mode configuration
-        requested_mode = getattr(self, "_requested_execution_mode", None)
         try:
             requested_mode_enum = resolve_execution_mode(execution_mode)
             effective_mode_enum = validate_execution_mode(requested_mode_enum)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from None
 
-        privacy_alias_requested = requested_mode_enum is ExecutionMode.PRIVACY
-        if requested_mode and requested_mode.lower() == "privacy":
-            privacy_alias_requested = True
+        privacy_alias_requested = False
 
         self._effective_execution_mode = effective_mode_enum
         self.execution_mode = effective_mode_enum.value
@@ -487,34 +483,17 @@ class OptimizedFunction:
         self.effectuation = bool(effectuation)
 
     def _is_cloud_execution_mode(self) -> bool:
-        """Return True when configured for managed cloud execution."""
-        effective_mode = getattr(self, "_effective_execution_mode", None)
-        if isinstance(effective_mode, ExecutionMode):
-            mode_enum = effective_mode
-        else:
-            mode_enum = resolve_execution_mode(
-                effective_mode, default=resolve_execution_mode(self.execution_mode)
-            )
-        return mode_enum is ExecutionMode.CLOUD
+        return False
 
-    def _setup_configuration_space(self, configuration_space, config_space) -> None:
-        """Setup configuration space with backward compatibility."""
-        # Backward compatibility: support both config_space and configuration_space
-        if config_space is not None and configuration_space is None:
-            try:
-                self.configuration_space = config_space
-            except ValidationError as e:
-                if _CONFIG_SPACE_TYPE_ERROR in str(e):
-                    raise TypeError(str(e)) from None
+    def _setup_configuration_space(self, configuration_space) -> None:
+        """Setup configuration space."""
+        try:
+            self.configuration_space = configuration_space or {}
+        except ValidationError as e:
+            if _CONFIG_SPACE_TYPE_ERROR in str(e):
+                raise TypeError(str(e)) from None
+            else:
                 raise
-        else:
-            try:
-                self.configuration_space = configuration_space or {}
-            except ValidationError as e:
-                if _CONFIG_SPACE_TYPE_ERROR in str(e):
-                    raise TypeError(str(e)) from None
-                else:
-                    raise
 
     def _store_callbacks(self, kwargs: dict[str, Any], sentinel: object) -> None:
         """Store callbacks parameter, normalizing to a list."""
@@ -577,6 +556,9 @@ class OptimizedFunction:
         self.max_trials = kwargs.pop("max_trials", 50)
         kwargs["max_trials"] = self.max_trials
 
+        # Experiment display name: decorator param > TRAIGENT_EXPERIMENT_NAME > func.__name__
+        self._experiment_name: str | None = kwargs.pop("experiment_name", None)
+
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
 
@@ -594,25 +576,20 @@ class OptimizedFunction:
         self.use_cloud_service = self._store_optional_param(
             kwargs, sentinel, "use_cloud_service", False, as_bool=True
         )
-        default_cloud_fallback_policy = (
-            "never"
-            if getattr(self, "_effective_execution_mode", None) is ExecutionMode.CLOUD
-            else "auto"
-        )
         raw_cloud_fallback_policy = kwargs.pop("cloud_fallback_policy", sentinel)
-        if raw_cloud_fallback_policy is sentinel or raw_cloud_fallback_policy is None:
-            self.cloud_fallback_policy = default_cloud_fallback_policy
-        else:
-            if not isinstance(raw_cloud_fallback_policy, str):
-                raise ValueError(
-                    "cloud_fallback_policy must be one of: auto, warn, never"
-                )
-            resolved_cloud_fallback_policy = raw_cloud_fallback_policy.strip().lower()
-            if resolved_cloud_fallback_policy not in _CLOUD_FALLBACK_POLICIES:
-                raise ValueError(
-                    "cloud_fallback_policy must be one of: auto, warn, never"
-                )
-            self.cloud_fallback_policy = resolved_cloud_fallback_policy
+        if (
+            raw_cloud_fallback_policy is not sentinel
+            and raw_cloud_fallback_policy is not None
+        ):
+            import warnings
+
+            warnings.warn(
+                "cloud_fallback_policy is deprecated and has no effect. "
+                "Remote cloud execution has been removed.",
+                DeprecationWarning,
+                stacklevel=6,
+            )
+        self.cloud_fallback_policy = "auto"
         kwargs["cloud_fallback_policy"] = self.cloud_fallback_policy
         self.framework_target = self._store_optional_param(
             kwargs, sentinel, "framework_target", None
@@ -848,11 +825,6 @@ class OptimizedFunction:
             else:
                 return 0
         return total
-
-    @property
-    def config_space(self) -> dict[str, Any]:
-        """Backward compatibility property for configuration_space."""
-        return self.configuration_space
 
     @property
     def objectives(self) -> list[str]:
@@ -1823,11 +1795,13 @@ class OptimizedFunction:
                         result = await orchestrator.optimize(
                             func=trial_func,
                             dataset=dataset,
+                            function_name=self.experiment_name,
                         )
                 else:
                     result = await orchestrator.optimize(
                         func=trial_func,
                         dataset=dataset,
+                        function_name=self.experiment_name,
                     )
 
             # Store results
@@ -2330,7 +2304,7 @@ Remediation:
 
         with ConfigurationSpaceContext(effective_config_space):
             cloud_candidate = await client.optimize_function(
-                function_name=self.func.__name__,
+                function_name=self.experiment_name,
                 dataset=dataset,
                 configuration_space=effective_config_space,
                 objectives=self.objectives,
@@ -3144,6 +3118,22 @@ Remediation:
     def __name__(self) -> str:
         """Get function name."""
         return getattr(self.func, "__name__", "OptimizedFunction")
+
+    @property
+    def experiment_name(self) -> str:
+        """Resolved experiment display name for portal/storage.
+
+        Resolution order (highest to lowest priority):
+        1. ``experiment_name`` passed to ``@traigent.optimize()``
+        2. ``TRAIGENT_EXPERIMENT_NAME`` environment variable
+        3. Decorated function's ``__name__``
+        """
+        if self._experiment_name is not None:
+            return self._experiment_name
+        env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+        if env_name:
+            return env_name
+        return self.__name__
 
     @property
     def __doc__(self) -> str | None:  # type: ignore[override]

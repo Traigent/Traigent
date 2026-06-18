@@ -1372,6 +1372,24 @@ class TraigentAuthCLI:
         creds = self._load_stored_credentials()
 
         if not creds:
+            env_api_key = os.environ.get("TRAIGENT_API_KEY")
+            if env_api_key:
+                env_table = Table(show_header=False, box=None)
+                env_table.add_column("Field", style="cyan")
+                env_table.add_column("Value")
+                env_table.add_row(
+                    "Status", "[green]✅ Authenticated (environment variable)[/green]"
+                )
+                masked = (
+                    f"{env_api_key[:10]}...{env_api_key[-4:]}"
+                    if len(env_api_key) > 14
+                    else "***"
+                )
+                env_table.add_row("TRAIGENT_API_KEY", masked)
+                env_table.add_row("Backend", self.backend_url)
+                console.print(env_table)
+                console.print()
+                return True
             console.print("[yellow]❌ Not authenticated[/yellow]")
             console.print("\nRun [cyan]traigent auth login[/cyan] to authenticate.\n")
             return False

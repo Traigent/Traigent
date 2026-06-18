@@ -16,29 +16,20 @@ from traigent.utils.validation import Validators, validate_or_raise
 class ExecutionMode(StrEnum):
     """Execution modes for Traigent optimization.
 
-    Each mode provides different trade-offs between privacy, performance, and features:
-
     - EDGE_ANALYTICS: Optimization and LLM calls execute on the client.
-      Non-sensitive telemetry syncs to the backend when available for analytics; runs continue
-      if the backend is unreachable, but insights remain local.
-    - PRIVACY: Legacy alias for hybrid mode with strict privacy toggles (no input/output sent).
-    - STANDARD: Removed legacy mode.
-    - CLOUD: Reserved for future remote execution where optimization and trials run
-      in Traigent Cloud. Not available yet.
-    - HYBRID_API: External API-based optimization where trials execute via HTTP endpoints.
-      Enables optimization of any agentic service that implements the Traigent API contract.
+      Non-sensitive telemetry syncs to the backend when available for analytics.
+    - HYBRID: Smart algorithm (Optuna-based) with backend-provided next-trial suggestions
+      and client-side execution.
+    - HYBRID_API: External API-based optimization where trials execute via HTTP endpoints
+      implementing the Traigent Hybrid Mode API contract.
     """
 
     EDGE_ANALYTICS = "edge_analytics"
-    PRIVACY = "privacy"  # Back-compat alias; prefer HYBRID + privacy_enabled
     HYBRID = "hybrid"
-    STANDARD = "standard"
-    CLOUD = "cloud"
     HYBRID_API = "hybrid_api"
 
 
-# Canonical runtime-supported modes and accepted public aliases. Keep this as
-# the single source for decorator-time and runtime validation messages.
+# Canonical runtime-supported modes and accepted public aliases.
 _SUPPORTED_MODES = (
     ExecutionMode.EDGE_ANALYTICS,
     ExecutionMode.HYBRID,
@@ -46,10 +37,8 @@ _SUPPORTED_MODES = (
 )
 _EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
     "local": ExecutionMode.EDGE_ANALYTICS,
-    "privacy": ExecutionMode.HYBRID,
 }
-_NOT_YET_SUPPORTED_MODES = {ExecutionMode.CLOUD}
-# STANDARD is removed; CLOUD is reserved for future remote execution.
+_NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 
 
 def accepted_execution_mode_values() -> tuple[str, ...]:
@@ -70,17 +59,29 @@ def resolve_execution_mode(
     default: ExecutionMode = ExecutionMode.EDGE_ANALYTICS,
 ) -> ExecutionMode:
     """Normalize user-provided execution mode values into an ExecutionMode enum."""
+    import warnings
 
     if mode is None:
         return default
     if isinstance(mode, ExecutionMode):
-        if mode is ExecutionMode.PRIVACY:
-            return ExecutionMode.HYBRID
         return mode
     if isinstance(mode, str):
         normalized = mode.strip().lower()
         if not normalized:
             return default
+        if normalized in ("privacy", "cloud", "standard"):
+            warnings.warn(
+                f"execution_mode={mode!r} is no longer supported. "
+                f"Mapped to 'hybrid' for backward compatibility. "
+                f"Valid modes: {list(accepted_execution_mode_values())}",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            return (
+                ExecutionMode.HYBRID
+                if normalized in ("privacy", "standard")
+                else ExecutionMode.EDGE_ANALYTICS
+            )
         if normalized in _EXECUTION_MODE_ALIASES:
             return _EXECUTION_MODE_ALIASES[normalized]
         try:
@@ -97,9 +98,10 @@ def resolve_execution_mode(
 def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     """Resolve *and* validate that an execution mode is currently supported.
 
-    ``privacy`` is accepted as a legacy alias for ``hybrid``. Raises
-    :class:`~traigent.utils.exceptions.ConfigurationError` for removed
-    modes (``standard``) and not-yet-supported modes (``cloud``).
+    Legacy string values (``privacy``, ``cloud``, ``standard``) emit a
+    DeprecationWarning and are mapped to a canonical mode.
+    Raises :class:`~traigent.utils.exceptions.ConfigurationError` for
+    unknown mode strings.
     Use :func:`resolve_execution_mode` when you only need
     string-to-enum conversion without support validation.
     """
@@ -112,11 +114,6 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
             f"No such mode '{mode}'; {_accepted_execution_mode_message()}"
         ) from None
 
-    if resolved in _NOT_YET_SUPPORTED_MODES:
-        raise ConfigurationError(
-            "Cloud remote execution is not available yet; use hybrid for "
-            f"portal-tracked optimization; {_accepted_execution_mode_message()}."
-        )
     if resolved not in _SUPPORTED_MODES:
         raise ConfigurationError(
             f"No such mode '{resolved.value}'; {_accepted_execution_mode_message()}"
@@ -230,9 +227,7 @@ class TraigentConfig:
     comparability_mode: Literal["legacy", "warn", "strict"] = "warn"
 
     # Analytics and telemetry settings
-    enable_usage_analytics: bool = (
-        True  # Send privacy-safe usage stats when backend/portal integration is configured
-    )
+    enable_usage_analytics: bool = True  # Send privacy-safe usage stats when backend/portal integration is configured
     analytics_endpoint: str | None = None  # Custom analytics endpoint
     anonymous_user_id: str | None = None  # Anonymous identifier (auto-generated)
 
@@ -473,8 +468,7 @@ class TraigentConfig:
         return self.execution_mode_enum is ExecutionMode.EDGE_ANALYTICS
 
     def is_cloud_mode(self) -> bool:
-        """Check if configuration is set to reserved cloud mode."""
-        return self.execution_mode_enum is ExecutionMode.CLOUD
+        return False
 
     def is_privacy_enabled(self) -> bool:
         """Whether privacy mode is enabled (content never logged or transmitted)."""

@@ -111,24 +111,34 @@ class TestValidateAndSanitizeUrl:
 
 
 class TestMapToBackendStatus:
-    """Test status mapping."""
+    """Test status mapping (issue #1302 — run-lifecycle wire vocab).
+
+    Offline producer witness: these assert ``map_to_backend_status`` emits ONLY
+    backend-canonical run-lifecycle members and NEVER the session-lifecycle
+    ACTIVE / CREATED on the experiment-run / configuration-run status PUT path.
+    They FAIL against the pre-#1302 mapper which emitted ACTIVE / CREATED.
+    """
 
     def setup_method(self):
         """Set up test fixtures."""
         mock_client = Mock()
         self.ops = ApiOperations(mock_client)
 
-    def test_pending_maps_to_active(self):
-        """Test pending maps to ACTIVE."""
-        assert self.ops.map_to_backend_status("pending") == "ACTIVE"
+    def test_pending_maps_to_pending(self):
+        """pending -> PENDING (was ACTIVE before #1302)."""
+        assert self.ops.map_to_backend_status("pending") == "PENDING"
 
-    def test_running_maps_to_active(self):
-        """Test running maps to ACTIVE."""
-        assert self.ops.map_to_backend_status("running") == "ACTIVE"
+    def test_running_maps_to_running(self):
+        """running -> RUNNING (was ACTIVE before #1302)."""
+        assert self.ops.map_to_backend_status("running") == "RUNNING"
 
-    def test_in_progress_maps_to_active(self):
-        """Test in_progress maps to ACTIVE."""
-        assert self.ops.map_to_backend_status("in_progress") == "ACTIVE"
+    def test_in_progress_maps_to_running(self):
+        """in_progress -> RUNNING (was ACTIVE before #1302)."""
+        assert self.ops.map_to_backend_status("in_progress") == "RUNNING"
+
+    def test_not_started_maps_to_not_started(self):
+        """not_started -> NOT_STARTED (was CREATED before #1302)."""
+        assert self.ops.map_to_backend_status("not_started") == "NOT_STARTED"
 
     def test_completed_maps_to_completed(self):
         """Test completed maps to COMPLETED."""
@@ -138,26 +148,101 @@ class TestMapToBackendStatus:
         """Test failed maps to FAILED."""
         assert self.ops.map_to_backend_status("failed") == "FAILED"
 
-    def test_not_started_maps_to_created(self):
-        """Test not_started maps to CREATED."""
-        assert self.ops.map_to_backend_status("not_started") == "CREATED"
-
-    def test_pruned_maps_to_pruned(self):
-        """Test pruned maps to PRUNED."""
-        assert self.ops.map_to_backend_status("pruned") == "PRUNED"
-
     def test_cancelled_maps_to_cancelled(self):
         """Test cancelled maps to CANCELLED."""
         assert self.ops.map_to_backend_status("cancelled") == "CANCELLED"
 
+    def test_never_emits_session_lifecycle_vocab_for_experiment_runs(self):
+        """No SDK in-flight status maps to the session-lifecycle ACTIVE/CREATED.
+
+        This is the core #1302 regression: in-flight states (pending/running/
+        not_started) must persist on the run PUT path, which they cannot if the
+        SDK emits ACTIVE/CREATED (backend 400-rejects those).
+        """
+        from traigent.cloud.api_operations import EXPERIMENT_RUN_WIRE_STATUSES
+
+        forbidden = {"ACTIVE", "CREATED"}
+        for sdk_status in [
+            "pending",
+            "running",
+            "in_progress",
+            "not_started",
+            "completed",
+            "failed",
+            "cancelled",
+            "pruned",
+        ]:
+            mapped = self.ops.map_to_backend_status(
+                sdk_status, endpoint="experiment_run"
+            )
+            assert mapped not in forbidden, (
+                f"{sdk_status!r} mapped to forbidden session-lifecycle value {mapped!r}"
+            )
+            assert mapped in EXPERIMENT_RUN_WIRE_STATUSES
+
+    def test_config_run_vocab_for_config_endpoint(self):
+        """Every config-run mapping is a member of CONFIGURATION_RUN_WIRE_STATUSES."""
+        from traigent.cloud.api_operations import CONFIGURATION_RUN_WIRE_STATUSES
+
+        for sdk_status in [
+            "not_started",
+            "running",
+            "in_progress",
+            "completed",
+            "failed",
+            "cancelled",
+            "pruned",
+        ]:
+            mapped = self.ops.map_to_backend_status(sdk_status, endpoint="config_run")
+            assert mapped not in {"ACTIVE", "CREATED"}
+            assert mapped in CONFIGURATION_RUN_WIRE_STATUSES
+
+    def test_pruned_preserved_for_config_runs(self):
+        """pruned -> PRUNED for config-runs (they accept PRUNED)."""
+        assert (
+            self.ops.map_to_backend_status("pruned", endpoint="config_run") == "PRUNED"
+        )
+
+    def test_pruned_folds_to_unknown_for_experiment_runs(self):
+        """pruned -> UNKNOWN for experiment-runs (no PRUNED member).
+
+        Must NOT emit PRUNED on the experiment-run endpoint, and must NOT claim
+        COMPLETED — a pruned run is not a successful completion, so emitting
+        COMPLETED would be fake completion. UNKNOWN is the honest neutral fold.
+        """
+        assert (
+            self.ops.map_to_backend_status("pruned", endpoint="experiment_run")
+            == "UNKNOWN"
+        )
+
     def test_uppercase_status_preserved(self):
-        """Test uppercase status preserved."""
+        """Already-canonical wire values pass through (case-insensitive)."""
         assert self.ops.map_to_backend_status("COMPLETED") == "COMPLETED"
         assert self.ops.map_to_backend_status("FAILED") == "FAILED"
+        assert self.ops.map_to_backend_status("RUNNING") == "RUNNING"
 
-    def test_unknown_status_uppercased(self):
-        """Test unknown status is uppercased."""
-        assert self.ops.map_to_backend_status("custom") == "CUSTOM"
+    def test_unknown_status_falls_back_to_unknown_not_failed(self):
+        """Unrecognized statuses fall back to UNKNOWN, never FAILED/CUSTOM.
+
+        Pre-#1302 the gate defaulted unexpected statuses to FAILED (asserting
+        failure on something we did not understand) and the mapper uppercased
+        arbitrary strings into invalid backend members.
+        """
+        assert self.ops.map_to_backend_status("custom") == "UNKNOWN"
+        assert (
+            self.ops.map_to_backend_status("custom", endpoint="config_run") == "UNKNOWN"
+        )
+
+    def test_paused_supported_for_experiment_runs_only(self):
+        """paused -> PAUSED for experiment-runs; config-runs lack PAUSED."""
+        assert (
+            self.ops.map_to_backend_status("paused", endpoint="experiment_run")
+            == "PAUSED"
+        )
+        # config-runs have no PAUSED member -> neutral fallback, not a 400.
+        assert (
+            self.ops.map_to_backend_status("paused", endpoint="config_run") == "UNKNOWN"
+        )
 
 
 class TestSanitizeErrorMessage:
@@ -258,6 +343,49 @@ class TestCreateTraigentSessionViaApi:
             assert "mock_session_" in session_id
             assert "mock_exp_" in exp_id
             assert "mock_run_" in run_id
+
+    @pytest.mark.asyncio
+    async def test_auth_error_on_create_propagates_as_authentication_error(self):
+        """#1278: a 401/403 during session creation must reach the caller AS an
+        AuthenticationError — NOT be demoted to a plain CloudServiceError by the
+        generic ``except Exception`` ladder.
+
+        Before the fix, AuthenticationError (raised by ``_handle_session_error``
+        with the structured 403 detail) fell through to ``except Exception`` and
+        was re-wrapped as CloudServiceError, so session_operations classified it
+        SESSION_FAILED -> BACKEND_UNREACHABLE ("check your network/URL") instead
+        of an auth/permission error. This test fails on the pre-fix ladder
+        (raises CloudServiceError) and passes once the dedicated
+        ``except AuthenticationError: raise`` clause is in place.
+        """
+        from traigent.cloud.auth import AuthenticationError
+
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+        # Simulate the 403 path: _post_session_creation -> _handle_session_error
+        # raises AuthenticationError carrying the structured detail.
+        with (
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(
+                self.ops,
+                "_post_session_creation",
+                new=AsyncMock(
+                    side_effect=AuthenticationError(
+                        "Authentication failed: missing permission"
+                    )
+                ),
+            ),
+        ):
+            with pytest.raises(AuthenticationError):
+                await self.ops.create_traigent_session_via_api(request)
 
 
 class TestResolveMaxTrials:
@@ -413,7 +541,7 @@ class TestHandleSessionError:
                 '"details":{"missing_permissions":["experiment.write"]}}',
             )
 
-        detail = getattr(exc.value, "session_creation_failure")
+        detail = exc.value.session_creation_failure
         assert detail.error_code == "INSUFFICIENT_PERMISSIONS"
         assert detail.message == "Missing required permissions: experiment.write"
         assert detail.missing_permissions == ("experiment.write",)
@@ -443,7 +571,7 @@ class TestHandleSessionError:
         with pytest.raises(CloudServiceError, match="Session creation failed") as exc:
             self.ops._handle_session_error(400, "Bad Request")
 
-        detail = getattr(exc.value, "session_creation_failure")
+        detail = exc.value.session_creation_failure
         assert detail.status_code == 400
         assert detail.raw_body == "Bad Request"
 
@@ -1250,8 +1378,13 @@ class TestUpdateExperimentRunStatusSuccess:
             )
 
     @pytest.mark.asyncio
-    async def test_invalid_status_uses_failed_default(self):
-        """Test invalid status defaults to FAILED, not completed."""
+    async def test_invalid_status_uses_unknown_default(self):
+        """Invalid status -> neutral UNKNOWN, NOT FAILED (issue #1302, AC3).
+
+        Pre-#1302 the gate defaulted unexpected statuses to FAILED — asserting
+        failure on a status we did not understand. The corrected behavior sends
+        the neutral UNKNOWN member (valid on both backend run enums).
+        """
         mock_response = AsyncMock()
         mock_response.status = 200
 
@@ -1274,7 +1407,43 @@ class TestUpdateExperimentRunStatusSuccess:
             await self.ops.update_experiment_run_status_on_completion(
                 "run_123", "unknown_status"
             )
-            assert mock_session.put.call_args.kwargs["json"]["status"] == "FAILED"
+            sent_status = mock_session.put.call_args.kwargs["json"]["status"]
+            assert sent_status == "UNKNOWN"
+            assert sent_status != "FAILED"
+
+    @pytest.mark.asyncio
+    async def test_running_status_persists_as_running_not_active(self):
+        """In-flight 'running' must persist as RUNNING, not session ACTIVE.
+
+        Core #1302 regression witness on the experiment-run PUT body: before the
+        fix this sent ACTIVE which the backend 400-rejects, so an SDK run could
+        never persist its in-flight state.
+        """
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "running"
+            )
+            sent_status = mock_session.put.call_args.kwargs["json"]["status"]
+            assert sent_status == "RUNNING"
+            assert sent_status not in {"ACTIVE", "CREATED"}
 
     @pytest.mark.asyncio
     async def test_failed_update_logs_warning(self):

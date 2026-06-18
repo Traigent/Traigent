@@ -144,12 +144,17 @@ class TestModuleFunctions:
         """Set up test fixtures."""
         clear_global_config()
 
-    def test_build_optimize_configuration_rejects_cloud(self):
-        """Cloud is reserved and fails closed in config building."""
+    def test_build_optimize_configuration_deprecated_cloud_resolves(self):
+        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        import warnings
+
         params = OptimizeParameters(eval_dataset="test.jsonl", execution_mode="cloud")
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            build_optimize_configuration(params, "cloud")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = build_optimize_configuration(params, "cloud")
+        assert config["execution_mode"] == "edge_analytics"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_global_config_functions(self):
         """Test global configuration management functions."""
@@ -198,8 +203,12 @@ class TestConfigurationBuilderIntegration:
             },
         )
 
-        # Build configuration
-        config = build_optimize_configuration(params, "cloud")
+        import warnings
+
+        # Build configuration — "cloud" is a deprecated alias; global "privacy" sets privacy_enabled
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            config = build_optimize_configuration(params, "cloud")
 
         # Verify configuration
         assert config["eval_dataset"] == ["test1.jsonl", "test2.jsonl"]

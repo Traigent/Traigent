@@ -431,33 +431,43 @@ class TestGetAvailableStrategies:
 
     @patch("traigent.api.functions.list_optimizers")
     def test_get_available_strategies_bayesian(self, mock_list_optimizers):
-        """Test Bayesian optimization strategy info."""
+        """Bayesian is cloud-only; if somehow registered, appears as 'custom' metadata.
+
+        Smart algorithms (bayesian, optuna family) are not registered locally and
+        the registry's get_optimizer() gate raises before they can be used. If a
+        plugin registers one, get_available_strategies() surfaces generic custom
+        metadata — it does NOT return Bayesian-specific parameters.
+        """
         mock_list_optimizers.return_value = ["bayesian"]
 
         strategies = get_available_strategies()
 
+        # bayesian appears in the dict (the function lists whatever the registry has)
         assert "bayesian" in strategies
         bayesian_info = strategies["bayesian"]
-        assert bayesian_info["name"] == "Bayesian Optimization"
-        assert bayesian_info["supports_continuous"] is True
-        assert bayesian_info["supports_categorical"] is True
-        assert bayesian_info["deterministic"] is False
-        assert "acquisition_function" in bayesian_info["parameters"]
-        assert "initial_random_samples" in bayesian_info["parameters"]
+        # Cloud-only name falls through to the generic custom branch
+        assert bayesian_info["description"] == "Custom optimization algorithm"
 
     @patch("traigent.api.functions.list_optimizers")
     def test_get_available_strategies_optuna_metadata(self, mock_list_optimizers):
-        """Test registered Optuna strategies have concrete metadata."""
+        """Optuna names are cloud-only; they fall through to generic custom metadata.
+
+        Smart algorithms (optuna_tpe, nsga2, etc.) are not registered locally.
+        get_available_strategies() renders them as custom entries if a plugin
+        somehow registers them — it does not return Optuna-specific parameters.
+        """
         mock_list_optimizers.return_value = ["optuna_tpe", "nsga2", "optuna_grid"]
 
         strategies = get_available_strategies()
 
-        assert strategies["optuna_tpe"]["name"] == "Optuna TPE Optimization"
-        assert strategies["nsga2"]["name"] == "Optuna NSGA-II Optimization"
+        # Cloud-only names fall through to the generic custom branch
         assert (
-            strategies["optuna_grid"]["description"] != "Custom optimization algorithm"
+            strategies["optuna_tpe"]["description"] == "Custom optimization algorithm"
         )
-        assert "max_trials" in strategies["optuna_tpe"]["parameters"]
+        assert strategies["nsga2"]["description"] == "Custom optimization algorithm"
+        assert (
+            strategies["optuna_grid"]["description"] == "Custom optimization algorithm"
+        )
 
     @patch("traigent.api.functions.list_optimizers")
     def test_get_available_strategies_custom(self, mock_list_optimizers):
@@ -511,7 +521,8 @@ class TestGetVersionInfo:
         features = info["features"]
         assert features["grid_search"] is True
         assert features["random_search"] is True
-        assert features["bayesian_optimization"] is True
+        # bayesian_optimization is cloud-only; local SDK always reports False
+        assert features["bayesian_optimization"] is False
         assert features["multi_objective"] is True
         assert features["constraint_handling"] is True
         assert features["async_evaluation"] is True

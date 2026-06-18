@@ -1158,8 +1158,8 @@ class TestExampleMeasure:
 class TestLocalDtoHelpers:
     """Regression tests for local DTO helper metadata."""
 
-    def test_local_experiment_metadata_uses_mode_not_execution_mode(self):
-        """Local experiment helper should not emit raw SDK execution_mode metadata."""
+    def test_local_experiment_metadata_uses_execution_mode_edge_analytics(self):
+        """Local experiment helper emits execution_mode=edge_analytics in metadata."""
         experiment = cloud_dtos.create_local_experiment(
             experiment_id="exp-local",
             name="Local Experiment",
@@ -1167,11 +1167,11 @@ class TestLocalDtoHelpers:
             configuration_space={"temperature": [0.1, 0.2]},
         )
 
-        assert experiment.metadata["mode"] == "local"
-        assert "execution_mode" not in experiment.metadata
+        assert experiment.metadata["execution_mode"] == "edge_analytics"
+        assert "mode" not in experiment.metadata
 
-    def test_local_experiment_run_metadata_uses_mode_not_execution_mode(self):
-        """Local run helper should not emit raw SDK execution_mode metadata."""
+    def test_local_experiment_run_metadata_uses_execution_mode_edge_analytics(self):
+        """Local run helper emits execution_mode=edge_analytics in metadata."""
         run = cloud_dtos.create_local_experiment_run(
             run_id="run-local",
             experiment_id="exp-local",
@@ -1180,5 +1180,5 @@ class TestLocalDtoHelpers:
             objectives=["accuracy"],
         )
 
-        assert run.metadata["mode"] == "local"
-        assert "execution_mode" not in run.metadata
+        assert run.metadata["execution_mode"] == "edge_analytics"
+        assert "mode" not in run.metadata

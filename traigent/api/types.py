@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import traceback as traceback_module
+import warnings
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -40,6 +41,10 @@ class OptimizationStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # Neutral fallback for statuses the SDK does not recognize (e.g. a newer
+    # backend member). Never assert success/failure on an unknown value
+    # (issue #1302, AC3).
+    UNKNOWN = "unknown"
 
 
 class TrialStatus(StrEnum):
@@ -52,6 +57,10 @@ class TrialStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     PRUNED = "pruned"
+    # Neutral fallback for statuses the SDK does not recognize. Used by inbound
+    # deserialization so an unrecognized status is never silently treated as
+    # COMPLETED (issue #1302, AC3).
+    UNKNOWN = "unknown"
 
 
 @dataclass(slots=True)
@@ -683,6 +692,13 @@ class OptimizationResult:
     experiment_id: str | None = None
     cloud_url: str | None = None
     run_label: str | None = None
+
+    # Provenance of this result (issue #1265): "backend" when the run was
+    # tracked end-to-end on the cloud backend, "local" when it was computed
+    # locally — either an intentionally local mode or a hybrid/cloud run that
+    # degraded to local-only because the backend was unreachable mid-run. Also
+    # mirrored in ``metadata["source"]`` for callers that inspect metadata.
+    source: str = "backend"
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
@@ -738,16 +754,26 @@ class OptimizationResult:
                 if trial.metrics:
                     return dict(trial.metrics)
             return {}
-        # Find the best trial by score
-        best_trial = max(
-            self.trials,
-            key=lambda t: (
-                t.metrics.get(self.objectives[0], float("-inf"))
-                if t.metrics
-                else float("-inf")
-            ),
-        )
-        return dict(best_trial.metrics) if best_trial.metrics else {}
+        # F-C fix: match the trial whose config equals best_config so that
+        # best_metrics is always consistent with the actual winning trial, not
+        # the highest-scoring trial (which differs for minimize-primary or
+        # multi-objective runs).
+        if self.best_config:
+            for trial in self.trials:
+                if trial.metrics and trial.config == self.best_config:
+                    return dict(trial.metrics)
+        # Fall back to best_trial_id stored in metadata (set by result_selection)
+        # when no config match is found (aggregated configs, degenerate configs).
+        best_trial_id = self.metadata.get("best_trial_id") if self.metadata else None
+        if best_trial_id:
+            for trial in self.trials:
+                if trial.trial_id == best_trial_id and trial.metrics:
+                    return dict(trial.metrics)
+        # Last resort: return any successful trial's metrics.
+        for trial in self.trials:
+            if trial.metrics and trial.is_successful:
+                return dict(trial.metrics)
+        return {}
 
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
         """Calculate min/max ranges for each objective across all successful trials.
@@ -1242,7 +1268,17 @@ class OptimizationResult:
         minimize_lookup = set(minimize_objectives)
 
         for obj in self.objectives:
-            if obj not in trial.metrics or obj not in ranges:
+            if obj not in trial.metrics:
+                warnings.warn(
+                    f"Objective '{obj}' was not found in the evaluator's returned metrics "
+                    f"(got: {sorted(trial.metrics)}). Its weighted score defaults to 0. "
+                    "Return it explicitly from your custom_evaluator, e.g. "
+                    f"return {{'accuracy': ..., '{obj}': ...}}.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+                continue
+            if obj not in ranges:
                 continue
 
             min_val, max_val = ranges[obj]

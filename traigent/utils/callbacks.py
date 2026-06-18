@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import sys
 import threading
 import time
 import weakref
@@ -20,6 +21,59 @@ if TYPE_CHECKING:
     from ..api.types import OptimizationResult, TrialResult
 
 logger = get_logger(__name__)
+
+# Emoji/unicode chars used in progress output and their ASCII fallbacks.
+_UNICODE_FALLBACKS: dict[str, str] = {
+    "🚀": "[>]",
+    "📊": "[~]",
+    "⚙️": "[*]",
+    "✅": "[OK]",
+    "❌": "[!!]",
+    "⏱️": "[T]",
+    "🏆": "[best]",
+    "📈": "[%]",
+    "🛑": "[stop]",
+    "🔖": "[run]",
+    "🔗": "[url]",
+    "🎯": "[obj]",
+    "🔧": "[cfg]",
+    "▶️": "[>]",
+    "⚠️": "[WARN]",
+    "✨": "[**]",
+    "█": "#",
+    "░": "-",
+    "•": "*",
+}
+
+
+def _safe_print(*args: Any, **kwargs: Any) -> None:
+    """Print with graceful fallback for non-UTF-8 consoles (e.g. Windows cp1252).
+
+    Replaces characters that the current stdout encoding cannot represent with
+    ASCII equivalents instead of raising UnicodeEncodeError.
+
+    Writes directly to ``sys.stdout`` (resolved at call time) so that test
+    fixtures that patch ``sys.stdout`` at the module level are respected.
+    """
+    stream = sys.stdout
+    encoding = getattr(stream, "encoding", "utf-8") or "utf-8"
+    sep = str(kwargs.get("sep", " "))
+    end = str(kwargs.get("end", "\n"))
+    flush = bool(kwargs.get("flush", False))
+    text = sep.join(str(a) for a in args) + end
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        for uni, asc in _UNICODE_FALLBACKS.items():
+            text = text.replace(uni, asc)
+        try:
+            text.encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            text = text.encode(encoding, errors="replace").decode(encoding)
+    stream.write(text)
+    if flush:
+        stream.flush()
+
 
 CallbackInvocationKey = tuple[int, str]
 
@@ -134,10 +188,10 @@ class ProgressBarCallback(OptimizationCallback):
         self._objectives = list(objectives)
         # Note: ProgressBarCallback uses print for interactive console output
         # This is intentional for user-facing progress display
-        print(f"🚀 Starting optimization with {algorithm}")
-        print(f"📊 Objectives: {', '.join(objectives)}")
-        print(f"⚙️  Configuration space: {len(config_space)} parameters")
-        print()
+        _safe_print(f"🚀 Starting optimization with {algorithm}")
+        _safe_print(f"📊 Objectives: {', '.join(objectives)}")
+        _safe_print(f"⚙️  Configuration space: {len(config_space)} parameters")
+        _safe_print()
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
@@ -169,7 +223,7 @@ class ProgressBarCallback(OptimizationCallback):
         )
 
         # Print progress line - using print for interactive console output
-        print(
+        _safe_print(
             f"\r[{bar}] {progress.progress_percent:5.1f}% "
             f"({progress.completed_trials}/{progress.total_trials}) "
             f"✅ {progress.successful_trials} "
@@ -195,7 +249,7 @@ class ProgressBarCallback(OptimizationCallback):
             )
             total = self._last_progress.total_trials
             # Using print for final progress display output
-            print(
+            _safe_print(
                 f"\r[{bar}] 100.0% "
                 f"({total}/{total}) "
                 f"✅ {self._last_progress.successful_trials} "
@@ -205,35 +259,35 @@ class ProgressBarCallback(OptimizationCallback):
                 flush=True,
             )
 
-        print("\n")
+        _safe_print("\n")
         if result.stop_reason == "timeout" or result.status == "cancelled":
             timeout_value = None
             if isinstance(result.metadata, dict):
                 timeout_value = result.metadata.get("timeout")
             timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
-            print(f"⚠️ Optimization stopped early: timeout reached{timeout_hint}.")
+            _safe_print(f"⚠️ Optimization stopped early: timeout reached{timeout_hint}.")
         else:
-            print("✅ Optimization complete!")
+            _safe_print("✅ Optimization complete!")
         best_score_str = (
             f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
         )
-        print(f"🏆 Best score: {best_score_str}")
-        print(f"⏱️  Total time: {result.duration:.1f}s")
-        print(f"📈 Success rate: {result.success_rate:.1%}")
+        _safe_print(f"🏆 Best score: {best_score_str}")
+        _safe_print(f"⏱️  Total time: {result.duration:.1f}s")
+        _safe_print(f"📈 Success rate: {result.success_rate:.1%}")
 
         if result.stop_reason and result.stop_reason != "timeout":
-            print(f"🛑 Stop reason: {result.stop_reason}")
+            _safe_print(f"🛑 Stop reason: {result.stop_reason}")
 
         if result.run_label:
-            print(f"🔖 Run: {result.run_label}")
+            _safe_print(f"🔖 Run: {result.run_label}")
         if result.cloud_url:
-            print(f"🔗 View: {result.cloud_url}")
+            _safe_print(f"🔗 View: {result.cloud_url}")
         elif (
             result.run_label
             and isinstance(result.metadata, dict)
             and result.metadata.get("offline_mode")
         ):
-            print("   Run locally — sync to cloud with `traigent sync`")
+            _safe_print("   Run locally — sync to cloud with `traigent sync`")
 
         self._print_results_table(result)
 
@@ -258,7 +312,7 @@ class ProgressBarCallback(OptimizationCallback):
                 metric_overrides=metric_overrides,
             )
             if self._table_footer_note:
-                print(self._table_footer_note)
+                _safe_print(self._table_footer_note)
         except Exception as exc:
             logger.warning("Failed to render results table: %s", exc)
 
@@ -321,7 +375,7 @@ class ResultsTableCallback(OptimizationCallback):
                 metric_overrides=metric_overrides,
             )
             if self._table_footer_note:
-                print(self._table_footer_note)
+                _safe_print(self._table_footer_note)
         except Exception as exc:
             logger.warning("Failed to render results table: %s", exc)
 
@@ -980,23 +1034,23 @@ class DetailedProgressCallback(OptimizationCallback):
         else:
             self.total_trials = total
 
-        print("\n" + "=" * 60)
-        print("🚀 OPTIMIZATION STARTING")
-        print("=" * 60)
-        print(f"📊 Algorithm: {algorithm}")
-        print(f"🎯 Objectives: {', '.join(objectives)}")
-        print("🔧 Configuration Space:")
+        _safe_print("\n" + "=" * 60)
+        _safe_print("🚀 OPTIMIZATION STARTING")
+        _safe_print("=" * 60)
+        _safe_print(f"📊 Algorithm: {algorithm}")
+        _safe_print(f"🎯 Objectives: {', '.join(objectives)}")
+        _safe_print("🔧 Configuration Space:")
 
         for param, values in config_space.items():
-            print(f"   • {param}: {values}")
+            _safe_print(f"   • {param}: {values}")
 
         if self.total_trials > 0:
-            print(f"\n📈 Total configurations to test: {self.total_trials}")
+            _safe_print(f"\n📈 Total configurations to test: {self.total_trials}")
         else:
-            print(
+            _safe_print(
                 "\n📈 Total configurations to test: unknown (will infer from observed trials)"
             )
-        print("-" * 60 + "\n")
+        _safe_print("-" * 60 + "\n")
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
@@ -1004,15 +1058,15 @@ class DetailedProgressCallback(OptimizationCallback):
         self.configs_tested.append(config)
 
         total_display = self.total_trials if self.total_trials > 0 else "?"
-        print(f"▶️  Trial {self.trial_count}/{total_display} starting...")
+        _safe_print(f"▶️  Trial {self.trial_count}/{total_display} starting...")
 
         if self.show_config_details:
-            print("   Configuration:")
+            _safe_print("   Configuration:")
             for key, value in config.items():
                 if isinstance(value, float):
-                    print(f"     • {key}: {value:.2f}")
+                    _safe_print(f"     • {key}: {value:.2f}")
                 else:
-                    print(f"     • {key}: {value}")
+                    _safe_print(f"     • {key}: {value}")
 
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
@@ -1024,18 +1078,20 @@ class DetailedProgressCallback(OptimizationCallback):
         else:
             total_display_str = str(total_display)
 
-        print(f"{status_icon} Trial {self.trial_count}/{total_display_str} completed")
+        _safe_print(
+            f"{status_icon} Trial {self.trial_count}/{total_display_str} completed"
+        )
 
         if self.show_metrics and trial.metrics:
-            print("   Metrics:")
+            _safe_print("   Metrics:")
             for metric, value in trial.metrics.items():
                 if isinstance(value, float):
-                    print(f"     • {metric}: {value:.3f}")
+                    _safe_print(f"     • {metric}: {value:.3f}")
                 else:
-                    print(f"     • {metric}: {value}")
+                    _safe_print(f"     • {metric}: {value}")
 
         if progress.best_score is not None:
-            print(f"   🏆 Best score so far: {progress.best_score:.3f}")
+            _safe_print(f"   🏆 Best score so far: {progress.best_score:.3f}")
 
         # Progress bar
         denominator_candidates = [
@@ -1061,12 +1117,12 @@ class DetailedProgressCallback(OptimizationCallback):
         bar_length = 40
         filled = int(bar_length * percent / 100)
         bar = "█" * filled + "░" * (bar_length - filled)
-        print(f"   Progress: [{bar}] {percent:.0f}%")
-        print()
+        _safe_print(f"   Progress: [{bar}] {percent:.0f}%")
+        _safe_print()
 
     def _print_header(self, result: OptimizationResult) -> None:
         """Print the completion header."""
-        print("\n" + "=" * 60)
+        _safe_print("\n" + "=" * 60)
         is_early_stop = result.stop_reason == "timeout" or result.status == "cancelled"
         if is_early_stop:
             timeout_value = (
@@ -1075,49 +1131,49 @@ class DetailedProgressCallback(OptimizationCallback):
                 else None
             )
             timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
-            print(f"⚠️ OPTIMIZATION STOPPED EARLY: TIMEOUT REACHED{timeout_hint}")
+            _safe_print(f"⚠️ OPTIMIZATION STOPPED EARLY: TIMEOUT REACHED{timeout_hint}")
         else:
-            print("✨ OPTIMIZATION COMPLETE!")
-        print("=" * 60)
+            _safe_print("✨ OPTIMIZATION COMPLETE!")
+        _safe_print("=" * 60)
 
     def _print_config(self, config: dict[str, Any]) -> None:
         """Print the best configuration."""
-        print("⚙️  Best Configuration:")
+        _safe_print("⚙️  Best Configuration:")
         for key, value in config.items():
             formatted = f"{value:.2f}" if isinstance(value, float) else str(value)
-            print(f"   • {key}: {formatted}")
+            _safe_print(f"   • {key}: {formatted}")
 
     def on_optimization_complete(self, result: OptimizationResult) -> None:
         """Called when optimization completes."""
         self._print_header(result)
 
         if result.best_score is not None:
-            print(f"🏆 Best Score: {result.best_score:.3f}")
+            _safe_print(f"🏆 Best Score: {result.best_score:.3f}")
 
         if result.best_config:
             self._print_config(result.best_config)
 
         if result.duration:
-            print(f"⏱️  Total Time: {result.duration:.1f} seconds")
+            _safe_print(f"⏱️  Total Time: {result.duration:.1f} seconds")
 
         if result.success_rate:
-            print(f"📊 Success Rate: {result.success_rate:.1%}")
+            _safe_print(f"📊 Success Rate: {result.success_rate:.1%}")
 
         if result.stop_reason and result.stop_reason != "timeout":
-            print(f"🛑 Stop reason: {result.stop_reason}")
+            _safe_print(f"🛑 Stop reason: {result.stop_reason}")
 
         if result.run_label:
-            print(f"🔖 Run: {result.run_label}")
+            _safe_print(f"🔖 Run: {result.run_label}")
         if result.cloud_url:
-            print(f"🔗 View: {result.cloud_url}")
+            _safe_print(f"🔗 View: {result.cloud_url}")
         elif (
             result.run_label
             and isinstance(result.metadata, dict)
             and result.metadata.get("offline_mode")
         ):
-            print("   Run locally — sync to cloud with `traigent sync`")
+            _safe_print("   Run locally — sync to cloud with `traigent sync`")
 
-        print("=" * 60 + "\n")
+        _safe_print("=" * 60 + "\n")
 
 
 # Convenience functions for common callback combinations

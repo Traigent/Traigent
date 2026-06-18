@@ -79,7 +79,7 @@ The `TrialResult` dataclass represents the outcome of a single optimization tria
 | `trial_id` | `str` | Unique identifier for this trial. |
 | `config` | `dict[str, Any]` | The configuration used for this trial (e.g., `{"model": "gpt-4o", "temperature": 0.5}`). |
 | `metrics` | `dict[str, float]` | Metric values produced by this trial (e.g., `{"accuracy": 0.85, "latency": 1.2}`). |
-| `status` | `TrialStatus` | Status of this trial. One of: `NOT_STARTED`, `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`, `PRUNED`. |
+| `status` | `TrialStatus` | Status of this trial. One of: `NOT_STARTED`, `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`, `PRUNED`, `UNKNOWN`. |
 | `duration` | `float` | Wall-clock execution time for this trial in seconds. |
 | `timestamp` | `datetime` | When this trial was executed. |
 | `error_message` | `str \| None` | Error message if the trial failed. `None` for successful trials. |
@@ -165,6 +165,7 @@ TrialStatus.COMPLETED    # "completed"
 TrialStatus.FAILED       # "failed"
 TrialStatus.CANCELLED    # "cancelled"
 TrialStatus.PRUNED       # "pruned"
+TrialStatus.UNKNOWN      # "unknown" (neutral fallback for unrecognized statuses)
 ```
 
 ---

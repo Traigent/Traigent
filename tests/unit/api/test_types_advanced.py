@@ -856,7 +856,9 @@ class TestOptimizationResultNormalizationMethods:
         # Schema-aware path: ObjectiveSchema drives orientation + weights.
         schema = ObjectiveSchema.from_objectives(
             [
-                ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
+                ObjectiveDefinition(
+                    name="accuracy", orientation="maximize", weight=1.0
+                ),
                 ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
             ]
         )
@@ -911,6 +913,42 @@ class TestOptimizationResultNormalizationMethods:
 
         # 0.8 * 0.7 + 0.6 * 0.3 = 0.56 + 0.18 = 0.74
         assert score == pytest.approx(0.74)
+
+    def test_normalize_trial_metrics_warns_when_objective_missing_from_evaluator(self):
+        """Regression for #1318: custom_evaluator omitting a named objective metric
+        silently defaults that objective's score to 0. A UserWarning must be emitted
+        so users know they need to return the metric explicitly."""
+        result = OptimizationResult(
+            trials=[],
+            best_config={},
+            best_score=None,
+            optimization_id="opt_warn",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost", "latency"],
+            algorithm="bayesian",
+            timestamp=datetime.now(),
+        )
+        trial = TrialResult(
+            trial_id="t1",
+            config={"model": "gpt-4o-mini"},
+            metrics={"accuracy": 0.9},  # cost + latency missing
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(),
+        )
+        ranges = {"accuracy": (0.0, 1.0), "cost": (0.0, 1.0), "latency": (0.0, 1.0)}
+
+        with pytest.warns(UserWarning, match="Objective 'cost'"):
+            result._normalize_trial_metrics(trial, ranges, [], None)
+
+        # Both missing objectives should warn (one warn call each)
+        with pytest.warns(UserWarning) as record:
+            result._normalize_trial_metrics(trial, ranges, [], None)
+        warning_texts = [str(w.message) for w in record]
+        assert any("cost" in t for t in warning_texts)
+        assert any("latency" in t for t in warning_texts)
 
 
 class TestOptimizationResultHelperMethods:

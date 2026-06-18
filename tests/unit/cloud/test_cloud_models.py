@@ -23,6 +23,100 @@ from traigent.cloud.models import (
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 
+class TestStatusEnumDeduplication:
+    """Issue #1302 AC4 — the dual status enums share ONE source of truth."""
+
+    def test_trialstatus_is_single_source_of_truth(self):
+        """cloud.models.TrialStatus IS api.types.TrialStatus (no second copy)."""
+        from traigent.api.types import TrialStatus as PublicTrialStatus
+
+        assert TrialStatus is PublicTrialStatus
+
+    def test_remote_services_session_status_is_canonical(self):
+        """remote_services.OptimizationSessionStatus references the canonical one."""
+        from traigent.optimizers.remote_services import (
+            OptimizationSessionStatus as RemoteOSS,
+        )
+
+        assert RemoteOSS is OptimizationSessionStatus
+
+    def test_cloud_optimizer_session_status_is_canonical(self):
+        """cloud_optimizer re-exports the canonical session status enum."""
+        from traigent.optimizers.cloud_optimizer import (
+            OptimizationSessionStatus as OptimizerOSS,
+        )
+
+        assert OptimizerOSS is OptimizationSessionStatus
+
+    def test_canonical_session_status_superset(self):
+        """The canonical enum carries every member each former copy needed."""
+        members = set(OptimizationSessionStatus.__members__)
+        # From the former cloud.models copy:
+        assert {"PENDING", "CREATED", "ACTIVE", "PAUSED"} <= members
+        # From the former remote_services copy:
+        assert "INITIALIZING" in members
+        # Neutral inbound fallback:
+        assert "UNKNOWN" in members
+
+
+class TestInboundStatusTolerance:
+    """Issue #1302 AC3 — inbound deserialization tolerates case / out-of-set."""
+
+    def test_session_response_accepts_uppercase_backend_status(self):
+        """Backend sends UPPER (ACTIVE); deserialization must not raise."""
+        from traigent.cloud.client import TraigentCloudClient
+
+        client = TraigentCloudClient.__new__(TraigentCloudClient)
+        resp = client._deserialize_session_response(
+            {"session_id": "s1", "status": "ACTIVE"}
+        )
+        assert resp.status is OptimizationSessionStatus.ACTIVE
+
+    def test_session_response_out_of_set_falls_back_to_unknown(self):
+        """Unrecognized status -> UNKNOWN, never a raise."""
+        from traigent.cloud.client import TraigentCloudClient
+
+        client = TraigentCloudClient.__new__(TraigentCloudClient)
+        resp = client._deserialize_session_response(
+            {"session_id": "s1", "status": "TOTALLY_NEW_STATE"}
+        )
+        assert resp.status is OptimizationSessionStatus.UNKNOWN
+
+    def test_trial_result_uppercase_running_does_not_wrong_default(self):
+        """Backend RUNNING must deserialize to RUNNING, not silent COMPLETED."""
+        from traigent.cloud.client import TraigentCloudClient
+
+        client = TraigentCloudClient.__new__(TraigentCloudClient)
+        result = client._deserialize_trial_result(
+            {
+                "session_id": "s1",
+                "trial_id": "t1",
+                "metrics": {},
+                "duration": 1.0,
+                "status": "RUNNING",
+            }
+        )
+        assert result.status is TrialStatus.RUNNING
+        assert result.status is not TrialStatus.COMPLETED
+
+    def test_trial_result_out_of_set_does_not_assert_success(self):
+        """Unrecognized trial status -> UNKNOWN, never COMPLETED (no fake success)."""
+        from traigent.cloud.client import TraigentCloudClient
+
+        client = TraigentCloudClient.__new__(TraigentCloudClient)
+        result = client._deserialize_trial_result(
+            {
+                "session_id": "s1",
+                "trial_id": "t1",
+                "metrics": {},
+                "duration": 1.0,
+                "status": "WEIRD",
+            }
+        )
+        assert result.status is TrialStatus.UNKNOWN
+        assert result.status is not TrialStatus.COMPLETED
+
+
 class TestOptimizationSession:
     """Test OptimizationSession model."""
 

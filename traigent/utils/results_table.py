@@ -27,6 +27,38 @@ if TYPE_CHECKING:
 BEST_METRIC_REL_TOL = 1e-9
 BEST_METRIC_ABS_TOL = 1e-12
 
+# Characters that cannot be encoded on narrow consoles (e.g. Windows cp1252) and
+# their ASCII fallbacks.  Applied lazily only when an encode error is detected.
+_TABLE_UNICODE_FALLBACKS: dict[str, str] = {
+    "─": "-",
+    "│": "|",
+    "┌": "+",
+    "┐": "+",
+    "└": "+",
+    "┘": "+",
+    "┴": "+",
+    "├": "+",
+    "┤": "+",
+    "┼": "+",
+    "★": "*",
+    "⚠": "!",
+}
+
+
+def _safe_table_print(text: str, **kwargs: Any) -> None:
+    """Print table output, replacing non-encodable chars instead of crashing."""
+    encoding = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        for uni, asc in _TABLE_UNICODE_FALLBACKS.items():
+            text = text.replace(uni, asc)
+        try:
+            text.encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            text = text.encode(encoding, errors="replace").decode(encoding)
+    print(text, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -386,7 +418,7 @@ def print_results_table(
     """
     trials = getattr(results, "trials", [])
     if not trials:
-        print("\nNo trials to display.")
+        _safe_table_print("\nNo trials to display.")
         return
 
     _Colors.refresh()
@@ -456,13 +488,13 @@ def print_results_table(
     title = f" Trial Results ({label_prefix}{len(trials)} trials) "
     padding = (total_width - len(title)) // 2
 
-    print()
-    print(f"{C.BOLD}{TL}{H * total_width}{TR}{C.RESET}")
-    print(
+    _safe_table_print("")
+    _safe_table_print(f"{C.BOLD}{TL}{H * total_width}{TR}{C.RESET}")
+    _safe_table_print(
         f"{C.BOLD}{V}{' ' * padding}{title}"
         f"{' ' * (total_width - padding - len(title))}{V}{C.RESET}"
     )
-    print(f"{C.BOLD}{LT}{H * total_width}{RT}{C.RESET}")
+    _safe_table_print(f"{C.BOLD}{LT}{H * total_width}{RT}{C.RESET}")
 
     # Column headers
     header_parts = [f"{C.BOLD}{'#':^{col_widths['#']}}{C.RESET}"]
@@ -474,10 +506,12 @@ def print_results_table(
         header_parts.append(
             f"{C.YELLOW}{'examples':^{col_widths['examples']}}{C.RESET}"
         )
-    print(f"{V} " + f" {V} ".join(header_parts) + f" {V}")
+    _safe_table_print(f"{V} " + f" {V} ".join(header_parts) + f" {V}")
 
     # Separator
-    print(f"{LT}" + XT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{RT}")
+    _safe_table_print(
+        f"{LT}" + XT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{RT}"
+    )
 
     # Data rows
     for i, trial in enumerate(trials):
@@ -506,14 +540,16 @@ def print_results_table(
             formatted_counts = f"{counts[0]}/{counts[1]}" if counts is not None else "?"
             row_parts.append(f"{formatted_counts:^{col_widths['examples']}}")
 
-        print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
+        _safe_table_print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 
     # Bottom border
-    print(f"{BL}" + BT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{BR}")
+    _safe_table_print(
+        f"{BL}" + BT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{BR}"
+    )
 
     # Legend (or "all failed" banner when no trial succeeded)
     if all_failed:
-        print(
+        _safe_table_print(
             f"{C.YELLOW}⚠ All trials failed — no examples succeeded. "
             f"Inspect per-example errors in "
             f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
@@ -521,4 +557,4 @@ def print_results_table(
     else:
         legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
         legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
-        print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
+        _safe_table_print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
