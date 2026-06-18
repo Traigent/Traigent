@@ -499,10 +499,17 @@ class TestOptimizationResult:
         assert result.success_rate == 0.0
 
     def test_best_metrics_property(self):
-        """Test best_metrics property."""
+        """Test best_metrics returns metrics from the winning trial (best_config match).
+
+        best_metrics must reflect the trial whose config equals best_config, not
+        the trial with the highest metric value.  With accuracy as primary and
+        best_config pointing at t2 (gpt-4, accuracy=0.95, cost=0.10), the
+        returned metrics must be t2's, not t1's (gpt-3.5, accuracy=0.85,
+        cost=0.02).
+        """
         result = OptimizationResult(
             trials=self.trials,
-            best_config={},
+            best_config=self.trials[1].config,  # t2: gpt-4 (accuracy=0.95)
             best_score=0.95,
             optimization_id="opt_001",
             duration=10.0,

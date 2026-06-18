@@ -391,9 +391,13 @@ def _select_best_single_trial(
     band_target: float | None,
     ranking_summary: dict[str, Any],
     objective_order: Iterable[str] | None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> SelectionResult:
     """Select best trial without aggregation, applying tie-breakers."""
-    minimization = is_minimization_objective(primary_objective)
+    minimization = is_minimization_objective(
+        primary_objective,
+        orientation=(objective_orientations or {}).get(primary_objective),
+    )
     chooser = min if minimization else max
 
     scored_trials = [
@@ -553,6 +557,7 @@ def _select_best_aggregated(
     band_target: float | None,
     ranking_summary: dict[str, Any],
     objective_order: Iterable[str] | None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> SelectionResult:
     """Select best configuration from aggregated results with tie-breaking."""
     if not aggregated:
@@ -566,7 +571,10 @@ def _select_best_aggregated(
             reason_code=NO_RANKING_ELIGIBLE_TRIALS,
         )
 
-    minimization = is_minimization_objective(primary_objective)
+    minimization = is_minimization_objective(
+        primary_objective,
+        orientation=(objective_orientations or {}).get(primary_objective),
+    )
 
     def score(entry: dict[str, Any]) -> float:
         value = _compute_mean_metrics(entry).get(primary_objective)
@@ -689,6 +697,7 @@ def select_best_configuration(
     require_certified: bool = False,
     certified_config: dict[str, Any] | None = None,
     certified_score: float | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> SelectionResult:
     """Return the configuration that best satisfies the primary objective.
 
@@ -711,6 +720,11 @@ def select_best_configuration(
             From TVL 0.9 promotion_policy.tie_breakers.
         band_target: Optional target value for banded objectives.
         objective_order: Declared objectives in preference order.
+        objective_orientations: Optional mapping of objective name → declared
+            orientation (``"minimize"`` / ``"maximize"`` / ``"band"``).  When
+            present, the declared orientation for the primary objective is used
+            directly and name-pattern heuristics are bypassed.  Populated from
+            ``ObjectiveSchema.objectives[*].orientation`` by the orchestrator.
 
     Returns:
         SelectionResult with best configuration and score.
@@ -826,6 +840,7 @@ def select_best_configuration(
             band_target,
             ranking_summary,
             objective_order,
+            objective_orientations=objective_orientations,
         )
 
     aggregated = _aggregate_trials(eligible_trials, set(config_space_keys))
@@ -836,4 +851,5 @@ def select_best_configuration(
         band_target,
         ranking_summary,
         objective_order,
+        objective_orientations=objective_orientations,
     )

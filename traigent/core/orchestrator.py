@@ -3003,6 +3003,14 @@ class OptimizationOrchestrator:
                 if primary and hasattr(incumbent, "get_metric")
                 else None
             )
+        # Build objective orientation map from ObjectiveSchema when available
+        # (F-B fix: honour declared orientation, not name-pattern heuristics).
+        _obj_orientations: dict[str, str] | None = None
+        if self.objective_schema and self.objective_schema.objectives:
+            _obj_orientations = {
+                obj.name: str(obj.orientation)
+                for obj in self.objective_schema.objectives
+            }
         selection = select_best_configuration(
             trials=self._trials,
             # Objectives-free runs are supported (weighted scoring disabled,
@@ -3022,6 +3030,7 @@ class OptimizationOrchestrator:
             require_certified=strict_mode,
             certified_config=certified_config,
             certified_score=certified_score,
+            objective_orientations=_obj_orientations,
         )
         best_config = selection.best_config
         best_score = selection.best_score
