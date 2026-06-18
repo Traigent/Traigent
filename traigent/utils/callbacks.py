@@ -51,10 +51,16 @@ def _safe_print(*args: Any, **kwargs: Any) -> None:
 
     Replaces characters that the current stdout encoding cannot represent with
     ASCII equivalents instead of raising UnicodeEncodeError.
+
+    Writes directly to ``sys.stdout`` (resolved at call time) so that test
+    fixtures that patch ``sys.stdout`` at the module level are respected.
     """
-    encoding = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
-    sep = kwargs.get("sep", " ")
-    text = sep.join(str(a) for a in args)
+    stream = sys.stdout
+    encoding = getattr(stream, "encoding", "utf-8") or "utf-8"
+    sep = str(kwargs.get("sep", " "))
+    end = str(kwargs.get("end", "\n"))
+    flush = bool(kwargs.get("flush", False))
+    text = sep.join(str(a) for a in args) + end
     try:
         text.encode(encoding)
     except (UnicodeEncodeError, LookupError):
@@ -64,8 +70,9 @@ def _safe_print(*args: Any, **kwargs: Any) -> None:
             text.encode(encoding)
         except (UnicodeEncodeError, LookupError):
             text = text.encode(encoding, errors="replace").decode(encoding)
-    kwargs.pop("sep", None)
-    print(text, **kwargs)
+    stream.write(text)
+    if flush:
+        stream.flush()
 
 
 CallbackInvocationKey = tuple[int, str]
