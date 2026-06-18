@@ -351,13 +351,25 @@ class SyncManager:
                 if value is not None
             }
 
+            # Build measures from real per-objective metrics first so that
+            # user-provided values (e.g. "accuracy", "latency") are never
+            # clobbered by the composite score alias.  Per-objective metrics
+            # are stored by the evaluator under metadata["all_metrics"].  Cost
+            # fields come last so they also don't overwrite objective metrics
+            # that happen to share a name with a cost field.
+            all_metrics: dict[str, Any] = (trial.metadata or {}).get(
+                "all_metrics"
+            ) or {}
+            trial_metrics = {
+                k: v for k, v in all_metrics.items() if self._is_numeric(v)
+            }
             result = {
                 "id": f"config_run_{trial.trial_id}",
                 "trial_id": trial.trial_id,
                 "experiment_parameters": trial.config,
                 "measures": {
+                    **trial_metrics,
                     "score": trial.score,
-                    "accuracy": trial.score,  # Map score to accuracy for compatibility
                     **cost_measures,
                 },
                 "timestamp": trial.timestamp,
