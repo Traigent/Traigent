@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from traigent.security.credentials import SecurityError
 from traigent.security.encryption import (
     DataClassification,
     DataProtectionManager,
@@ -94,7 +95,9 @@ class TestKeyManager:
         self, tmp_path, monkeypatch
     ):
         """Configured key stores must survive process-local manager lifetimes."""
-        monkeypatch.setenv("TRAIGENT_KEY_MANAGER_MASTER_PASSWORD", "test-key-store-passphrase")
+        monkeypatch.setenv(
+            "TRAIGENT_KEY_MANAGER_MASTER_PASSWORD", "test-key-store-passphrase"
+        )
         storage_path = tmp_path / "keys.json"
         key_manager = KeyManager(storage_path=storage_path)
 
@@ -696,6 +699,22 @@ class TestSecureStorage:
 
         decrypted = storage.retrieve_data("record-2")
         assert decrypted == "Secret One-Time Token"
+
+    def test_retrieve_data_raises_on_decryption_failure(self):
+        """Decryption failures must not look like missing records."""
+        key_manager = KeyManager()
+        encryption_manager = EncryptionManager(key_manager)
+        storage = SecureStorage(encryption_manager)
+
+        record = storage.store_data(
+            data="Secret One-Time Token",
+            record_id="record-3",
+            classification=DataClassification.RESTRICTED,
+        )
+        record.data = b"tampered-ciphertext"
+
+        with pytest.raises(SecurityError, match="Decryption failed for record-3"):
+            storage.retrieve_data("record-3")
 
 
 class TestEncryptionFailsClosedWithoutCrypto:

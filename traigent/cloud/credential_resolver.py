@@ -8,6 +8,7 @@ Extracted from AuthManager to follow Single Responsibility Principle.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime
@@ -178,9 +179,11 @@ class CredentialResolver:
         except FileNotFoundError:
             # File not found is expected for first run
             return None
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, PermissionError, OSError) as e:
             logger.warning(f"Failed to load cached credentials: {e}")
             return None
+        except Exception:
+            raise
 
     async def load_from_env(self, mode: AuthMode) -> AuthCredentials | None:
         """Load credentials from environment variables or credential manager.
@@ -287,9 +290,11 @@ class CredentialResolver:
 
             return None
 
-        except Exception as e:
+        except (ImportError, AttributeError, KeyError, TypeError) as e:
             logger.warning(f"Failed to load environment credentials: {e}")
             return None
+        except Exception:
+            raise
 
     async def cache(self, credentials: AuthCredentials) -> None:
         """Cache credentials to file with secure permissions.
