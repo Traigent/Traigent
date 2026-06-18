@@ -843,8 +843,8 @@ class TestSyncManager:
     def test_sync_all_sessions_no_completed(self, sync_manager: SyncManager) -> None:
         """Test sync all sessions when no completed sessions exist."""
         mock_sessions = [
-            Mock(status="running", session_id="s1"),
-            Mock(status="pending", session_id="s2"),
+            Mock(status="running", session_id="s1", completed_trials=0, metadata={}),
+            Mock(status="pending", session_id="s2", completed_trials=0, metadata={}),
         ]
 
         sync_manager.storage.list_sessions.return_value = mock_sessions
