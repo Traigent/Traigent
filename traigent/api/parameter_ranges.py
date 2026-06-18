@@ -789,12 +789,12 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             ("openai", "fast"): ["gpt-4o-mini"],
             ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
             ("openai", "quality"): ["gpt-4o", "o1-preview"],
-            ("anthropic", "fast"): ["claude-3-haiku-20240307"],
-            ("anthropic", "balanced"): ["claude-3-5-sonnet-20241022"],
-            ("anthropic", "quality"): ["claude-3-opus-20240229"],
-            (None, "fast"): ["gpt-4o-mini", "claude-3-haiku-20240307"],
-            (None, "balanced"): ["gpt-4o-mini", "gpt-4o", "claude-3-5-sonnet-20241022"],
-            (None, "quality"): ["gpt-4o", "claude-3-opus-20240229"],
+            ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
+            ("anthropic", "balanced"): ["claude-sonnet-4-6"],
+            ("anthropic", "quality"): ["claude-opus-4-8"],
+            (None, "fast"): ["gpt-4o-mini", "claude-haiku-4-5-20251001"],
+            (None, "balanced"): ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-6"],
+            (None, "quality"): ["gpt-4o", "claude-opus-4-8"],
         }
 
         models_found = fallbacks.get((provider, tier))

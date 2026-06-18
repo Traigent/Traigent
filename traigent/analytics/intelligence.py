@@ -1098,7 +1098,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                         "resource_type": "compute",
                         "type": "model_downgrade",
                         "priority": "high",
-                        "action": "Consider using gpt-3.5-turbo or claude-3-5-haiku-latest",
+                        "action": "Consider using gpt-4o-mini or claude-haiku-4-5-20251001",
                         "potential_savings": "50-90%",
                         "impact": "Minimal accuracy loss for most tasks",
                         "confidence": 0.85,
@@ -1529,9 +1529,9 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                     "task": task.get("name", "unknown"),
                     "allocated_budget": allocation,
                     "recommended_model": (
-                        "claude-3-5-haiku-latest"
+                        "claude-haiku-4-5-20251001"
                         if allocation < 50
-                        else "gpt-3.5-turbo"
+                        else "gpt-4o-mini"
                     ),
                     "expected_performance": 0.85,
                 }
@@ -1778,10 +1778,9 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
             model_mappings = {
                 "openai": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "gpt-4-turbo"],
                 "anthropic": [
-                    "claude-3-5-sonnet-20241022",
-                    "claude-3-5-haiku-latest",
-                    "claude-3-opus-20240229",
-                    "claude-3-sonnet-20240229",
+                    "claude-opus-4-8",
+                    "claude-sonnet-4-6",
+                    "claude-haiku-4-5-20251001",
                 ],
             }
 
