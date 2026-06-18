@@ -845,3 +845,49 @@ class TestEdgeAnalyticsCommands:
 
         assert result.exit_code == 0
         # Should handle Unicode characters properly
+
+    # --- #1345 regression tests: 'created_at' KeyError in list command ---
+
+    def test_list_sessions_no_trials_no_crash(self):
+        """list command must not crash on sessions that have no trials (KeyError #1345)."""
+        # Create a session without adding any trials
+        self.storage.create_session(
+            "no_trial_function",
+            optimization_config={"param": [1, 2]},
+        )
+
+        with patch.dict(os.environ, self.env_vars):
+            result = self.runner.invoke(list_sessions)
+
+        assert result.exit_code == 0, f"list crashed: {result.output}"
+        assert "no_trial_function" in result.output
+
+    def test_list_sessions_summary_includes_created_at_for_no_trial_session(self):
+        """get_session_summary returns created_at even for sessions with no trials (#1345)."""
+        no_trial_session_id = self.storage.create_session(
+            "empty_session_func",
+        )
+        summary = self.storage.get_session_summary(no_trial_session_id)
+        assert summary is not None, "Expected a summary dict, got None"
+        assert "created_at" in summary, (
+            "created_at missing from no-trial session summary"
+        )
+        assert "function_name" in summary
+        assert "completed_trials" in summary
+        assert summary["completed_trials"] == 0
+        assert summary["best_score"] is None
+
+    def test_list_sessions_json_format_no_trial_session(self):
+        """list --format json must not crash on sessions with no trials (#1345)."""
+        no_trial_id = self.storage.create_session("json_empty_func")
+
+        with patch.dict(os.environ, self.env_vars):
+            result = self.runner.invoke(list_sessions, ["--format", "json"])
+
+        assert result.exit_code == 0, f"list json crashed: {result.output}"
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        # The no-trial session should appear in the JSON output with a created_at field
+        no_trial_entries = [e for e in data if e.get("session_id") == no_trial_id]
+        assert len(no_trial_entries) == 1
+        assert "created_at" in no_trial_entries[0]

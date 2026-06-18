@@ -80,7 +80,9 @@ def list_sessions(status: str | None, limit: int, output_format: str) -> None:
             for session in sessions:
                 summary = storage.get_session_summary(session.session_id)
                 if summary:
-                    created_at = str(summary["created_at"])[:10]  # Just the date
+                    created_at = str(summary.get("created_at", ""))[
+                        :10
+                    ]  # Just the date
                     best_score = (
                         f"{summary['best_score']:.3f}"
                         if summary["best_score"] is not None

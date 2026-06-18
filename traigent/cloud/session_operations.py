@@ -926,6 +926,27 @@ class SessionOperations:
             )  # Store in metadata since no dedicated attr
             completed_trials = getattr(session, "completed_trials", 0)
 
+        # Persist the terminal status to local storage so that
+        # `edge-analytics list` and `traigent sync` see the session as
+        # eligible for sync (fixes #1344: status stuck at "pending").
+        # ``include_full_history`` is the channel through which
+        # ``backend_session_manager.finalize_session`` signals whether the
+        # optimization completed successfully (True) or failed (False); we use
+        # it to map to the matching local-storage status rather than always
+        # writing "completed".
+        local_storage = getattr(self.client, "local_storage", None)
+        if local_storage is not None:
+            local_status = "completed" if include_full_history else "failed"
+            try:
+                local_storage.finalize_session(session_id, local_status)
+            except Exception as _ls_err:
+                logger.debug(
+                    "Could not persist %s status for session %s to local storage: %s",
+                    local_status,
+                    session_id,
+                    _ls_err,
+                )
+
         # Revoke security session
         self.client._revoke_security_session(session_id)
 

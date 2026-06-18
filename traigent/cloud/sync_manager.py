@@ -159,6 +159,45 @@ class SyncManager:
             return str(status)
         return "unsynced"
 
+    @staticmethod
+    def _is_finished_session(session: OptimizationSession) -> bool:
+        """Return True for sessions that are definitively finished.
+
+        A session is finished when its status is "completed" OR when it is
+        stuck at "pending" but has completed trials and a terminal stop reason
+        stored in its metadata (edge case: #1344 — old SDK wrote trials but
+        forgot to flip the status flag).
+        """
+        if session.status == "completed":
+            return True
+        if session.status in ("failed", "cancelled"):
+            return False
+        # Fallback guard for sessions left at "pending" by an older SDK
+        # version that recorded trials but never called finalize_session.
+        # Any canonical StopReason value signals the optimization is done.
+        if session.completed_trials > 0:
+            stop_reason = (session.metadata or {}).get("stop_reason")
+            if stop_reason in (
+                # All canonical StopReason values from traigent/api/types.py
+                "max_trials_reached",
+                "max_samples_reached",
+                "timeout",
+                "cost_limit",
+                "metric_limit",
+                "optimizer",
+                "plateau",
+                "convergence",
+                "user_cancelled",
+                "condition",
+                "error",
+                "vendor_error",
+                "network_error",
+                # Legacy alias retained for backward-compat with pre-1.0 sessions
+                "budget_exhausted",
+            ):
+                return True
+        return False
+
     def get_sync_status(self) -> dict[str, Any]:
         """Get status of local sessions and cloud-sync state.
 
@@ -166,7 +205,9 @@ class SyncManager:
         wandb-style, by reading each session's persisted ``sync_state``.
         """
         sessions = self.storage.list_sessions()
-        completed_sessions = [s for s in sessions if s.status == "completed"]
+        # Include sessions that are definitively finished even if stuck at
+        # "pending" due to the pre-fix #1344 status-persistence bug.
+        completed_sessions = [s for s in sessions if self._is_finished_session(s)]
 
         total_trials = sum(s.completed_trials for s in sessions)
 
@@ -667,7 +708,9 @@ class SyncManager:
             Overall sync result
         """
         sessions = self.storage.list_sessions()
-        completed_sessions = [s for s in sessions if s.status == "completed"]
+        # Include sessions that are definitively finished even if stuck at
+        # "pending" due to the pre-fix #1344 status-persistence bug.
+        completed_sessions = [s for s in sessions if self._is_finished_session(s)]
 
         session_results: list[dict[str, Any]] = []
         synced_successfully = 0
