@@ -869,7 +869,9 @@ class TestEdgeAnalyticsCommands:
         )
         summary = self.storage.get_session_summary(no_trial_session_id)
         assert summary is not None, "Expected a summary dict, got None"
-        assert "created_at" in summary, "created_at missing from no-trial session summary"
+        assert "created_at" in summary, (
+            "created_at missing from no-trial session summary"
+        )
         assert "function_name" in summary
         assert "completed_trials" in summary
         assert summary["completed_trials"] == 0
