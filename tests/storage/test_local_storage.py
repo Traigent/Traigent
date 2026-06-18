@@ -607,3 +607,53 @@ class TestTrialResult:
         assert restored_trial.config == original_trial.config
         assert restored_trial.score == original_trial.score
         assert restored_trial.metadata == original_trial.metadata
+
+
+class TestNormalizeConfigNumpy:
+    """Regression tests for #1316: numpy scalars crash compute_config_hash."""
+
+    def setup_method(self):
+        import tempfile
+
+        self.temp_dir = tempfile.mkdtemp()
+        self.storage = LocalStorageManager(self.temp_dir)
+
+    def teardown_method(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_compute_config_hash_numpy_int_does_not_crash(self):
+        """numpy int64 from Optuna suggest_int must not crash compute_config_hash (#1316)."""
+        pytest.importorskip("numpy")
+        import numpy as np
+
+        config = {"fewshot_k": np.int64(3), "candidate_count": np.int64(5)}
+        # Must not raise TypeError ("Object of type int64 is not JSON serializable")
+        result = self.storage.compute_config_hash(config)
+        assert isinstance(result, str) and len(result) == 12
+
+    def test_compute_config_hash_numpy_float_does_not_crash(self):
+        pytest.importorskip("numpy")
+        import numpy as np
+
+        config = {"temperature": np.float64(0.7)}
+        result = self.storage.compute_config_hash(config)
+        assert isinstance(result, str) and len(result) == 12
+
+    def test_compute_config_hash_numpy_bool_does_not_crash(self):
+        pytest.importorskip("numpy")
+        import numpy as np
+
+        config = {"use_voting": np.bool_(True)}
+        result = self.storage.compute_config_hash(config)
+        assert isinstance(result, str) and len(result) == 12
+
+    def test_compute_config_hash_mixed_types_stable(self):
+        """Same config hashes identically regardless of numpy vs Python native."""
+        pytest.importorskip("numpy")
+        import numpy as np
+
+        native_config = {"fewshot_k": 3, "temperature": 0.7}
+        numpy_config = {"fewshot_k": np.int64(3), "temperature": np.float64(0.7)}
+        assert self.storage.compute_config_hash(native_config) == self.storage.compute_config_hash(numpy_config)

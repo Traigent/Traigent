@@ -378,3 +378,41 @@ class TestMeasuresLogging:
         assert not any(
             "No measures found for trial trial_xyz" in msg for msg in caplog.messages
         )
+
+
+class TestGenerateTrialIdNumpy:
+    """Regression tests for #1316: numpy scalars crash _generate_trial_id."""
+
+    def setup_method(self):
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.auth_manager = Mock()
+        self.ops = TrialOperations(mock_client)
+
+    def test_generate_trial_id_numpy_int_does_not_crash(self):
+        """numpy int64 from Optuna suggest_int must not crash _generate_trial_id (#1316)."""
+        pytest.importorskip("numpy")
+        import numpy as np
+
+        config = {"fewshot_k": np.int64(3), "candidate_count": np.int64(5)}
+        # Must not raise TypeError ("Object of type int64 is not JSON serializable")
+        result = self.ops._generate_trial_id("sess-abc", config)
+        assert isinstance(result, str) and len(result) == 16
+
+    def test_generate_trial_id_numpy_float_does_not_crash(self):
+        pytest.importorskip("numpy")
+        import numpy as np
+
+        config = {"temperature": np.float64(0.7)}
+        result = self.ops._generate_trial_id("sess-abc", config)
+        assert isinstance(result, str)
+
+    def test_generate_trial_id_stable_for_equivalent_configs(self):
+        """numpy and native-Python values for the same config must produce the same ID."""
+        pytest.importorskip("numpy")
+        import numpy as np
+
+        native = self.ops._generate_trial_id("sess-abc", {"k": 3})
+        numpy_ = self.ops._generate_trial_id("sess-abc", {"k": np.int64(3)})
+        assert native == numpy_

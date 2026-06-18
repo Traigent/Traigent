@@ -962,7 +962,9 @@ class TrialOperations:
         Returns:
             Unique trial ID
         """
-        # Create a deterministic hash from session and config
-        config_str = json.dumps(config, sort_keys=True)
+        # Create a deterministic hash from session and config.
+        # Sanitize first so numpy scalars (e.g. np.int64 from Optuna suggest_int)
+        # don't crash json.dumps — same coercion as _sanitize_for_json.
+        config_str = json.dumps(self._sanitize_for_json(config), sort_keys=True)
         hash_input = f"{session_id}:{config_str}"
         return hashlib.sha256(hash_input.encode()).hexdigest()[:16]

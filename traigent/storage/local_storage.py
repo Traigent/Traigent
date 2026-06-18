@@ -728,6 +728,10 @@ class LocalStorageManager:
         Returns:
             Normalized value with floats rounded and dicts sorted
         """
+        from traigent.utils.numpy_compat import convert_numpy_value, is_numpy_type
+
+        if is_numpy_type(value):
+            return self._normalize_config(convert_numpy_value(value))
         if isinstance(value, float):
             # Round floats to 8 decimal places for consistency
             return round(value, 8)
