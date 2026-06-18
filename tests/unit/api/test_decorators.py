@@ -784,8 +784,10 @@ class TestOptimizedFunctionIntegration:
             "Decorating function test_func with @traigent.optimize"
         )
 
-        # Check info log for creation
-        mock_logger.info.assert_called_with("Created optimizable function: test_func")
+        # Check info log for creation (message includes experiment_name)
+        mock_logger.info.assert_called_with(
+            "Created optimizable function: test_func (experiment_name='test_func')"
+        )
 
     def test_decorator_factory_pattern(self):
         """Test that optimize returns a decorator function."""
@@ -1087,3 +1089,84 @@ class TestRemovedExecutionRuntimeOptions:
             return x
 
         assert isinstance(py_func_with_config, OptimizedFunction)
+
+
+class TestExperimentName:
+    """Tests for experiment_name parameter and TRAIGENT_EXPERIMENT_NAME env var."""
+
+    def test_experiment_name_default_is_func_name(self):
+        """When no experiment_name is passed, experiment_name == func.__name__."""
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "my_pipeline"
+
+    def test_experiment_name_override(self):
+        """Explicit experiment_name is used instead of func.__name__."""
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            experiment_name="Amir txt2sql v1 (ACL 0.8, 0.15, 0.05)",
+        )
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "Amir txt2sql v1 (ACL 0.8, 0.15, 0.05)"
+        # __name__ still reflects the real function name
+        assert my_pipeline.__name__ == "my_pipeline"
+
+    def test_experiment_name_env_var(self, monkeypatch):
+        """TRAIGENT_EXPERIMENT_NAME env var is used when no explicit name is passed."""
+        monkeypatch.setenv("TRAIGENT_EXPERIMENT_NAME", "env_experiment")
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "env_experiment"
+
+    def test_experiment_name_param_beats_env_var(self, monkeypatch):
+        """Explicit experiment_name takes precedence over TRAIGENT_EXPERIMENT_NAME."""
+        monkeypatch.setenv("TRAIGENT_EXPERIMENT_NAME", "env_experiment")
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            experiment_name="explicit name",
+        )
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "explicit name"
+
+    def test_experiment_name_env_var_cleared(self, monkeypatch):
+        """After env var is removed, falls back to func.__name__."""
+        monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME", raising=False)
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_pipeline(x: int) -> int:
+            return x
+
+        assert my_pipeline.experiment_name == "my_pipeline"
+
+    def test_experiment_name_stored_on_optimized_function(self):
+        """_experiment_name is stored on the OptimizedFunction instance."""
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            experiment_name="stored name",
+        )
+        def my_func(x: int) -> int:
+            return x
+
+        assert my_func._experiment_name == "stored name"
+
+    def test_experiment_name_none_stores_none(self):
+        """When experiment_name=None (default), _experiment_name is None."""
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_func(x: int) -> int:
+            return x
+
+        assert my_func._experiment_name is None
