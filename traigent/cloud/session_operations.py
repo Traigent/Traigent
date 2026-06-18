@@ -941,8 +941,7 @@ class SessionOperations:
                 local_storage.finalize_session(session_id, local_status)
             except Exception as _ls_err:
                 logger.debug(
-                    "Could not persist %s status for session %s to "
-                    "local storage: %s",
+                    "Could not persist %s status for session %s to local storage: %s",
                     local_status,
                     session_id,
                     _ls_err,
