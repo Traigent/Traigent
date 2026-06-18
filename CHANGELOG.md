@@ -4,7 +4,7 @@ All notable changes to Traigent SDK are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.14.0] - 2026-06-19
 
 ### Added
 - **Composite telemetry rides the measures channel.** `composite_measures(run)`
