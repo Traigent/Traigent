@@ -1543,7 +1543,9 @@ class TestTypedConfigurationSpace:
 
     def test_list_becomes_categorical(self):
         result = _typed_configuration_space({"model": ["gpt-4o-mini", "gpt-4o"]})
-        assert result == {"model": {"type": "categorical", "choices": ["gpt-4o-mini", "gpt-4o"]}}
+        assert result == {
+            "model": {"type": "categorical", "choices": ["gpt-4o-mini", "gpt-4o"]}
+        }
 
     def test_tuple_becomes_categorical(self):
         result = _typed_configuration_space({"model": ("a", "b")})
@@ -1577,10 +1579,12 @@ class TestTypedConfigurationSpace:
 
     def test_mixed_space_normalizes_all_entries(self):
         # Realistic user space: model categorical list, temperature scalar fixed value
-        result = _typed_configuration_space({
-            "model": ["gpt-4o-mini", "gpt-4o"],
-            "temperature": 0.0,
-        })
+        result = _typed_configuration_space(
+            {
+                "model": ["gpt-4o-mini", "gpt-4o"],
+                "temperature": 0.0,
+            }
+        )
         assert result == {
             "model": {"type": "categorical", "choices": ["gpt-4o-mini", "gpt-4o"]},
             "temperature": {"type": "categorical", "choices": [0.0]},
