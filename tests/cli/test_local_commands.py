@@ -851,7 +851,7 @@ class TestEdgeAnalyticsCommands:
     def test_list_sessions_no_trials_no_crash(self):
         """list command must not crash on sessions that have no trials (KeyError #1345)."""
         # Create a session without adding any trials
-        no_trial_session_id = self.storage.create_session(
+        self.storage.create_session(
             "no_trial_function",
             optimization_config={"param": [1, 2]},
         )
