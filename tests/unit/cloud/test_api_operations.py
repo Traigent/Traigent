@@ -8,6 +8,7 @@ from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
     AIOHTTP_AVAILABLE,
     ApiOperations,
+    _typed_configuration_space,
 )
 from traigent.cloud.client import (
     CloudRemoteExecutionUnavailableError,
@@ -1535,3 +1536,66 @@ class TestUpdateExperimentRunStatusSuccess:
             await self.ops.update_experiment_run_status_on_completion(
                 "run_123", "cancelled"
             )
+
+
+class TestTypedConfigurationSpace:
+    """Tests for _typed_configuration_space normalization."""
+
+    def test_list_becomes_categorical(self):
+        result = _typed_configuration_space({"model": ["gpt-4o-mini", "gpt-4o"]})
+        assert result == {"model": {"type": "categorical", "choices": ["gpt-4o-mini", "gpt-4o"]}}
+
+    def test_tuple_becomes_categorical(self):
+        result = _typed_configuration_space({"model": ("a", "b")})
+        assert result == {"model": {"type": "categorical", "choices": ["a", "b"]}}
+
+    def test_scalar_float_becomes_single_choice_categorical(self):
+        # temperature=0.0 (fixed value) must be wrapped, not passed raw to BE
+        result = _typed_configuration_space({"temperature": 0.0})
+        assert result == {"temperature": {"type": "categorical", "choices": [0.0]}}
+
+    def test_scalar_int_becomes_single_choice_categorical(self):
+        result = _typed_configuration_space({"top_k": 5})
+        assert result == {"top_k": {"type": "categorical", "choices": [5]}}
+
+    def test_scalar_str_becomes_single_choice_categorical(self):
+        result = _typed_configuration_space({"model": "gpt-4o"})
+        assert result == {"model": {"type": "categorical", "choices": ["gpt-4o"]}}
+
+    def test_dict_with_low_high_floats_infers_float_type(self):
+        result = _typed_configuration_space({"temperature": {"low": 0.0, "high": 1.0}})
+        assert result == {"temperature": {"type": "float", "low": 0.0, "high": 1.0}}
+
+    def test_dict_with_low_high_ints_infers_int_type(self):
+        result = _typed_configuration_space({"top_k": {"low": 1, "high": 10}})
+        assert result == {"top_k": {"type": "int", "low": 1, "high": 10}}
+
+    def test_dict_with_type_already_set_passes_through(self):
+        entry = {"type": "float", "low": 0.0, "high": 1.0}
+        result = _typed_configuration_space({"temperature": entry})
+        assert result["temperature"] is entry
+
+    def test_mixed_space_normalizes_all_entries(self):
+        # Realistic user space: model categorical list, temperature scalar fixed value
+        result = _typed_configuration_space({
+            "model": ["gpt-4o-mini", "gpt-4o"],
+            "temperature": 0.0,
+        })
+        assert result == {
+            "model": {"type": "categorical", "choices": ["gpt-4o-mini", "gpt-4o"]},
+            "temperature": {"type": "categorical", "choices": [0.0]},
+        }
+
+    def test_non_dict_space_passes_through(self):
+        assert _typed_configuration_space(None) is None
+        assert _typed_configuration_space("bad") == "bad"
+
+    def test_bool_scalar_wrapped_not_confused_with_int(self):
+        # bool is a subclass of int; verify it still gets wrapped as categorical
+        result = _typed_configuration_space({"flag": True})
+        assert result == {"flag": {"type": "categorical", "choices": [True]}}
+
+    def test_dict_with_only_high_infers_float(self):
+        # partial range dict — type can't be int if one bound is missing/float
+        result = _typed_configuration_space({"x": {"high": 1.5}})
+        assert result["x"]["type"] == "float"

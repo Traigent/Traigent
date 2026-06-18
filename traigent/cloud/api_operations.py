@@ -195,17 +195,38 @@ def map_status_to_wire(status: str, *, endpoint: str = "experiment_run") -> str:
 
 
 def _typed_configuration_space(space: Any) -> Any:
-    """Normalize the decorator's SHORTHAND configuration space to the typed
-    contract (live composites-E2E finding): a bare list/tuple of choices
-    becomes {"type": "categorical", "choices": [...]}; entries already
-    carrying a "type" pass through unchanged; anything else passes through
-    for the backend to reject LOUDLY (never silently guessed)."""
+    """Normalize shorthand configuration space to the typed wire contract.
+
+    Normalization rules applied in order:
+    - list/tuple → {"type": "categorical", "choices": [...]}
+    - dict with "type" already set → pass through unchanged
+    - dict with "low"/"high" but no "type" → infer "int" (both int) or "float"
+    - scalar (bool, int, float, str) → {"type": "categorical", "choices": [value]}
+      (represents a fixed/pinned parameter with exactly one choice)
+    - anything else → pass through for the backend to reject with a clear error
+    """
     if not isinstance(space, dict):
         return space
     normalized: dict[str, Any] = {}
     for name, entry in space.items():
         if isinstance(entry, (list, tuple)):
             normalized[name] = {"type": "categorical", "choices": list(entry)}
+        elif isinstance(entry, dict):
+            if "type" not in entry and ("low" in entry or "high" in entry):
+                low, high = entry.get("low"), entry.get("high")
+                inferred = (
+                    "int"
+                    if isinstance(low, int)
+                    and not isinstance(low, bool)
+                    and isinstance(high, int)
+                    and not isinstance(high, bool)
+                    else "float"
+                )
+                normalized[name] = {**entry, "type": inferred}
+            else:
+                normalized[name] = entry
+        elif isinstance(entry, (bool, int, float, str)):
+            normalized[name] = {"type": "categorical", "choices": [entry]}
         else:
             normalized[name] = entry
     return normalized
