@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -608,6 +609,49 @@ class TrialOperations:
 
         return True
 
+    @staticmethod
+    def _is_session_not_found_400(status: int, error_text: str) -> bool:
+        """Return True only for the specific transient per-worker session-not-found case.
+
+        A 400 is treated as transient only when:
+        - status is exactly 400 (not 404, not 5xx), AND
+        - the response body signals the *session* (not a trial, config-run, or
+          unrelated object) was not found.
+
+        Matches both plain-text patterns and structured JSON error codes so the
+        check stays valid if the backend changes its message wording.
+        """
+        if status != 400:
+            return False
+
+        body_lower = error_text.lower()
+
+        # Structured check: parse JSON and look for an error code that unambiguously
+        # names a missing session.
+        try:
+            parsed = json.loads(error_text)
+            if isinstance(parsed, dict):
+                code = str(parsed.get("code") or parsed.get("error_code") or "").lower()
+                if code in {"session_not_found", "session-not-found"}:
+                    return True
+        except (ValueError, KeyError):
+            pass
+
+        # Plain-text heuristic: "session" must be the *subject* of the not-found
+        # message, not merely appear somewhere in the text.  Patterns checked:
+        #   "session <id> not found"
+        #   "session does not exist"
+        #   "unknown session"
+        # Excluded intentionally: "Trial ... not found in session" or
+        # "Configuration run not found" which contain "session" as a prepositional
+        # object — these are different error classes and must not be swallowed.
+        session_subject_patterns = (
+            r"\bsession\b[^.]*\bnot found\b",
+            r"\bsession\b[^.]*\bdoes not exist\b",
+            r"\bunknown session\b",
+        )
+        return any(re.search(pat, body_lower) for pat in session_subject_patterns)
+
     def _handle_trial_error_response(
         self,
         status: int,
@@ -620,49 +664,49 @@ class TrialOperations:
 
         Logs the HTTP status and response body so callers can diagnose backend
         rejections without inspecting raw network traffic.  When the backend
-        returns 400 with a "not found" body the error is downgraded to INFO
-        with a user-friendly note about transient per-worker session storage
-        (see BE #1194).
+        returns 400 and the body indicates that the *session* was not found, the
+        error is downgraded to INFO with a user-friendly recovery note (see BE
+        #1194 — per-worker session storage race).
 
         Returns:
-            True if the error is a transient session-not-found (400 + "not found")
-            that the caller should treat as a skipped upload rather than a hard
-            failure, False for all other errors.
+            True if the error is a transient session-not-found 400 that the
+            caller should treat as a skipped upload rather than a hard failure.
+            False for all other errors (caller should degrade backend tracking).
         """
         # Extract a concise user-facing message from the response body when
         # the backend returned JSON with an "error" or "message" field.
         detail: str = error_text.strip()
         if detail:
             try:
-                import json as _json
-
-                parsed = _json.loads(detail)
+                parsed = json.loads(detail)
                 if isinstance(parsed, dict):
                     detail = parsed.get("error") or parsed.get("message") or detail
             except (ValueError, KeyError):
                 pass
 
-        is_not_found = status == 400 and "not found" in error_text.lower()
-
-        if is_not_found:
+        if self._is_session_not_found_400(status, error_text):
+            # Log the backend detail so the raw body is still visible even
+            # though this is a benign transient condition.
             logger.info(
-                "Session %s not found on backend — trial result could not be "
-                "uploaded (likely transient; run `traigent sync` after "
-                "optimization completes to upload offline). Trial ID: %s",
+                "Session %s not found on backend — trial %s could not be "
+                "uploaded (likely transient per-worker storage; run "
+                "`traigent sync` after optimization to upload offline). "
+                "Backend detail: %s",
                 session_id,
                 trial_id,
+                detail or error_text or "(no body)",
             )
             return True
-        else:
-            logger.warning(
-                "❌ Failed to submit trial result: HTTP %s — %s",
-                status,
-                detail or "(no response body)",
-            )
-            logger.warning(
-                "   Trial ID: %s  Session ID: %s  URL: %s", trial_id, session_id, url
-            )
-            return False
+
+        logger.warning(
+            "❌ Failed to submit trial result: HTTP %s — %s",
+            status,
+            detail or "(no response body)",
+        )
+        logger.warning(
+            "   Trial ID: %s  Session ID: %s  URL: %s", trial_id, session_id, url
+        )
+        return False
 
     async def submit_trial_result_via_session(
         self,
