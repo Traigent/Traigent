@@ -389,3 +389,184 @@ class TestExtractLLMMetrics:
         assert metrics.tokens.total_tokens == 0
         assert metrics.response.response_time_ms == 0.0
         assert metrics.cost.total_cost == 0.0
+
+
+class TestOpenRouterCostExtraction:
+    """Tests for OpenRouter provider-reported cost extraction (issue #1317).
+
+    OpenRouter passes the actual call cost in LiteLLM's
+    ``response._hidden_params['response_cost']`` and/or ``response.usage.cost``.
+    Models served via OpenRouter are often absent from LiteLLM's static pricing
+    table, so ``cost_from_tokens`` returns $0.00 for them.  The SDK must fall
+    back to the provider-reported cost from these fields.
+    """
+
+    def test_extract_cost_from_hidden_params_response_cost(self):
+        """Cost in _hidden_params['response_cost'] is captured (OpenRouter via LiteLLM)."""
+        from traigent.evaluators.metrics_tracker import (
+            GenericResponseHandler,
+        )
+
+        class MockUsage:
+            prompt_tokens = 200
+            completion_tokens = 100
+            total_tokens = 300
+
+        class MockHiddenParams(dict):
+            """Minimal LiteLLM HiddenParams stand-in (dict + .get())."""
+
+        hidden = MockHiddenParams(response_cost=0.00456)
+
+        class MockLiteLLMResponse:
+            model = "openrouter/meta-llama/llama-3.1-8b-instruct"
+            usage = MockUsage()
+            _hidden_params = hidden
+            response_time_ms = 0.0
+
+        # Use GenericResponseHandler directly so we exercise extract_metadata_cost
+        # without depending on which handler wins the chain.
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == pytest.approx(0.00456), (
+            "extract_metadata_cost must return the provider-reported cost from "
+            "_hidden_params['response_cost'] when the standard cost field is absent"
+        )
+
+    def test_extract_cost_from_usage_cost_field(self):
+        """Cost in usage.cost is captured as a fallback (LiteLLM Usage object)."""
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
+
+        class MockUsage:
+            prompt_tokens = 150
+            completion_tokens = 75
+            total_tokens = 225
+            cost = 0.00789  # LiteLLM Usage.cost field
+
+        class MockLiteLLMResponse:
+            model = "openrouter/google/gemma-7b-it"
+            usage = MockUsage()
+            response_time_ms = 0.0
+
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == pytest.approx(0.00789), (
+            "extract_metadata_cost must return the provider-reported cost from "
+            "usage.cost when _hidden_params is absent"
+        )
+
+    def test_hidden_params_takes_precedence_over_usage_cost(self):
+        """_hidden_params.response_cost takes precedence over usage.cost."""
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+            cost = 0.0001  # Should be ignored — _hidden_params wins
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "openrouter/mistralai/mistral-7b-instruct"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=0.00222)
+            response_time_ms = 0.0
+
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == pytest.approx(0.00222), (
+            "_hidden_params.response_cost must take precedence over usage.cost"
+        )
+
+    def test_zero_response_cost_falls_through_to_usage_cost(self):
+        """A zero response_cost in _hidden_params does not block usage.cost."""
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+            cost = 0.00333
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "openrouter/openai/gpt-3.5-turbo"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=0.0)
+            response_time_ms = 0.0
+
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == pytest.approx(0.00333), (
+            "A zero response_cost must be treated as absent so usage.cost is used"
+        )
+
+    def test_no_provider_cost_returns_zero(self):
+        """When neither _hidden_params nor usage.cost is set, cost stays 0."""
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        class MockLiteLLMResponse:
+            model = "openrouter/some-provider/some-model"
+            usage = MockUsage()
+            response_time_ms = 0.0
+
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == 0.0
+
+    def test_extract_llm_metrics_picks_up_openrouter_cost(self, monkeypatch):
+        """End-to-end: extract_llm_metrics returns the provider-reported cost.
+
+        Simulates a model absent from LiteLLM's pricing table (strict=False
+        returns 0.0 from cost_from_tokens) but whose actual cost is in
+        _hidden_params['response_cost'].
+        """
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 200
+            completion_tokens = 80
+            total_tokens = 280
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMOpenRouterResponse:
+            model = "openrouter/meta-llama/llama-3.1-8b-instruct"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=0.00099)
+            response_time_ms = 50.0
+
+        # Stub cost_from_tokens to simulate an unpriced model returning (0, 0).
+        # The function is imported lazily inside _compute_cost, so patch it at
+        # its definition site in cost_calculator.
+        monkeypatch.setattr(
+            "traigent.utils.cost_calculator.cost_from_tokens",
+            lambda *a, **kw: (0.0, 0.0),
+        )
+
+        metrics = extract_llm_metrics(
+            MockLiteLLMOpenRouterResponse(),
+            model_name="openrouter/meta-llama/llama-3.1-8b-instruct",
+        )
+
+        assert metrics.tokens.input_tokens == 200
+        assert metrics.tokens.output_tokens == 80
+        assert metrics.cost.total_cost == pytest.approx(0.00099), (
+            "extract_llm_metrics must report the OpenRouter provider-reported cost "
+            "from _hidden_params['response_cost'] even when the model is not in "
+            "LiteLLM's pricing table (issue #1317)"
+        )
