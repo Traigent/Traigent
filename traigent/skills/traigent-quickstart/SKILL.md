@@ -56,12 +56,20 @@ See `references/installation-extras.md` for the full table of extras and their c
 
 Set these environment variables to develop and test without making real API calls or connecting to a backend:
 
+```python
+# Preferred: use the SDK helper (sets both TRAIGENT_MOCK_LLM and TRAIGENT_OFFLINE_MODE)
+import traigent
+traigent.enable_mock_mode_for_quickstart()
+```
+
+Or set environment variables directly:
+
 ```bash
 export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_OFFLINE_MODE=true
 ```
 
-- `TRAIGENT_MOCK_LLM=true` -- Mocks supported LLM calls made through Traigent's integration/interceptor path so local dry-runs do not need provider API keys or incur provider costs.
+- `TRAIGENT_MOCK_LLM=true` -- Mocks supported LLM calls made through Traigent's integration/interceptor path so local dry-runs do not need provider API keys or incur provider costs. Note: raw `openai.chat.completions.create(...)` and `anthropic.messages.create(...)` calls made outside the Traigent interceptor path are **not** mocked — only calls made via LiteLLM or LangChain inside `@traigent.optimize` functions are intercepted. Set `TRAIGENT_OFFLINE_MODE=true` together.
 - `TRAIGENT_OFFLINE_MODE=true` -- Skips backend communication so you do not need a running Traigent backend.
 
 ### Using a .env File
@@ -99,7 +107,7 @@ from traigent import Range, Choices
     eval_dataset="eval_queries.jsonl",
     objectives=["accuracy"],
     model=Choices(["gpt-4o-mini", "gpt-4o"]),
-    temperature=Range(0.0, 1.0),
+    temperature=Choices([0.0, 0.5, 1.0]),
 )
 def classify_query(query: str) -> str:
     config = traigent.get_config()
@@ -119,7 +127,7 @@ def classify_query(query: str) -> str:
 
 async def main():
     # Run optimization (async)
-    results = await classify_query.optimize(max_trials=6, algorithm="grid")
+    results = await classify_query.optimize(max_trials=6, algorithm="random")
 
     # Inspect results
     print(f"Best config: {results.best_config}")
@@ -142,7 +150,7 @@ asyncio.run(main())
 If you prefer synchronous execution:
 
 ```python
-results = classify_query.optimize_sync(max_trials=6, algorithm="grid")
+results = classify_query.optimize_sync(max_trials=6, algorithm="random")
 ```
 
 ### Key Concepts
@@ -195,7 +203,7 @@ print(traigent.get_version_info())
 ### Validate an eval dataset
 
 ```bash
-traigent validate --dataset eval_queries.jsonl
+traigent validate eval_queries.jsonl
 ```
 
 ## CLI Quick Reference
@@ -209,6 +217,6 @@ traigent validate --dataset eval_queries.jsonl
 ## Next Steps
 
 - **Define parameter search spaces** -- See the `traigent-configuration-space` skill for `Range`, `IntRange`, `Choices`, `LogRange`, factory presets, and constraints.
-- **Choose an optimization algorithm** -- Run `traigent algorithms` to see available options (grid, random, bayesian, optuna, etc.).
+- **Choose an optimization algorithm** -- Run `traigent algorithms` to see available options. Locally, `grid` and `random` are available; `bayesian` and `optuna` require the cloud portal.
 - **Add multiple objectives** -- Use `objectives=["accuracy", "cost", "latency"]` for multi-objective optimization.
 - **Use framework integrations** -- Install `traigent[integrations]` for LangChain, OpenAI, and Anthropic adapters.

@@ -38,7 +38,7 @@ def classify(text):
     # ... LLM call using config ...
     return result
 
-results = classify.optimize()
+results = await classify.optimize()
 
 # Top-level results
 print(results.best_config)      # {"model": "gpt-4o", "temperature": 0.0}
@@ -195,8 +195,8 @@ elif results.stop_reason == "error":
 After optimization, apply the winning configuration so your function uses it in production:
 
 ```python
-# Run optimization
-results = classify.optimize()
+# Run optimization (async)
+results = await classify.optimize()
 
 # Apply the best configuration
 classify.apply_best_config(results)
@@ -213,7 +213,7 @@ response = classify("What category is this email?")
 Verify results before applying:
 
 ```python
-results = classify.optimize()
+results = await classify.optimize()
 
 if results.best_score is not None and results.best_score >= 0.85:
     classify.apply_best_config(results)
@@ -276,7 +276,7 @@ def summarize(text):
     return summary
 
 # 1. Run optimization
-results = summarize.optimize()
+results = await summarize.optimize()
 
 # 2. Quick summary
 print(f"Best config: {results.best_config}")

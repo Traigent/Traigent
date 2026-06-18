@@ -112,7 +112,7 @@ traigent.utils.exceptions.CostLimitExceeded: Cost limit exceeded: $0.52 >= $0.50
 from traigent.utils.exceptions import CostLimitExceeded
 
 try:
-    results = func.optimize()
+    results = await func.optimize()
 except CostLimitExceeded as e:
     print(f"Budget exceeded: spent ${e.accumulated:.2f} of ${e.limit:.2f} limit")
     # Check if partial results are available
@@ -139,7 +139,7 @@ def my_func(text):
 my_func("hello")  # OptimizationStateError!
 
 # CORRECT: run optimization first, then apply
-results = my_func.optimize()
+results = my_func.optimize_sync()
 my_func.apply_best_config(results)
 my_func("hello")  # Works - get_config() returns applied config
 ```
@@ -190,7 +190,7 @@ Has `config`, `input_data`, and `original_error` attributes. Check the original 
 from traigent.utils.exceptions import InvocationError
 
 try:
-    results = func.optimize()
+    results = await func.optimize()
 except InvocationError as e:
     print(f"Config that caused failure: {e.config}")
     print(f"Original error: {e.original_error}")
@@ -265,7 +265,7 @@ def my_func(text):
     return "mock response"
 
 # Runs without API keys or backend
-results = my_func.optimize()
+results = await my_func.optimize()
 ```
 
 Mock mode is essential for:
@@ -375,7 +375,7 @@ def classify(text):
 
 # Attempt optimization with fallback
 try:
-    results = classify.optimize()
+    results = await classify.optimize()
 
     if results.best_score is not None and results.best_score >= 0.7:
         classify.apply_best_config(results)

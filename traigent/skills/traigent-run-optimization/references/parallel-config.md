@@ -147,10 +147,11 @@ def batch_process(items: list) -> list:
     snapshot = copy_context_to_thread()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(snapshot.run, process_one, item, cfg)
-            for item in items
-        ]
+        def worker(item):
+            with snapshot.restore():
+                return process_one(item, cfg)
+
+        futures = [executor.submit(worker, item) for item in items]
         return [f.result() for f in futures]
 ```
 
