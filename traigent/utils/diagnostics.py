@@ -11,6 +11,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from traigent.utils.console import _safe_print
 from typing import Any
 
 
@@ -59,46 +60,46 @@ class DiagnosticReport:
 
     def print_report(self) -> None:
         """Print formatted report to console."""
-        print("\n" + "=" * 60)
-        print("🔍 Traigent Diagnostic Report")
-        print("=" * 60)
+        _safe_print("\n" + "=" * 60)
+        _safe_print("🔍 Traigent Diagnostic Report")
+        _safe_print("=" * 60)
 
-        print("\n📊 System Info:")
-        print(
+        _safe_print("\n📊 System Info:")
+        _safe_print(
             f"  Python: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         )
-        print(f"  Platform: {self.platform}")
+        _safe_print(f"  Platform: {self.platform}")
 
         if self.successes:
-            print(f"\n✅ Successes ({len(self.successes)}):")
+            _safe_print(f"\n✅ Successes ({len(self.successes)}):")
             for success in self.successes:
-                print(f"  [{success['category']}] {success['message']}")
+                _safe_print(f"  [{success['category']}] {success['message']}")
 
         if self.warnings:
-            print(f"\n⚠️  Warnings ({len(self.warnings)}):")
+            _safe_print(f"\n⚠️  Warnings ({len(self.warnings)}):")
             for warning in self.warnings:
-                print(f"  [{warning['category']}] {warning['message']}")
+                _safe_print(f"  [{warning['category']}] {warning['message']}")
 
         if self.issues:
-            print(f"\n❌ Issues ({len(self.issues)}):")
+            _safe_print(f"\n❌ Issues ({len(self.issues)}):")
             for issue in self.issues:
-                print(f"  [{issue['category']}] {issue['message']}")
+                _safe_print(f"  [{issue['category']}] {issue['message']}")
                 if issue["fix"]:
-                    print(f"     💡 Fix: {issue['fix']}")
+                    _safe_print(f"     💡 Fix: {issue['fix']}")
 
         if self.recommendations:
-            print("\n💡 Recommendations:")
+            _safe_print("\n💡 Recommendations:")
             for rec in self.recommendations:
-                print(f"  • {rec}")
+                _safe_print(f"  • {rec}")
 
-        print("\n" + "=" * 60)
+        _safe_print("\n" + "=" * 60)
 
         if not self.issues:
-            print("✅ No critical issues found!")
+            _safe_print("✅ No critical issues found!")
         else:
-            print(f"❌ Found {len(self.issues)} issue(s) that need attention.")
+            _safe_print(f"❌ Found {len(self.issues)} issue(s) that need attention.")
 
-        print("=" * 60 + "\n")
+        _safe_print("=" * 60 + "\n")
 
 
 class TraigentDiagnostics:
@@ -339,7 +340,7 @@ def diagnose() -> DiagnosticReport:
 
 def main():
     """CLI entry point for diagnostics."""
-    print("Running Traigent diagnostics...")
+    _safe_print("Running Traigent diagnostics...")
     report = diagnose()
     report.print_report()
 
@@ -347,7 +348,7 @@ def main():
     report_file = Path("traigent_diagnostic_report.json")
     with open(report_file, "w") as f:
         json.dump(report.to_dict(), f, indent=2)
-    print(f"📄 Full report saved to: {report_file}")
+    _safe_print(f"📄 Full report saved to: {report_file}")
 
     # Return exit code based on issues
     return 1 if report.issues else 0

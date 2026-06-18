@@ -2206,3 +2206,143 @@ class TestCallbackManagerTimeoutAndIsolation:
         mock_callback.on_trial_start.assert_called_once()
         mock_callback.on_trial_complete.assert_called_once()
         mock_callback.on_optimization_complete.assert_called_once()
+
+
+class TestUnicodeOutputSafety:
+    """Regression tests for UnicodeEncodeError on non-UTF-8 consoles (issue #1321).
+
+    These tests patch sys.stdout at the traigent.utils.callbacks module level so
+    that _safe_print reads the encoding from (and writes to) our fake cp1252 stream
+    even under pytest's default stdout-capture mode.
+    """
+
+    class _Cp1252Stdout:
+        """Simulates a Windows cp1252 console that raises UnicodeEncodeError for non-cp1252 chars."""
+
+        def __init__(self) -> None:
+            self.encoding = "cp1252"
+            self._buf: list[str] = []
+
+        def write(self, s: str) -> int:
+            s.encode("cp1252")  # raises UnicodeEncodeError for chars outside cp1252
+            self._buf.append(s)
+            return len(s)
+
+        def flush(self) -> None:
+            pass
+
+        @property
+        def written(self) -> str:
+            return "".join(self._buf)
+
+    @pytest.fixture()
+    def cp1252_stdout(self, monkeypatch: pytest.MonkeyPatch) -> _Cp1252Stdout:
+        """Patch sys.stdout at both the module level and globally for reliable capture."""
+        fake = self._Cp1252Stdout()
+        # Patch at both places so _safe_print's getattr(sys.stdout, "encoding") sees
+        # "cp1252" even when pytest is capturing FD-level output.
+        monkeypatch.setattr("sys.stdout", fake)
+        import traigent.utils.callbacks as _cb_mod
+
+        monkeypatch.setattr(_cb_mod.sys, "stdout", fake)
+        return fake
+
+    def _make_result(self) -> OptimizationResult:
+        from datetime import UTC, datetime
+
+        return OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4o", "temperature": 0.7},
+            best_score=0.92,
+            optimization_id="opt_1321",
+            duration=12.3,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+    def _make_progress(self) -> ProgressInfo:
+        return ProgressInfo(
+            current_trial=1,
+            total_trials=5,
+            completed_trials=1,
+            successful_trials=1,
+            failed_trials=0,
+            best_score=0.85,
+            best_config={"model": "gpt-4o"},
+            elapsed_time=2.0,
+            estimated_remaining=8.0,
+            current_algorithm="grid",
+        )
+
+    def _make_trial(self, status: TrialStatus | None = None) -> TrialResult:
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialStatus as TS
+
+        return TrialResult(
+            trial_id="trial_1321",
+            config={"model": "gpt-4o", "temperature": 0.7},
+            metrics={"accuracy": 0.85},
+            status=status or TS.COMPLETED,
+            duration=1.2,
+            timestamp=datetime.now(UTC),
+        )
+
+    def test_progress_bar_callback_safe_on_cp1252(
+        self, cp1252_stdout: _Cp1252Stdout
+    ) -> None:
+        """ProgressBarCallback must not raise UnicodeEncodeError on cp1252 consoles.
+
+        Patches sys at the traigent.utils.callbacks module level so that
+        _safe_print checks the fake cp1252 encoding and sanitizes output
+        before it reaches print().  The test passes if no UnicodeEncodeError
+        propagates; written content (post-fallback) must be cp1252-encodable.
+        """
+        import traigent.utils.callbacks as _cb_mod
+
+        cp1252_stdout._buf.clear()
+        # Patch sys inside the callbacks module so _safe_print sees our fake
+        import unittest.mock as _mock
+
+        with _mock.patch.object(_cb_mod, "sys") as mock_sys:
+            mock_sys.stdout = cp1252_stdout
+            cb = ProgressBarCallback(width=20, update_interval=0.0)
+            cb.on_optimization_start(
+                config_space={"model": ["gpt-4o", "gpt-4o-mini"]},
+                objectives=["accuracy"],
+                algorithm="grid",
+            )
+            cb.on_trial_complete(self._make_trial(), self._make_progress())
+            cb.on_optimization_complete(self._make_result())
+
+        # All output was cp1252-encodable (no UnicodeEncodeError raised above)
+        assert len(cp1252_stdout.written) > 0, (
+            "Expected some output from ProgressBarCallback"
+        )
+
+    def test_verbose_callback_safe_on_cp1252(
+        self, cp1252_stdout: _Cp1252Stdout
+    ) -> None:
+        """DetailedProgressCallback must not raise UnicodeEncodeError on cp1252 consoles."""
+        import traigent.utils.callbacks as _cb_mod
+        import unittest.mock as _mock
+
+        cp1252_stdout._buf.clear()
+        with _mock.patch.object(_cb_mod, "sys") as mock_sys:
+            mock_sys.stdout = cp1252_stdout
+            cb = DetailedProgressCallback(show_config_details=True, show_metrics=True)
+            cb.on_optimization_start(
+                config_space={"model": ["gpt-4o"], "temperature": [0.5, 0.7]},
+                objectives=["accuracy"],
+                algorithm="random",
+            )
+            cb.on_trial_start(0, {"model": "gpt-4o", "temperature": 0.5})
+            cb.on_trial_complete(self._make_trial(), self._make_progress())
+            cb.on_optimization_complete(self._make_result())
+
+        assert len(cp1252_stdout.written) > 0, (
+            "Expected some output from DetailedProgressCallback"
+        )

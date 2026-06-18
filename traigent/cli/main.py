@@ -38,6 +38,7 @@ from traigent.evaluators import (
     recommend_metrics,
 )
 from traigent.utils.logging import setup_logging
+from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import (
     PathTraversalError,
@@ -410,6 +411,10 @@ def cli(verbose: bool, debug: bool, quiet: bool) -> None:
         traigent --verbose info    # Verbose output
         traigent --quiet info      # Suppress logs
     """
+    # Wrap stdout with UTF-8 encoding on Windows consoles that default to
+    # narrow encodings (e.g. cp1252) to prevent UnicodeEncodeError from
+    # unicode progress/status characters (issue #1321).
+    configure_stdout_encoding()
     if quiet:
         setup_logging("ERROR")
     elif debug:

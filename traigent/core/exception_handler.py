@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Protocol
 
 from traigent.utils.logging import get_logger
+from traigent.utils.console import _safe_print
 
 logger = get_logger(__name__)
 
@@ -165,27 +166,27 @@ class TerminalPausePrompt:
             return "stop"
 
         description = _CATEGORY_DESCRIPTIONS.get(category, str(error))
-        print(f"\n⚠️  Vendor error: {category.value}")
-        print(f"   {description}")
-        print(f"   Error: {error}")
+        _safe_print(f"\n⚠️  Vendor error: {category.value}")
+        _safe_print(f"   {description}")
+        _safe_print(f"   Error: {error}")
 
         # Insufficient funds is non-recoverable — stop immediately
         if category == VendorErrorCategory.INSUFFICIENT_FUNDS:
-            print()
-            print(
+            _safe_print()
+            _safe_print(
                 "Stopping optimization (insufficient funds cannot be resolved by retrying)."
             )
             return "stop"
 
-        print()
-        print("Options:")
-        print("  [r] Resume optimization")
-        print("  [s] Stop and return partial results")
+        _safe_print()
+        _safe_print("Options:")
+        _safe_print("  [r] Resume optimization")
+        _safe_print("  [s] Stop and return partial results")
 
         try:
             choice = input("\nYour choice (r/s): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
+            _safe_print()
             return "stop"
 
         if choice in ("r", "resume"):
@@ -210,16 +211,16 @@ class TerminalPausePrompt:
             )
             return "stop"
 
-        print(f"\n💰 Budget limit reached: ${accumulated:.2f} / ${limit:.2f}")
-        print()
-        print("Options:")
-        print("  Enter a new limit (e.g. 5.0) to raise and continue")
-        print("  [s] Stop and return partial results")
+        _safe_print(f"\n💰 Budget limit reached: ${accumulated:.2f} / ${limit:.2f}")
+        _safe_print()
+        _safe_print("Options:")
+        _safe_print("  Enter a new limit (e.g. 5.0) to raise and continue")
+        _safe_print("  [s] Stop and return partial results")
 
         try:
             choice = input("\nNew limit or 's' to stop: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
+            _safe_print()
             return "stop"
 
         if choice in ("s", "stop", ""):
@@ -228,14 +229,14 @@ class TerminalPausePrompt:
         try:
             new_limit = float(choice)
             if new_limit <= accumulated:
-                print(
+                _safe_print(
                     f"  New limit must be greater than current spend (${accumulated:.2f})"
                 )
                 return "stop"
             if not (0 < new_limit < float("inf")):
-                print("  Invalid amount. Stopping.")
+                _safe_print("  Invalid amount. Stopping.")
                 return "stop"
             return f"raise:{new_limit}"
         except ValueError:
-            print("  Invalid input. Stopping.")
+            _safe_print("  Invalid input. Stopping.")
             return "stop"
