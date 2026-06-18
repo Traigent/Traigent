@@ -77,6 +77,7 @@ if MOCK:
 # Evaluation metric
 # ---------------------------------------------------------------------------
 
+
 def _normalize_sql(sql: str) -> str:
     """Lowercase, collapse whitespace, strip trailing semicolon."""
     sql = sql.strip().rstrip(";").lower()
@@ -99,10 +100,41 @@ def sql_accuracy(output: str, expected: str, **_: object) -> float:
     exp_tokens = set(norm_exp.split())
     out_tokens = set(norm_out.split())
     # Table/column names are any word that is not a SQL keyword
-    stop = {"select", "from", "where", "join", "on", "by", "and", "or",
-            "not", "in", "as", "is", "null", "the", "a", "an", "*", ">",
-            "<", "=", ">=", "<=", "<>", "(", ")", ",", ".", "'", "1", "5"}
-    exp_names = {t for t in exp_tokens if t not in stop and not t.replace(".", "").isnumeric()}
+    stop = {
+        "select",
+        "from",
+        "where",
+        "join",
+        "on",
+        "by",
+        "and",
+        "or",
+        "not",
+        "in",
+        "as",
+        "is",
+        "null",
+        "the",
+        "a",
+        "an",
+        "*",
+        ">",
+        "<",
+        "=",
+        ">=",
+        "<=",
+        "<>",
+        "(",
+        ")",
+        ",",
+        ".",
+        "'",
+        "1",
+        "5",
+    }
+    exp_names = {
+        t for t in exp_tokens if t not in stop and not t.replace(".", "").isnumeric()
+    }
     matched = sum(1 for t in exp_names if t in out_tokens)
     coverage = matched / len(exp_names) if exp_names else 0.0
     return round(0.5 * coverage, 3)
@@ -114,87 +146,47 @@ def sql_accuracy(output: str, expected: str, **_: object) -> float:
 
 _MOCK_ANSWERS: dict[str, str] = {
     # --- original 15 rows ---
-    "show all active customers":
-        "SELECT * FROM customers WHERE status = 'active'",
-    "count how many customers are in new york":
-        "SELECT COUNT(*) FROM customers WHERE city = 'New York'",
-    "find customers with unpaid bills":
-        "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid'",
-    "get the total billing revenue":
-        "SELECT SUM(amount) FROM billing",
-    "list the top 5 customers by data usage":
-        "SELECT c.name, SUM(nu.data_gb) AS total_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_data DESC LIMIT 5",
-    "find all premium plan subscribers":
-        "SELECT * FROM subscriptions WHERE plan_name = 'premium'",
-    "get average monthly rate per plan":
-        "SELECT plan_name, AVG(monthly_rate) AS avg_rate FROM subscriptions GROUP BY plan_name",
-    "count customers by city":
-        "SELECT city, COUNT(*) AS customer_count FROM customers GROUP BY city ORDER BY customer_count DESC",
-    "find overdue unpaid bills":
-        "SELECT * FROM billing WHERE status = 'unpaid' AND due_date < CURRENT_DATE",
-    "show total call minutes by customer":
-        "SELECT c.name, SUM(nu.call_minutes) AS total_minutes FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_minutes DESC",
-    "find customers with no network usage":
-        "SELECT name FROM customers WHERE customer_id NOT IN (SELECT DISTINCT customer_id FROM network_usage)",
-    "list customers on the enterprise plan":
-        "SELECT c.name, c.city FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE s.plan_name = 'enterprise'",
-    "get the highest monthly billing amount":
-        "SELECT MAX(amount) FROM billing",
-    "show customers who have more than one subscription":
-        "SELECT customer_id, COUNT(*) AS sub_count FROM subscriptions GROUP BY customer_id HAVING COUNT(*) > 1",
-    "find the average data usage per customer":
-        "SELECT c.name, AVG(nu.data_gb) AS avg_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name",
+    "show all active customers": "SELECT * FROM customers WHERE status = 'active'",
+    "count how many customers are in new york": "SELECT COUNT(*) FROM customers WHERE city = 'New York'",
+    "find customers with unpaid bills": "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid'",
+    "get the total billing revenue": "SELECT SUM(amount) FROM billing",
+    "list the top 5 customers by data usage": "SELECT c.name, SUM(nu.data_gb) AS total_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_data DESC LIMIT 5",
+    "find all premium plan subscribers": "SELECT * FROM subscriptions WHERE plan_name = 'premium'",
+    "get average monthly rate per plan": "SELECT plan_name, AVG(monthly_rate) AS avg_rate FROM subscriptions GROUP BY plan_name",
+    "count customers by city": "SELECT city, COUNT(*) AS customer_count FROM customers GROUP BY city ORDER BY customer_count DESC",
+    "find overdue unpaid bills": "SELECT * FROM billing WHERE status = 'unpaid' AND due_date < CURRENT_DATE",
+    "show total call minutes by customer": "SELECT c.name, SUM(nu.call_minutes) AS total_minutes FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_minutes DESC",
+    "find customers with no network usage": "SELECT name FROM customers WHERE customer_id NOT IN (SELECT DISTINCT customer_id FROM network_usage)",
+    "list customers on the enterprise plan": "SELECT c.name, c.city FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE s.plan_name = 'enterprise'",
+    "get the highest monthly billing amount": "SELECT MAX(amount) FROM billing",
+    "show customers who have more than one subscription": "SELECT customer_id, COUNT(*) AS sub_count FROM subscriptions GROUP BY customer_id HAVING COUNT(*) > 1",
+    "find the average data usage per customer": "SELECT c.name, AVG(nu.data_gb) AS avg_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name",
     # --- expanded rows (rows 16–40) ---
-    "list all distinct cities where we have customers":
-        "SELECT DISTINCT city FROM customers ORDER BY city",
-    "find the most expensive subscription plan":
-        "SELECT plan_name, monthly_rate FROM subscriptions ORDER BY monthly_rate DESC LIMIT 1",
-    "count the total number of subscriptions":
-        "SELECT COUNT(*) FROM subscriptions",
-    "show customers who started subscriptions in 2024":
-        "SELECT DISTINCT c.name FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE strftime('%Y', s.start_date) = '2024'",
-    "find all bills due this month":
-        "SELECT * FROM billing WHERE strftime('%Y-%m', due_date) = strftime('%Y-%m', CURRENT_DATE)",
-    "show total data usage per city":
-        "SELECT c.city, SUM(nu.data_gb) AS total_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.city ORDER BY total_data DESC",
-    "find customers with both unpaid bills and no network usage":
-        "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid' AND c.customer_id NOT IN (SELECT DISTINCT customer_id FROM network_usage)",
-    "show the minimum and maximum billing amounts":
-        "SELECT MIN(amount) AS min_amount, MAX(amount) AS max_amount FROM billing",
-    "list all customers sorted by name alphabetically":
-        "SELECT * FROM customers ORDER BY name ASC",
-    "find customers on plans costing more than 50 per month":
-        "SELECT DISTINCT c.name, c.city FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE s.monthly_rate > 50",
-    "show the count of paid versus unpaid bills":
-        "SELECT status, COUNT(*) AS bill_count FROM billing GROUP BY status",
-    "find customers with total call minutes over 1000":
-        "SELECT c.name, SUM(nu.call_minutes) AS total_minutes FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name HAVING SUM(nu.call_minutes) > 1000",
-    "list plans ordered by average monthly rate descending":
-        "SELECT plan_name, AVG(monthly_rate) AS avg_rate FROM subscriptions GROUP BY plan_name ORDER BY avg_rate DESC",
-    "show the total amount billed to each customer":
-        "SELECT c.name, SUM(b.amount) AS total_billed FROM customers c JOIN billing b ON c.customer_id = b.customer_id GROUP BY c.customer_id, c.name ORDER BY total_billed DESC",
-    "find customers whose name starts with a":
-        "SELECT * FROM customers WHERE name LIKE 'A%'",
-    "count how many customers have at least one subscription":
-        "SELECT COUNT(DISTINCT customer_id) FROM subscriptions",
-    "show network usage records from the last 30 days":
-        "SELECT * FROM network_usage WHERE record_date >= DATE(CURRENT_DATE, '-30 days')",
-    "find the customer with the highest single bill":
-        "SELECT c.name, b.amount FROM customers c JOIN billing b ON c.customer_id = b.customer_id ORDER BY b.amount DESC LIMIT 1",
-    "list inactive customers with no unpaid bills":
-        "SELECT c.name FROM customers c WHERE c.status = 'inactive' AND c.customer_id NOT IN (SELECT customer_id FROM billing WHERE status = 'unpaid')",
-    "show average call minutes and average data usage per customer":
-        "SELECT c.name, AVG(nu.call_minutes) AS avg_minutes, AVG(nu.data_gb) AS avg_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name",
-    "find cities with more than 3 customers":
-        "SELECT city, COUNT(*) AS customer_count FROM customers GROUP BY city HAVING COUNT(*) > 3",
-    "list customers along with their plan names and monthly rates":
-        "SELECT c.name, s.plan_name, s.monthly_rate FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id ORDER BY c.name",
-    "show total revenue from paid bills only":
-        "SELECT SUM(amount) AS paid_revenue FROM billing WHERE status = 'paid'",
-    "find customers who have network usage records but no subscription":
-        "SELECT DISTINCT c.name FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id WHERE c.customer_id NOT IN (SELECT DISTINCT customer_id FROM subscriptions)",
-    "show the earliest subscription start date":
-        "SELECT MIN(start_date) AS earliest_start FROM subscriptions",
+    "list all distinct cities where we have customers": "SELECT DISTINCT city FROM customers ORDER BY city",
+    "find the most expensive subscription plan": "SELECT plan_name, monthly_rate FROM subscriptions ORDER BY monthly_rate DESC LIMIT 1",
+    "count the total number of subscriptions": "SELECT COUNT(*) FROM subscriptions",
+    "show customers who started subscriptions in 2024": "SELECT DISTINCT c.name FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE strftime('%Y', s.start_date) = '2024'",
+    "find all bills due this month": "SELECT * FROM billing WHERE strftime('%Y-%m', due_date) = strftime('%Y-%m', CURRENT_DATE)",
+    "show total data usage per city": "SELECT c.city, SUM(nu.data_gb) AS total_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.city ORDER BY total_data DESC",
+    "find customers with both unpaid bills and no network usage": "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid' AND c.customer_id NOT IN (SELECT DISTINCT customer_id FROM network_usage)",
+    "show the minimum and maximum billing amounts": "SELECT MIN(amount) AS min_amount, MAX(amount) AS max_amount FROM billing",
+    "list all customers sorted by name alphabetically": "SELECT * FROM customers ORDER BY name ASC",
+    "find customers on plans costing more than 50 per month": "SELECT DISTINCT c.name, c.city FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE s.monthly_rate > 50",
+    "show the count of paid versus unpaid bills": "SELECT status, COUNT(*) AS bill_count FROM billing GROUP BY status",
+    "find customers with total call minutes over 1000": "SELECT c.name, SUM(nu.call_minutes) AS total_minutes FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name HAVING SUM(nu.call_minutes) > 1000",
+    "list plans ordered by average monthly rate descending": "SELECT plan_name, AVG(monthly_rate) AS avg_rate FROM subscriptions GROUP BY plan_name ORDER BY avg_rate DESC",
+    "show the total amount billed to each customer": "SELECT c.name, SUM(b.amount) AS total_billed FROM customers c JOIN billing b ON c.customer_id = b.customer_id GROUP BY c.customer_id, c.name ORDER BY total_billed DESC",
+    "find customers whose name starts with a": "SELECT * FROM customers WHERE name LIKE 'A%'",
+    "count how many customers have at least one subscription": "SELECT COUNT(DISTINCT customer_id) FROM subscriptions",
+    "show network usage records from the last 30 days": "SELECT * FROM network_usage WHERE record_date >= DATE(CURRENT_DATE, '-30 days')",
+    "find the customer with the highest single bill": "SELECT c.name, b.amount FROM customers c JOIN billing b ON c.customer_id = b.customer_id ORDER BY b.amount DESC LIMIT 1",
+    "list inactive customers with no unpaid bills": "SELECT c.name FROM customers c WHERE c.status = 'inactive' AND c.customer_id NOT IN (SELECT customer_id FROM billing WHERE status = 'unpaid')",
+    "show average call minutes and average data usage per customer": "SELECT c.name, AVG(nu.call_minutes) AS avg_minutes, AVG(nu.data_gb) AS avg_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name",
+    "find cities with more than 3 customers": "SELECT city, COUNT(*) AS customer_count FROM customers GROUP BY city HAVING COUNT(*) > 3",
+    "list customers along with their plan names and monthly rates": "SELECT c.name, s.plan_name, s.monthly_rate FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id ORDER BY c.name",
+    "show total revenue from paid bills only": "SELECT SUM(amount) AS paid_revenue FROM billing WHERE status = 'paid'",
+    "find customers who have network usage records but no subscription": "SELECT DISTINCT c.name FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id WHERE c.customer_id NOT IN (SELECT DISTINCT customer_id FROM subscriptions)",
+    "show the earliest subscription start date": "SELECT MIN(start_date) AS earliest_start FROM subscriptions",
 }
 
 
@@ -206,6 +198,7 @@ def _mock_generate_sql(question: str) -> str:
 # ---------------------------------------------------------------------------
 # Optimized function
 # ---------------------------------------------------------------------------
+
 
 @traigent.optimize(
     eval_dataset=DATASET,
@@ -256,10 +249,12 @@ def generate_sql(question: str) -> str:
         timeout=None,
         stop=None,
     )
-    response = llm.invoke([
-        SystemMessage(content="\n".join(system_parts)),
-        HumanMessage(content=question),
-    ])
+    response = llm.invoke(
+        [
+            SystemMessage(content="\n".join(system_parts)),
+            HumanMessage(content=question),
+        ]
+    )
     return str(response.content).strip()
 
 
@@ -279,7 +274,9 @@ if __name__ == "__main__":
         print("  - model: claude-3-haiku, claude-3-5-sonnet")
         print("  - temperature: 0.0, 0.2")
         print("  - include_schema: true, false")
-        print(f"Mode: {'MOCK (no API key required)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}")
+        print(
+            f"Mode: {'MOCK (no API key required)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
+        )
         print("-" * 60)
 
         async def main() -> None:
@@ -294,8 +291,15 @@ if __name__ == "__main__":
             print(f"Total trials: {len(result.trials)}")
 
             df = result.to_aggregated_dataframe(primary_objective="sql_accuracy")
-            preferred = ["model", "temperature", "include_schema",
-                         "samples_count", "sql_accuracy", "cost", "duration"]
+            preferred = [
+                "model",
+                "temperature",
+                "include_schema",
+                "samples_count",
+                "sql_accuracy",
+                "cost",
+                "duration",
+            ]
             cols = [c for c in preferred if c in df.columns]
             if cols:
                 df = df.sort_values("sql_accuracy", ascending=False)
