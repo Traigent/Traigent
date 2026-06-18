@@ -227,9 +227,9 @@ class TransportServerError(TransportError):
 # and link-local addresses.
 _METADATA_SERVICE_IPS = frozenset(
     {
-        "169.254.169.254",  # AWS / GCP / Azure / DigitalOcean / OpenStack
-        "100.100.100.200",  # Alibaba Cloud
-        "fd00:ec2::254",  # AWS IPv6 IMDS
+        "169.254.169.254",  # NOSONAR - AWS/GCP/Azure IMDS link-local address (RFC 3927)
+        "100.100.100.200",  # NOSONAR - Alibaba Cloud IMDS link-local address
+        "fd00:ec2::254",  # NOSONAR - AWS IMDSv2 IPv6 endpoint
     }
 )
 

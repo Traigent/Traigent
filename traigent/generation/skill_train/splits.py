@@ -29,7 +29,8 @@ def split_dataset(
 
     total = len(dataset.examples)
     indices = list(range(total))
-    random.Random(seed).shuffle(indices)
+    rng = random.Random(seed)  # NOSONAR - deterministic statistical split, no crypto
+    rng.shuffle(indices)
 
     selection_count = int(total * selection_fraction)
     test_count = int(total * test_fraction)

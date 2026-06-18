@@ -745,10 +745,12 @@ def _hypervolume_simple(
 
     count_dominated = 0
     for _ in range(n_samples):
-        sample = [
-            reference_point[i] + rng.random() * (upper_bounds[i] - reference_point[i])
-            for i in range(n_dims)
-        ]
+        sample = []
+        for i in range(n_dims):
+            fraction = rng.random()  # NOSONAR - Monte Carlo sampling, not cryptographic
+            sample.append(
+                reference_point[i] + fraction * (upper_bounds[i] - reference_point[i])
+            )
 
         # Check if dominated by any point in front
         for point in valid_points:
