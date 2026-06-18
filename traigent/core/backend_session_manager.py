@@ -151,10 +151,19 @@ def _format_untracked_warning_block(
             "permission middleware that returned this structured response."
         )
     elif classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY:
-        lines.append(
-            "Remedy: re-authenticate with `traigent auth login` or provide a "
-            "valid, non-revoked API key."
-        )
+        raw = (result.failure_detail or "").lower()
+        if "invalid api key format" in raw or "invalid_api_key_format" in raw:
+            lines.append(
+                "Remedy: your API key does not match the expected format. "
+                "Portal keys start with 'uk_' (46 chars) or 'tg_' (64 chars). "
+                "Copy the full key from Settings → API Keys and set "
+                "TRAIGENT_API_KEY to that exact value."
+            )
+        else:
+            lines.append(
+                "Remedy: re-authenticate with `traigent auth login` or provide a "
+                "valid, non-revoked API key."
+            )
     elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
         lines.append(
             "Remedy: configure a valid Traigent API key or run `traigent auth login`."
