@@ -12,7 +12,7 @@ from traigent.api.decorators import ExecutionOptions
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `execution_mode` | `str` | `"edge_analytics"` | Where to run: `"edge_analytics"` for local, `"hybrid"` for portal-tracked local execution, or `"cloud"` for the future remote execution path. |
+| `execution_mode` | `str` | auto-selected | Auto-selected based on algorithm and transport. `"edge_analytics"` for grid/random; `"hybrid"` for smart algorithms; `"hybrid_api"` for REST external services. Portal tracking is controlled by `TRAIGENT_API_KEY`, not this field. `"cloud"` is reserved for future use. |
 | `local_storage_path` | `str \| None` | `None` | Directory path for local result storage. |
 | `minimal_logging` | `bool` | `True` | Minimize logging output during optimization. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Parallel execution settings. See ParallelConfig section. |
@@ -68,28 +68,29 @@ def my_func(query: str) -> str:
 
 ### Hybrid
 
-Supported portal-tracked execution. Trials run locally, while the backend stores sessions and trial metrics for website visibility.
+Auto-selected when smart algorithms (Bayesian, TPE, CMA-ES, NSGA-II) are used. The cloud assists with suggestion generation; trials still run locally.
 
 ```python
 @traigent.optimize(
-    execution=ExecutionOptions(execution_mode="hybrid"),
-    configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
+    # execution_mode is auto-selected — no need to set it manually
+    # Set TRAIGENT_API_KEY for portal tracking
+    configuration_space={“model”: [“gpt-3.5-turbo”, “gpt-4”]},
+    objectives=[“accuracy”, “cost”],
 )
 def my_func(query: str) -> str:
     cfg = traigent.get_config()
-    return call_llm(model=cfg["model"], prompt=query)
+    return call_llm(model=cfg[“model”], prompt=query)
 ```
 
-**When to use**: When you want results in the Traigent portal while keeping trial execution local.
+**When to use**: Automatically used for smart algorithm runs. For portal tracking with grid/random search, just set `TRAIGENT_API_KEY` — mode stays `edge_analytics`.
 
 ### Cloud
 
-Reserved for future remote execution. It is not implemented yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
+Reserved for future remote execution. It is not implemented yet and fails closed.
 
-Do not configure new runs with `execution_mode="cloud"` yet. It raises a clear
-unavailable error instead of starting a synthetic remote optimization.
+Do not configure new runs with `execution_mode=”cloud”` yet.
 
-**When to use**: Do not use yet. Choose `hybrid` for portal-tracked optimization.
+**When to use**: Do not use yet. For portal-tracked runs, set `TRAIGENT_API_KEY` — mode is auto-selected.
 
 ### Cloud Fallback Policy
 

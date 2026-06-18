@@ -146,13 +146,11 @@ def my_agent(query: str) -> str:
 
 ## 🔒 Execution Model
 
-Traigent executes your code locally. The default is `execution_mode="edge_analytics"` (local).
+Traigent executes your code locally. **You do not need to set `execution_mode`** — the SDK auto-selects it based on your algorithm and configuration.
 
-`execution_mode="hybrid"` runs trials locally while sending session and trial metrics to the backend so results appear in the Traigent portal.
+Portal tracking (results visible in the Traigent portal) is enabled automatically when `TRAIGENT_API_KEY` is set. For grid/random search, the auto-selected mode is `edge_analytics`; for smart algorithms (Bayesian, TPE), it is `hybrid`.
 
-`execution_mode="cloud"` is reserved for future remote execution. It is not available yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
-
-If you want website-visible results today, use `hybrid`; do not switch to `cloud`.
+`execution_mode=”cloud”` is reserved for future remote execution and is not available yet.
 
 To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 

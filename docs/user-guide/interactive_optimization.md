@@ -2,7 +2,7 @@
 
 This guide documents Traigent's interactive optimization model for client-side execution with remote guidance.
 
-> **Current status:** The generic `InteractiveOptimizer` can be used with a real `RemoteGuidanceService` implementation, but Traigent Cloud remote guidance is not a supported production path yet. Use `execution_mode="hybrid"` for portal-tracked SDK optimization today; use `execution_mode="edge_analytics"` for fully local runs.
+> **Current status:** The generic `InteractiveOptimizer` can be used with a real `RemoteGuidanceService` implementation, but Traigent Cloud remote guidance is not a supported production path yet. Mode is auto-selected; set `TRAIGENT_API_KEY` for portal-tracked runs, or `TRAIGENT_OFFLINE_MODE=true` for fully local runs.
 
 ## Overview
 
@@ -85,7 +85,7 @@ and name the result-submission method `submit_trial_result`. Use
 signature differences into your code.
 
 > Backend availability: the Traigent Cloud remote-guidance endpoints back
-> these adapter calls. Use `execution_mode="hybrid"` if you only need
+> these adapter calls. Use `edge_analytics` mode (auto-selected) if you only need
 > portal-tracked SDK runs with local trial execution.
 
 
