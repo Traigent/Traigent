@@ -1,0 +1,112 @@
+name: SonarQube Local Gate
+
+# Quality gate against the in-cluster, scale-to-zero SonarQube on triagent-dev
+# (clouds/aws/modules/sonarqube). Runs on the self-hosted ARC runner `large`:
+# scales the SonarQube StatefulSet 0->1 (via the runner's in-cluster SA, which
+# has the sonarqube-scaler Role), waits for status=UP, runs coverage on natively
+# installed postgres/redis (no dind), scans, then scales SonarQube back to 0.
+#
+# Policy: REQUIRED on `main`, OPTIONAL (informational) on `develop`.
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # GLOBAL lock (not per-PR): the gate scales the single shared in-cluster
+  # SonarQube StatefulSet 0->1->0, so all Sonar runs across PRs/refs must
+  # serialize. A per-PR group lets two gates run in parallel, and the first to
+  # finish runs `scale --replicas=0`, killing SonarQube mid-scan of the other.
+  # cancel-in-progress: false => queue behind the in-flight scan, never cancel it.
+  group: sonarqube-shared
+  cancel-in-progress: false
+
+env:
+  SONAR_HOST_URL: http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  SONAR_NS: sonarqube
+  SONAR_STS: sonarqube-sonarqube
+
+jobs:
+  sonarqube-quality-gate:
+    name: SonarQube Quality Gate
+    runs-on: large
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install kubectl + sonar-scanner (arm64)
+        run: |
+          set -eu
+          export DEBIAN_FRONTEND=noninteractive
+          # ARC runner runs as root (no sudo); fall back to sudo only if not root.
+          SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO=sudo
+          command -v unzip >/dev/null 2>&1 || { $SUDO apt-get update -qq && $SUDO apt-get install -y -qq unzip; }
+          if ! command -v kubectl >/dev/null 2>&1; then
+            kver="$(curl -sL https://dl.k8s.io/release/stable.txt)"
+            $SUDO curl -sLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${kver}/bin/linux/arm64/kubectl"
+            $SUDO chmod +x /usr/local/bin/kubectl
+          fi
+          SC_VER=6.2.1.4610
+          curl -sLo /tmp/sc.zip "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SC_VER}-linux-aarch64.zip"
+          (cd /tmp && unzip -q -o sc.zip)
+          echo "/tmp/sonar-scanner-${SC_VER}-linux-aarch64/bin" >> "$GITHUB_PATH"
+
+      - name: Scale SonarQube up (0 -> 1) and wait for UP
+        run: |
+          set -eu
+          # The runner's in-cluster ServiceAccount holds the sonarqube-scaler Role.
+          kubectl -n "$SONAR_NS" scale statefulset "$SONAR_STS" --replicas=1
+          kubectl -n "$SONAR_NS" rollout status statefulset "$SONAR_STS" --timeout=300s || true
+          echo "Polling $SONAR_HOST_URL/api/system/status ..."
+          status=""
+          for _ in $(seq 1 60); do
+            status="$(curl -fsS "$SONAR_HOST_URL/api/system/status" 2>/dev/null | sed -n 's/.*"status":"\([A-Z_]*\)".*/\1/p' || true)"
+            echo "  status=${status:-unreachable}"
+            [ "$status" = "UP" ] && break
+            sleep 10
+          done
+          [ "$status" = "UP" ] || { echo "::error::SonarQube did not reach UP"; exit 1; }
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies + run tests with coverage
+        continue-on-error: true
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet -e ".[dev]" 2>/dev/null || pip install --quiet -e .
+          pip install --quiet pytest pytest-cov pytest-timeout
+          mkdir -p reports
+          # pure-pytest schema lib: no DB/redis/services needed. timeout bounds any hang.
+          pytest tests/ -q --timeout=120 --timeout-method=thread \
+            --cov=traigent --cov-report=xml:reports/coverage.xml \
+            --junitxml=reports/junit.xml
+
+      - name: Analyze and enforce quality gate
+        run: |
+          sonar-scanner \
+            -Dsonar.host.url="${SONAR_HOST_URL}" \
+            -Dsonar.token="${SONAR_TOKEN}" \
+            -Dsonar.organization= \
+            -Dsonar.projectKey=Traigent_Traigent \
+            -Dsonar.projectName=Traigent \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=300
+
+      - name: Scale SonarQube back to zero
+        if: always()
+        run: |
+          kubectl -n "$SONAR_NS" scale statefulset "$SONAR_STS" --replicas=0 || true
