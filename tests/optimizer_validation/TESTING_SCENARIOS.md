@@ -430,7 +430,7 @@ inputs:
   max_trials: int                     # traigent/api/types.py
   parallel_config: dict | null        # traigent/config/parallel.py
   injection_mode: str                 # "context" | "parameter" | "attribute" | "seamless"
-  execution_mode: str                 # "edge_analytics" | "privacy" | "hybrid" | "standard" | "cloud"
+  execution_mode: str                 # "edge_analytics" | "hybrid" | "hybrid_api"
 
 failure_injection:
   function_should_raise: type | null
