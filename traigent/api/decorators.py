@@ -384,6 +384,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "eval_dataset": None,
     "objectives": None,
     "configuration_space": None,
+    "experiment_name": None,
     "default_config": None,
     "constraints": None,
     "safety_constraints": None,
@@ -491,6 +492,7 @@ class LegacyOptimizeArgs:
         str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
     ) = None
     objectives: list[str] | ObjectiveSchema | None = None
+    experiment_name: str | None = None
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
     constraints: list[Callable[..., Any]] | None = None
@@ -582,6 +584,7 @@ class LegacyOptimizeArgs:
         return [
             ("eval_dataset", self.eval_dataset),
             ("objectives", self.objectives),
+            ("experiment_name", self.experiment_name),
             ("configuration_space", self.configuration_space),
             ("default_config", self.default_config),
             ("constraints", self.constraints),
@@ -1694,6 +1697,7 @@ def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
+    experiment_name: str | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
@@ -1759,6 +1763,13 @@ def optimize(  # NOSONAR(S107)
         configuration_space: Dictionary describing the search space. Keys are
             parameter names; values can be discrete lists, numeric tuples, or nested
             dicts for composite parameters.
+        experiment_name: Human-readable display name for this experiment shown in
+            the Traigent portal and local storage. When ``None`` (default), the
+            decorated function's ``__name__`` is used. Falls back to the
+            ``TRAIGENT_EXPERIMENT_NAME`` environment variable if set and no
+            explicit value is passed. Allows names with spaces, punctuation, and
+            other characters not valid in Python identifiers, for example
+            ``"Amir txt2sql v1 (ACL 0.8)"``.
         default_config: Baseline configuration materialized before the first trial.
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
@@ -2007,6 +2018,7 @@ def optimize(  # NOSONAR(S107)
     direct_inputs = {
         "objectives": objectives,
         "configuration_space": configuration_space,
+        "experiment_name": experiment_name,
         "default_config": default_config,
         "constraints": constraints,
         "safety_constraints": safety_constraints,
@@ -2137,6 +2149,8 @@ def optimize(  # NOSONAR(S107)
     max_trials_value = combined_settings["max_trials"]
     if max_trials_value is not None and max_trials_value <= 0:
         raise ValueError("max_trials must be a positive integer")
+    # Experiment display name (decorator > env var > func.__name__ at decoration time)
+    experiment_name_value = combined_settings["experiment_name"]
     # Tuned variable auto-detection
     auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
     auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
@@ -2436,6 +2450,8 @@ def optimize(  # NOSONAR(S107)
             strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
+            # Experiment display name (overrides func.__name__ in portal/storage)
+            experiment_name=experiment_name_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
             prompt_rewrite=prompt_rewrite,
             grow_dataset=grow_dataset,
@@ -2443,7 +2459,8 @@ def optimize(  # NOSONAR(S107)
             **combined_runtime_overrides,
         )
 
-        logger.info(f"Created optimizable function: {func.__name__}")
+        effective_name = experiment_name_value or func.__name__
+        logger.info(f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})")
 
         return optimized_func
 

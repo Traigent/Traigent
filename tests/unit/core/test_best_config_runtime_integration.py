@@ -623,7 +623,7 @@ async def test_optimization_completion_refreshes_best_config_snapshot():
     )
 
     class FakeOrchestrator:
-        async def optimize(self, *, func, dataset):
+        async def optimize(self, *, func, dataset, function_name=None):
             return result
 
     await opt_func._run_and_finalize_optimization(

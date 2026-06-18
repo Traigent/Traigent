@@ -556,6 +556,9 @@ class OptimizedFunction:
         self.max_trials = kwargs.pop("max_trials", 50)
         kwargs["max_trials"] = self.max_trials
 
+        # Experiment display name: decorator param > TRAIGENT_EXPERIMENT_NAME > func.__name__
+        self._experiment_name: str | None = kwargs.pop("experiment_name", None)
+
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
 
@@ -1792,11 +1795,13 @@ class OptimizedFunction:
                         result = await orchestrator.optimize(
                             func=trial_func,
                             dataset=dataset,
+                            function_name=self.experiment_name,
                         )
                 else:
                     result = await orchestrator.optimize(
                         func=trial_func,
                         dataset=dataset,
+                        function_name=self.experiment_name,
                     )
 
             # Store results
@@ -2299,7 +2304,7 @@ Remediation:
 
         with ConfigurationSpaceContext(effective_config_space):
             cloud_candidate = await client.optimize_function(
-                function_name=self.func.__name__,
+                function_name=self.experiment_name,
                 dataset=dataset,
                 configuration_space=effective_config_space,
                 objectives=self.objectives,
@@ -3113,6 +3118,22 @@ Remediation:
     def __name__(self) -> str:
         """Get function name."""
         return getattr(self.func, "__name__", "OptimizedFunction")
+
+    @property
+    def experiment_name(self) -> str:
+        """Resolved experiment display name for portal/storage.
+
+        Resolution order (highest to lowest priority):
+        1. ``experiment_name`` passed to ``@traigent.optimize()``
+        2. ``TRAIGENT_EXPERIMENT_NAME`` environment variable
+        3. Decorated function's ``__name__``
+        """
+        if self._experiment_name is not None:
+            return self._experiment_name
+        env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+        if env_name:
+            return env_name
+        return self.__name__
 
     @property
     def __doc__(self) -> str | None:  # type: ignore[override]

@@ -1258,12 +1258,17 @@ class OptimizationOrchestrator:
 
     # --- Consolidated logging helpers (V2 + legacy) ---
     def _initialize_logger(
-        self, session_id: str | None, func: Callable[..., Any], dataset: Dataset
+        self,
+        session_id: str | None,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        *,
+        experiment_display_name: str | None = None,
     ) -> None:
         if not session_id:
             return
 
-        experiment_name = (
+        experiment_name = experiment_display_name or (
             func.__name__ if hasattr(func, "__name__") else "unknown_function"
         )
 
@@ -2039,12 +2044,19 @@ class OptimizationOrchestrator:
 
         self._dataset_name = getattr(dataset, "name", "dataset")
 
+        # function_name may carry the user-supplied experiment_name override (from
+        # @traigent.optimize(experiment_name=...)). The fully-qualified descriptor
+        # identifier is still used for session keying; the override becomes the
+        # human-readable display name forwarded to the portal.
+        experiment_display_name: str | None = None
         if function_name and function_name != descriptor.identifier:
             logger.debug(
-                "Ignoring supplied function_name '%s' in favour of fully-qualified identifier '%s'",
+                "function_name='%s' supplied — using as experiment display name "
+                "(session keyed by descriptor identifier '%s')",
                 function_name,
                 descriptor.identifier,
             )
+            experiment_display_name = function_name
 
         # Create backend session using manager. Governance crosses the wire
         # content-free (Phase 8): the declared promotion policy and the
@@ -2061,12 +2073,15 @@ class OptimizationOrchestrator:
             objectives=list(self.optimizer.objectives or []),
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
+            experiment_display_name=experiment_display_name,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
 
         if session_id:
-            self._initialize_logger(session_id, func, dataset)
+            self._initialize_logger(
+                session_id, func, dataset, experiment_display_name=experiment_display_name
+            )
 
         self.callback_manager.on_optimization_start(
             config_space=self.optimizer.config_space,
