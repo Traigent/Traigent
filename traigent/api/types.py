@@ -754,16 +754,26 @@ class OptimizationResult:
                 if trial.metrics:
                     return dict(trial.metrics)
             return {}
-        # Find the best trial by score
-        best_trial = max(
-            self.trials,
-            key=lambda t: (
-                t.metrics.get(self.objectives[0], float("-inf"))
-                if t.metrics
-                else float("-inf")
-            ),
-        )
-        return dict(best_trial.metrics) if best_trial.metrics else {}
+        # F-C fix: match the trial whose config equals best_config so that
+        # best_metrics is always consistent with the actual winning trial, not
+        # the highest-scoring trial (which differs for minimize-primary or
+        # multi-objective runs).
+        if self.best_config:
+            for trial in self.trials:
+                if trial.metrics and trial.config == self.best_config:
+                    return dict(trial.metrics)
+        # Fall back to best_trial_id stored in metadata (set by result_selection)
+        # when no config match is found (aggregated configs, degenerate configs).
+        best_trial_id = self.metadata.get("best_trial_id") if self.metadata else None
+        if best_trial_id:
+            for trial in self.trials:
+                if trial.trial_id == best_trial_id and trial.metrics:
+                    return dict(trial.metrics)
+        # Last resort: return any successful trial's metrics.
+        for trial in self.trials:
+            if trial.metrics and trial.is_successful:
+                return dict(trial.metrics)
+        return {}
 
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
         """Calculate min/max ranges for each objective across all successful trials.
