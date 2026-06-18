@@ -273,6 +273,12 @@ class TestOIDCAuthProviderAuthentication:
         assert "admin" in user.roles
         assert "user" in user.roles
         assert user.metadata["auth_method"] == "oidc"
+        oidc_claims = user.metadata["oidc_claims"]
+        assert oidc_claims["sub"].startswith("sha256:")
+        assert "user-12345" not in str(oidc_claims)
+        assert "email" not in oidc_claims
+        assert "name" not in oidc_claims
+        assert "preferred_username" not in oidc_claims
 
     @patch("traigent.security.auth.oidc.PyJWKClient")
     @patch("traigent.security.auth.oidc.jwt")
@@ -839,22 +845,33 @@ class TestOIDCAuthProviderClaimsSanitization:
     def test_sanitize_claims_keeps_safe_keys(
         self, mock_jwks_client: MagicMock, valid_settings: dict[str, str]
     ) -> None:
-        """Test claims sanitization keeps safe keys."""
+        """Test claims sanitization keeps only non-PII functional keys."""
         from traigent.security.auth.oidc import OIDCAuthProvider
 
         provider = OIDCAuthProvider(valid_settings)
         claims = {
             "sub": "user-123",
+            "iss": "https://issuer.example.com",
+            "exp": 1234571490,
+            "iat": 1234567890,
             "email": "user@example.com",
             "name": "Test User",
+            "preferred_username": "testuser",
+            "roles": ["admin", "user"],
             "unsafe_key": "should-be-removed",
         }
 
         sanitized = provider._sanitize_claims(claims)
 
-        assert sanitized["sub"] == "user-123"
-        assert sanitized["email"] == "user@example.com"
-        assert sanitized["name"] == "Test User"
+        assert sanitized["sub"].startswith("sha256:")
+        assert sanitized["sub"] != "user-123"
+        assert sanitized["iss"] == "https://issuer.example.com"
+        assert sanitized["exp"] == 1234571490
+        assert sanitized["iat"] == 1234567890
+        assert sanitized["roles"] == {"present": True, "count": 2}
+        assert "email" not in sanitized
+        assert "name" not in sanitized
+        assert "preferred_username" not in sanitized
         assert "unsafe_key" not in sanitized
 
     @patch("traigent.security.auth.oidc.PyJWKClient")
@@ -873,7 +890,7 @@ class TestOIDCAuthProviderClaimsSanitization:
 
         sanitized = provider._sanitize_claims(claims)
 
-        assert sanitized["sub"] == "user-123"
+        assert sanitized["sub"].startswith("sha256:")
         assert "email" not in sanitized
         assert "name" not in sanitized
 
@@ -910,13 +927,19 @@ class TestOIDCAuthProviderClaimsSanitization:
             "nbf": 1234567890,
             "email": "user@example.com",
             "locale": "en-US",
+            "picture": "https://issuer.example.com/me.png",
+            "zoneinfo": "UTC",
+            "groups": "admins",
         }
 
         sanitized = provider._sanitize_claims(claims)
 
-        assert sanitized["sub"] == "user-123"
+        assert sanitized["sub"].startswith("sha256:")
         assert sanitized["iat"] == 1234567890
         assert sanitized["exp"] == 1234571490
         assert sanitized["nbf"] == 1234567890
-        assert sanitized["email"] == "user@example.com"
-        assert sanitized["locale"] == "en-US"
+        assert sanitized["groups"] == {"present": True, "count": 1}
+        assert "email" not in sanitized
+        assert "locale" not in sanitized
+        assert "picture" not in sanitized
+        assert "zoneinfo" not in sanitized
