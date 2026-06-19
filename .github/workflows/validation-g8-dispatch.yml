@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: ["Tests", "release-gate"]
     types: [completed]
+    branches: [develop, main, "release/**", "hotfix/**"]
   workflow_dispatch:
 
 permissions:
@@ -12,6 +13,7 @@ permissions:
 jobs:
   dispatch:
     name: Dispatch validation-spine G8
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch validation-spine repository_dispatch
