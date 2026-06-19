@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -158,9 +158,9 @@ class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
     Note:
-        ``runtime`` and ``js_*`` execution fields were removed in 0.12.0 with
-        the temporary Python-orchestrated JS bridge. Use native ``@traigent/sdk``
-        for JavaScript optimization. See CHANGELOG.md and docs/guides/js-bridge.md.
+        ``runtime`` and ``js_*`` execution fields were removed with the
+        temporary Python-orchestrated JS bridge. Use the ``traigent-js`` npm
+        package for JavaScript optimization.
 
     Attributes:
         execution_mode: Execution mode. Use ``edge_analytics`` for local
@@ -194,6 +194,13 @@ class ExecutionOptions(BaseModel):
         extra="forbid",
         validate_assignment=True,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_js_bridge_fields(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            _reject_removed_js_bridge_options(data)
+        return data
 
     execution_mode: str = "edge_analytics"
     local_storage_path: str | None = None
@@ -289,6 +296,8 @@ def _coerce_bundle(
     if isinstance(value, model_cls):
         return value
     if isinstance(value, dict):
+        if model_cls is ExecutionOptions:
+            _reject_removed_js_bridge_options(value)
         return cast(BundleModel, model_cls.model_validate(value))
     raise TypeError(
         f"{parameter_name} must be a dict or {model_cls.__name__}, got {type(value).__name__}"
@@ -452,8 +461,29 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
+_JS_BRIDGE_REMOVED_MESSAGE = (
+    "JS bridge removed. Use the traigent-js npm package for JavaScript optimization."
+)
+_JS_BRIDGE_REMOVED_PARAMETERS = frozenset(
+    (
+        "runtime",
+        "js_module",
+        "js_function",
+        "js_timeout",
+        "js_parallel_workers",
+        "js_use_npx",
+        "js_runner_path",
+        "js_node_executable",
+    )
+)
 _REMOVED_PARAMETERS = frozenset(
-    ("auto_optimize", "trigger", "batch_size", "parallel_trials")
+    (
+        "auto_optimize",
+        "trigger",
+        "batch_size",
+        "parallel_trials",
+        *_JS_BRIDGE_REMOVED_PARAMETERS,
+    )
 )
 _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
     (
@@ -468,6 +498,20 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "tvl_parameter_agents",
     )
 )
+
+
+def _removed_parameter_message(parameter_name: str) -> str:
+    if parameter_name in _JS_BRIDGE_REMOVED_PARAMETERS:
+        return _JS_BRIDGE_REMOVED_MESSAGE
+    return (
+        f"{parameter_name} parameter has been removed. Use supported arguments such as "
+        "parallel_config or ExecutionOptions instead."
+    )
+
+
+def _reject_removed_js_bridge_options(options: Mapping[str, Any]) -> None:
+    if set(options) & _JS_BRIDGE_REMOVED_PARAMETERS:
+        raise TypeError(_JS_BRIDGE_REMOVED_MESSAGE)
 
 
 def get_optimize_default(parameter_name: str) -> Any:
@@ -762,10 +806,7 @@ def _build_settings_recorder(
         if value is None:
             return
         if key in _REMOVED_PARAMETERS:
-            raise TypeError(
-                f"{key} parameter has been removed. Use supported arguments such as "
-                "parallel_config or ExecutionOptions instead."
-            )
+            raise TypeError(_removed_parameter_message(key))
         existing_source = provided_sources.get(key)
         if existing_source is not None:
             existing_value = combined_settings[key]
@@ -1420,11 +1461,7 @@ def _process_runtime_overrides(
 
     for key, value in normalized_runtime_overrides.items():
         if key in _REMOVED_PARAMETERS:
-            raise TypeError(
-                "The following optimize() parameters have been removed: "
-                f"[{key}]. Use supported arguments such as parallel_config "
-                "or ExecutionOptions instead."
-            )
+            raise TypeError(_removed_parameter_message(key))
         if key in _DIRECT_OPTION_KEYS:
             record_option(key, value, "keyword argument")
         else:
@@ -1432,6 +1469,8 @@ def _process_runtime_overrides(
 
     removed_in_runtime = set(combined_runtime_overrides) & _REMOVED_PARAMETERS
     if removed_in_runtime:
+        if removed_in_runtime & _JS_BRIDGE_REMOVED_PARAMETERS:
+            raise TypeError(_JS_BRIDGE_REMOVED_MESSAGE)
         raise TypeError(
             "The following optimize() parameters have been removed: "
             f"{sorted(removed_in_runtime)}. Use supported arguments such as parallel_config "
@@ -1790,6 +1829,8 @@ def optimize(  # NOSONAR(S107)
 
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
             True to accept a configuration or False to skip it.
+        safety_constraints: Not yet implemented - raises ``NotImplementedError``.
+            See traigent-smartopt#26.
 
         TVL integration:
             tvl_spec: Path to a TVL spec. When provided (and ``tvl`` opts allow it)
@@ -2064,6 +2105,12 @@ def optimize(  # NOSONAR(S107)
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
     safety_constraints = combined_settings["safety_constraints"]
+    if safety_constraints:
+        raise NotImplementedError(
+            "safety_constraints are not yet implemented. "
+            "Statistical chance-constraints are on the roadmap — track progress at "
+            "https://github.com/Traigent/traigent-smartopt/issues/26"
+        )
 
     # Process ConfigSpace constraints
     config_space_constraints, config_space_var_names, _ = (

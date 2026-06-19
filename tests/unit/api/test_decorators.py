@@ -1013,8 +1013,8 @@ class TestConstraintNormalization:
                 return x * 2
 
 
-class TestRemovedExecutionRuntimeOptions:
-    """Tests for removed Python-orchestrated JS runtime options."""
+class TestRemovedDecoratorCompatibilityOptions:
+    """Tests for removed decorator compatibility options."""
 
     def test_attribute_injection_mode_removed(self):
         """Test that injection_mode='attribute' raises error (removed in v2.x)."""
@@ -1022,49 +1022,6 @@ class TestRemovedExecutionRuntimeOptions:
 
         with pytest.raises((ValueError, Exception), match="removed"):
             InjectionOptions(injection_mode="attribute")
-
-    def test_runtime_field_is_no_longer_supported(self):
-        """ExecutionOptions no longer accepts runtime='python' or runtime='node'."""
-        from pydantic import ValidationError
-
-        from traigent.api.decorators import ExecutionOptions
-
-        for runtime in ("python", "node", "invalid"):
-            with pytest.raises(ValidationError, match="Extra inputs"):
-                ExecutionOptions(runtime=runtime)
-
-    def test_js_bridge_fields_are_no_longer_supported(self):
-        """Python-orchestrated JS bridge fields are rejected as extra inputs."""
-        from pydantic import ValidationError
-
-        from traigent.api.decorators import ExecutionOptions
-
-        removed_fields = {
-            "js_module": "./test.js",
-            "js_function": "runTrial",
-            "js_timeout": 300.0,
-            "js_parallel_workers": 2,
-            "js_use_npx": True,
-            "js_runner_path": "/tmp/runner.js",
-            "js_node_executable": "node",
-        }
-
-        for field, value in removed_fields.items():
-            with pytest.raises(ValidationError, match="Extra inputs"):
-                ExecutionOptions(**{field: value})
-
-    def test_optimize_rejects_removed_execution_dict_fields(self):
-        """The decorator rejects old dict-style JS bridge execution options."""
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError, match="Extra inputs"):
-
-            @optimize(
-                configuration_space={"x": [1, 2, 3]},
-                execution={"runtime": "node", "js_module": "./test.js"},
-            )
-            def js_func(x: int) -> int:
-                return x
 
     def test_injection_modes_still_work_without_runtime_option(self):
         """Supported Python injection modes do not require a runtime field."""
