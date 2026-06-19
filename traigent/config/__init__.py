@@ -21,7 +21,12 @@ from traigent.config.providers import (
     SeamlessParameterProvider,
     get_provider,
 )
-from traigent.config.types import TraigentConfig
+from traigent.config.types import (
+    ExecutionIntent,
+    ExecutionMode,
+    ResolvedExecutionPolicy,
+    TraigentConfig,
+)
 
 __all__ = [
     # Context management
@@ -37,5 +42,8 @@ __all__ = [
     "SeamlessParameterProvider",
     "get_provider",
     # Types
+    "ExecutionIntent",
+    "ExecutionMode",
+    "ResolvedExecutionPolicy",
     "TraigentConfig",
 ]

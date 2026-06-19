@@ -12,7 +12,7 @@ from traigent.api.parameter_validator import (
     validate_optimize_parameters,
 )
 from traigent.api.safety import hallucination_rate
-from traigent.config.types import ExecutionMode, InjectionMode
+from traigent.config.types import ExecutionIntent, ExecutionMode, InjectionMode
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
@@ -27,7 +27,9 @@ class TestOptimizeParameters:
         assert params.eval_dataset is None
         assert params.objectives is None
         assert params.injection_mode == InjectionMode.CONTEXT
-        assert params.execution_mode == "edge_analytics"
+        assert params.algorithm == "auto"
+        assert params.offline is False
+        assert params.execution_mode is None
         assert params.minimal_logging is True
         assert params.kwargs == {}
 
@@ -380,7 +382,8 @@ class TestParameterValidatorIntegration:
         assert "model" in params.configuration_space
         assert len(params.constraints) == 1
         assert params.execution_mode == "hybrid"
-        assert params.privacy_enabled is True
+        assert params.privacy_enabled is None
+        assert params.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
         assert params.kwargs["parallel_config"]["example_concurrency"] == 5
         assert params.kwargs["parallel_config"]["trial_concurrency"] == 3
         assert params.kwargs["custom_evaluator"] == "my_evaluator"

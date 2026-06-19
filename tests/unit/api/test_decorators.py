@@ -144,7 +144,7 @@ class TestOptimizeDecorator:
                 return x
 
         assert isinstance(deprecated_mode_function, OptimizedFunction)
-        assert deprecated_mode_function.execution_mode == "hybrid"
+        assert deprecated_mode_function.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
         for mode in accepted_execution_mode_values():

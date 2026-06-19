@@ -362,20 +362,22 @@ class TestEnterpriseGatedFeatures(DecoratorTestBase):
         ExecutionOptions(reps_per_trial=1, reps_aggregation="mean")
 
     @pytest.mark.parametrize(
-        ("field", "value"),
+        ("field", "value", "option_field"),
         [
-            ("hybrid_api_batch_size", 0),
-            ("hybrid_api_batch_parallelism", 0),
-            ("hybrid_api_heartbeat_interval", 0.0),
-            ("hybrid_api_heartbeat_interval", -5.0),
+            ("hybrid_api_batch_size", 0, "batch_size"),
+            ("hybrid_api_batch_parallelism", 0, "batch_parallelism"),
+            ("hybrid_api_heartbeat_interval", 0.0, "heartbeat_interval"),
+            ("hybrid_api_heartbeat_interval", -5.0, "heartbeat_interval"),
         ],
     )
-    def test_hybrid_api_execution_options_reject_degenerate_values(self, field, value):
+    def test_hybrid_api_execution_options_reject_degenerate_values(
+        self, field, value, option_field
+    ):
         """Hybrid API execution controls must be positive."""
         with pytest.raises(PydanticValidationError) as exc:
             ExecutionOptions(**{field: value})
 
-        assert field in str(exc.value)
+        assert option_field in str(exc.value)
 
     def test_max_trials_zero_rejected_at_decoration(self):
         """max_trials=0 fails at decoration instead of producing a no-op run."""

@@ -128,7 +128,7 @@ async def test_orchestrator_parallel_trials(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_privacy_alias_maps_to_hybrid():
+async def test_privacy_alias_maps_to_cloud_brain_policy():
     ds_small = _make_dataset(1)
 
     @traigent.optimize(
@@ -150,5 +150,7 @@ async def test_privacy_alias_maps_to_hybrid():
     # Access the attached config
     cfg = getattr(fn_priv, "traigent_config", None)
     assert cfg is not None
-    assert cfg.execution_mode == "hybrid"
-    assert cfg.privacy_enabled is True
+    assert fn_priv.execution_policy.intent.value == "cloud_brain"
+    assert fn_priv.execution_policy.offline is False
+    assert cfg.execution_mode == "edge_analytics"
+    assert cfg.privacy_enabled is False

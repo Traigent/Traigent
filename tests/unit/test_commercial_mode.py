@@ -101,7 +101,7 @@ class TestSupportedExecutionModes:
         assert test_function.execution_mode == "edge_analytics"
 
     def test_decorator_with_hybrid_execution(self):
-        """Hybrid is the supported portal-tracked execution mode."""
+        """Legacy hybrid resolves to cloud-brain policy with a local runtime shim."""
 
         @traigent.optimize(
             eval_dataset=None,
@@ -114,7 +114,8 @@ class TestSupportedExecutionModes:
             return f"processed: {input_text}"
 
         assert isinstance(test_function, OptimizedFunction)
-        assert test_function.execution_mode == "hybrid"
+        assert test_function.execution_policy.intent.value == "cloud_brain"
+        assert test_function.execution_mode == "edge_analytics"
         assert test_function.injection_mode == "context"
         assert test_function.objectives == ["accuracy"]
 
