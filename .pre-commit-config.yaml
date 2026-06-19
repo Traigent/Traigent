@@ -1,5 +1,9 @@
 # Pre-commit hooks for Traigent SDK
 # Install: pip install pre-commit && pre-commit install
+#
+# `make install-hooks` wires BOTH the per-commit hooks and the pre-push gate
+# (the local CI gate that mirrors the cloud gates — see scripts/local_gate.sh).
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 
 repos:
   # Python import sorting
@@ -111,6 +115,21 @@ repos:
         entry: scripts/hooks/check-ignored-files.sh
         pass_filenames: false
         always_run: true
+
+  # ── Local pre-push gate (mirrors the cloud CI/policy gates) ──────────────
+  # Catches the failures agents/humans otherwise discover only after pushing:
+  # ruff check/format (the required SDK PR gate 'preflight'), the validation-
+  # spine spine-trail breadcrumb, and (for release/hotfix branches) the
+  # SonarQube quality gate. Runs on `git push`, not on every commit.
+  - repo: local
+    hooks:
+      - id: local-gate
+        name: local CI gate (ruff + spine + sonar-if-main-bound)
+        entry: scripts/local_gate.sh
+        language: script
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
 
 # Configuration for detect-secrets
 # Run: detect-secrets scan > .secrets.baseline

@@ -210,8 +210,10 @@ class RandomSampler(Generic[T]):
 
         sequence: list[int] = []
         if self._replace:
+            population_size = self._population_size
             for _ in range(plan_size):
-                sequence.append(rng_copy.randrange(self._population_size))
+                idx = rng_copy.randrange(population_size)  # NOSONAR - no crypto
+                sequence.append(idx)
             return sequence
 
         working_pool = (
@@ -220,7 +222,7 @@ class RandomSampler(Generic[T]):
         for _ in range(plan_size):
             if not working_pool:
                 break
-            pos = rng_copy.randrange(len(working_pool))
+            pos = rng_copy.randrange(len(working_pool))  # NOSONAR - no crypto
             idx = working_pool.pop(pos)
             sequence.append(idx)
         return sequence

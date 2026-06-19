@@ -376,7 +376,7 @@ class ParameterImportanceAnalyzer:
 
         # Shuffle parameter values
         shuffled_values = param_values.copy()
-        random.shuffle(shuffled_values)
+        random.shuffle(shuffled_values)  # NOSONAR - statistical permutation, no crypto
 
         # Create permuted trials
         permuted_trials = []

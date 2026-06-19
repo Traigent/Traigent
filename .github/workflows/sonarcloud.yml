@@ -21,6 +21,11 @@ concurrency:
 jobs:
   sonarcloud:
     name: SonarCloud
+    # Public repos only: SonarCloud is quota-blocked (403) on private/internal
+    # repos, and the self-hosted "SonarQube Quality Gate" (sonarqube-local.yml)
+    # is the gate there. Skip cleanly when the repo is private. (Mirrors the
+    # same fix already applied to traigent-smartopt and traigent-js.)
+    if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 30  # Job-level timeout
     # Surface SONAR_TOKEN at job scope so the scan step can detect when it is

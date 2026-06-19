@@ -19,14 +19,15 @@
 
 name: validation-spine-pr
 
+# Moved off `pull_request` to a nightly schedule (CI-rationalization plan):
+# this scan is advisory (`continue-on-error: true`), secret-gated on
+# SPINE_RO_TOKEN (skips cleanly when absent), and scans the FULL product repo
+# on every run — so it produces no real PR verdict and only adds PR wall-clock.
+# It now runs nightly + on demand; promote back to PR-time only after it is
+# calibrated to gate (`--gate`) on PR-incremental scope.
 on:
-  pull_request:
-    branches: [develop, main]
-    paths:
-      - "traigent/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - ".github/workflows/validation-spine-pr.yml"
+  schedule:
+    - cron: "20 6 * * *"
   workflow_dispatch:
 
 permissions:

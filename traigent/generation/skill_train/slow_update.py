@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from traigent.evaluators.base import Dataset
 from traigent.generation.validators import looks_like_injection
 
+from ._deterministic_indices import deterministic_sample_indices
 from .document import (
     PROTECTED_END,
     PROTECTED_START,
@@ -36,7 +36,7 @@ def build_slow_update_probe(train: Dataset, probe_size: int, seed: int) -> Datas
     """Build the fixed train-probe dataset reused across epochs."""
 
     count = min(probe_size, len(train.examples))
-    indices = random.Random(seed).sample(range(len(train.examples)), count)
+    indices = deterministic_sample_indices(len(train.examples), count, seed)
     return Dataset(
         examples=[train.examples[i] for i in indices],
         name=f"{train.name}__slow_update_probe",
