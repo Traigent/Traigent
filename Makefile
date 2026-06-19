@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format format-ruff local-gate security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local release-build release-example-smoke release-check release-real-validation install-hooks
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format format-ruff local-gate local-gate-full security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local release-build release-example-smoke release-check release-real-validation install-hooks
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -135,8 +135,11 @@ quick-fix:  ## Quick fix common issues (format, simple lint fixes)
 pre-commit:  ## Run pre-commit hooks on all files
 	pre-commit run --all-files
 
-local-gate:  ## Run the local pre-push gate (ruff + spine + sonar-if-main-bound) -- RUN THIS BEFORE PUSHING
+local-gate:  ## Run the local pre-push gate (freshness + ruff + smoke + spine + sonar-if-main-bound) -- RUN THIS BEFORE PUSHING
 	@bash scripts/local_gate.sh
+
+local-gate-full:  ## Run local-gate with the optional full tests/unit tier
+	@LOCAL_GATE_FULL_UNIT=1 bash scripts/local_gate.sh
 
 format-ruff:  ## Format + autofix with ruff (matches the REQUIRED 'preflight' CI check)
 	$(RUFF) format $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
@@ -144,9 +147,11 @@ format-ruff:  ## Format + autofix with ruff (matches the REQUIRED 'preflight' CI
 
 install-hooks:  ## Install git pre-commit + pre-push hooks (mirrors the cloud gates locally)
 	@command -v pre-commit >/dev/null 2>&1 || { echo "Installing pre-commit..."; $(PIP) install pre-commit; }
-	pre-commit install
-	pre-commit install --hook-type commit-msg
-	pre-commit install --hook-type pre-push
+	pre-commit validate-config
+	pre-commit install --install-hooks
+	pre-commit install --hook-type commit-msg --install-hooks
+	pre-commit install --hook-type pre-push --install-hooks
+	@test -x "$$(git rev-parse --git-path hooks/pre-push)" || { echo "Error: pre-push hook was not installed/executable"; exit 1; }
 	@echo "Hooks installed. The pre-push hook runs 'scripts/local_gate.sh' on every push."
 
 update-deps:  ## Update all dependencies to latest versions

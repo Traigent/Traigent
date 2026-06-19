@@ -8,10 +8,13 @@
 # is caught in seconds, not after a push + a full CI round-trip.
 #
 # Runs (fast → slow):
+#   0. freshness preflight                 (origin/develop + origin/main)
 #   1. ruff check + ruff format --check    (mirrors the SDK Required PR Gate
 #                                            'preflight' job in pr-gate.yml)
-#   2. spine preflight                     (mirrors 'spine-trail present')
-#   3. SonarQube quality gate              (main-bound branches only; see below)
+#   2. pytest smoke tier                   (bounded local pre-push unit smoke
+#                                            when SDK code/tests changed)
+#   3. spine preflight                     (mirrors 'spine-trail present')
+#   4. SonarQube quality gate              (main-bound branches only; see below)
 #
 # NOTE on the linter — CHANGED FILES, not the whole tree. This repo's pre-commit
 # uses black + isort, but the REQUIRED cloud check (pr-gate.yml 'preflight')
@@ -25,9 +28,12 @@
 # `make format-ruff`, which formats the whole source tree).
 #
 # Usage:
-#   scripts/local_gate.sh            # auto: ruff+spine always; sonar if main-bound
+#   scripts/local_gate.sh            # auto: freshness+ruff+pytest+spine; sonar if main-bound
 #   LOCAL_GATE_SONAR=1 scripts/local_gate.sh   # force the sonar step
-#   LOCAL_GATE_SKIP=sonar scripts/local_gate.sh
+#   LOCAL_GATE_SKIP=pytest,sonar scripts/local_gate.sh
+#   LOCAL_GATE_FULL_UNIT=1 scripts/local_gate.sh   # opt into the full tests/unit tier
+#   LOCAL_GATE_PYTEST_WORKERS=8 scripts/local_gate.sh   # full-unit opt-in only; default: 4
+#   LOCAL_GATE_STRICT_FRESHNESS=1 scripts/local_gate.sh   # fail on any remote drift
 # It is also installed as a git pre-push hook (see `make install-hooks`).
 #
 # SonarQube: required for main-bound branches (release/*, hotfix/*). The cloud
@@ -48,6 +54,15 @@ skip() { [[ ",${LOCAL_GATE_SKIP:-}," == *",$1,"* ]]; }
 hr() { printf '─%.0s' {1..64}; echo; }
 section() { hr; echo "▶ $1"; }
 
+# Base ref for the changed-file diff (mirrors pr-gate.yml's three-dot range):
+# release/hotfix branches target main; everything else targets develop.
+if [[ "$BRANCH" =~ ^(release|hotfix)/ ]]; then base_branch="main"; else base_branch="develop"; fi
+base_ref="origin/$base_branch"
+
+MAIN_BOUND=0
+[[ "$BRANCH" =~ ^(release|hotfix)/ ]] && MAIN_BOUND=1
+[[ "${LOCAL_GATE_SONAR:-0}" == "1" ]] && MAIN_BOUND=1
+
 # Resolve a ruff entrypoint: PATH ruff, else the venv's, else `python -m ruff`.
 RUFF=""
 if command -v ruff >/dev/null 2>&1; then RUFF="ruff"
@@ -55,51 +70,141 @@ elif [[ -x ".venv/bin/ruff" ]]; then RUFF=".venv/bin/ruff"
 elif python3 -c "import ruff" >/dev/null 2>&1; then RUFF="python3 -m ruff"
 fi
 
-# Base ref for the changed-file diff (mirrors pr-gate.yml's three-dot range):
-# release/hotfix branches target main; everything else targets develop.
-if [[ "$BRANCH" =~ ^(release|hotfix)/ ]]; then base_branch="main"; else base_branch="develop"; fi
-BASE_REF=""
-for ref in "origin/$base_branch" "$base_branch"; do
-  if git rev-parse --verify --quiet "$ref" >/dev/null; then BASE_REF="$ref"; break; fi
-done
+# Resolve a pytest entrypoint for the local smoke/full-unit tier.
+PYTEST=()
+if command -v pytest >/dev/null 2>&1; then PYTEST=(pytest)
+elif [[ -x ".venv/bin/pytest" ]]; then PYTEST=(.venv/bin/pytest)
+elif python3 -c "import pytest" >/dev/null 2>&1; then PYTEST=(python3 -m pytest)
+fi
+
+SMOKE_TESTS=(
+  tests/unit/test_init_imports.py
+  tests/unit/api/test_types.py
+  tests/unit/wrapper/test_wrapper_service.py
+)
+
+freshness_preflight() {
+  section "remote freshness preflight (origin/develop + origin/main)"
+  local rc=0 strict=0 ref sha counts ahead behind
+  [[ "$MAIN_BOUND" == "1" || "${LOCAL_GATE_STRICT_FRESHNESS:-0}" == "1" ]] && strict=1
+
+  echo "  • branch=${BRANCH}; base=${base_branch}; strict_freshness=${strict}"
+  for remote_branch in develop main; do
+    ref="origin/${remote_branch}"
+    if ! git rev-parse --verify --quiet "$ref" >/dev/null; then
+      if [[ "$ref" == "$base_ref" || "$strict" == "1" ]]; then
+        echo "  ❌ required remote ref $ref is missing; fetch origin before trusting changed-file gates"
+        rc=1
+      else
+        echo "  ⚠️  remote ref $ref is missing; not used for this ${base_branch}-bound diff"
+      fi
+      continue
+    fi
+
+    sha="$(git rev-parse --short=12 "$ref")"
+    if counts="$(git rev-list --left-right --count "HEAD...$ref" 2>/dev/null)"; then
+      read -r ahead behind <<< "$counts"
+      echo "  • $ref@$sha (HEAD ahead $ahead / behind $behind)"
+      if [[ "$behind" =~ ^[0-9]+$ && "$behind" -gt 0 ]]; then
+        if [[ "$strict" == "1" ]] || { [[ "$ref" == "origin/main" ]] && [[ "$MAIN_BOUND" == "1" ]]; }; then
+          echo "    ❌ HEAD is behind $ref; refresh/rebase before a main-bound gate"
+          rc=1
+        else
+          echo "    ⚠️  HEAD is behind $ref; develop-bound local results may differ from hosted CI"
+        fi
+      fi
+    else
+      if [[ "$strict" == "1" || "$ref" == "$base_ref" ]]; then
+        echo "  ❌ unable to compare HEAD with $ref; changed-file diff would be untrusted"
+        rc=1
+      else
+        echo "  ⚠️  unable to compare HEAD with $ref"
+      fi
+    fi
+  done
+
+  return "$rc"
+}
+
+if ! freshness_preflight; then FAIL=1; fi
 
 # Collect the .py files THIS branch changes (committed vs merge-base) plus
 # staged/unstaged/untracked, so an about-to-be-pushed edit is covered.
-changed_py() {
-  { if [[ -n "$BASE_REF" ]]; then
-      mb="$(git merge-base "$BASE_REF" HEAD 2>/dev/null || echo "$BASE_REF")"
-      git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- '*.py'
+changed_files() {
+  local pathspec=("$@")
+  { if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
+      mb="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
+      if [[ -n "$mb" ]]; then
+        git diff --name-only --diff-filter=ACMRT "${mb}...HEAD" -- "${pathspec[@]}"
+      else
+        git diff --name-only --diff-filter=ACMRT "$base_ref" HEAD -- "${pathspec[@]}"
+      fi
     fi
-    git diff --name-only --diff-filter=ACMRT HEAD -- '*.py'
-    git ls-files --others --exclude-standard -- '*.py'
+    git diff --name-only --diff-filter=ACMRT HEAD -- "${pathspec[@]}"
+    git ls-files --others --exclude-standard -- "${pathspec[@]}"
   } | sort -u
 }
 
 # ── 1. ruff (changed-file format-check + lint) ────────────────────────────
 section "ruff check + format --check on CHANGED files (SDK Required PR Gate: preflight)"
-if [[ -n "$RUFF" ]]; then
-  mapfile -t CHANGED < <(changed_py | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
-  if [[ "${#CHANGED[@]}" -eq 0 ]]; then
-    echo "  ✅ no changed .py files vs ${BASE_REF:-$base_branch} (nothing to check)"
-  else
-    echo "  • checking ${#CHANGED[@]} changed .py file(s) vs ${BASE_REF:-$base_branch}"
-    if $RUFF format --check "${CHANGED[@]}"; then echo "  ✅ ruff format clean"
-    else echo "  ❌ ruff format would reformat changed files — run 'ruff format <files>'"; FAIL=1; fi
-    if $RUFF check "${CHANGED[@]}"; then echo "  ✅ ruff check clean"
-    else echo "  ❌ ruff check found issues — run 'ruff check --fix <files>'"; FAIL=1; fi
-  fi
+mapfile -t CHANGED < <(changed_files '*.py' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
+if [[ "${#CHANGED[@]}" -eq 0 ]]; then
+  echo "  ✅ no changed .py files vs $base_ref (ruff no-op)"
+elif [[ -n "$RUFF" ]]; then
+  echo "  • checking ${#CHANGED[@]} changed .py file(s) vs $base_ref"
+  if $RUFF format --check "${CHANGED[@]}"; then echo "  ✅ ruff format clean"
+  else echo "  ❌ ruff format would reformat changed files — run 'ruff format <files>'"; FAIL=1; fi
+  if $RUFF check "${CHANGED[@]}"; then echo "  ✅ ruff check clean"
+  else echo "  ❌ ruff check found issues — run 'ruff check --fix <files>'"; FAIL=1; fi
 else
-  echo "  ⚠️  ruff not installed (pip install ruff); skipping — CI will still run it"
+  echo "  ❌ ruff is not installed, but ${#CHANGED[@]} changed .py file(s) require the SDK Ruff gate"
+  echo "     Install dev deps (pip install -e '.[all,dev]') or install ruff, then re-run."
+  FAIL=1
 fi
 
-# ── 2. spine preflight ────────────────────────────────────────────────────
+# ── 2. pytest smoke/full-unit tier ────────────────────────────────────────
+sdk_code_changed() {
+  [[ "$1" =~ ^(traigent|traigent_validation|tests|scripts|walkthrough)/ ]] || \
+    [[ "$1" =~ ^(Makefile|\.pre-commit-config\.yaml|pyproject\.toml|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)$ ]]
+}
+
+if ! skip pytest; then
+  section "pytest smoke tests on code changes (local pre-push SDK unit guard)"
+  mapfile -t CODE_CHANGED < <(changed_files | while read -r f; do sdk_code_changed "$f" && echo "$f"; done)
+  if [[ "${#CODE_CHANGED[@]}" -eq 0 ]]; then
+    echo "  ✅ no SDK code/test/gate files changed vs $base_ref (pytest tier not required)"
+  elif [[ "${#PYTEST[@]}" -gt 0 ]]; then
+    # Keep ambient user-site pytest plugins from changing the CI-shaped unit run.
+    # The repo depends on pytest-asyncio, not pytest-asyncio-cooperative; the
+    # latter can reorder xdist reports and produce internal errors locally.
+    pytest_args=(-p no:asyncio-cooperative -q --tb=short)
+    if [[ "${LOCAL_GATE_FULL_UNIT:-0}" == "1" ]]; then
+      pytest_workers="${LOCAL_GATE_PYTEST_WORKERS:-4}"
+      pytest_args+=(tests/unit)
+      if [[ -n "$pytest_workers" ]]; then
+        pytest_args+=(-n "$pytest_workers" --dist loadgroup)
+      fi
+      echo "  • LOCAL_GATE_FULL_UNIT=1; running optional full unit tier"
+    else
+      pytest_args+=("${SMOKE_TESTS[@]}" -n 0)
+      echo "  • bounded smoke tier selected; set LOCAL_GATE_FULL_UNIT=1 for full tests/unit"
+    fi
+    echo "  • ${#CODE_CHANGED[@]} code/test/gate file(s) changed; running ${PYTEST[*]} ${pytest_args[*]}"
+    if PYTHONPATH=. "${PYTEST[@]}" "${pytest_args[@]}"; then echo "  ✅ pytest tier clean"
+    else echo "  ❌ pytest tier failed"; FAIL=1; fi
+  else
+    echo "  ❌ pytest is not installed; install dev deps (pip install -e '.[all,dev]') before pushing code changes"
+    FAIL=1
+  fi
+else
+  hr; echo "ℹ️  pytest tier skipped via LOCAL_GATE_SKIP=pytest"
+fi
+
+# ── 3. spine preflight ────────────────────────────────────────────────────
 section "spine preflight (spine-trail present)"
 if ! python3 scripts/ci/spine_preflight.py; then FAIL=1; fi
 
-# ── 3. SonarQube quality gate (main-bound only) ──────────────────────────
-MAIN_BOUND=0
-[[ "$BRANCH" =~ ^(release|hotfix)/ ]] && MAIN_BOUND=1
-[[ "${LOCAL_GATE_SONAR:-0}" == "1" ]] && MAIN_BOUND=1
+# ── 4. SonarQube quality gate (main-bound only) ──────────────────────────
 if [[ "$MAIN_BOUND" == "1" ]] && ! skip sonar; then
   section "SonarQube quality gate (main-bound: $BRANCH)"
   have_creds=0
