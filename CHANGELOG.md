@@ -4,6 +4,15 @@ All notable changes to Traigent SDK are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.14.1] - 2026-06-19
+
+### Fixed
+- **Cloud session creation HTTP 400 resolved.** `_typed_configuration_space()` now
+  normalizes scalar fixed values (e.g. `temperature=0.0`) to single-choice categoricals and
+  infers `"float"`/`"int"` types for untyped range dicts (e.g. `{"low": 0.0, "high": 1.0}`).
+  Previously these passed through to the backend un-typed, triggering `VALIDATION_ERROR`
+  and silent fallback to local-only mode (`cloud_url=None`).
+
 ## [0.14.0] - 2026-06-19
 
 ### Added
