@@ -655,9 +655,9 @@ class TestAvailablePresets:
             "safety_score",
         }
         for key in non_ragas_keys:
-            assert (
-                key in presets
-            ), f"Expected '{key}' in presets, got {list(presets.keys())}"
+            assert key in presets, (
+                f"Expected '{key}' in presets, got {list(presets.keys())}"
+            )
 
 
 class TestDecoratorIntegration:
@@ -669,7 +669,10 @@ class TestDecoratorIntegration:
 
         constraint = hallucination_rate().below(0.1)
 
-        with pytest.raises(NotImplementedError, match="safety_constraints are not yet implemented"):
+        with pytest.raises(
+            NotImplementedError, match="safety_constraints are not yet implemented"
+        ):
+
             @optimize(
                 objectives=["accuracy"],
                 configuration_space={"model": ["gpt-4"]},
@@ -686,6 +689,7 @@ class TestDecoratorIntegration:
         c2 = toxicity_score().below(0.05)
 
         with pytest.raises(NotImplementedError, match="traigent-smartopt/issues/26"):
+
             @optimize(
                 objectives=["accuracy"],
                 configuration_space={"model": ["gpt-4"]},
@@ -702,7 +706,10 @@ class TestDecoratorIntegration:
         c2 = toxicity_score().below(0.05)
         combined = c1 & c2
 
-        with pytest.raises(NotImplementedError, match="safety_constraints are not yet implemented"):
+        with pytest.raises(
+            NotImplementedError, match="safety_constraints are not yet implemented"
+        ):
+
             @optimize(
                 objectives=["accuracy"],
                 configuration_space={"model": ["gpt-4"]},
