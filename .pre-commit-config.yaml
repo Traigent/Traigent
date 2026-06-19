@@ -118,13 +118,15 @@ repos:
 
   # ── Local pre-push gate (mirrors the cloud CI/policy gates) ──────────────
   # Catches the failures agents/humans otherwise discover only after pushing:
-  # ruff check/format (the required SDK PR gate 'preflight'), the validation-
-  # spine spine-trail breadcrumb, and (for release/hotfix branches) the
-  # SonarQube quality gate. Runs on `git push`, not on every commit.
+  # freshness, ruff check/format (the required SDK PR gate 'preflight'), a
+  # bounded local smoke tier when SDK code/tests changed, the validation-spine
+  # spine-trail breadcrumb, and (for release/hotfix branches) the SonarQube
+  # quality gate. This is local pre-push only; the cloud PR gate still owns the
+  # full required test matrix. Runs on `git push`, not on every commit.
   - repo: local
     hooks:
       - id: local-gate
-        name: local CI gate (ruff + spine + sonar-if-main-bound)
+        name: local CI gate (freshness + ruff + smoke + spine + sonar-if-main-bound)
         entry: scripts/local_gate.sh
         language: script
         pass_filenames: false
