@@ -456,7 +456,9 @@ class TestTypedSpaceNormalization:
 
     def test_unknown_shapes_not_silently_guessed(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
-        weird = {"x": 42}
+        # A dict without "type"/"low"/"high" is an unknown shape — not a scalar,
+        # list, or typed entry. It must pass through for the backend to reject
+        # LOUDLY rather than being silently invented into something else.
+        weird = {"x": {"vendor_key": "custom_value", "opaque": True}}
         payload = _ops()._build_session_payload(_request(configuration_space=weird), 5)
-        # passed through for the backend to reject LOUDLY — never invented
         assert payload["configuration_space"] == weird
