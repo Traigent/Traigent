@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import traigent.traigent_client as traigent_client_module
 from traigent.cloud.client import CloudServiceError
 from traigent.traigent_client import TraigentClient
 
@@ -45,12 +46,14 @@ def _patch_optimizer_loop(mp, *, has_next: bool = False) -> None:
     # aren't bound on the module); we still inject the mocks the patched
     # `_optimize_hybrid` resolves from module globals.
     mp.setattr(
-        "traigent.traigent_client.OptimizerDirectClient",
+        traigent_client_module,
+        "OptimizerDirectClient",
         lambda *a, **k: direct_client,
         raising=False,
     )
     mp.setattr(
-        "traigent.traigent_client.LocalExecutionAdapter",
+        traigent_client_module,
+        "LocalExecutionAdapter",
         lambda *a, **k: Mock(),
         raising=False,
     )
