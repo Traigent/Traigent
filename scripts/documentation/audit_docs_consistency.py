@@ -196,7 +196,9 @@ def join_shell_lines(block: str) -> list[str]:
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        candidate = stripped[2:].strip() if stripped.startswith(("$ ", "> ")) else stripped
+        candidate = (
+            stripped[2:].strip() if stripped.startswith(("$ ", "> ")) else stripped
+        )
         if current:
             current = f"{current} {candidate}"
         else:
@@ -240,7 +242,9 @@ def discover_generated_refs(text: str) -> set[str]:
         if block_lang in {"python", "py"}:
             lines = [line.strip() for line in block.splitlines() if line.strip()]
             if lines:
-                match = re.match(r"^#\s+([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)\s*$", lines[0])
+                match = re.match(
+                    r"^#\s+([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)\s*$", lines[0]
+                )
                 if match:
                     generated.add(match.group(1))
         if block_lang not in {"", "bash", "sh", "shell", "console", "zsh"}:
@@ -271,7 +275,9 @@ def resolve_command_ref(
         return status, None
     if ref is None:
         return "no-local-ref", None
-    if ref in generated_refs or Path(ref).name in {Path(item).name for item in generated_refs}:
+    if ref in generated_refs or Path(ref).name in {
+        Path(item).name for item in generated_refs
+    }:
         return "generated-in-doc", relativize((cwd_context / ref).resolve())
     candidates = [
         (cwd_context / ref).resolve(),
@@ -408,9 +414,8 @@ def build_records() -> tuple[list[DocRecord], list[dict], list[CommandRecord]]:
     return doc_records, asset_inventory, commands
 
 
-def write_json(path: Path, payload: object) -> None:
-    # nosec - internal docs-audit helper; path is set by main() to a fixed
-    # output filename under args.output_dir, never user-controlled.
+def write_json(output_dir: Path, filename: str, payload: object) -> None:
+    path = build_output_path(output_dir, filename)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
@@ -423,7 +428,8 @@ def relativize(path: Path | None) -> str | None:
         return str(path)
 
 
-def write_csv(path: Path, rows: list[DocRecord]) -> None:
+def write_csv(output_dir: Path, filename: str, rows: list[DocRecord]) -> None:
+    path = build_output_path(output_dir, filename)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(asdict(rows[0]).keys()))
         writer.writeheader()
@@ -432,11 +438,13 @@ def write_csv(path: Path, rows: list[DocRecord]) -> None:
 
 
 def write_summary(
-    path: Path,
+    output_dir: Path,
+    filename: str,
     docs: list[DocRecord],
     assets: list[dict],
     commands: list[CommandRecord],
 ) -> None:
+    path = build_output_path(output_dir, filename)
     ref_status_counts = Counter(command.ref_status for command in commands)
     broken_docs = [doc for doc in docs if doc.broken_links or doc.broken_images]
     lines = [
@@ -470,11 +478,13 @@ def write_summary(
 
 
 def write_tracking(
-    path: Path,
+    output_dir: Path,
+    filename: str,
     docs: list[DocRecord],
     assets: list[dict],
     commands: list[CommandRecord],
 ) -> None:
+    path = build_output_path(output_dir, filename)
     command_counts = Counter(command.doc_path for command in commands)
     lines = [
         "# Docs Scan Tracking",
@@ -523,23 +533,20 @@ def main() -> int:
 
     docs, assets, commands = build_records()
 
+    write_json(output_dir, "doc_inventory.json", [asdict(doc) for doc in docs])
+    write_csv(output_dir, "doc_inventory.csv", docs)
+    write_json(output_dir, "image_diagram_inventory.json", assets)
     write_json(
-        build_output_path(output_dir, "doc_inventory.json"),
-        [asdict(doc) for doc in docs],
-    )
-    write_csv(build_output_path(output_dir, "doc_inventory.csv"), docs)
-    write_json(build_output_path(output_dir, "image_diagram_inventory.json"), assets)
-    write_json(
-        build_output_path(output_dir, "command_inventory.json"),
-        [asdict(command) for command in commands],
+        output_dir, "command_inventory.json", [asdict(command) for command in commands]
     )
     write_summary(
-        build_output_path(output_dir, "inventory_summary.md"),
+        output_dir,
+        "inventory_summary.md",
         docs,
         assets,
         commands,
     )
-    write_tracking(build_output_path(output_dir, "scan_tracking.md"), docs, assets, commands)
+    write_tracking(output_dir, "scan_tracking.md", docs, assets, commands)
     return 0
 
 
