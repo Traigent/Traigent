@@ -28,6 +28,16 @@ jobs:
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 30  # Job-level timeout
+    # Surface SONAR_TOKEN at job scope so the scan step can detect when it is
+    # unavailable. Dependabot-triggered runs and PRs from forks do NOT receive
+    # repository Actions secrets, so the token is empty there and the upstream
+    # `sonar-scanner` aborts with "Project not found" (exit code 3). In that
+    # case we skip the upload instead of failing the gate; unit tests and
+    # coverage above still run. Analysis is unaffected on pushes to main and on
+    # same-repo human PRs, where the token is present. Mirrors the capability-
+    # detect-then-skip pattern already used by the codeql job in release-review.
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
@@ -77,7 +87,13 @@ jobs:
           TRAIGENT_OFFLINE_MODE: "true"
 
       - name: SonarCloud Scan
+        if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602  # v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+
+      - name: Note skipped SonarCloud upload
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: |
+          echo "::notice title=SonarCloud upload skipped::SONAR_TOKEN is unavailable (Dependabot or fork PR cannot read repository Actions secrets). Skipping the SonarCloud upload; unit tests and coverage still ran above. Full analysis runs on pushes to main and on same-repo human PRs where the token is present."

@@ -8,7 +8,7 @@ name: SDK Required PR Gate
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [develop, main]
     # Default types + ready_for_review so flipping a draft to ready runs the gate.
     types: [opened, synchronize, reopened, ready_for_review]
   # Merge-queue candidate refs (gh-readonly-queue/*); required checks must
