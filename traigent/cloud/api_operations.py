@@ -201,6 +201,8 @@ def _typed_configuration_space(space: Any) -> Any:
     - list/tuple → {"type": "categorical", "choices": [...]}
     - dict with "type" already set → pass through unchanged
     - dict with "low"/"high" but no "type" → infer "int" (both int) or "float"
+    - scalar (bool, int, float, str) → {"type": "categorical", "choices": [value]}
+      (represents a fixed/pinned parameter with exactly one choice)
     - anything else → pass through for the backend to reject with a clear error
     """
     if not isinstance(space, dict):
@@ -223,6 +225,8 @@ def _typed_configuration_space(space: Any) -> Any:
                 normalized[name] = {**entry, "type": inferred}
             else:
                 normalized[name] = entry
+        elif isinstance(entry, (bool, int, float, str)):
+            normalized[name] = {"type": "categorical", "choices": [entry]}
         else:
             normalized[name] = entry
     return normalized
