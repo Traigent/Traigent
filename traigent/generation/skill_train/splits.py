@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import random
-
 from traigent.evaluators.base import Dataset
 from traigent.utils.logging import get_logger
+
+from ._deterministic_indices import deterministic_index_order
 
 logger = get_logger(__name__)
 
@@ -28,9 +28,7 @@ def split_dataset(
     """Split a Dataset deterministically with a held-out selection gate."""
 
     total = len(dataset.examples)
-    indices = list(range(total))
-    rng = random.Random(seed)  # NOSONAR - deterministic statistical split, no crypto
-    rng.shuffle(indices)
+    indices = deterministic_index_order(total, seed)
 
     selection_count = int(total * selection_fraction)
     test_count = int(total * test_fraction)
