@@ -7,14 +7,16 @@ name: Skill Contract
 # (read-only access to Traigent/traigent-skills) is provisioned. Keep advisory (not a
 # required check) until it has been green across a few PRs.
 
+# Moved off `pull_request` to a nightly schedule (CI-rationalization plan):
+# this gate is advisory (not a required check) and secret-gated on
+# SKILLS_REPO_TOKEN — it skips cleanly (green no-op) until the token is
+# provisioned, so it produces no real PR verdict. It now runs nightly + on
+# demand; promote back to PR-time once it has been green and armed across a
+# few PRs.
 on:
-  pull_request:
-    paths:
-      - "traigent/**/*.py"
-      - "pyproject.toml"
-      # Self-test: changes to this workflow re-run the gate so a fix/regression
-      # is caught in-PR (the job otherwise only triggers on SDK-surface changes).
-      - ".github/workflows/skill-contract.yml"
+  schedule:
+    - cron: "40 6 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read

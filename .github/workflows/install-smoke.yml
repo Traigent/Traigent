@@ -11,7 +11,7 @@ on:
       - "scripts/ci/**"
       - ".github/workflows/install-smoke.yml"
   pull_request:
-    branches: [main]
+    branches: [develop, main]
     paths:
       - "pyproject.toml"
       - "uv.lock"
@@ -19,6 +19,10 @@ on:
       - "hello_world.py"
       - "scripts/ci/**"
       - ".github/workflows/install-smoke.yml"
+  # Nightly: run the full OS matrix (ubuntu + macOS + Windows) so the slow
+  # macOS/Windows lanes are caught within ~1 day instead of on every PR.
+  schedule:
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 # Cancel in-flight runs when a new commit lands on the same ref.
@@ -32,13 +36,17 @@ permissions:
   contents: read
 
 jobs:
-  # .[recommended] is the default user-facing bundle — test across all platforms
+  # .[recommended] is the default user-facing bundle.
+  # Per-branch matrix (mirrors the approved CI-rationalization plan):
+  #   develop PR        -> ubuntu / 3.12 only (lean develop gate)
+  #   main PR / push     -> ubuntu / 3.11 + 3.12
+  #   nightly schedule   -> ubuntu + macOS + Windows / 3.11 + 3.12 (full OS matrix)
   install-recommended:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
+        os: ${{ fromJSON( github.event_name == 'schedule' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]' ) }}
+        python-version: ${{ fromJSON( (github.event_name == 'pull_request' && github.base_ref == 'develop') && '["3.12"]' || '["3.11","3.12"]' ) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6.0.2
