@@ -663,60 +663,53 @@ class TestAvailablePresets:
 class TestDecoratorIntegration:
     """Tests for integration with @optimize decorator."""
 
-    def test_safety_constraints_accepted(self) -> None:
-        """Test that safety_constraints parameter is accepted."""
+    def test_safety_constraints_raises_not_implemented(self) -> None:
+        """safety_constraints raises NotImplementedError — feature is unimplemented."""
         from traigent.api.decorators import optimize
 
-        # This should not raise - just testing parameter acceptance
-        metric = hallucination_rate()
-        constraint = metric.below(0.1)
+        constraint = hallucination_rate().below(0.1)
 
-        @optimize(
-            objectives=["accuracy"],
-            configuration_space={"model": ["gpt-4"]},
-            safety_constraints=[constraint],
-        )
-        def my_func(x: str) -> str:
-            return x
+        with pytest.raises(NotImplementedError, match="safety_constraints are not yet implemented"):
+            @optimize(
+                objectives=["accuracy"],
+                configuration_space={"model": ["gpt-4"]},
+                safety_constraints=[constraint],
+            )
+            def my_func(x: str) -> str:
+                return x
 
-        assert hasattr(my_func, "safety_constraints")
-        assert my_func.safety_constraints == [constraint]
-
-    def test_multiple_safety_constraints(self) -> None:
-        """Test multiple safety constraints."""
+    def test_multiple_safety_constraints_raises_not_implemented(self) -> None:
+        """Multiple safety_constraints also raise NotImplementedError."""
         from traigent.api.decorators import optimize
 
         c1 = hallucination_rate().below(0.1)
         c2 = toxicity_score().below(0.05)
 
-        @optimize(
-            objectives=["accuracy"],
-            configuration_space={"model": ["gpt-4"]},
-            safety_constraints=[c1, c2],
-        )
-        def my_func(x: str) -> str:
-            return x
+        with pytest.raises(NotImplementedError, match="traigent-smartopt/issues/26"):
+            @optimize(
+                objectives=["accuracy"],
+                configuration_space={"model": ["gpt-4"]},
+                safety_constraints=[c1, c2],
+            )
+            def my_func(x: str) -> str:
+                return x
 
-        assert len(my_func.safety_constraints) == 2
-
-    def test_compound_safety_constraint(self) -> None:
-        """Test compound safety constraint in decorator."""
+    def test_compound_safety_constraint_raises_not_implemented(self) -> None:
+        """Compound safety_constraint also raises NotImplementedError."""
         from traigent.api.decorators import optimize
 
         c1 = hallucination_rate().below(0.1)
         c2 = toxicity_score().below(0.05)
         combined = c1 & c2
 
-        @optimize(
-            objectives=["accuracy"],
-            configuration_space={"model": ["gpt-4"]},
-            safety_constraints=[combined],
-        )
-        def my_func(x: str) -> str:
-            return x
-
-        assert len(my_func.safety_constraints) == 1
-        assert isinstance(my_func.safety_constraints[0], CompoundSafetyConstraint)
+        with pytest.raises(NotImplementedError, match="safety_constraints are not yet implemented"):
+            @optimize(
+                objectives=["accuracy"],
+                configuration_space={"model": ["gpt-4"]},
+                safety_constraints=[combined],
+            )
+            def my_func(x: str) -> str:
+                return x
 
     def test_safety_constraints_are_post_eval_orchestrator_constraints(self) -> None:
         """Safety constraints must be wired into runtime post-eval enforcement."""
