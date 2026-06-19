@@ -17,3 +17,13 @@ def test_build_output_path_returns_child_path(tmp_path: Path) -> None:
 def test_build_output_path_rejects_traversal(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Invalid output path"):
         audit_docs_consistency.build_output_path(tmp_path, "../outside.md")
+
+
+def test_write_json_rejects_traversal_filename(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Invalid output path"):
+        audit_docs_consistency.write_json(tmp_path, "../outside.json", {"ok": True})
+
+
+def test_write_tracking_rejects_traversal_filename(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Invalid output path"):
+        audit_docs_consistency.write_tracking(tmp_path, "../outside.md", [], [], [])

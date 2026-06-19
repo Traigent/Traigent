@@ -11,11 +11,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: none
 
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
