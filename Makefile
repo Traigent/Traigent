@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local release-build release-example-smoke release-check release-real-validation
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format format-ruff local-gate security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local release-build release-example-smoke release-check release-real-validation install-hooks
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -135,9 +135,19 @@ quick-fix:  ## Quick fix common issues (format, simple lint fixes)
 pre-commit:  ## Run pre-commit hooks on all files
 	pre-commit run --all-files
 
-install-hooks:  ## Install git pre-commit hooks
+local-gate:  ## Run the local pre-push gate (ruff + spine + sonar-if-main-bound) -- RUN THIS BEFORE PUSHING
+	@bash scripts/local_gate.sh
+
+format-ruff:  ## Format + autofix with ruff (matches the REQUIRED 'preflight' CI check)
+	$(RUFF) format $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
+	$(RUFF) check --fix $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
+
+install-hooks:  ## Install git pre-commit + pre-push hooks (mirrors the cloud gates locally)
+	@command -v pre-commit >/dev/null 2>&1 || { echo "Installing pre-commit..."; $(PIP) install pre-commit; }
 	pre-commit install
 	pre-commit install --hook-type commit-msg
+	pre-commit install --hook-type pre-push
+	@echo "Hooks installed. The pre-push hook runs 'scripts/local_gate.sh' on every push."
 
 update-deps:  ## Update all dependencies to latest versions
 	$(PIP) install --upgrade pip setuptools wheel

@@ -1,5 +1,13 @@
 # Traigent SDK Copilot Instructions
 
+## ✅ Before you push: `make local-gate`
+Run `make local-gate` before every `git push` / `gh pr create`. It mirrors the
+cloud gates locally (ruff check + `ruff format --check` — the required PR gate;
+the `spine-trail present` check; SonarQube for `release/*`/`hotfix/*`) so you
+catch avoidable reds in seconds. Fix ruff reds with `make format-ruff`. One-time
+setup: `make install-hooks`. Add a `Spine-Trail:`/`Spine:` line to the PR body.
+See [../docs/LOCAL_CI_GATE.md](../docs/LOCAL_CI_GATE.md).
+
 ## 🧠 Project Context
 Traigent is a Python SDK for zero-code LLM optimization using decorators (`@traigent.optimize`). It intercepts calls, injects parameters, and optimizes against objectives (accuracy, cost, latency).
 
