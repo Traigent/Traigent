@@ -6,6 +6,12 @@ Traigent optimization has two public routing knobs:
   cloud-backed smart algorithms.
 - `offline`: `False` by default; set `True` for zero Traigent backend egress.
 
+Environment equivalents:
+
+- `TRAIGENT_OFFLINE=1` forces offline mode.
+- `TRAIGENT_OFFLINE_MODE=1` is a legacy alias for offline mode.
+- `TRAIGENT_REQUIRE_CLOUD=1` disables the `algorithm="auto"` local fallback.
+
 Trials run in your process. The cloud-brain path asks Traigent for optimizer
 decisions; it does not execute your dataset examples remotely.
 
@@ -32,7 +38,7 @@ Set `TRAIGENT_REQUIRE_CLOUD=1` when fallback is not acceptable.
 | `algorithm="auto"` | Cloud optimizer chooses configs; trials run locally | `cloud_brain` |
 | `algorithm="auto"` and connectivity failure | Warns and falls back to local search | `local_fallback` |
 | `algorithm="grid"` or `"random"` | Runs locally with no cloud optimizer round trip | `explicit_local` |
-| `offline=True` or `TRAIGENT_OFFLINE=1` | Fully local, zero Traigent backend egress | `offline` |
+| `offline=True`, `TRAIGENT_OFFLINE=1`, or `TRAIGENT_OFFLINE_MODE=1` | Fully local, zero Traigent backend egress | `offline` |
 | Smart algorithm name | Requires cloud; errors if offline or unavailable | `cloud_brain` |
 
 ## Default Cloud-First Auto
@@ -47,7 +53,7 @@ def agent(question: str) -> str:
     return answer_question(question)
 
 result = agent.optimize(max_trials=8)
-print(result.source)
+print(result.metadata["source"])
 ```
 
 Use this when cloud optimizer decisions are acceptable and local fallback is
@@ -57,7 +63,7 @@ acceptable during connectivity failures.
 
 ```python
 result = agent.optimize(algorithm="grid", max_trials=8)
-print(result.source)  # explicit_local
+print(result.metadata["source"])  # explicit_local
 ```
 
 Use this for reproducible local sweeps, CI smoke tests, and simple baselines.
@@ -85,7 +91,7 @@ Smart algorithms are cloud optimizers:
 
 ```python
 result = agent.optimize(algorithm="bayesian", max_trials=20)
-print(result.source)  # cloud_brain
+print(result.metadata["source"])  # cloud_brain
 ```
 
 They hard-error when `offline=True` is set or when the backend is unavailable.
@@ -99,4 +105,48 @@ Traigent backend boundary: no example inputs, expected outputs, prompts,
 responses, or example metadata.
 
 Privacy-on cloud-brain mode is not the same as no-network mode. Use
-`offline=True` or `TRAIGENT_OFFLINE=1` for zero Traigent backend egress.
+`offline=True`, `TRAIGENT_OFFLINE=1`, or `TRAIGENT_OFFLINE_MODE=1` for zero
+Traigent backend egress.
+
+## External Service Evaluation
+
+External-service evaluation is independent of the optimizer routing knobs. The
+optimizer still runs locally; each trial's evaluation is dispatched to your
+HTTP or MCP service through an external evaluator:
+
+```python
+from traigent import optimize
+from traigent.api.decorators import (
+    ExternalServiceEvaluator,
+    HybridAPIOptions,
+)
+
+
+@optimize(
+    configuration_space={"temperature": [0.1, 0.5, 0.9]},
+    objectives=["accuracy"],
+    evaluator=ExternalServiceEvaluator(
+        hybrid_api=HybridAPIOptions(endpoint="https://svc.example.com/evaluate")
+    ),
+)
+def agent(question: str) -> str:
+    return answer_question(question)
+```
+
+Use this in place of the removed `execution_mode="hybrid_api"` plus flat
+`hybrid_api_*` keyword arguments.
+
+## Deprecations and Migration
+
+These legacy execution knobs are deprecated and should not be used in new code:
+
+| Old surface | New surface |
+| --- | --- |
+| `execution_mode="hybrid"` | `@optimize()` |
+| `execution_mode="edge_analytics"` or `"local"` | `@optimize(offline=True)` |
+| `execution_mode="hybrid_api", hybrid_api_endpoint="https://svc"` | `@optimize(evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(endpoint="https://svc")))` |
+| `privacy_enabled=True` | Drop it. Cloud-brain mode already avoids dataset content egress; use `offline=True` for zero network egress to Traigent. |
+| `cloud_fallback_policy=...` | Drop it. Use `TRAIGENT_REQUIRE_CLOUD=1` when auto-fallback must be disabled. |
+
+`execution_mode=` is accepted only as a deprecated compatibility keyword with a
+warning. `privacy_enabled` and `cloud_fallback_policy` are deprecated no-ops.
