@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils.mock_answers import configure_mock_notice
 
 import traigent
-from traigent import TraigentConfig
 from traigent.api.parameter_ranges import Choices, IntRange, Range
 from traigent.api.types import AgentDefinition
 
@@ -32,9 +31,7 @@ DATASET_PATH = str(
 )
 
 # Initialize Traigent in mock mode
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 # Constants for mock responses
 ML_RESPONSE = "Machine learning enables computers to learn from data."
@@ -118,7 +115,7 @@ async def method_1_per_parameter_agent() -> None:
         model=Choices(["gpt-4o-mini", "gpt-4o"], name="model", agent="generator"),
         objectives=["accuracy", "cost"],
         eval_dataset=DATASET_PATH,
-        execution_mode="edge_analytics",
+        offline=True,
     )
     def rag_pipeline(question: str) -> str:
         """Mock RAG pipeline using all configured parameters."""
@@ -167,7 +164,7 @@ async def method_2_prefix_grouping() -> None:
         agent_prefixes=["retriever_", "generator_"],
         objectives=["accuracy"],
         eval_dataset=DATASET_PATH,
-        execution_mode="edge_analytics",
+        offline=True,
     )
     def rag_pipeline(question: str) -> str:
         """Mock RAG pipeline with prefix-based params."""
@@ -233,7 +230,7 @@ async def method_3_explicit_agents() -> None:
         },
         objectives=["accuracy", "total_cost"],
         eval_dataset=DATASET_PATH,
-        execution_mode="edge_analytics",
+        offline=True,
     )
     def rag_pipeline(question: str) -> str:
         """Mock RAG pipeline with explicit agent definitions."""
@@ -288,4 +285,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 1: Basic QA Tuning - Model and temperature optimization.
 
 Usage (run in a terminal from repo root, works without activating venv):
@@ -33,7 +34,6 @@ from utils.helpers import (
 from utils.scoring import STOPWORDS, token_match_score, token_matches, tokenize
 
 import traigent
-from traigent import TraigentConfig
 
 sanitize_traigent_api_key()
 configure_logging()
@@ -55,10 +55,8 @@ REQUIRE_CONFIRM = os.getenv("TRAIGENT_REQUIRE_CONFIRM", "1").lower() in (
     "yes",
 )
 traigent.initialize(
-    config=TraigentConfig(
-        execution_mode="edge_analytics",
-        minimal_logging=MINIMAL_LOGGING,
-    )
+    offline=True,
+    minimal_logging=MINIMAL_LOGGING,
 )
 
 # Dataset path relative to this file
@@ -130,7 +128,7 @@ def results_match_score(output: str, expected: str, **kwargs) -> float:
     scoring_function=results_match_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_question(question: str) -> str:
     """Simple Q&A function using OpenAI."""
@@ -199,4 +197,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

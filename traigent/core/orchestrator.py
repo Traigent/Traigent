@@ -62,6 +62,7 @@ from traigent.core.execution_policy_runtime import (
     policy_from_config,
     policy_is_cloud_brain,
 )
+from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
@@ -1149,7 +1150,7 @@ class OptimizationOrchestrator:
             primary_objective,
             self.optimizer.objectives,
         )
-        return candidate_key > incumbent_key
+        return bool(candidate_key > incumbent_key)
 
     def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
         if not self.optimizer.objectives:
@@ -2056,7 +2057,7 @@ class OptimizationOrchestrator:
         if not self.traigent_config.enable_usage_analytics:
             return
 
-        if backend_egress_disabled(self.traigent_config):
+        if is_backend_offline() or backend_egress_disabled(self.traigent_config):
             logger.debug("Skipping analytics submission: backend egress is disabled")
             return
 

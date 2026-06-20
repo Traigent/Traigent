@@ -39,8 +39,9 @@ class PasswordAuthHandler:
     - Explicit development-only mock fallback
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, no_egress: bool = False) -> None:
         """Initialize password auth handler."""
+        self.no_egress = bool(no_egress)
         self._failed_attempts = 0
         self._last_failure_time = 0.0
 
@@ -245,12 +246,10 @@ class PasswordAuthHandler:
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
         """Perform backend authentication using resilient HTTP client."""
-        from traigent.utils.env_config import is_backend_offline
+        from traigent.cloud.client import cloud_backend_egress_disabled
 
-        if is_backend_offline():
-            logger.debug(
-                "Skipping password authentication: backend offline mode enabled"
-            )
+        if cloud_backend_egress_disabled(self.no_egress):
+            logger.debug("Skipping password authentication: backend egress disabled")
             return None
 
         if not AIOHTTP_AVAILABLE:

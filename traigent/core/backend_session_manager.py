@@ -251,6 +251,8 @@ class BackendSessionManager:
         # Run-scoped circuit breaker — once disabled, all backend writes skip
         self._no_egress = backend_egress_disabled(traigent_config)
         self._backend_tracking_enabled: bool = not self._no_egress
+        if self._backend_client is not None and self._no_egress:
+            self._backend_client.no_egress = True
         self._backend_disabled_reason: SessionCreationFailureReason | None = None
         self._fallback_reason: str | None = getattr(
             traigent_config, "fallback_reason", None
@@ -516,6 +518,7 @@ class BackendSessionManager:
             enable_session_sync=True,
         )
         local_storage_path = traigent_config.get_local_storage_path()
+        no_egress = backend_egress_disabled(traigent_config)
 
         try:
             client = BackendIntegratedClient(
@@ -523,6 +526,7 @@ class BackendSessionManager:
                 backend_config=backend_config,
                 enable_fallback=True,
                 local_storage_path=local_storage_path,
+                no_egress=no_egress,
             )
             logger.info(
                 f"Backend client initialized for {traigent_config.execution_mode} mode - "
@@ -540,6 +544,7 @@ class BackendSessionManager:
                 backend_config=backend_config,
                 enable_fallback=True,
                 local_storage_path=local_storage_path,
+                no_egress=no_egress,
             )
 
     def _should_suppress_backend_warnings(self) -> bool:

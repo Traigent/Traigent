@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 7: Multi-Provider LLM Support - Use any LLM vendor with Traigent.
 
 This example demonstrates how to use different LLM providers (OpenAI, Anthropic,
@@ -55,7 +56,6 @@ from utils.helpers import (
 from utils.scoring import token_match_score
 
 import traigent
-from traigent import TraigentConfig
 from traigent.providers import (
     get_provider_for_model,
     print_provider_status,
@@ -69,9 +69,7 @@ configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 # -----------------------------------------------------------------------------
 # Provider Detection - Check which API keys are available and valid
@@ -91,7 +89,7 @@ PROVIDER_STATUS = validate_providers(ALL_MODELS)
 
 # Build available models list based on which providers are valid
 AVAILABLE_MODELS: list[str] = []
-for provider, status in PROVIDER_STATUS.items():
+for _provider, status in PROVIDER_STATUS.items():
     if status.valid and status.models:
         AVAILABLE_MODELS.extend(status.models)
 
@@ -154,7 +152,7 @@ def create_llm_client(model: str, temperature: float) -> Any:
     scoring_function=token_match_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_with_any_provider(question: str) -> str:
     """Answer a question using the configured LLM provider and model.
@@ -272,4 +270,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

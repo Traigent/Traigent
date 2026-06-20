@@ -16,7 +16,6 @@ from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -102,8 +101,11 @@ class BenchmarkClient:
     def __init__(
         self,
         config: BenchmarkClientConfig | None = None,
+        *,
+        no_egress: bool = False,
     ) -> None:
         self.config = config or BenchmarkClientConfig()
+        self.no_egress = bool(no_egress)
 
     def generate_sync(
         self,
@@ -150,7 +152,11 @@ class BenchmarkClient:
     # ------------------------------------------------------------------
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        raise_if_backend_offline("BenchmarkClient request")
+        from traigent.cloud.client import raise_if_cloud_egress_disabled
+
+        raise_if_cloud_egress_disabled(
+            "BenchmarkClient request", no_egress=self.no_egress
+        )
         full_url = f"{self.config.backend_origin}{path}"
         encoded = json.dumps(payload).encode("utf-8")
         http_req = request.Request(

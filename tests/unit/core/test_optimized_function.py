@@ -662,7 +662,7 @@ class TestOptimizedFunction:
     async def test_optimize_with_deprecated_cloud_resolves_to_edge_analytics(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        """Deprecated cloud mode keeps cloud-first policy with edge_analytics compat mode."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -676,6 +676,7 @@ class TestOptimizedFunction:
                 eval_dataset=sample_dataset,
             )
         assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     @pytest.mark.asyncio
@@ -837,6 +838,7 @@ class TestOptimizedFunction:
                 execution_mode="cloud",
             )
         assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     # Error Handling Tests

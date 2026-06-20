@@ -131,14 +131,16 @@ async def test_orchestrator_parallel_trials(monkeypatch):
 async def test_privacy_alias_maps_to_cloud_brain_policy():
     ds_small = _make_dataset(1)
 
-    @traigent.optimize(
-        eval_dataset=ds_small,
-        configuration_space={"p": [0]},
-        objectives=["accuracy"],
-        execution_mode="privacy",
-    )
-    def fn_priv(x: int) -> str:
-        return f"val-{x}"
+    with pytest.warns(DeprecationWarning):
+
+        @traigent.optimize(
+            eval_dataset=ds_small,
+            configuration_space={"p": [0]},
+            objectives=["accuracy"],
+            execution_mode="privacy",
+        )
+        def fn_priv(x: int) -> str:
+            return f"val-{x}"
 
     # Run a minimal optimization to build TraigentConfig
     await fn_priv.optimize(

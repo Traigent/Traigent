@@ -50,7 +50,7 @@ def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
     assert any("preserve the legacy no-egress guarantee" in msg for msg in messages)
 
 
-def test_legacy_cloud_maps_to_cloud_first_with_loud_warning() -> None:
+def test_legacy_cloud_maps_to_cloud_first_with_edge_analytics_compat_mode() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
@@ -63,7 +63,16 @@ def test_legacy_cloud_maps_to_cloud_first_with_loud_warning() -> None:
     ]
     assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
     assert sample.execution_policy.offline is False
+    assert sample.execution_mode == "edge_analytics"
     assert any("semantic flip" in msg for msg in messages)
+
+
+def test_legacy_auto_execution_mode_is_rejected() -> None:
+    with pytest.raises(ConfigurationError, match="No such mode 'auto'"):
+
+        @optimize(configuration_space={"x": [1, 2]}, execution_mode="auto")
+        def sample(x: int) -> int:
+            return x
 
 
 def test_privacy_enabled_is_deprecated_noop_warning() -> None:

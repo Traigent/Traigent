@@ -51,12 +51,29 @@ from traigent.config.types import (
     ExecutionMode,
     ResolvedExecutionPolicy,
     TraigentConfig,
-    resolve_execution_mode,
+    resolve_execution_policy,
     validate_execution_mode,
 )
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
+from traigent.core.execution_policy_runtime import (
+    SOURCE_CLOUD_BRAIN,
+    SOURCE_EXPLICIT_LOCAL,
+    SOURCE_LOCAL_FALLBACK,
+    SOURCE_OFFLINE,
+    CloudBrainUnavailableError,
+    backend_egress_disabled,
+    exception_is_connectivity,
+    initial_result_source,
+    is_offline_requested,
+    mark_local_fallback,
+    policy_allows_cloud_fallback,
+    policy_from_config,
+    policy_is_cloud_brain,
+    policy_is_cloud_required,
+    policy_requires_cloud,
+)
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -72,22 +89,6 @@ from traigent.core.optimization_pipeline import (
     prepare_optimization_dataset,
     resolve_effective_parallel_config,
     resolve_execution_parameters,
-)
-from traigent.core.execution_policy_runtime import (
-    CloudBrainUnavailableError,
-    SOURCE_CLOUD_BRAIN,
-    SOURCE_EXPLICIT_LOCAL,
-    SOURCE_LOCAL_FALLBACK,
-    SOURCE_OFFLINE,
-    exception_is_connectivity,
-    initial_result_source,
-    is_offline_requested,
-    mark_local_fallback,
-    policy_allows_cloud_fallback,
-    policy_from_config,
-    policy_is_cloud_brain,
-    policy_is_cloud_required,
-    policy_requires_cloud,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import (
@@ -379,6 +380,15 @@ class OptimizedFunction:
         """
         # Extract decorator-provided metadata before core storage
         self._requested_execution_mode = kwargs.pop("requested_execution_mode", None)
+        provided_execution_policy = kwargs.pop("execution_policy", None)
+        self.execution_policy = (
+            provided_execution_policy
+            if isinstance(provided_execution_policy, ResolvedExecutionPolicy)
+            else None
+        )
+        self.external_service_evaluator: Any = None
+        self.hybrid_api_options: Any = None
+        self.offline: bool = False
         # Config persistence parameters
         self._auto_load_best = kwargs.pop("auto_load_best", False)
         self._load_from = kwargs.pop("load_from", None)
@@ -479,17 +489,29 @@ class OptimizedFunction:
         self.framework_targets = framework_targets or []
 
         # Execution mode configuration
+        if self.execution_policy is None:
+            self.execution_policy = resolve_execution_policy(
+                execution_mode=execution_mode,
+                source_hint="optimized_function",
+            )
+        else:
+            execution_mode = self._requested_execution_mode or execution_mode
+
         try:
-            requested_mode_enum = resolve_execution_mode(execution_mode)
-            effective_mode_enum = validate_execution_mode(requested_mode_enum)
+            effective_mode_enum = validate_execution_mode(execution_mode)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from None
 
-        privacy_alias_requested = False
+        privacy_alias_requested = any(
+            isinstance(value, str) and value.strip().lower() == "privacy"
+            for value in (execution_mode, self._requested_execution_mode)
+        )
 
         self._effective_execution_mode = effective_mode_enum
         self.execution_mode = effective_mode_enum.value
+        self.offline = self.execution_policy.offline
         self._privacy_alias_requested = privacy_alias_requested
+        self._privacy_alias_enabled = False
         self.local_storage_path = local_storage_path
         self.minimal_logging = minimal_logging
 
@@ -647,6 +669,7 @@ class OptimizedFunction:
         )
         if getattr(self, "_privacy_alias_requested", False):
             self.privacy_enabled = True
+            self._privacy_alias_enabled = True
             kwargs["privacy_enabled"] = True
             self._privacy_alias_requested = False
 
@@ -1905,6 +1928,7 @@ class OptimizedFunction:
                 api_key=BackendConfig.get_api_key(),
                 base_url=BackendConfig.get_backend_url(),
                 enable_fallback=False,
+                no_egress=backend_egress_disabled(traigent_config),
             )
             remote_service = TraigentCloudRemoteGuidanceAdapter(cloud_client)
             optimizer_kwargs = dict(algorithm_kwargs)
@@ -2208,7 +2232,10 @@ Remediation:
             execution_mode=self.execution_mode,
             local_storage_path=self.local_storage_path,
             minimal_logging=self.minimal_logging,
-            privacy_enabled=getattr(self, "privacy_enabled", False),
+            privacy_enabled=(
+                bool(getattr(self, "privacy_enabled", False))
+                and not bool(getattr(self, "_privacy_alias_enabled", False))
+            ),
             execution_policy=execution_policy,
             no_egress=no_egress,
             result_source=result_source,
@@ -2301,7 +2328,9 @@ Remediation:
         )
 
         # Update TraigentConfig with final privacy setting
-        traigent_config.privacy_enabled = effective_privacy_enabled
+        traigent_config.privacy_enabled = effective_privacy_enabled and not bool(
+            getattr(self, "_privacy_alias_enabled", False)
+        )
 
         # Phase 8: Build orchestrator
         orchestrator = self._build_optimization_orchestrator(

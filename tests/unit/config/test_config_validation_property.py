@@ -118,7 +118,11 @@ def test_presence_penalty_rejects_invalid_range(penalty):
 )
 def test_execution_mode_accepts_valid_values(mode):
     """Property: Supported execution modes should be accepted."""
-    config = TraigentConfig(execution_mode=mode)
+    if isinstance(mode, str) and mode in {"local", "privacy"}:
+        with pytest.warns(DeprecationWarning):
+            config = TraigentConfig(execution_mode=mode)
+    else:
+        config = TraigentConfig(execution_mode=mode)
     # Privacy mode should be converted to hybrid with privacy_enabled
     if isinstance(mode, str) and mode == "privacy":
         assert config.execution_mode == "hybrid"
@@ -130,7 +134,7 @@ def test_execution_mode_accepts_valid_values(mode):
         assert config.execution_mode == expected
 
 
-@given(st.sampled_from(["standard", "cloud"]))
+@given(st.sampled_from(["local", "privacy", "standard", "cloud"]))
 def test_execution_mode_deprecated_values_warn_and_resolve(mode):
     """Property: Deprecated string aliases emit DeprecationWarning and resolve to a canonical mode."""
     import warnings
@@ -139,8 +143,8 @@ def test_execution_mode_deprecated_values_warn_and_resolve(mode):
         warnings.simplefilter("always")
         config = TraigentConfig(execution_mode=mode)
 
-    # "standard" → hybrid, "cloud" → edge_analytics
-    assert config.execution_mode in ("hybrid", "edge_analytics")
+    expected = "edge_analytics" if mode in {"local", "cloud"} else "hybrid"
+    assert config.execution_mode == expected
     assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
@@ -277,6 +281,7 @@ def test_custom_params_preserved(custom_params):
     st.sampled_from(
         [
             "edge_analytics",
+            "local",
             "privacy",
             "hybrid",
             "hybrid_api",
@@ -290,7 +295,16 @@ def test_custom_params_preserved(custom_params):
 )
 def test_resolve_execution_mode_handles_all_valid_inputs(mode_str):
     """Property: resolve_execution_mode should handle all valid inputs."""
-    result = resolve_execution_mode(mode_str)
+    if isinstance(mode_str, str) and mode_str.strip().lower() in {
+        "local",
+        "privacy",
+        "standard",
+        "cloud",
+    }:
+        with pytest.warns(DeprecationWarning):
+            result = resolve_execution_mode(mode_str)
+    else:
+        result = resolve_execution_mode(mode_str)
     assert isinstance(result, ExecutionMode)
 
     # Empty strings and None should use default

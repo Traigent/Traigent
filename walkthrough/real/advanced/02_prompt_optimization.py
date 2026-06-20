@@ -40,7 +40,7 @@ except ImportError:
     exit(1)
 
 # Initialize Traigent
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Define system prompt variants to optimize
 SYSTEM_PROMPTS = [
@@ -64,7 +64,7 @@ model = Choices.model(provider="openai", tier="fast")
     model=model,
     objectives=["accuracy", "latency"],
     eval_dataset=DATASET_PATH,
-    execution_mode="edge_analytics",
+    offline=True,
 )
 async def qa_agent(question: str) -> str:
     """Real QA agent with tunable system prompt."""

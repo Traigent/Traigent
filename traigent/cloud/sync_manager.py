@@ -15,6 +15,8 @@ from typing import Any
 
 import requests  # Always needed for synchronous operations
 
+from traigent.cloud.client import raise_if_cloud_egress_disabled
+
 try:
     import aiohttp  # noqa: F401 - Import check only
 
@@ -68,17 +70,24 @@ class SyncManager:
     and handles the upload process with progress tracking.
     """
 
-    def __init__(self, config: TraigentConfig, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        config: TraigentConfig,
+        api_key: str | None = None,
+        no_egress: bool = False,
+    ) -> None:
         """
         Initialize sync manager.
 
         Args:
             config: TraigentConfig with local storage settings
             api_key: API key for backend authentication
+            no_egress: Runtime policy flag that forbids backend transport
         """
         self.config = config
         self.storage = LocalStorageManager(config.get_local_storage_path())
         self.api_key = api_key
+        self.no_egress = bool(no_egress)
         self.base_url = BackendConfig.get_cloud_api_url().rstrip("/")
 
         # Setup HTTP client - always create a requests session for sync operations
@@ -98,6 +107,11 @@ class SyncManager:
     def session(self):
         """Public access to the HTTP session for testing."""
         return self._session
+
+    def _raise_if_backend_egress_disabled(self, operation: str) -> None:
+        """Fail closed before local-to-backend sync transport."""
+
+        raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     def _resolve_request_timeout(self) -> float:
         """Resolve timeout (seconds) applied to blocking HTTP calls."""
@@ -760,6 +774,7 @@ class SyncManager:
 
     def _sync_agent(self, agent_data: dict[str, Any]) -> dict[str, Any]:
         """Create or reuse the local-import agent by stable name."""
+        self._raise_if_backend_egress_disabled("sync agent")
         try:
             existing_agent = self._find_existing_by_name(
                 "agents", agent_data["name"], "agents"
@@ -806,6 +821,7 @@ class SyncManager:
 
     def _sync_benchmark(self, benchmark_data: dict[str, Any]) -> dict[str, Any]:
         """Create or reuse the benchmark by stable name."""
+        self._raise_if_backend_egress_disabled("sync benchmark")
         try:
             existing_benchmark = self._find_existing_by_name(
                 "benchmarks", benchmark_data["name"], "benchmarks"
@@ -863,6 +879,7 @@ class SyncManager:
 
     def _sync_experiment(self, experiment_data: dict[str, Any]) -> dict[str, Any]:
         """Sync experiment data to cloud."""
+        self._raise_if_backend_egress_disabled("sync experiment")
         try:
             response = self._session.post(
                 f"{self.base_url}/experiments",
@@ -888,6 +905,7 @@ class SyncManager:
         self, experiment_id: str, run_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Sync experiment run data to cloud."""
+        self._raise_if_backend_egress_disabled("sync experiment run")
         try:
             if not experiment_id:
                 return {
@@ -923,6 +941,7 @@ class SyncManager:
         self, experiment_run_id: str, trials: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Create the cost-bearing configuration rows for an experiment run."""
+        self._raise_if_backend_egress_disabled("sync configuration runs")
         errors: list[str] = []
         configuration_run_ids: list[str] = []
         synced = 0
@@ -986,6 +1005,7 @@ class SyncManager:
         self, resource_path: str, name: str, collection_key: str
     ) -> dict[str, Any] | None:
         """Find an existing backend resource by exact name."""
+        self._raise_if_backend_egress_disabled("sync lookup")
         response = self._session.get(
             f"{self.base_url}/{resource_path}",
             params={"name": name},

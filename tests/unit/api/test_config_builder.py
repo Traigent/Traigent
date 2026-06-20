@@ -126,7 +126,7 @@ class TestModuleFunctions:
         clear_global_config()
 
     def test_build_optimize_configuration_deprecated_cloud_resolves(self):
-        """Deprecated cloud mode resolves to cloud-brain policy with warning."""
+        """Deprecated cloud mode resolves to cloud-first policy with warning."""
         import warnings
 
         params = OptimizeParameters(eval_dataset="test.jsonl", execution_mode="cloud")
@@ -135,6 +135,7 @@ class TestModuleFunctions:
             warnings.simplefilter("always")
             config = build_optimize_configuration(params, "cloud")
         assert config["execution_policy"].intent is ExecutionIntent.CLOUD_BRAIN
+        assert config["execution_policy"].offline is False
         assert config["execution_mode"] == "hybrid"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
@@ -187,7 +188,8 @@ class TestConfigurationBuilderIntegration:
 
         import warnings
 
-        # Build configuration: legacy privacy/cloud aliases feed the new policy.
+        # Build configuration: original legacy cloud mode takes precedence and
+        # maps to the consolidated cloud-first policy.
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             config = build_optimize_configuration(params, "cloud")
@@ -205,6 +207,6 @@ class TestConfigurationBuilderIntegration:
         assert config["config_param"] == "llm_config"
         assert config["parallel_config"].example_concurrency == 10
         assert config["parallel_config"].trial_concurrency == 3
-        assert config["execution_mode"] == "hybrid"  # privacy alias from global config
+        assert config["execution_mode"] == "hybrid"
         assert config["execution_policy"].intent is ExecutionIntent.CLOUD_BRAIN
         assert "privacy_enabled" not in config

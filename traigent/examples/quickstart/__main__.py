@@ -122,7 +122,7 @@ def _demo_scorer(
     evaluation=EvaluationOptions(
         eval_dataset=DATASET, metric_functions={"accuracy": _demo_scorer}
     ),
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer(question: str) -> str:
     """Call an LLM with the current trial's config (intercepted in mock mode)."""

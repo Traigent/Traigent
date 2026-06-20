@@ -1,4 +1,4 @@
-"""Traigent Integration with execution mode support."""
+"""Traigent integration with execution policy support."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-CLOUD-HYBRID FUNC-INVOKERS REQ-CLOUD-009 REQ-INV-006 SYNC-CloudHybrid
 
@@ -12,8 +12,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 from traigent.adapters.execution_adapter import LocalExecutionAdapter
 from traigent.api.types import TrialResult, TrialStatus
-from traigent.config.types import ExecutionMode, TraigentConfig, validate_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    ResolvedExecutionPolicy,
+    TraigentConfig,
+    resolve_execution_policy,
+    validate_execution_mode,
+)
 from traigent.optimizers import get_optimizer
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 
@@ -69,34 +76,78 @@ def _require_cloud() -> None:
 
 
 class TraigentClient:
-    """Enhanced Traigent client with execution mode support.
+    """Enhanced Traigent client with execution-policy support.
 
-    This client automatically detects and uses the appropriate execution mode:
-    - Local: Everything runs locally (no backend connection)
-    - Hybrid: Local execution with metric submission to backend/portal tracking
-    - Cloud: Reserved for future remote execution; not available yet
+    This client resolves the public ``algorithm`` and ``offline`` knobs through
+    the same policy path as the decorator:
+    - ``algorithm="auto"`` uses cloud-brain orchestration with local fallback.
+    - ``algorithm="grid"``/``"random"`` or ``offline=True`` run locally.
+    - Known smart algorithms require cloud orchestration.
     """
+
+    # Class-level default so instances built via ``object.__new__`` (e.g. test
+    # doubles that bypass ``__init__``) still expose the egress-policy flag and
+    # fail safe rather than raising ``AttributeError`` on the hybrid send paths.
+    no_egress: bool = False
 
     def __init__(
         self,
         api_key: str | None = None,
         backend_url: str | None = None,
-        execution_mode: str = "auto",
-        agent_builder=None,
+        *positional_args: Any,
+        algorithm: str = "auto",
+        agent_builder: Any = None,
+        offline: bool = False,
+        no_egress: bool = False,
+        **legacy_kwargs: Any,
     ) -> None:
-        """Initialize Traigent client with execution mode.
+        """Initialize Traigent client with execution policy controls.
 
         Args:
             api_key: API key for backend
             backend_url: Backend URL (defaults to centralized config)
-            execution_mode: 'auto', 'edge_analytics', 'hybrid', 'hybrid_api'
+            algorithm: Optimizer selector. ``auto`` uses cloud-brain
+                orchestration, ``grid``/``random`` stay local, and known smart
+                optimizers require cloud orchestration.
+            offline: Force local-only, zero-egress resolution.
             agent_builder: Agent builder instance for local execution
+            offline: Explicit no-backend-egress policy for this legacy client
+            no_egress: Explicit no-backend-egress policy for this legacy client
 
         Note:
-            Backend integration dependencies are required for 'hybrid' mode.
-            Edge analytics mode works without backend/cloud dependencies installed.
+            Backend integration dependencies are required for cloud-brain
+            orchestration. Offline local execution works without backend/cloud
+            dependencies installed.
         """
         from traigent.config.backend_config import BackendConfig
+
+        execution_mode, has_execution_mode = self._pop_legacy_execution_mode(
+            legacy_kwargs
+        )
+        positional_execution_mode = None
+        has_positional_execution_mode = False
+        if positional_args:
+            if len(positional_args) > 2:
+                raise TypeError(
+                    "TraigentClient accepts at most two positional arguments "
+                    "after backend_url: execution_mode/algorithm and agent_builder"
+                )
+            mode_or_algorithm = positional_args[0]
+            if self._looks_like_legacy_execution_mode(mode_or_algorithm):
+                positional_execution_mode = mode_or_algorithm
+                has_positional_execution_mode = True
+            else:
+                algorithm = cast(str, mode_or_algorithm)
+            if len(positional_args) == 2:
+                if agent_builder is not None:
+                    raise TypeError("got multiple values for agent_builder")
+                agent_builder = positional_args[1]
+
+        if has_positional_execution_mode:
+            if has_execution_mode:
+                raise TypeError("got multiple values for execution_mode")
+            execution_mode = cast(ExecutionMode | str | None, positional_execution_mode)
+            has_execution_mode = True
 
         # Track whether caller explicitly supplied an API key
         self._explicit_api_key = api_key is not None
@@ -104,9 +155,20 @@ class TraigentClient:
         # Use provided values or get from centralized config
         self.api_key = api_key or BackendConfig.get_api_key()
         self.backend_url = backend_url or BackendConfig.get_backend_url()
+        self.no_egress = bool(offline or no_egress)
 
-        # Determine execution mode first (before initializing cloud components)
-        self.execution_mode = self._determine_execution_mode(execution_mode)
+        # Determine execution policy first (before initializing cloud components)
+        self.execution_policy = self._resolve_execution_policy(
+            algorithm=algorithm,
+            offline=offline,
+            execution_mode=execution_mode,
+            has_execution_mode=has_execution_mode,
+        )
+        self.execution_mode = self._determine_execution_mode(
+            self.execution_policy,
+            requested_mode=execution_mode,
+            has_requested_mode=has_execution_mode,
+        )
         logger.info(
             f"Traigent client initialized with execution mode: {self.execution_mode}"
         )
@@ -118,6 +180,7 @@ class TraigentClient:
             self.backend_client = BackendIntegratedClient(
                 api_key=self.api_key,
                 backend_config=BackendClientConfig(backend_base_url=self.backend_url),
+                no_egress=self.no_egress or is_backend_offline(),
             )
         else:
             self.backend_client = None  # type: ignore[assignment]
@@ -134,7 +197,7 @@ class TraigentClient:
         configuration_space: dict[str, Any],
         objectives: list[str],
         max_trials: int = 50,
-        optimization_config: dict[str, Any | None] = None,
+        optimization_config: dict[str, Any | None] | None = None,
     ) -> dict[str, Any]:
         """Optimize function with automatic mode selection.
 
@@ -227,7 +290,9 @@ class TraigentClient:
             logger.info(f"Created hybrid session: {session_id}")
 
             # Initialize direct optimizer client
-            async with OptimizerDirectClient(endpoint, token) as optimizer:
+            async with OptimizerDirectClient(
+                endpoint, token, no_egress=self.no_egress or is_backend_offline()
+            ) as optimizer:
                 # Initialize local execution adapter
                 if not self.agent_builder:
                     raise ValueError("Agent builder required for hybrid mode")
@@ -317,7 +382,7 @@ class TraigentClient:
                 final_results["execution_mode"] = "hybrid"
                 final_results["completed_trials"] = completed_trials
 
-                return final_results
+                return cast(dict[str, Any], final_results)
 
     async def _optimize_saas(
         self,
@@ -655,34 +720,99 @@ class TraigentClient:
         if primary_objective:
             score = trial.get_metric(primary_objective)
             if score is not None:
-                return score
+                return cast(float | int, score)
         metrics = trial.metrics or {}
         score = metrics.get("score")
         if score is not None:
             return cast(float | int, score)
-        return next(
-            (value for value in metrics.values() if isinstance(value, (int, float))),
-            None,
+        for value in metrics.values():
+            if isinstance(value, (int, float)):
+                return value
+        return None
+
+    @staticmethod
+    def _pop_legacy_execution_mode(
+        legacy_kwargs: dict[str, Any],
+    ) -> tuple[ExecutionMode | str | None, bool]:
+        """Return a deprecated execution_mode kwarg while rejecting unknown kwargs."""
+
+        has_execution_mode = "execution_mode" in legacy_kwargs
+        execution_mode = legacy_kwargs.pop("execution_mode", None)
+        if legacy_kwargs:
+            unexpected = ", ".join(sorted(legacy_kwargs))
+            raise TypeError(
+                f"Unexpected TraigentClient keyword argument(s): {unexpected}"
+            )
+        return cast(ExecutionMode | str | None, execution_mode), has_execution_mode
+
+    @staticmethod
+    def _looks_like_legacy_execution_mode(value: Any) -> bool:
+        """Detect third-positional legacy mode values after the signature cleanup."""
+
+        if isinstance(value, ExecutionMode):
+            return True
+        if not isinstance(value, str):
+            return False
+        return value.strip().lower() in {
+            "edge_analytics",
+            "hybrid",
+            "hybrid_api",
+            "local",
+            "privacy",
+            "standard",
+            "cloud",
+            "auto",
+        }
+
+    @staticmethod
+    def _resolve_execution_policy(
+        *,
+        algorithm: str,
+        offline: bool,
+        execution_mode: ExecutionMode | str | None,
+        has_execution_mode: bool,
+    ) -> ResolvedExecutionPolicy:
+        if has_execution_mode and TraigentClient._is_legacy_auto_execution_mode(
+            execution_mode
+        ):
+            return resolve_execution_policy(
+                algorithm=algorithm,
+                offline=True,
+                source_hint="traigent_client",
+            )
+        return resolve_execution_policy(
+            algorithm=algorithm,
+            offline=offline,
+            execution_mode=execution_mode if has_execution_mode else None,
+            source_hint="traigent_client",
         )
 
-    def _determine_execution_mode(self, requested_mode: str) -> ExecutionMode:
-        """Determine actual execution mode based on environment.
+    @staticmethod
+    def _is_legacy_auto_execution_mode(mode: ExecutionMode | str | None) -> bool:
+        return isinstance(mode, str) and mode.strip().lower() == "auto"
+
+    def _determine_execution_mode(
+        self,
+        execution_policy: ResolvedExecutionPolicy,
+        *,
+        requested_mode: ExecutionMode | str | None,
+        has_requested_mode: bool,
+    ) -> ExecutionMode:
+        """Determine actual execution mode for compatibility attributes.
 
         Args:
-            requested_mode: User requested mode
+            execution_policy: Resolved public execution policy
+            requested_mode: Deprecated execution_mode value when explicitly provided
+            has_requested_mode: Whether the caller used deprecated execution_mode
 
         Returns:
             Actual execution mode to use
-
-        Raises:
-            ConfigurationError: If the requested mode is invalid or unsupported.
         """
-        if requested_mode != "auto":
+        if has_requested_mode:
+            if self._is_legacy_auto_execution_mode(requested_mode):
+                return ExecutionMode.EDGE_ANALYTICS
             return validate_execution_mode(requested_mode)
-
-        # Auto-detection remains conservative; users can request hybrid explicitly
-        # when they want backend/portal tracking.
-        return ExecutionMode.EDGE_ANALYTICS
+        return execution_policy.legacy_execution_mode
 
     def _check_privacy_requirements(self) -> bool:
         """Check if privacy requirements mandate standard mode.

@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent._version import get_version
+from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
@@ -59,6 +60,14 @@ class TrialOperations:
         )
         env = resolve_environment_label(default="production")
         return f"backend_url={backend_url}, env={env}"
+
+    def _raise_if_backend_egress_disabled(self, operation: str) -> None:
+        """Fail closed before any backend HTTP request."""
+
+        raise_if_cloud_egress_disabled(
+            operation,
+            no_egress=getattr(self.client, "no_egress", False),
+        )
 
     @staticmethod
     def _summarize_actor(info: dict[str, Any] | None) -> str:
@@ -226,6 +235,7 @@ class TrialOperations:
         if is_backend_offline():
             logger.debug("Offline mode: skipping trial registration for %s", trial_id)
             return None
+        self._raise_if_backend_egress_disabled("register trial start")
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping trial registration")
@@ -391,6 +401,7 @@ class TrialOperations:
                 session_id,
             )
             return None
+        self._raise_if_backend_egress_disabled("get next trial")
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping trial-slot request")
@@ -743,6 +754,7 @@ class TrialOperations:
                 trial_id,
             )
             return None
+        self._raise_if_backend_egress_disabled("submit trial result")
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping result submission")
@@ -911,6 +923,7 @@ class TrialOperations:
                 trial_id,
             )
             return None
+        self._raise_if_backend_egress_disabled("submit summary stats")
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping summary stats submission")
@@ -1044,6 +1057,7 @@ class TrialOperations:
                 "Offline mode: skipping weighted score update for trial %s", trial_id
             )
             return None
+        self._raise_if_backend_egress_disabled("update trial weighted scores")
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available")

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 4: Multi-Objective - Balance accuracy, cost, and latency.
 
 Usage (run in a terminal from repo root, works without activating venv):
@@ -39,7 +40,7 @@ configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -81,7 +82,7 @@ def extract_label(response: str) -> str:
     objectives=OBJECTIVES,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def ai_agent_classify_text_sentiment(text: str) -> str:
     """Text classification with multiple objectives."""
@@ -152,4 +153,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

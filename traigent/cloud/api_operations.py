@@ -15,6 +15,7 @@ from traigent.cloud.client import (
     CloudRemoteExecutionUnavailableError,
     CloudServiceError,
     SessionContractError,
+    raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
@@ -244,6 +245,14 @@ class ApiOperations:
         """
         self.client = client
 
+    def _raise_if_backend_egress_disabled(self, operation: str) -> None:
+        """Fail closed before any backend HTTP request."""
+
+        raise_if_cloud_egress_disabled(
+            operation,
+            no_egress=getattr(self.client, "no_egress", False),
+        )
+
     def validate_and_sanitize_url(self, url: str) -> str:
         """Validate and sanitize URL to prevent injection attacks.
 
@@ -389,6 +398,10 @@ class ApiOperations:
                 f"mock_exp_{int(time.time())}",
                 f"mock_run_{int(time.time())}",
             )
+        raise_if_cloud_egress_disabled(
+            "create session",
+            no_egress=getattr(self.client, "no_egress", False),
+        )
 
         if not AIOHTTP_AVAILABLE:
             raise CloudServiceError(
@@ -599,6 +612,7 @@ class ApiOperations:
     ) -> tuple[str, str, str]:
         """Send the session creation request and handle responses."""
 
+        self._raise_if_backend_egress_disabled("create session")
         async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
             api_base = (
                 self.client.backend_config.api_base_url
@@ -695,6 +709,7 @@ class ApiOperations:
         Returns:
             True if successful, False otherwise
         """
+        self._raise_if_backend_egress_disabled("update configuration run status")
         if not AIOHTTP_AVAILABLE:
             return False
 
@@ -756,6 +771,7 @@ class ApiOperations:
         Returns:
             True if successful, False otherwise
         """
+        self._raise_if_backend_egress_disabled("update configuration run measures")
         if not AIOHTTP_AVAILABLE or not metrics:
             return False
 
@@ -927,6 +943,7 @@ class ApiOperations:
             experiment_run_id: Experiment run ID
             status: Status to set (COMPLETED, FAILED, etc.)
         """
+        self._raise_if_backend_egress_disabled("update experiment run status")
         if not AIOHTTP_AVAILABLE:
             logger.debug("aiohttp not available, skipping experiment run status update")
             return

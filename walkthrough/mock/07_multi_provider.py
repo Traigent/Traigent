@@ -35,7 +35,6 @@ from utils.mock_answers import (
 )
 
 import traigent
-from traigent import TraigentConfig
 from traigent.integrations.providers import get_models_for_tier
 from traigent.providers import get_provider_for_model
 
@@ -45,9 +44,7 @@ from traigent.providers import get_provider_for_model
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -113,7 +110,7 @@ def results_match_score(
     scoring_function=results_match_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",
-    execution_mode="edge_analytics",
+    offline=True,
     mock_mode_config=MOCK_MODE_CONFIG,
 )
 def answer_with_any_provider(question: str) -> str:
@@ -197,4 +194,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

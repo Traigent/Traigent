@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 2: Zero Code Change - Seamless mode intercepts hardcoded values.
 
 Usage (run in a terminal from repo root, works without activating venv):
@@ -38,7 +39,7 @@ configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -56,7 +57,7 @@ CONFIG_SPACE = {
     scoring_function=token_match_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="seamless",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_question(question: str) -> str:
     """Your existing code - Traigent overrides the hardcoded values below."""
@@ -105,4 +106,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

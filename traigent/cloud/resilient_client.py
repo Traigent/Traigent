@@ -369,6 +369,8 @@ async def resilient_backend_request(
     headers: dict[str, str] | None = None,
     data: dict[str, Any] | None = None,
     timeout: float = 30.0,
+    *,
+    no_egress: bool = False,
 ) -> dict[str, Any]:
     """Make resilient request to backend with retry logic.
 
@@ -379,6 +381,7 @@ async def resilient_backend_request(
         headers: Request headers
         data: Request data
         timeout: Request timeout
+        no_egress: Runtime policy flag that forbids backend transport
 
     Returns:
         Response data
@@ -386,6 +389,9 @@ async def resilient_backend_request(
     Raises:
         Exception: If request fails after all retries
     """
+    from traigent.cloud.client import raise_if_cloud_egress_disabled
+
+    raise_if_cloud_egress_disabled("resilient backend request", no_egress=no_egress)
 
     async def make_request() -> dict[str, Any]:
         try:

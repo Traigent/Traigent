@@ -1,8 +1,8 @@
 """Tests for execution mode configurations.
 
 Tests execution modes. edge_analytics and hybrid are supported today.
-cloud raises ConfigurationError because remote cloud execution is reserved.
-privacy is a legacy alias for hybrid; standard raises ConfigurationError.
+cloud and standard are deprecated compatibility values that warn and resolve.
+privacy is a legacy alias for hybrid.
 """
 
 from __future__ import annotations
@@ -19,10 +19,6 @@ from traigent.utils.exceptions import ConfigurationError
 
 # Supported local execution modes.
 SUPPORTED_EXECUTION_MODES = ["edge_analytics", "hybrid"]
-
-# Modes that raise ConfigurationError
-UNSUPPORTED_MODES = ["cloud"]  # Not yet supported
-REMOVED_MODES = ["standard"]  # Removed
 
 
 class TestExecutionModeMatrix:
@@ -61,29 +57,21 @@ class TestExecutionModeMatrix:
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
-    @pytest.mark.parametrize("execution_mode", UNSUPPORTED_MODES)
     @pytest.mark.unit
-    def test_unsupported_mode_raises_configuration_error(
-        self,
-        execution_mode: str,
-    ) -> None:
-        """Test that unsupported modes raise ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            from traigent.config.types import validate_execution_mode
+    def test_cloud_mode_warns_and_resolves_to_edge_analytics(self) -> None:
+        """Deprecated cloud mode preserves the legacy edge_analytics mapping."""
+        from traigent.config.types import ExecutionMode, validate_execution_mode
 
-            validate_execution_mode(execution_mode)
+        with pytest.warns(DeprecationWarning):
+            assert validate_execution_mode("cloud") is ExecutionMode.EDGE_ANALYTICS
 
-    @pytest.mark.parametrize("execution_mode", REMOVED_MODES)
     @pytest.mark.unit
-    def test_removed_mode_raises_configuration_error(
-        self,
-        execution_mode: str,
-    ) -> None:
-        """Test that removed modes raise ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="No such mode"):
-            from traigent.config.types import validate_execution_mode
+    def test_standard_mode_warns_and_resolves_to_hybrid(self) -> None:
+        """Deprecated standard mode preserves the legacy hybrid mapping."""
+        from traigent.config.types import ExecutionMode, validate_execution_mode
 
-            validate_execution_mode(execution_mode)
+        with pytest.warns(DeprecationWarning):
+            assert validate_execution_mode("standard") is ExecutionMode.HYBRID
 
 
 class TestInvalidExecutionMode:
@@ -218,27 +206,27 @@ class TestHybridMode:
 
 
 class TestStandardMode:
-    """Tests for STANDARD execution mode - now removed."""
+    """Tests for deprecated STANDARD execution mode."""
 
     @pytest.mark.unit
-    def test_standard_mode_raises_configuration_error(self) -> None:
-        """Test standard mode raises ConfigurationError (removed)."""
-        from traigent.config.types import validate_execution_mode
+    def test_standard_mode_warns_and_resolves_to_hybrid(self) -> None:
+        """Test standard mode emits DeprecationWarning and resolves to hybrid."""
+        from traigent.config.types import ExecutionMode, validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="No such mode"):
-            validate_execution_mode("standard")
+        with pytest.warns(DeprecationWarning):
+            assert validate_execution_mode("standard") is ExecutionMode.HYBRID
 
 
 class TestCloudMode:
-    """Tests for CLOUD execution mode - not yet supported."""
+    """Tests for deprecated CLOUD execution mode."""
 
     @pytest.mark.unit
-    def test_cloud_mode_raises_configuration_error(self) -> None:
-        """Test cloud mode raises ConfigurationError (not yet supported)."""
-        from traigent.config.types import validate_execution_mode
+    def test_cloud_mode_warns_and_resolves_to_edge_analytics(self) -> None:
+        """Test cloud mode emits DeprecationWarning and resolves to edge_analytics."""
+        from traigent.config.types import ExecutionMode, validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
-            validate_execution_mode("cloud")
+        with pytest.warns(DeprecationWarning):
+            assert validate_execution_mode("cloud") is ExecutionMode.EDGE_ANALYTICS
 
 
 class TestExecutionModeEdgeCases:
@@ -259,14 +247,14 @@ class TestExecutionModeEdgeCases:
             execution_mode=None,  # type: ignore[arg-type]
             max_trials=2,
             expected=ExpectedResult(
-                outcome=ExpectedOutcome.FAILURE,
+                outcome=ExpectedOutcome.SUCCESS,
             ),
             gist_template="none_mode -> {trial_count()} | {status()}",
         )
 
         _, result = await scenario_runner(scenario)
 
-        # Should either use default or fail gracefully
+        # None means the mode was omitted, so the new algorithm policy applies.
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):

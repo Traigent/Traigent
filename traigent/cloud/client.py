@@ -18,6 +18,9 @@ from urllib.parse import urlparse
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset
+from traigent.utils.env_config import is_backend_offline
+from traigent.utils.error_handler import OfflineModeError
+from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
@@ -56,6 +59,47 @@ CLOUD_REMOTE_EXECUTION_UNAVAILABLE = (
     "portal-tracked optimization. Supported modes are local/edge_analytics "
     "and hybrid."
 )
+
+
+class CloudEgressBlockedError(OfflineModeError):
+    """Raised before backend transport when offline/no-egress is active."""
+
+    def __init__(self, operation: str) -> None:
+        self.operation = operation
+        HelpfulTraigentError.__init__(
+            self,
+            message=f"backend egress is disabled (offline); not sending {operation}",
+            fix=(
+                "Unset TRAIGENT_OFFLINE/TRAIGENT_OFFLINE_MODE or clear the "
+                "runtime no_egress policy before using backend communication."
+            ),
+            docs_link="https://github.com/Traigent/Traigent#offline-mode",
+        )
+
+
+def no_egress_flag_enabled(value: Any) -> bool:
+    """Return True only for an explicit boolean no-egress policy flag."""
+
+    return value is True
+
+
+def cloud_backend_egress_disabled(no_egress: Any = False) -> bool:
+    """Return whether cloud/backend transport must be blocked."""
+
+    if no_egress_flag_enabled(no_egress):
+        return True
+    return bool(is_backend_offline())
+
+
+def raise_if_cloud_egress_disabled(
+    operation: str,
+    *,
+    no_egress: Any = False,
+) -> None:
+    """Fail closed before backend transport when offline/no-egress is active."""
+
+    if cloud_backend_egress_disabled(no_egress):
+        raise CloudEgressBlockedError(operation)
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -366,6 +410,7 @@ class TraigentCloudClient(BaseTraigentClient):
         enable_fallback: bool = True,
         max_retries: int = 3,
         timeout: float = 30.0,
+        no_egress: bool = False,
     ) -> None:
         """Initialize cloud client.
 
@@ -375,6 +420,7 @@ class TraigentCloudClient(BaseTraigentClient):
             enable_fallback: Reserved compatibility setting for future cloud behavior
             max_retries: Maximum retry attempts for cloud requests
             timeout: Request timeout in seconds
+            no_egress: Runtime policy flag that forbids backend transport
         """
         if not AIOHTTP_AVAILABLE:
             logger.warning(
@@ -414,9 +460,10 @@ class TraigentCloudClient(BaseTraigentClient):
         self.enable_fallback = enable_fallback
         self.max_retries = max_retries
         self.timeout = timeout
+        self.no_egress = bool(no_egress)
 
         # Initialize components
-        self.auth = AuthManager(api_key=api_key)
+        self.auth = AuthManager(api_key=api_key, no_egress=self.no_egress)
         self.auth_manager = self.auth
         self.usage_tracker = UsageTracker()
         self.subset_selector = SmartSubsetSelector()
@@ -442,6 +489,8 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def __aenter__(self):
         """Async context manager entry."""
+        if cloud_backend_egress_disabled(self.no_egress):
+            return self
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, will use fallback optimization")
             return self
@@ -467,6 +516,7 @@ class TraigentCloudClient(BaseTraigentClient):
         This method creates a session if it doesn't exist, ensuring
         authentication headers are always included.
         """
+        self._raise_if_backend_egress_disabled("backend request")
         existing = self._aio_session
         if existing is not None and not _session_is_closed(existing):
             return existing
@@ -505,6 +555,11 @@ class TraigentCloudClient(BaseTraigentClient):
         if "Authorization" not in headers and "X-API-Key" not in headers:
             raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
         return cast(dict[str, str], headers)
+
+    def _raise_if_backend_egress_disabled(self, operation: str) -> None:
+        """Fail closed before any backend HTTP request."""
+
+        raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session after failures."""
@@ -744,6 +799,7 @@ class TraigentCloudClient(BaseTraigentClient):
         self, request_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Submit optimization request to the reserved remote service."""
+        self._raise_if_backend_egress_disabled("submit optimization")
         await self._ensure_session()
         if self._aio_session is None:
             raise CloudServiceError(_SESSION_NOT_INITIALIZED)
@@ -973,9 +1029,7 @@ class TraigentCloudClient(BaseTraigentClient):
     def _should_skip_tvar_recommendations_fetch(self) -> bool:
         """Return True when recommendation fetches must stay local/offline."""
 
-        from traigent.utils.env_config import is_backend_offline
-
-        if is_backend_offline():
+        if cloud_backend_egress_disabled(self.no_egress):
             return True
 
         edge_env_values = {
@@ -992,6 +1046,7 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def check_service_status(self) -> dict[str, Any]:
         """Check Traigent backend service status."""
+        self._raise_if_backend_egress_disabled("check service status")
         await self._ensure_session()
         if self._aio_session is None:
             raise CloudServiceError(_SESSION_NOT_INITIALIZED)
@@ -1008,6 +1063,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 if result is not None:
                     return result
                 # result is None means retry (continue loop)
+            except CloudEgressBlockedError:
+                raise
             except CloudServiceError as exc:
                 last_error = exc
                 if attempt == attempts:
@@ -1030,6 +1087,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Returns:
             dict with status on success/final failure, or None to signal retry.
         """
+        self._raise_if_backend_egress_disabled("check service status")
         request = self._aio_session.get(url, headers=await self._get_headers())  # type: ignore[union-attr]
         response_candidate = await request if asyncio.iscoroutine(request) else request
 
@@ -1113,6 +1171,7 @@ class TraigentCloudClient(BaseTraigentClient):
         if not session_id:
             raise ValueError("session_id is required")
 
+        self._raise_if_backend_egress_disabled("delete session")
         await self._ensure_session()
         if self._aio_session is None:
             raise CloudServiceError(_SESSION_NOT_INITIALIZED)
@@ -1183,6 +1242,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If session creation fails
         """
+        self._raise_if_backend_egress_disabled("create session")
         await self._ensure_session()
 
         # Handle both calling patterns: with SessionCreationRequest object or separate params
@@ -1251,6 +1311,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If request fails
         """
+        self._raise_if_backend_egress_disabled("get next trial")
         await self._ensure_session()
 
         request = NextTrialRequest(
@@ -1313,6 +1374,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If submission fails
         """
+        self._raise_if_backend_egress_disabled("submit trial result")
         await self._ensure_session()
 
         from traigent.cloud.models import TrialStatus
@@ -1375,6 +1437,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If finalization fails
         """
+        self._raise_if_backend_egress_disabled("finalize session")
         await self._ensure_session()
 
         request = OptimizationFinalizationRequest(
@@ -1681,6 +1744,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If optimization start fails
         """
+        self._raise_if_backend_egress_disabled("start agent optimization")
         await self._ensure_session()
 
         # Default objectives
@@ -1763,6 +1827,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If execution fails
         """
+        self._raise_if_backend_egress_disabled("execute agent")
         await self._ensure_session()
 
         # Handle both calling patterns
@@ -1822,6 +1887,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If status retrieval fails
         """
+        self._raise_if_backend_egress_disabled("get agent optimization status")
         await self._ensure_session()
         if self._aio_session is None:
             raise CloudServiceError(_SESSION_NOT_INITIALIZED)
@@ -1866,6 +1932,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If cancellation fails
         """
+        self._raise_if_backend_egress_disabled("cancel agent optimization")
         await self._ensure_session()
 
         if self._aio_session is None:
