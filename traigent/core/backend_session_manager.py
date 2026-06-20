@@ -252,7 +252,9 @@ class BackendSessionManager:
         self._no_egress = backend_egress_disabled(traigent_config)
         self._backend_tracking_enabled: bool = not self._no_egress
         self._backend_disabled_reason: SessionCreationFailureReason | None = None
-        self._fallback_reason: str | None = getattr(traigent_config, "fallback_reason", None)
+        self._fallback_reason: str | None = getattr(
+            traigent_config, "fallback_reason", None
+        )
 
         # Tracks (session_id, trial_id) pairs that have already been registered
         # with the backend, so retries of submit_trial don't re-register and
@@ -291,7 +293,9 @@ class BackendSessionManager:
     def fallback_reason(self) -> str | None:
         """Return the local-fallback reason when one was recorded."""
 
-        return self._fallback_reason or getattr(self._traigent_config, "fallback_reason", None)
+        return self._fallback_reason or getattr(
+            self._traigent_config, "fallback_reason", None
+        )
 
     def _egress_disabled(self) -> bool:
         """Return true when this manager must not touch backend egress paths."""
@@ -386,9 +390,9 @@ class BackendSessionManager:
                     f"failed: {fallback_reason}"
                 )
             if policy_is_cloud_brain(policy):
-                if policy_allows_cloud_fallback(policy) and session_failure_is_connectivity(
-                    result
-                ):
+                if policy_allows_cloud_fallback(
+                    policy
+                ) and session_failure_is_connectivity(result):
                     self._fallback_reason = fallback_reason
                     mark_local_fallback(self._traigent_config, fallback_reason)
                     logger.warning(

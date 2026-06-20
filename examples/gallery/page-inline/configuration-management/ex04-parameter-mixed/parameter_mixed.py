@@ -21,7 +21,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -130,9 +132,9 @@ def content_generator(topic: str, context: str = "") -> str:
 
     # Combine instructions into system prompt
     system_prompt = f"""You are a content generation expert.
-Style: {style_instructions.get(style, style_instructions['balanced'])}
-Audience: {audience_instructions.get(audience, audience_instructions['intermediate'])}
-Format: {format_instructions.get(format_type, format_instructions['paragraph'])}
+Style: {style_instructions.get(style, style_instructions["balanced"])}
+Audience: {audience_instructions.get(audience, audience_instructions["intermediate"])}
+Format: {format_instructions.get(format_type, format_instructions["paragraph"])}
 
 Generate high-quality content based on the given topic and context."""
 

@@ -30,7 +30,12 @@ from pathlib import Path
 import numpy as np
 
 # Add project root to path for imports
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)))
+sys.path.insert(
+    0,
+    os.environ.get(
+        "TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)
+    ),
+)
 
 try:
     import traigent
@@ -225,7 +230,6 @@ def run_baseline_comparison(tasks: list[FewShotTask]) -> dict[str, dict[str, flo
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-
         for name, strategy in baseline_strategies.items():
             task = progress.add_task(f"Running {name}...", total=1)
 
@@ -274,7 +278,7 @@ def display_results(
         table.add_row(
             f"{name.replace('_', ' ').title()}",
             f"{results['accuracy']:.3f}",
-            f"{results.get('consistency', 1-results['variance']):.3f}",
+            f"{results.get('consistency', 1 - results['variance']):.3f}",
             f"{results['selection_latency_ms']:.1f}",
             f"{results['diversity_score']:.3f}",
             status,
@@ -447,7 +451,8 @@ async def main() -> None:
     # Run the optimization
     try:
         optimization_results = await optimize_few_shot_selection.optimize(
-            max_trials=100, timeout=1800  # 30 minutes
+            max_trials=100,
+            timeout=1800,  # 30 minutes
         )
 
         # Display results

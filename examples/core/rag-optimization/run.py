@@ -421,7 +421,9 @@ if __name__ == "__main__":
                     "duration",
                 ]
                 ascending = any(p in primary.lower() for p in minimize_patterns)
-                df_raw = df_raw.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
+                df_raw = df_raw.sort_values(
+                    by=primary, ascending=ascending, na_position="last"
+                )  # type: ignore[call-arg]
             print("\nRaw (per-sample) trials:")
             print(df_raw.to_string(index=False))
 

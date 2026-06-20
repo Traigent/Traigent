@@ -89,7 +89,9 @@ class _OutboundCapture:
 
         return f"{method} {path}"
 
-    def response_for(self, method: str, url: Any, kwargs: dict[str, Any]) -> tuple[int, Any]:
+    def response_for(
+        self, method: str, url: Any, kwargs: dict[str, Any]
+    ) -> tuple[int, Any]:
         stage = self.record(method, url, kwargs)
 
         if stage == "key-validation":
@@ -198,7 +200,7 @@ class _FakeAiohttpResponse:
         self._payload = payload
         self.headers: dict[str, str] = {}
 
-    async def __aenter__(self) -> "_FakeAiohttpResponse":
+    async def __aenter__(self) -> _FakeAiohttpResponse:
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
@@ -238,7 +240,7 @@ def _install_transport_capture(
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.closed = False
 
-        async def __aenter__(self) -> "CapturingClientSession":
+        async def __aenter__(self) -> CapturingClientSession:
             return self
 
         async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
@@ -248,9 +250,7 @@ def _install_transport_capture(
         async def close(self) -> None:
             self.closed = True
 
-        def post(
-            self, url: Any, *args: Any, **kwargs: Any
-        ) -> _FakeAiohttpResponse:
+        def post(self, url: Any, *args: Any, **kwargs: Any) -> _FakeAiohttpResponse:
             status, payload = capture.response_for("POST", url, kwargs)
             return _FakeAiohttpResponse(status, payload)
 
@@ -275,7 +275,9 @@ def _install_transport_capture(
     except ImportError:  # pragma: no cover - requests is a required dependency
         return
 
-    def fake_requests_post(url: Any, *args: Any, **kwargs: Any) -> _FakeRequestsResponse:
+    def fake_requests_post(
+        url: Any, *args: Any, **kwargs: Any
+    ) -> _FakeRequestsResponse:
         status, payload = capture.response_for("POST", url, kwargs)
         return _FakeRequestsResponse(status, payload)
 

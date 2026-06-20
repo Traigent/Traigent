@@ -135,9 +135,7 @@ def _evaluate_expression(question: str) -> str:
     safe_globals = {"__builtins__": {}, "pow": pow, "bin": bin, "int": int}
 
     try:
-        value = eval(
-            expr, safe_globals, {}
-        )  # noqa: S307 - controlled input for examples
+        value = eval(expr, safe_globals, {})  # noqa: S307 - controlled input for examples
     except Exception as exc:  # pragma: no cover - defensive fallback
         raise ValueError(f"Failed to evaluate expression '{expr}': {exc}") from exc
 

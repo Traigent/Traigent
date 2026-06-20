@@ -418,7 +418,6 @@ class TestPromptTemplateFallbackLength:
             result.example_results[0].metrics["input_tokens"] == expected_input_tokens
         )
 
-
     @pytest.mark.asyncio
     async def test_privacy_uses_rendered_prompt_length_for_prompt_length_based_tokens(
         self, monkeypatch
@@ -479,7 +478,6 @@ class TestPromptTemplateFallbackLength:
         assert (
             result.example_results[0].metrics["input_tokens"] == expected_input_tokens
         )
-
 
     def test_privacy_tracing_redacts_expected_and_actual_outputs(self, monkeypatch):
         """Privacy mode must not send example content through tracing hooks."""

@@ -36,7 +36,12 @@ from typing import Any
 import numpy as np
 
 # Add project root to path for imports
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)))
+sys.path.insert(
+    0,
+    os.environ.get(
+        "TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)
+    ),
+)
 
 try:
     import traigent
@@ -278,7 +283,6 @@ def run_baseline_comparison(dataset: RAGDataset) -> dict[str, dict[str, float]]:
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-
         for name, config in baseline_configs.items():
             task = progress.add_task(f"Running {name}...", total=1)
 

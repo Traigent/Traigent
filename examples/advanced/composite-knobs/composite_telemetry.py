@@ -150,7 +150,9 @@ def main() -> None:
     )
 
     if decision.decision == "promote":
-        print(f"CALIBRATION-BACKED WINNER (client-attested): variant=strong promoted — {decision.reason}")
+        print(
+            f"CALIBRATION-BACKED WINNER (client-attested): variant=strong promoted — {decision.reason}"
+        )
     elif decision.decision == "reject":
         print(f"NO PROMOTION: candidate rejected — {decision.reason}")
     else:

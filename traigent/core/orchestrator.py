@@ -102,7 +102,6 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import OptimizationError, VendorPauseError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
@@ -2206,7 +2205,10 @@ class OptimizationOrchestrator:
             )
 
         try:
-            from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
+            from traigent.cloud.models import (
+                OptimizationSession,
+                OptimizationSessionStatus,
+            )
         except ModuleNotFoundError as exc:  # pragma: no cover - optional install guard
             raise CloudBrainUnavailableError(
                 "session-create",
@@ -3278,7 +3280,9 @@ class OptimizationOrchestrator:
         if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
             result_metadata["fallback_reason"] = fallback_reason
         if getattr(self.traigent_config, "persistence_status", None):
-            result_metadata["persistence_status"] = self.traigent_config.persistence_status
+            result_metadata["persistence_status"] = (
+                self.traigent_config.persistence_status
+            )
 
         # Create optimization result
         optimization_result = OptimizationResult(

@@ -134,7 +134,9 @@ def _print_results_summary(result) -> None:
         widths.append(max([len(header), *(len(row[index]) for row in rows)]))
 
     print("\nResults Summary:")
-    print(" | ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print(
+        " | ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+    )
     print("-+-".join("-" * width for width in widths))
     for row in rows:
         print(" | ".join(value.ljust(widths[index]) for index, value in enumerate(row)))

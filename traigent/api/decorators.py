@@ -509,7 +509,9 @@ _LEGACY_EXECUTION_OPTION_KEYS = frozenset(
         *_LEGACY_HYBRID_API_OPTION_MAP.keys(),
     }
 )
-_DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys()) | _LEGACY_EXECUTION_OPTION_KEYS
+_DIRECT_OPTION_KEYS = (
+    frozenset(_OPTIMIZE_DEFAULTS.keys()) | _LEGACY_EXECUTION_OPTION_KEYS
+)
 _JS_BRIDGE_REMOVED_MESSAGE = (
     "JS bridge removed. Use the traigent-js npm package for JavaScript optimization."
 )
@@ -1328,7 +1330,9 @@ def _coerce_external_service_evaluator(
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         payload = model_dump()
-        hybrid_payload = payload.get("hybrid_api") if isinstance(payload, dict) else None
+        hybrid_payload = (
+            payload.get("hybrid_api") if isinstance(payload, dict) else None
+        )
         hybrid_dump = getattr(hybrid_payload, "model_dump", None)
         if callable(hybrid_dump):
             payload["hybrid_api"] = hybrid_dump()
@@ -1336,7 +1340,7 @@ def _coerce_external_service_evaluator(
             return ExternalServiceEvaluator.model_validate(payload)
 
     if hasattr(value, "hybrid_api"):
-        hybrid_value = getattr(value, "hybrid_api")
+        hybrid_value = value.hybrid_api
         hybrid_dump = getattr(hybrid_value, "model_dump", None)
         hybrid_payload = hybrid_dump() if callable(hybrid_dump) else hybrid_value
         return ExternalServiceEvaluator.model_validate(
@@ -2477,12 +2481,16 @@ def optimize(  # NOSONAR(S107)
     hybrid_api_batch_parallelism = (
         hybrid_api_options.batch_parallelism if hybrid_api_options else 1
     )
-    hybrid_api_keep_alive = hybrid_api_options.keep_alive if hybrid_api_options else True
+    hybrid_api_keep_alive = (
+        hybrid_api_options.keep_alive if hybrid_api_options else True
+    )
     hybrid_api_heartbeat_interval = (
         hybrid_api_options.heartbeat_interval if hybrid_api_options else 30.0
     )
     hybrid_api_timeout = hybrid_api_options.timeout if hybrid_api_options else None
-    hybrid_api_auth_header = hybrid_api_options.auth_header if hybrid_api_options else None
+    hybrid_api_auth_header = (
+        hybrid_api_options.auth_header if hybrid_api_options else None
+    )
     hybrid_api_auto_discover_tvars = (
         hybrid_api_options.auto_discover_tvars if hybrid_api_options else False
     )

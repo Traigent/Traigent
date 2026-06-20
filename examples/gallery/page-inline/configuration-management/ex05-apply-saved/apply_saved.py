@@ -19,7 +19,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -70,7 +72,9 @@ def customer_support_agent(question: str, choices: list[str]) -> int:
     """
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3, max_tokens=120)
 
-    labeled_choices = "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(choices))
+    labeled_choices = "\n".join(
+        f"{chr(65 + i)}. {opt}" for i, opt in enumerate(choices)
+    )
     prompt = f"""You are a helpful customer support assistant.
 Choose the single best answer to the question below from the options A-D.
 Respond with only the letter A, B, C, or D.
@@ -125,7 +129,7 @@ def use_optimized_support():
         "Send a message in the chat",
     ]
     pred = customer_support_agent(q, ch)
-    print(f"Predicted choice index: {pred}  -> {chr(65+pred)}. {ch[pred]}")
+    print(f"Predicted choice index: {pred}  -> {chr(65 + pred)}. {ch[pred]}")
 
     return results
 
@@ -162,7 +166,9 @@ def load_and_apply_saved_config():
                 temperature=0.3,  # Overridden by saved config
                 max_tokens=120,  # Overridden by saved config
             )
-            labeled = "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(choices))
+            labeled = "\n".join(
+                f"{chr(65 + i)}. {opt}" for i, opt in enumerate(choices)
+            )
             prompt = f"""Choose the best answer (A-D) for the question below.
 Respond with only the letter A, B, C, or D.
 
@@ -217,7 +223,7 @@ Options:
         for q, ch in tests:
             pred = production_support_agent(q, ch)
             print(f"Q: {q}")
-            print(f"Chosen: {chr(65+pred)}. {ch[pred]}\n")
+            print(f"Chosen: {chr(65 + pred)}. {ch[pred]}\n")
     else:
         print(f"Config file {config_file} not found. Run optimization first.")
 

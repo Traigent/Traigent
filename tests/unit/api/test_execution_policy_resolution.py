@@ -42,7 +42,9 @@ def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
         def sample(x: int) -> int:
             return x
 
-    messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+    messages = [
+        str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
+    ]
     assert sample.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
     assert sample.execution_policy.offline is True
     assert any("preserve the legacy no-egress guarantee" in msg for msg in messages)
@@ -56,7 +58,9 @@ def test_legacy_cloud_maps_to_cloud_first_with_loud_warning() -> None:
         def sample(x: int) -> int:
             return x
 
-    messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+    messages = [
+        str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
+    ]
     assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
     assert sample.execution_policy.offline is False
     assert any("semantic flip" in msg for msg in messages)
@@ -70,10 +74,14 @@ def test_privacy_enabled_is_deprecated_noop_warning() -> None:
         def sample(x: int) -> int:
             return x
 
-    messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+    messages = [
+        str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
+    ]
     assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
     assert sample.execution_policy.offline is False
-    assert any("privacy_enabled is deprecated and has no effect" in msg for msg in messages)
+    assert any(
+        "privacy_enabled is deprecated and has no effect" in msg for msg in messages
+    )
 
 
 def test_legacy_flat_hybrid_api_kwargs_translate_to_options() -> None:

@@ -119,9 +119,7 @@ def normalize_algorithm_name(algorithm: str | None) -> str:
     if algorithm is None:
         return "auto"
     if not isinstance(algorithm, str):
-        raise TypeError(
-            f"algorithm must be a string, got {type(algorithm).__name__}"
-        )
+        raise TypeError(f"algorithm must be a string, got {type(algorithm).__name__}")
     normalized = algorithm.strip().lower().replace("-", "_").replace(" ", "_")
     return normalized or "auto"
 

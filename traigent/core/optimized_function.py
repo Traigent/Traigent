@@ -48,7 +48,6 @@ from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import (
-    ExecutionIntent,
     ExecutionMode,
     ResolvedExecutionPolicy,
     TraigentConfig,
@@ -1896,7 +1895,9 @@ class OptimizedFunction:
 
         try:
             from traigent.cloud.client import TraigentCloudClient
-            from traigent.cloud.remote_guidance import TraigentCloudRemoteGuidanceAdapter
+            from traigent.cloud.remote_guidance import (
+                TraigentCloudRemoteGuidanceAdapter,
+            )
             from traigent.config.backend_config import BackendConfig
             from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
@@ -1956,7 +1957,9 @@ class OptimizedFunction:
         except (AuthenticationError, ConfigurationError, ValidationError):
             raise
         except Exception as e:
-            if policy_requires_cloud(policy) or not policy_allows_cloud_fallback(policy):
+            if policy_requires_cloud(policy) or not policy_allows_cloud_fallback(
+                policy
+            ):
                 raise
             if not exception_is_connectivity(e):
                 raise

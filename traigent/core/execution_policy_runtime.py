@@ -5,9 +5,12 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterable
-from typing import Any
 
-from traigent.config.types import ExecutionIntent, ResolvedExecutionPolicy, TraigentConfig
+from traigent.config.types import (
+    ExecutionIntent,
+    ResolvedExecutionPolicy,
+    TraigentConfig,
+)
 from traigent.core.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
@@ -121,7 +124,12 @@ def policy_requires_cloud(policy: ResolvedExecutionPolicy | None) -> bool:
 
     return bool(
         env_requires_cloud()
-        or (policy is not None and (policy.require_cloud or policy.intent is ExecutionIntent.CLOUD_REQUIRED))
+        or (
+            policy is not None
+            and (
+                policy.require_cloud or policy.intent is ExecutionIntent.CLOUD_REQUIRED
+            )
+        )
     )
 
 
@@ -262,7 +270,9 @@ def exception_is_connectivity(exc: BaseException) -> bool:
             return True
         status = exception_status(current)
         text = str(current).lower()
-        if status in HARD_FAILURE_STATUSES or _contains_any(text, HARD_FAILURE_PATTERNS):
+        if status in HARD_FAILURE_STATUSES or _contains_any(
+            text, HARD_FAILURE_PATTERNS
+        ):
             return False
         if status in CONNECTIVITY_STATUSES or _contains_any(
             text, CONNECTIVITY_PATTERNS

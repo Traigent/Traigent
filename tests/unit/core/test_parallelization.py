@@ -53,9 +53,9 @@ async def test_local_evaluator_respects_max_workers():
     assert res_seq.metrics is not None
     assert res_par.metrics is not None
     # Parallel run should be significantly faster (rough heuristic)
-    assert (
-        dur_par < dur_seq * 0.75
-    ), f"Expected parallel < 75% of sequential, got {dur_par:.3f} vs {dur_seq:.3f}"
+    assert dur_par < dur_seq * 0.75, (
+        f"Expected parallel < 75% of sequential, got {dur_par:.3f} vs {dur_seq:.3f}"
+    )
 
 
 @pytest.mark.asyncio
@@ -122,9 +122,9 @@ async def test_orchestrator_parallel_trials(monkeypatch):
 
     # Heuristic check with jitter tolerance: parallel execution should not
     # regress materially vs sequential under shared CI runners.
-    assert (
-        dur_par <= dur_seq * 1.20
-    ), f"Expected parallel trials within 20% of sequential: {dur_par:.3f} vs {dur_seq:.3f}"
+    assert dur_par <= dur_seq * 1.20, (
+        f"Expected parallel trials within 20% of sequential: {dur_par:.3f} vs {dur_seq:.3f}"
+    )
 
 
 @pytest.mark.asyncio

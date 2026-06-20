@@ -32,7 +32,12 @@ from pathlib import Path
 from typing import Any
 
 # Add project root to path for imports
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)))
+sys.path.insert(
+    0,
+    os.environ.get(
+        "TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)
+    ),
+)
 
 try:
     import traigent
@@ -239,7 +244,6 @@ def run_baseline_comparison(
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-
         for baseline_config in baseline_configs:
             name = baseline_config.pop("name")
             task = progress.add_task(f"Running {name}...", total=1)
@@ -325,7 +329,9 @@ def display_results(
         fp_status = (
             "✅"
             if false_positive_rate <= 0.05
-            else "⚠️" if false_positive_rate <= 0.10 else "❌"
+            else "⚠️"
+            if false_positive_rate <= 0.10
+            else "❌"
         )
         console.print(
             f"{fp_status} False Positive Rate: {false_positive_rate:.1%} (target: ≤5%)"
@@ -336,7 +342,9 @@ def display_results(
         utility_status = (
             "✅"
             if utility_preservation >= 0.8
-            else "⚠️" if utility_preservation >= 0.7 else "❌"
+            else "⚠️"
+            if utility_preservation >= 0.7
+            else "❌"
         )
         console.print(
             f"{utility_status} Utility Preservation: {utility_preservation:.1%} (target: ≥80%)"
@@ -347,7 +355,9 @@ def display_results(
         hall_status = (
             "✅"
             if hallucination_detection >= 0.85
-            else "⚠️" if hallucination_detection >= 0.75 else "❌"
+            else "⚠️"
+            if hallucination_detection >= 0.75
+            else "❌"
         )
         console.print(
             f"{hall_status} Hallucination Detection: {hallucination_detection:.1%} (target: ≥85%)"
