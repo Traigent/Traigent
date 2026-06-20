@@ -20,7 +20,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils.mock_answers import configure_mock_notice
 
 import traigent
-from traigent import TraigentConfig
 from traigent.api.constraints import implies
 from traigent.api.parameter_ranges import Choices, IntRange, Range
 
@@ -33,9 +32,7 @@ DATASET_PATH = str(
 )
 
 # Initialize Traigent in mock mode
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 # Define parameter ranges using factory methods
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]
@@ -62,7 +59,7 @@ constraints = [
     constraints=constraints,
     objectives=["accuracy", "cost"],
     eval_dataset=DATASET_PATH,
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def creative_writer(question: str) -> str:
     """Mock creative writing function using all configured parameters."""
@@ -157,7 +154,7 @@ async def main() -> None:
         t_temp = trial.config.get("temperature", 0)
         t_acc = trial.metrics.get("accuracy", 0)
         print(
-            f"  Trial {i+1}: model={trial.config.get('model', 'N/A')}, "
+            f"  Trial {i + 1}: model={trial.config.get('model', 'N/A')}, "
             f"temp={t_temp:.2f}, "
             f"accuracy={t_acc:.2%}"
         )
@@ -168,4 +165,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

@@ -398,18 +398,22 @@ class AuthManager:
         self,
         api_key: str | None = None,
         config: UnifiedAuthConfig | None = None,
+        *,
+        no_egress: bool = False,
     ) -> None:
         """Initialize authentication manager.
 
         Args:
             api_key: Optional API key supplied programmatically.
             config: Authentication configuration overrides.
+            no_egress: Runtime policy flag that forbids backend transport.
         """
         if isinstance(api_key, UnifiedAuthConfig) and config is None:
             config = api_key
             api_key = None
 
         self.config = config or UnifiedAuthConfig()
+        self.no_egress = bool(no_egress)
 
         # Authentication state
         self._credentials: AuthCredentials | None = None
@@ -452,6 +456,7 @@ class AuthManager:
         # Token management (delegated to TokenManager)
         self._token_manager = TokenManager(
             self.config,
+            no_egress=self.no_egress,
             validate_key_format_fn=self._api_key_manager.validate_format,
             set_api_key_token_fn=self._api_key_manager.set_token,
         )
@@ -468,7 +473,7 @@ class AuthManager:
         )
 
         # Password authentication (delegated to PasswordAuthHandler)
-        self._password_auth_handler = PasswordAuthHandler()
+        self._password_auth_handler = PasswordAuthHandler(no_egress=self.no_egress)
         self._password_auth_handler.set_callbacks(
             build_credentials=self._build_credentials_from_token_data,
             store_tokens=self._store_secure_tokens,
@@ -550,7 +555,7 @@ class AuthManager:
     @property
     def _api_key_token(self) -> SecureToken | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_token
+        return cast(SecureToken | None, self._api_key_manager.api_key_token)
 
     @_api_key_token.setter
     def _api_key_token(self, value: SecureToken | None) -> None:
@@ -560,7 +565,7 @@ class AuthManager:
     @property
     def _api_key_preview(self) -> str | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_preview
+        return cast(str | None, self._api_key_manager.api_key_preview)
 
     @_api_key_preview.setter
     def _api_key_preview(self, value: str | None) -> None:
@@ -570,7 +575,7 @@ class AuthManager:
     @property
     def _api_key_source(self) -> str | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_source
+        return cast(str | None, self._api_key_manager.api_key_source)
 
     @_api_key_source.setter
     def _api_key_source(self, value: str | None) -> None:
@@ -580,7 +585,7 @@ class AuthManager:
     @property
     def _api_key_expiry(self) -> datetime | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_expiry
+        return cast(datetime | None, self._api_key_manager.api_key_expiry)
 
     @_api_key_expiry.setter
     def _api_key_expiry(self, value: datetime | None) -> None:
@@ -590,7 +595,7 @@ class AuthManager:
     @property
     def _api_key_last_rotated(self) -> datetime | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_last_rotated
+        return cast(datetime | None, self._api_key_manager.api_key_last_rotated)
 
     @_api_key_last_rotated.setter
     def _api_key_last_rotated(self, value: datetime | None) -> None:
@@ -600,7 +605,7 @@ class AuthManager:
     @property
     def _api_key(self) -> APIKey | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key
+        return cast(APIKey | None, self._api_key_manager.api_key)
 
     @_api_key.setter
     def _api_key(self, value: APIKey | None) -> None:
@@ -614,7 +619,7 @@ class AuthManager:
     @staticmethod
     def _mask_api_key(api_key: str) -> str:
         """Delegate to APIKeyManager.mask_key."""
-        return APIKeyManager.mask_key(api_key)
+        return cast(str, APIKeyManager.mask_key(api_key))
 
     def _set_api_key_token(
         self,
@@ -631,15 +636,15 @@ class AuthManager:
 
     def get_api_key_preview(self) -> str | None:
         """Return a masked preview of the currently configured API key."""
-        return self._api_key_manager.get_preview()
+        return cast(str | None, self._api_key_manager.get_preview())
 
     def has_api_key(self) -> bool:
         """Return True if an API key has been configured."""
-        return self._api_key_manager.has_key()
+        return bool(self._api_key_manager.has_key())
 
     def _get_api_key_for_internal_use(self) -> str | None:
         """Delegate to APIKeyManager.get_key_for_internal_use."""
-        return self._api_key_manager.get_key_for_internal_use()
+        return cast(str | None, self._api_key_manager.get_key_for_internal_use())
 
     # Primary Authentication Interface
 
@@ -701,15 +706,15 @@ class AuthManager:
 
     def get_api_key_status(self) -> dict[str, Any]:
         """Return structured API key status for monitoring."""
-        return self._api_key_manager.get_status()
+        return cast(dict[str, Any], self._api_key_manager.get_status())
 
     def check_api_key_rotation(self) -> bool:
         """Log rotation guidance and return True when the key is healthy."""
-        return self._api_key_manager.check_rotation()
+        return bool(self._api_key_manager.check_rotation())
 
     def _validate_key_format(self, key: str | None) -> bool:
         """Validate API key format."""
-        return self._api_key_manager.validate_format(key)
+        return bool(self._api_key_manager.validate_format(key))
 
     def clear(self) -> None:
         """Clear authentication state synchronously."""
@@ -771,7 +776,10 @@ class AuthManager:
         mode: AuthMode | None,
     ) -> AuthCredentials | dict[str, Any] | None:
         """Delegate to CredentialResolver.resolve."""
-        return await self._credential_resolver.resolve(credentials, mode)
+        return cast(
+            AuthCredentials | dict[str, Any] | None,
+            await self._credential_resolver.resolve(credentials, mode),
+        )
 
     async def _authenticate_with_dict(
         self, credentials_dict: dict[str, Any]
@@ -996,7 +1004,7 @@ class AuthManager:
 
     def get_api_key_info(self) -> dict[str, Any] | None:
         """Return non-sensitive API key metadata if available."""
-        return self._api_key_manager.get_info()
+        return cast(dict[str, Any] | None, self._api_key_manager.get_info())
 
     def get_owner_fingerprint(self) -> dict[str, Any]:
         """Return sanitized identifiers for the currently authenticated actor.
@@ -1440,10 +1448,13 @@ class AuthManager:
         to bypass authentication.
         """
         from traigent.config.backend_config import BackendConfig
+        from traigent.cloud.client import cloud_backend_egress_disabled
         from traigent.utils.env_config import is_backend_offline
 
-        if is_backend_offline():
-            return "backend offline mode enabled"
+        if cloud_backend_egress_disabled(self.no_egress):
+            if is_backend_offline():
+                return "backend offline mode enabled"
+            return "backend egress disabled"
 
         try:
             backend_api_url = BackendConfig.build_api_base(
@@ -1573,6 +1584,13 @@ class AuthManager:
     ) -> str | None:
         """Requests fallback for backend key validation when aiohttp is unavailable."""
         import requests
+        from traigent.cloud.client import cloud_backend_egress_disabled
+        from traigent.utils.env_config import is_backend_offline
+
+        if cloud_backend_egress_disabled(self.no_egress):
+            if is_backend_offline():
+                return "backend offline mode enabled"
+            return "backend egress disabled"
 
         try:
             response = requests.post(
@@ -1606,15 +1624,23 @@ class AuthManager:
         self, mode: AuthMode | None = None
     ) -> AuthCredentials | None:
         """Delegate to CredentialResolver.load_credentials."""
-        return await self._credential_resolver.load_credentials(mode)
+        return cast(
+            AuthCredentials | None,
+            await self._credential_resolver.load_credentials(mode),
+        )
 
     async def _load_cached_credentials(self) -> AuthCredentials | None:
         """Delegate to CredentialResolver.load_cached."""
-        return await self._credential_resolver.load_cached()
+        return cast(
+            AuthCredentials | None, await self._credential_resolver.load_cached()
+        )
 
     async def _load_env_credentials(self, mode: AuthMode) -> AuthCredentials | None:
         """Delegate to CredentialResolver.load_from_env."""
-        return await self._credential_resolver.load_from_env(mode)
+        return cast(
+            AuthCredentials | None,
+            await self._credential_resolver.load_from_env(mode),
+        )
 
     async def _cache_credentials(self, credentials: AuthCredentials) -> None:
         """Delegate to CredentialResolver.cache."""
@@ -1622,11 +1648,11 @@ class AuthManager:
 
     def _encrypt_credentials(self, credentials: AuthCredentials) -> dict[str, Any]:
         """Delegate to CredentialResolver.encrypt."""
-        return self._credential_resolver.encrypt(credentials)
+        return cast(dict[str, Any], self._credential_resolver.encrypt(credentials))
 
     def _decrypt_credentials(self, encrypted_data: dict[str, Any]) -> dict[str, Any]:
         """Delegate to CredentialResolver.decrypt."""
-        return self._credential_resolver.decrypt(encrypted_data)
+        return cast(dict[str, Any], self._credential_resolver.decrypt(encrypted_data))
 
     def _generate_service_signature(self, target: str) -> str:
         """Generate service-to-service authentication signature."""
@@ -1651,6 +1677,12 @@ class AuthManager:
         self, credentials: AuthCredentials
     ) -> dict[str, Any]:
         """Perform OAuth2 client credentials flow."""
+        from traigent.cloud.client import raise_if_cloud_egress_disabled
+
+        raise_if_cloud_egress_disabled(
+            "OAuth2 client credentials", no_egress=self.no_egress
+        )
+
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for OAuth2 flow") from None
 
@@ -1885,7 +1917,7 @@ def get_auth_headers() -> dict[str, str]:
     """
     from traigent.cloud.credential_manager import CredentialManager
 
-    return CredentialManager.get_auth_headers()
+    return cast(dict[str, str], CredentialManager.get_auth_headers())
 
 
 def get_auth_manager() -> AuthManager:

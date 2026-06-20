@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Demo: optimize a method and observe every trial plus post-optimization runs.
 
 This script demonstrates the recommended composition:
@@ -61,7 +62,6 @@ from utils.mock_answers import (
 from utils.scoring import token_match_score
 
 import traigent
-from traigent import TraigentConfig
 from traigent.config.context import get_trial_context
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.observability import (
@@ -373,9 +373,7 @@ def configure_runtime(
     else:
         os.environ.pop("TRAIGENT_MOCK_LLM", None)
     traigent.configure(logging_level=os.getenv("TRAIGENT_LOG_LEVEL", "WARNING").upper())
-    traigent.initialize(
-        config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-    )
+    traigent.initialize(offline=True, minimal_logging=True)
 
 
 def build_observability_client(
@@ -526,7 +524,7 @@ def create_demo_agent(runtime: RuntimeSettings, client: ObservabilityClient):
         scoring_function=score_response,
         configuration_space=runtime.config_space,
         injection_mode="context",
-        execution_mode="edge_analytics",
+        offline=True,
         mock_mode_config={
             "base_accuracy": 0.85,
             "variance": 0.0,
@@ -723,4 +721,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

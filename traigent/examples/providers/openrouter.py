@@ -40,7 +40,7 @@ import traigent  # noqa: E402
     evaluation=EvaluationOptions(
         eval_dataset=DATASET, metric_functions={"accuracy": demo_scorer}
     ),
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()

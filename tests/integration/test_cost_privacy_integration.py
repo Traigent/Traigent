@@ -54,7 +54,7 @@ async def test_privacy_mode_with_length_storage():
     """Test that privacy mode stores and uses lengths for cost calculation."""
     # Create evaluator with privacy mode enabled
     evaluator = LocalEvaluator(
-        metrics=["accuracy"], privacy_enabled=True, mock_mode_config={"enabled": False}
+        metrics=["accuracy"], mock_mode_config={"enabled": False}
     )
 
     # Create test dataset
@@ -236,7 +236,6 @@ async def test_end_to_end_flow_with_mock_mode(monkeypatch):
 
     evaluator = LocalEvaluator(
         metrics=["accuracy"],
-        privacy_enabled=False,
         detailed=True,
         mock_mode_config={"enabled": True, "override_evaluator": False},
     )

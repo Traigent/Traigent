@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 8: Privacy Modes - Local-only privacy-first execution (current).
 
 Usage (run in a terminal from repo root, works without activating venv):
@@ -31,7 +32,6 @@ from utils.helpers import (
 from utils.scoring import token_match_score
 
 import traigent
-from traigent import TraigentConfig
 
 configure_logging()
 
@@ -39,11 +39,9 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 traigent.initialize(
-    config=TraigentConfig(
-        execution_mode="edge_analytics",
-        minimal_logging=True,
-        enable_usage_analytics=False,
-    )
+    offline=True,
+    minimal_logging=True,
+    enable_usage_analytics=False,
 )
 
 # Dataset path relative to this file
@@ -63,7 +61,7 @@ CONFIG_SPACE = {
     scoring_function=token_match_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
-    execution_mode="edge_analytics",
+    offline=True,
     local_storage_path=RESULTS_DIR,
 )
 def local_mode(question: str) -> str:
@@ -116,4 +114,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

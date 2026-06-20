@@ -844,6 +844,7 @@ class TestOptimization:
                 execution_mode="cloud",
             )
         assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_get_optimization_results(

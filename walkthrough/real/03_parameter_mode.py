@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 3: Parameter Mode - Explicit configuration control.
 
 Usage (run in a terminal from repo root, works without activating venv):
@@ -39,7 +40,7 @@ configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -59,7 +60,7 @@ CONFIG_SPACE = {
     injection_mode="parameter",
     scoring_function=token_match_score,
     configuration_space=CONFIG_SPACE,
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_with_control(question: str, config: TraigentConfig) -> str:
     """Function with explicit configuration parameter."""
@@ -128,4 +129,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

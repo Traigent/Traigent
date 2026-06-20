@@ -99,6 +99,13 @@ def _auth_manager_with_public_backend() -> AuthManager:
     return manager
 
 
+def _no_egress_auth_manager_with_public_backend() -> AuthManager:
+    """Create a no-egress auth manager whose validation URL is public."""
+    manager = AuthManager(no_egress=True)
+    manager.config.backend_base_url = "https://backend.example.test"
+    return manager
+
+
 def _clear_backend_validation_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Remove policy env knobs that affect loopback backend validation."""
     for key in (
@@ -118,9 +125,9 @@ async def test_validate_rejects_string_false_payload():
     with _patch_aiohttp({"valid": "false"}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert (
-        reason is not None
-    ), "String 'false' was treated as truthy — strict ``is True`` check missing"
+    assert reason is not None, (
+        "String 'false' was treated as truthy — strict ``is True`` check missing"
+    )
     assert "invalid" in reason.lower() or "reported" in reason.lower()
 
 
@@ -162,6 +169,18 @@ async def test_validate_posts_json_payload_to_backend():
     assert (
         _FakeSession.last_post_kwargs["headers"]["Content-Type"] == "application/json"
     )
+
+
+@pytest.mark.asyncio
+async def test_validate_respects_no_egress_policy():
+    """Runtime no_egress policy must block backend API-key validation."""
+    manager = _no_egress_auth_manager_with_public_backend()
+
+    with _patch_aiohttp({"valid": True}) as aiohttp:
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "backend egress disabled"
+    aiohttp.ClientSession.assert_not_called()
 
 
 @pytest.mark.asyncio

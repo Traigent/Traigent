@@ -10,8 +10,11 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import traigent.cloud.benchmark_client as bc_module
 from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
+from traigent.utils.error_handler import OfflineModeError
 
 ORIGIN = "https://api.example.test"
 
@@ -87,3 +90,16 @@ def test_generate_sync_unscoped_route_when_no_project(monkeypatch):
     with patcher:
         client.generate_sync(description="qa", count=5, use_case="question-answering")
     assert captured["url"] == f"{ORIGIN}/api/v1/datasets/generate"
+
+
+def test_no_egress_blocks_benchmark_generation(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    client = BenchmarkClient(_config(None), no_egress=True)
+
+    with patch.object(bc_module.request, "urlopen") as urlopen:
+        with pytest.raises(OfflineModeError):
+            client.generate_sync(
+                description="qa", count=5, use_case="question-answering"
+            )
+
+    urlopen.assert_not_called()

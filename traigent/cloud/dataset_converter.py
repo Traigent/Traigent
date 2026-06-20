@@ -20,6 +20,7 @@ from random import SystemRandom
 from typing import Any, cast
 from urllib.parse import urlparse
 
+from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 
 # Optional dependency for HTTP client
@@ -132,16 +133,20 @@ class ExampleSetMetadata:
 class DatasetConverter:
     """Converter between SDK datasets and backend example sets."""
 
-    def __init__(self, backend_base_url: str | None = None) -> None:
+    def __init__(
+        self, backend_base_url: str | None = None, *, no_egress: bool = False
+    ) -> None:
         """Initialize dataset converter.
 
         Args:
             backend_base_url: Backend API base URL. Defaults to the configured
                 cloud backend. Must use http(s) scheme without embedded
                 credentials, query parameters, or fragments.
+            no_egress: Runtime policy flag that forbids backend transport.
         """
         resolved_backend_url = backend_base_url or DEFAULT_CLOUD_URL
         self.backend_base_url = self._validate_backend_base_url(resolved_backend_url)
+        self.no_egress = bool(no_egress)
         self._session: aiohttp.ClientSession | None = None
 
     async def __aenter__(self):
@@ -201,6 +206,16 @@ class DatasetConverter:
         candidate = normalized.geturl()
 
         return candidate.rstrip("/")
+
+    def _raise_if_backend_egress_disabled(
+        self, operation: str, *, no_egress: bool | None = None
+    ) -> None:
+        """Fail closed before backend example-set transport."""
+
+        raise_if_cloud_egress_disabled(
+            operation,
+            no_egress=self.no_egress if no_egress is None else no_egress,
+        )
 
     @staticmethod
     def _validate_example_set_id(example_set_id: str) -> str:
@@ -359,6 +374,7 @@ class DatasetConverter:
         agent_id: str | None = None,
         example_set_name: str | None = None,
         privacy_mode: bool = False,
+        no_egress: bool | None = None,
     ) -> ConversionResult:
         """Upload SDK dataset to backend as example set.
 
@@ -367,6 +383,7 @@ class DatasetConverter:
             agent_id: Optional agent ID to associate with
             example_set_name: Custom example set name
             privacy_mode: Enable privacy-preserving upload
+            no_egress: Optional per-call runtime policy forbidding backend transport
 
         Returns:
             Conversion result
@@ -383,10 +400,14 @@ class DatasetConverter:
                 metadata.name = self._sanitize_example_set_name(example_set_name)
 
             # Create example set via API
-            example_set_id = await self._create_backend_example_set(metadata, agent_id)
+            example_set_id = await self._create_backend_example_set(
+                metadata, agent_id, no_egress=no_egress
+            )
 
             # Upload examples
-            result = await self._upload_examples_to_backend(example_set_id, examples)
+            result = await self._upload_examples_to_backend(
+                example_set_id, examples, no_egress=no_egress
+            )
 
             return ConversionResult(
                 success=True,
@@ -411,7 +432,10 @@ class DatasetConverter:
     # Backend Example Set to SDK Dataset Conversion
 
     async def backend_example_set_to_sdk_dataset(
-        self, example_set_id: str, dataset_name: str | None = None
+        self,
+        example_set_id: str,
+        dataset_name: str | None = None,
+        no_egress: bool | None = None,
     ) -> Dataset:
         """Convert backend example set to SDK dataset.
 
@@ -419,6 +443,7 @@ class DatasetConverter:
             example_set_id: Backend example set ID consisting of a UUID or
                 alphanumeric string with '.', '_', or '-' characters.
             dataset_name: Optional dataset name
+            no_egress: Optional per-call runtime policy forbidding backend transport
 
         Returns:
             SDK dataset
@@ -432,10 +457,10 @@ class DatasetConverter:
         try:
             # Fetch example set from backend
             example_set_data = await self._fetch_backend_example_set(
-                normalized_example_set_id
+                normalized_example_set_id, no_egress=no_egress
             )
             examples_data = await self._fetch_backend_examples(
-                normalized_example_set_id
+                normalized_example_set_id, no_egress=no_egress
             )
 
             # Convert examples
@@ -782,9 +807,16 @@ class DatasetConverter:
     # Backend API Methods
 
     async def _create_backend_example_set(
-        self, metadata: ExampleSetMetadata, agent_id: str | None = None
+        self,
+        metadata: ExampleSetMetadata,
+        agent_id: str | None = None,
+        *,
+        no_egress: bool | None = None,
     ) -> str:
         """Create example set in backend via API."""
+        self._raise_if_backend_egress_disabled(
+            "create backend example set", no_egress=no_egress
+        )
         if not self._session:
             raise RuntimeError("Session not initialized") from None
 
@@ -807,9 +839,16 @@ class DatasetConverter:
                 )
 
     async def _upload_examples_to_backend(
-        self, example_set_id: str, examples: list[dict[str, Any]]
+        self,
+        example_set_id: str,
+        examples: list[dict[str, Any]],
+        *,
+        no_egress: bool | None = None,
     ) -> dict[str, Any]:
         """Upload examples to backend example set."""
+        self._raise_if_backend_egress_disabled(
+            "upload backend examples", no_egress=no_egress
+        )
         if not self._session:
             raise RuntimeError("Session not initialized")
 
@@ -853,8 +892,13 @@ class DatasetConverter:
                     f"Failed to upload examples: {response.status} {error_text}"
                 )
 
-    async def _fetch_backend_example_set(self, example_set_id: str) -> dict[str, Any]:
+    async def _fetch_backend_example_set(
+        self, example_set_id: str, *, no_egress: bool | None = None
+    ) -> dict[str, Any]:
         """Fetch example set metadata from backend."""
+        self._raise_if_backend_egress_disabled(
+            "fetch backend example set", no_egress=no_egress
+        )
         if not self._session:
             raise RuntimeError("Session not initialized")
 
@@ -872,9 +916,12 @@ class DatasetConverter:
                 )
 
     async def _fetch_backend_examples(
-        self, example_set_id: str
+        self, example_set_id: str, *, no_egress: bool | None = None
     ) -> list[dict[str, Any]]:
         """Fetch examples from backend example set."""
+        self._raise_if_backend_egress_disabled(
+            "fetch backend examples", no_egress=no_egress
+        )
         if not self._session:
             raise RuntimeError("Session not initialized")
 

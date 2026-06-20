@@ -19,13 +19,10 @@ from utils.mock_answers import (
 )
 
 import traigent
-from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -95,7 +92,7 @@ def _suppress_code_gen_warning() -> None:
     scoring_function=code_evaluator,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
-    execution_mode="edge_analytics",
+    offline=True,
     mock_mode_config=MOCK_MODE_CONFIG,
 )
 def generate_code(task: str) -> str:
@@ -164,4 +161,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

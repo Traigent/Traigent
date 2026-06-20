@@ -10,6 +10,7 @@ from typing import Any, cast
 import backoff
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud.client import raise_if_cloud_egress_disabled
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,13 @@ _SESSION_NOT_INITIALIZED = "Session not initialized"
 class OptimizerDirectClient:
     """Direct client for optimizer metric submission in hybrid mode."""
 
-    def __init__(self, endpoint: str, token: str) -> None:
+    def __init__(self, endpoint: str, token: str, *, no_egress: bool = False) -> None:
         """Initialize optimizer direct client.
 
         Args:
             endpoint: Optimizer endpoint URL
             token: JWT token for authentication
+            no_egress: Runtime policy flag that forbids backend transport
         """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError(
@@ -39,12 +41,18 @@ class OptimizerDirectClient:
 
         self.endpoint = endpoint.strip().rstrip("/")
         self.token = token.strip()
+        self.no_egress = bool(no_egress)
         self.session: aiohttp.ClientSession | None = None
         self._metric_buffer: list[Any] = []
         self._buffer_lock = asyncio.Lock()
         self._flush_interval = 5.0  # seconds
         self._batch_size = 100
         self._flush_task: asyncio.Task[None] | None = None
+
+    def _raise_if_backend_egress_disabled(self, operation: str) -> None:
+        """Fail closed before optimizer backend transport."""
+
+        raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -86,7 +94,7 @@ class OptimizerDirectClient:
         trial_id: str,
         metrics: dict[str, float],
         execution_time: float,
-        metadata: dict[str, Any | None] = None,
+        metadata: dict[str, Any | None] | None = None,
     ) -> dict[str, Any]:
         """Submit metrics to optimizer.
 
@@ -102,6 +110,7 @@ class OptimizerDirectClient:
         Returns:
             Submission response
         """
+        self._raise_if_backend_egress_disabled("submit optimizer metrics")
         submission = {
             "trial_id": trial_id,
             "metrics": metrics,
@@ -140,6 +149,7 @@ class OptimizerDirectClient:
         Returns:
             Next configuration or completion status
         """
+        self._raise_if_backend_egress_disabled("get next optimizer configuration")
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
@@ -173,6 +183,7 @@ class OptimizerDirectClient:
         Returns:
             Session status
         """
+        self._raise_if_backend_egress_disabled("get optimizer session status")
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
@@ -279,6 +290,7 @@ class OptimizerDirectClient:
         Returns:
             Submission response
         """
+        self._raise_if_backend_egress_disabled("submit optimizer metrics")
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
@@ -318,6 +330,7 @@ class OptimizerDirectClient:
         Returns:
             Batch response
         """
+        self._raise_if_backend_egress_disabled("submit optimizer metrics batch")
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:

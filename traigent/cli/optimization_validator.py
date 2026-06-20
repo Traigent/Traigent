@@ -195,13 +195,11 @@ class OptimizationValidator:
             return LocalEvaluator(
                 metrics=func_info.objectives or ["accuracy"],
                 execution_mode="edge_analytics",
-                privacy_enabled=False,
                 mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
             )
         return LocalEvaluator(
             metrics=func_info.objectives,
             execution_mode=getattr(func_info.func, "execution_mode", "cloud"),
-            privacy_enabled=getattr(func_info.func, "privacy_enabled", False),
             mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
         )
 

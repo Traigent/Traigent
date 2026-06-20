@@ -112,6 +112,8 @@ class BackendAuthManager:
         api_key: str | None,
         rate_limit_calls: int = 100,
         rate_limit_period: float = 60.0,
+        *,
+        no_egress: bool = False,
     ) -> None:
         auth_cls: type[AuthManager]
         backend_client_module = sys.modules.get("traigent.cloud.backend_client")
@@ -123,10 +125,11 @@ class BackendAuthManager:
         jwt_token = os.getenv("TRAIGENT_JWT_TOKEN")
         if jwt_token:
             self.auth = auth_cls(
-                config=UnifiedAuthConfig(default_mode=AuthMode.JWT_TOKEN)
+                config=UnifiedAuthConfig(default_mode=AuthMode.JWT_TOKEN),
+                no_egress=no_egress,
             )
         else:
-            self.auth = auth_cls(api_key=api_key)
+            self.auth = auth_cls(api_key=api_key, no_egress=no_egress)
         self.rate_limit_calls = rate_limit_calls
         self.rate_limit_period = rate_limit_period
         self._request_times: list[float] = []

@@ -55,6 +55,16 @@ class TestLocalEvaluatorTokenEstimation:
             metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
         )
 
+    def test_privacy_enabled_kwarg_is_deprecated_noop(self):
+        """LocalEvaluator accepts and ignores the removed privacy flag."""
+        with pytest.warns(
+            DeprecationWarning, match="privacy_enabled is deprecated"
+        ) as caught:
+            evaluator = LocalEvaluator(privacy_enabled=True)
+
+        assert len(caught) == 1
+        assert not hasattr(evaluator, "privacy_enabled")
+
     @pytest.mark.asyncio
     async def test_token_estimation_for_string_outputs(self, evaluator, sample_dataset):
         """Test that string outputs get proper token estimates."""
@@ -388,9 +398,7 @@ class TestPromptTemplateFallbackLength:
         )
 
     @pytest.mark.asyncio
-    async def test_non_privacy_uses_rendered_prompt_length_for_input_tokens(
-        self, monkeypatch
-    ):
+    async def test_uses_rendered_prompt_length_for_input_tokens(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
         input_data = {"question": "2+2?"}
@@ -401,7 +409,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=False,
             execution_mode="edge_analytics",
         )
         dataset = self._single_example_dataset(input_data)
@@ -419,9 +426,7 @@ class TestPromptTemplateFallbackLength:
         )
 
     @pytest.mark.asyncio
-    async def test_privacy_uses_rendered_prompt_length_for_prompt_length_based_tokens(
-        self, monkeypatch
-    ):
+    async def test_rendered_prompt_length_is_unconditional(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
         input_data = {"question": "2+2?"}
@@ -432,7 +437,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=True,
             execution_mode="edge_analytics",
         )
         dataset = self._single_example_dataset(input_data)
@@ -450,9 +454,7 @@ class TestPromptTemplateFallbackLength:
         )
 
     @pytest.mark.asyncio
-    async def test_non_privacy_format_failure_falls_back_to_additive_length(
-        self, monkeypatch
-    ):
+    async def test_format_failure_falls_back_to_additive_length(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
         input_data = {"question": "2+2?"}
@@ -462,7 +464,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=False,
             execution_mode="edge_analytics",
         )
         dataset = self._single_example_dataset(input_data)
@@ -479,8 +480,8 @@ class TestPromptTemplateFallbackLength:
             result.example_results[0].metrics["input_tokens"] == expected_input_tokens
         )
 
-    def test_privacy_tracing_redacts_expected_and_actual_outputs(self, monkeypatch):
-        """Privacy mode must not send example content through tracing hooks."""
+    def test_tracing_redacts_expected_and_actual_outputs(self, monkeypatch):
+        """Local evaluator traces must not include example content."""
         captured: dict[str, dict] = {}
 
         @contextmanager
@@ -499,7 +500,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=True,
             execution_mode="edge_analytics",
         )
         example = EvaluationExample(
@@ -524,8 +524,8 @@ class TestPromptTemplateFallbackLength:
         assert captured["record"]["actual_output"] is None
         assert captured["record"]["metrics"] == {"accuracy": 1.0}
 
-    def test_tracing_is_content_free_even_when_privacy_flag_false(self, monkeypatch):
-        """The legacy privacy flag no longer controls content redaction."""
+    def test_tracing_is_content_free_by_default(self, monkeypatch):
+        """The removed privacy flag no longer controls content redaction."""
         captured: dict[str, dict] = {}
 
         @contextmanager
@@ -544,7 +544,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=False,
             execution_mode="edge_analytics",
         )
         example = EvaluationExample(
@@ -569,7 +568,7 @@ class TestPromptTemplateFallbackLength:
         assert captured["record"]["actual_output"] is None
 
     @pytest.mark.asyncio
-    async def test_privacy_format_failure_falls_back_to_additive_length(
+    async def test_repeated_format_failure_falls_back_to_additive_length(
         self, monkeypatch
     ):
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
@@ -581,7 +580,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=True,
             execution_mode="edge_analytics",
         )
         dataset = self._single_example_dataset(input_data)
@@ -599,9 +597,7 @@ class TestPromptTemplateFallbackLength:
         )
 
     @pytest.mark.asyncio
-    async def test_non_privacy_without_prompt_preserves_legacy_input_estimation(
-        self, monkeypatch
-    ):
+    async def test_without_prompt_preserves_legacy_input_estimation(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
         input_data = {"question": "2+2?"}
@@ -610,7 +606,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=False,
             execution_mode="edge_analytics",
         )
         dataset = self._single_example_dataset(input_data)
@@ -628,7 +623,7 @@ class TestPromptTemplateFallbackLength:
         )
 
     @pytest.mark.asyncio
-    async def test_privacy_without_prompt_preserves_legacy_input_estimation(
+    async def test_repeated_without_prompt_preserves_legacy_input_estimation(
         self, monkeypatch
     ):
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
@@ -639,7 +634,6 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            privacy_enabled=True,
             execution_mode="edge_analytics",
         )
         dataset = self._single_example_dataset(input_data)

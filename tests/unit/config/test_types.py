@@ -212,13 +212,20 @@ class TestValidateExecutionMode:
 
     def test_privacy_alias_validates_as_hybrid(self) -> None:
         """Privacy remains a legacy alias for hybrid."""
-        assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
+        with pytest.warns(DeprecationWarning):
+            assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
 
     def test_local_alias_validates_as_edge_analytics(self) -> None:
         """Local is accepted as a public alias for edge_analytics."""
-        assert resolve_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
-        assert validate_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
-        assert TraigentConfig(execution_mode="local").execution_mode == "edge_analytics"
+        with pytest.warns(DeprecationWarning):
+            assert resolve_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
+        with pytest.warns(DeprecationWarning):
+            assert validate_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
+        with pytest.warns(DeprecationWarning):
+            assert (
+                TraigentConfig(execution_mode="local").execution_mode
+                == "edge_analytics"
+            )
 
     def test_deprecated_standard_mode_warns_and_resolves_to_hybrid(self) -> None:
         """The removed standard mode emits DeprecationWarning and maps to hybrid."""
@@ -236,7 +243,12 @@ class TestValidateExecutionMode:
             "local",
         ]
         for mode in accepted_execution_mode_values():
-            assert validate_execution_mode(mode) in {
+            if mode == "local":
+                with pytest.warns(DeprecationWarning):
+                    result = validate_execution_mode(mode)
+            else:
+                result = validate_execution_mode(mode)
+            assert result in {
                 ExecutionMode.EDGE_ANALYTICS,
                 ExecutionMode.HYBRID,
                 ExecutionMode.HYBRID_API,
@@ -254,7 +266,8 @@ class TestValidateExecutionMode:
 
     def test_config_privacy_alias_normalizes_to_hybrid(self) -> None:
         """TraigentConfig normalizes the privacy alias and enables privacy."""
-        config = TraigentConfig(execution_mode="privacy")
+        with pytest.warns(DeprecationWarning):
+            config = TraigentConfig(execution_mode="privacy")
 
         assert config.execution_mode == ExecutionMode.HYBRID.value
         assert config.privacy_enabled is True

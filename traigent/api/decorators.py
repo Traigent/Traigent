@@ -74,12 +74,12 @@ from traigent.config.parallel import (
     merge_parallel_configs,
 )
 from traigent.config.types import (
-    ExecutionMode,
     ExecutionIntent,
-    ResolvedExecutionPolicy,
-    resolve_execution_policy,
+    ExecutionMode,
     InjectionMode,
+    ResolvedExecutionPolicy,
     is_traigent_disabled,
+    resolve_execution_policy,
     validate_algorithm_name,
 )
 from traigent.core.objectives import (
@@ -1319,7 +1319,9 @@ def _coerce_external_service_evaluator(
         return ExternalServiceEvaluator(hybrid_api=value)
     if isinstance(value, dict):
         if "hybrid_api" in value or "kind" in value:
-            return ExternalServiceEvaluator.model_validate(value)
+            return cast(
+                ExternalServiceEvaluator, ExternalServiceEvaluator.model_validate(value)
+            )
         return ExternalServiceEvaluator(
             hybrid_api=HybridAPIOptions.model_validate(value)
         )
@@ -1337,17 +1339,23 @@ def _coerce_external_service_evaluator(
         if callable(hybrid_dump):
             payload["hybrid_api"] = hybrid_dump()
         if isinstance(payload, dict) and ("hybrid_api" in payload or "kind" in payload):
-            return ExternalServiceEvaluator.model_validate(payload)
+            return cast(
+                ExternalServiceEvaluator,
+                ExternalServiceEvaluator.model_validate(payload),
+            )
 
     if hasattr(value, "hybrid_api"):
         hybrid_value = value.hybrid_api
         hybrid_dump = getattr(hybrid_value, "model_dump", None)
         hybrid_payload = hybrid_dump() if callable(hybrid_dump) else hybrid_value
-        return ExternalServiceEvaluator.model_validate(
-            {
-                "kind": getattr(value, "kind", "hybrid_api"),
-                "hybrid_api": hybrid_payload,
-            }
+        return cast(
+            ExternalServiceEvaluator,
+            ExternalServiceEvaluator.model_validate(
+                {
+                    "kind": getattr(value, "kind", "hybrid_api"),
+                    "hybrid_api": hybrid_payload,
+                }
+            ),
         )
 
     if any(hasattr(value, field) for field in ("endpoint", "transport", "tunable_id")):
@@ -1398,7 +1406,7 @@ def _merge_hybrid_api_options(
                 "via both evaluator and legacy flat hybrid_api_* arguments."
             )
         merged[option_key] = value
-    return HybridAPIOptions.model_validate(merged)
+    return cast(HybridAPIOptions, HybridAPIOptions.model_validate(merged))
 
 
 def _resolve_external_service_evaluator(
@@ -2038,19 +2046,15 @@ def optimize(  # NOSONAR(S107)
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
                 orchestration, storage, and parallelism.
-            execution_mode: Execution mode. Use "edge_analytics" for local
-                execution, "hybrid" for local trials plus backend/portal
-                tracking, or "hybrid_api" for external-agent API optimization.
-                "cloud" is reserved for future remote execution and fails
-                closed today.
+            algorithm: Optimizer selector. ``auto`` (default) uses cloud-brain
+                orchestration with local fallback, ``grid``/``random`` stay
+                local, and known smart optimizers require cloud orchestration.
+            offline: Force local-only, zero-egress resolution.
             local_storage_path: Location for Edge Analytics storage. Falls back
                 to ``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent/`` when omitted.
             minimal_logging: Toggle for reduced logging noise in Edge mode.
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
-            privacy_enabled: Flag enabling hybrid privacy safeguards.
-            cloud_fallback_policy: Legacy/future cloud fallback policy. It does
-                not enable cloud remote execution today.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
 
@@ -2171,13 +2175,13 @@ def optimize(  # NOSONAR(S107)
         ... def handle_ticket(ticket: str) -> str:
         ...     return support_chain.run(ticket)
 
-        Edge Analytics mode optimization for privacy and offline use:
+        Offline local optimization:
 
         >>> @traigent.optimize(
         ...     objectives=["accuracy", "safety"],
         ...     evaluation={"eval_dataset": "medical_qa.jsonl"},
         ...     execution={
-        ...         "execution_mode": "edge_analytics",
+        ...         "offline": True,
         ...         "local_storage_path": "./my_optimizations",
         ...         "minimal_logging": True,
         ...     },
@@ -2666,6 +2670,7 @@ def optimize(  # NOSONAR(S107)
             scoring_function=scoring_function,
             metric_functions=metric_functions,
             requested_execution_mode=requested_execution_mode,
+            execution_policy=execution_policy,
             # Multi-agent configuration
             agents=agents_config,
             agent_prefixes=agent_prefixes_config,

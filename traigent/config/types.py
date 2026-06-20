@@ -221,11 +221,15 @@ def resolve_execution_mode(
             _warn_deprecated_execution_mode_alias(
                 mode,
                 "Use resolve_execution_policy() for the new cloud-first policy. "
-                "This internal compatibility helper still maps it to "
+                "This deprecated compatibility helper still maps it to "
                 "edge_analytics.",
             )
             return ExecutionMode.EDGE_ANALYTICS
         if normalized == "local":
+            _warn_deprecated_execution_mode_alias(
+                mode,
+                "Use offline=True for local-only, zero-egress optimization.",
+            )
             return _EXECUTION_MODE_ALIASES[normalized]
         try:
             return ExecutionMode(normalized)
@@ -241,7 +245,7 @@ def resolve_execution_mode(
 def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     """Resolve *and* validate that an execution mode is currently supported.
 
-    Legacy string values (``privacy``, ``cloud``, ``standard``) emit a
+    Legacy string values (``local``, ``privacy``, ``cloud``, ``standard``) emit a
     DeprecationWarning and are mapped to a canonical mode.
     Raises :class:`~traigent.utils.exceptions.ConfigurationError` for
     unknown mode strings.
@@ -311,7 +315,7 @@ def resolve_execution_policy(
         normalized_mode = raw_mode.strip().lower()
         hint_parts.append(f"legacy_execution_mode={normalized_mode}")
 
-        if normalized_mode in {"edge_analytics", "local"}:
+        if normalized_mode in {"", "edge_analytics", "local"}:
             warnings.warn(
                 f"execution_mode={raw_mode!r} is deprecated. Mapping to "
                 "offline=True / LOCAL_ONLY to preserve the legacy no-egress "

@@ -212,8 +212,13 @@ def jwt_development_mode(monkeypatch, request):
     monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "development")
     # Ensure mock LLM mode to avoid real LLM API calls during tests
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
-    # Ensure offline mode to avoid real backend calls during tests
-    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    # Most tests run fully offline. Cloud unit tests exercise mocked transport
+    # boundaries, so keep them online unless an individual test opts into
+    # offline mode explicitly.
+    if "tests/unit/cloud/" in _test_path(request.node):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    else:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("MOCK_MODE", "true")
     if not _test_exercises_policy(request.node, _CI_APPROVAL_POLICY_TEST_PATHS):
         monkeypatch.setenv("TRAIGENT_RUN_APPROVED", "1")

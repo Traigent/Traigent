@@ -42,20 +42,10 @@ def _patch_optimizer_loop(mp, *, has_next: bool = False) -> None:
     fake_optimizer.submit_metrics = AsyncMock()
 
     direct_client_factory = Mock(return_value=fake_optimizer)
-    # raising=False: the optional cloud-optimizer extra may be absent in the
-    # unit-test environment (then `_CLOUD_AVAILABLE` is False and these names
-    # aren't bound on the module); we still inject the mocks the patched
-    # `_optimize_hybrid` resolves from module globals.
-    mp.setattr(
-        "traigent.traigent_client.OptimizerDirectClient",
-        direct_client_factory,
-        raising=False,
-    )
-    mp.setattr(
-        "traigent.traigent_client.LocalExecutionAdapter",
-        lambda *a, **k: Mock(),
-        raising=False,
-    )
+    method_globals = TraigentClient._optimize_hybrid.__globals__
+    mp.setitem(method_globals, "OptimizerDirectClient", direct_client_factory)
+    mp.setitem(method_globals, "LocalExecutionAdapter", lambda *a, **k: Mock())
+    mp.setitem(method_globals, "is_backend_offline", lambda: False)
 
 
 @pytest.mark.asyncio

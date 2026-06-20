@@ -46,6 +46,7 @@ class TokenManager:
         self,
         config: UnifiedAuthConfig,
         *,
+        no_egress: bool = False,
         validate_key_format_fn: Any = None,
         set_api_key_token_fn: Any = None,
     ) -> None:
@@ -57,6 +58,7 @@ class TokenManager:
             set_api_key_token_fn: Callback to set API key token
         """
         self.config = config
+        self.no_egress = bool(no_egress)
         self._validate_key_format = validate_key_format_fn
         self._set_api_key_token = set_api_key_token_fn
 
@@ -319,9 +321,9 @@ class TokenManager:
             AuthResult with new credentials on success
         """
         from traigent.cloud.auth import AuthResult, AuthStatus
-        from traigent.utils.env_config import is_backend_offline
+        from traigent.cloud.client import cloud_backend_egress_disabled
 
-        if is_backend_offline():
+        if cloud_backend_egress_disabled(self.no_egress):
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
@@ -370,10 +372,14 @@ class TokenManager:
                     if response.status == 401:
                         raise ValueError("Refresh token invalid or expired")
                     if response.status == 429:
-                        await response.text()  # drain body; do not propagate upstream content
+                        await (
+                            response.text()
+                        )  # drain body; do not propagate upstream content
                         raise RuntimeError("Token refresh failed with HTTP 429")
                     if response.status != 200:
-                        await response.text()  # drain body; do not propagate upstream content
+                        await (
+                            response.text()
+                        )  # drain body; do not propagate upstream content
                         raise RuntimeError(
                             f"Token refresh failed with HTTP {response.status}"
                         )
@@ -479,6 +485,21 @@ class TokenManager:
             AuthResult with refresh status
         """
         from traigent.cloud.auth import AuthResult, AuthStatus
+        from traigent.cloud.client import (
+            CloudEgressBlockedError,
+            raise_if_cloud_egress_disabled,
+        )
+
+        try:
+            raise_if_cloud_egress_disabled(
+                "OAuth2 token refresh", no_egress=self.no_egress
+            )
+        except CloudEgressBlockedError:
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=_GENERIC_REFRESH_ERROR,
+            )
 
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for token refresh") from None
@@ -530,7 +551,9 @@ class TokenManager:
             async with aiohttp.ClientSession() as session:
                 async with session.post(token_url, data=data) as response:
                     if response.status != 200:
-                        await response.text()  # drain body; do not propagate upstream content
+                        await (
+                            response.text()
+                        )  # drain body; do not propagate upstream content
                         logger.warning(
                             "OAuth2 token refresh failed with HTTP %s",
                             response.status,

@@ -110,6 +110,27 @@ async def test_offline_mode_skips_backend_password_auth(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_no_egress_skips_backend_password_auth(monkeypatch):
+    """Runtime no_egress policy should fail closed without backend login."""
+    handler = PasswordAuthHandler(no_egress=True)
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",  # pragma: allowlist secret
+    }
+    execute = AsyncMock(return_value={"access_token": "should-not-be-used"})
+
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    with patch(
+        "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+        new=execute,
+    ):
+        token_data = await handler._perform_authentication(credentials)
+
+    assert token_data is None
+    execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_invalid_credentials_propagate_even_in_dev_mode():
     """Wrong credentials should fail loudly instead of returning mock tokens."""
     handler = PasswordAuthHandler()
