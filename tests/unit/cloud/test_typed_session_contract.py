@@ -251,6 +251,11 @@ class TestGovernedNoSilentFallback:
     invalid contract env values, and governed typed-create rejection from an
     old BE as a quiet local-only run. Governed/contract failures fail LOUD."""
 
+    @pytest.fixture(autouse=True)
+    def _backend_enabled_for_governed_contract_tests(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+
     @staticmethod
     def _session_ops(create_error):
         from traigent.cloud.session_operations import SessionOperations

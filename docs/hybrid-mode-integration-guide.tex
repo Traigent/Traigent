@@ -259,11 +259,16 @@ If your service requires authentication, accept a standard
 Traigent optimizer with:
 
 \begin{lstlisting}[basicstyle=\ttfamily\small]
+from traigent.api.decorators import ExternalServiceEvaluator, HybridAPIOptions
+
 @traigent.optimize(
-    execution_mode="hybrid_api",
-    hybrid_api_endpoint="https://api.your-service.com",
-    tunable_id="my_agent",
-    hybrid_api_auth_header="Bearer <token>",
+    evaluator=ExternalServiceEvaluator(
+        hybrid_api=HybridAPIOptions(
+            endpoint="https://api.your-service.com",
+            tunable_id="my_agent",
+            auth_header="Bearer <token>",
+        )
+    ),
 )
 \end{lstlisting}
 

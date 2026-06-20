@@ -66,7 +66,7 @@ _RESPONSES: dict[str, dict[str, str]] = {
         "accuracy": accuracy_metric,
         "partial_credit": partial_credit_metric,
     },
-    execution_mode="edge_analytics",
+    offline=True,
     algorithm="grid",
 )
 def answer_prompt(prompt: str) -> str:

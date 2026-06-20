@@ -106,7 +106,7 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
     eval_dataset=DATASET,
     objectives=["accuracy", "cost"],
     metric_functions={"accuracy": _exact_match},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def classify_sentiment(text: str) -> str:

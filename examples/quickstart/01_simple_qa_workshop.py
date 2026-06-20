@@ -52,7 +52,11 @@ def _patched_merge(self, aggregated_metrics, comprehensive_metrics):
     for key, value in comprehensive_metrics.items():
         if value is None:
             continue
-        if key in {"accuracy", "score"} and key in aggregated_metrics and aggregated_metrics[key] not in (None, 0.0):
+        if (
+            key in {"accuracy", "score"}
+            and key in aggregated_metrics
+            and aggregated_metrics[key] not in (None, 0.0)
+        ):
             continue
         if key in custom_keys and key in aggregated_metrics:
             continue
@@ -60,6 +64,7 @@ def _patched_merge(self, aggregated_metrics, comprehensive_metrics):
 
 
 _le.LocalEvaluator._merge_comprehensive_metrics = _patched_merge
+
 
 def _patched_agg(self, example_results, tracker_example_metrics=None):
     aggregated = {}
@@ -96,16 +101,46 @@ DATASET = [
     {"input": {"question": "How many continents are there?"}, "output": "7"},
     {"input": {"question": "What is the speed of light in km/s?"}, "output": "299792"},
     {"input": {"question": "Who wrote Romeo and Juliet?"}, "output": "Shakespeare"},
-    {"input": {"question": "What causes ocean tides?"}, "output": "The gravitational pull of the moon and sun"},
-    {"input": {"question": "Why is the sky blue?"}, "output": "Rayleigh scattering of sunlight by atmosphere"},
-    {"input": {"question": "How does photosynthesis work?"}, "output": "Plants convert light energy to chemical energy using chlorophyll"},
-    {"input": {"question": "What is machine learning?"}, "output": "A method where computers learn patterns from data"},
-    {"input": {"question": "Why do we have seasons?"}, "output": "Earth's axial tilt causes varying sun angles throughout the year"},
-    {"input": {"question": "Explain opportunity cost with an example"}, "output": "The value of the next best alternative foregone when making a choice"},
-    {"input": {"question": "What is the difference between weather and climate?"}, "output": "Weather is short-term atmospheric conditions; climate is long-term patterns"},
-    {"input": {"question": "How does a vaccine work?"}, "output": "It trains the immune system to recognize and fight pathogens"},
-    {"input": {"question": "What is cognitive bias?"}, "output": "Systematic patterns of deviation from rational judgment"},
-    {"input": {"question": "Explain the concept of compound interest"}, "output": "Interest calculated on both principal and accumulated interest"},
+    {
+        "input": {"question": "What causes ocean tides?"},
+        "output": "The gravitational pull of the moon and sun",
+    },
+    {
+        "input": {"question": "Why is the sky blue?"},
+        "output": "Rayleigh scattering of sunlight by atmosphere",
+    },
+    {
+        "input": {"question": "How does photosynthesis work?"},
+        "output": "Plants convert light energy to chemical energy using chlorophyll",
+    },
+    {
+        "input": {"question": "What is machine learning?"},
+        "output": "A method where computers learn patterns from data",
+    },
+    {
+        "input": {"question": "Why do we have seasons?"},
+        "output": "Earth's axial tilt causes varying sun angles throughout the year",
+    },
+    {
+        "input": {"question": "Explain opportunity cost with an example"},
+        "output": "The value of the next best alternative foregone when making a choice",
+    },
+    {
+        "input": {"question": "What is the difference between weather and climate?"},
+        "output": "Weather is short-term atmospheric conditions; climate is long-term patterns",
+    },
+    {
+        "input": {"question": "How does a vaccine work?"},
+        "output": "It trains the immune system to recognize and fight pathogens",
+    },
+    {
+        "input": {"question": "What is cognitive bias?"},
+        "output": "Systematic patterns of deviation from rational judgment",
+    },
+    {
+        "input": {"question": "Explain the concept of compound interest"},
+        "output": "Interest calculated on both principal and accumulated interest",
+    },
 ]
 
 
@@ -142,7 +177,7 @@ def cost_metric(input_data: dict) -> float:
         scoring_function=exact_match,
         metric_functions={"cost": cost_metric},
     ),
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_question(question: str) -> str:
     """Deterministic mock agent -- no LLM calls."""
@@ -177,17 +212,22 @@ async def main() -> None:
             (t for t in trials if t.config == result.best_config), trials[0]
         )
         best_metrics = {
-            k: v for k, v in best_trial.metrics.items()
-            if k in ("accuracy", "cost")
+            k: v for k, v in best_trial.metrics.items() if k in ("accuracy", "cost")
         }
 
-    print(json.dumps({
-        "example": "quickstart/01_simple_qa_workshop",
-        "bestConfig": result.best_config,
-        "bestMetrics": best_metrics,
-        "stopReason": result.stop_reason,
-        "trialCount": len(trials),
-    }, indent=2, default=str))
+    print(
+        json.dumps(
+            {
+                "example": "quickstart/01_simple_qa_workshop",
+                "bestConfig": result.best_config,
+                "bestMetrics": best_metrics,
+                "stopReason": result.stop_reason,
+                "trialCount": len(trials),
+            },
+            indent=2,
+            default=str,
+        )
+    )
 
 
 if __name__ == "__main__":

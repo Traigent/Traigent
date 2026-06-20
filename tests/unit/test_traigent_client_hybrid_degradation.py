@@ -60,8 +60,7 @@ def _patch_optimizer_loop(mp, *, has_next: bool = False) -> None:
 
 @pytest.mark.asyncio
 async def test_hybrid_finalize_backend_unreachable_degrades_to_local(caplog):
-    """A CloudServiceError at finalize must NOT crash the run; it returns a
-    local result marked source='local'."""
+    """A CloudServiceError at finalize must not rewrite optimization source."""
     client = _build_hybrid_client()
     client.backend_client.finalize_hybrid_session = AsyncMock(
         side_effect=CloudServiceError("backend unreachable")
@@ -79,14 +78,15 @@ async def test_hybrid_finalize_backend_unreachable_degrades_to_local(caplog):
             config_defaults={},
         )
 
-    assert result["source"] == "local"
+    assert result["source"] == "cloud_brain"
     assert result["backend_finalized"] is False
+    assert result["persistence_status"] == "failed"
     assert result["execution_mode"] == "hybrid"
 
 
 @pytest.mark.asyncio
 async def test_hybrid_finalize_success_marks_source_backend():
-    """When the backend finalizes normally, the result is source='backend'."""
+    """When the backend finalizes normally, source remains cloud_brain."""
     client = _build_hybrid_client()
     client.backend_client.finalize_hybrid_session = AsyncMock(
         return_value={"best_configuration": {"model": "gpt-4o-mini"}}
@@ -104,7 +104,8 @@ async def test_hybrid_finalize_success_marks_source_backend():
             config_defaults={},
         )
 
-    assert result["source"] == "backend"
+    assert result["source"] == "cloud_brain"
+    assert result["persistence_status"] == "succeeded"
     assert result["execution_mode"] == "hybrid"
 
 

@@ -54,7 +54,7 @@ DATA_ROOT = (
 )
 if MOCK:
     # Initialize with local-only mode for mock runs
-    traigent.initialize(execution_mode="edge_analytics")
+    traigent.initialize(offline=True)
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 
@@ -189,7 +189,7 @@ def style_accuracy_metric(output: str, expected: str, **_: object) -> float:
         "temperature": [0.0, 0.2],
     },
     metric_functions={"style_accuracy": style_accuracy_metric},
-    execution_mode="edge_analytics",
+    offline=True,
     injection_mode="seamless",
 )
 def draft_email(brief: str) -> str:

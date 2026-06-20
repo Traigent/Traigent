@@ -133,7 +133,7 @@ create_support_dataset()
     },
     eval_dataset=DATASET_FILE,
     objectives=["accuracy", "cost", "response_time"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def classify_support_intent(message: str) -> str:

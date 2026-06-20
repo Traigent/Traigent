@@ -107,7 +107,7 @@ def _sentiment_accuracy(
     eval_dataset=DATASET_FILE,
     objectives=["accuracy", "cost"],
     metric_functions={"accuracy": _sentiment_accuracy},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def sentiment_classifier(text: str) -> str:

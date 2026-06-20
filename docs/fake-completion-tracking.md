@@ -12,14 +12,12 @@ the SDK, backend, and frontend fake-completion audit.
 
 - SDK commit `c4e8ef97` on
   `security/preprod-schema-extra-20260425`:
-  - Clarified SDK modes:
-    - `edge_analytics`: local-only execution.
-    - `hybrid`: local trial execution plus backend/portal session tracking.
-    - `cloud`: reserved for future remote execution.
+  - Clarified the legacy SDK mode behavior that preceded the current
+    `algorithm`/`offline` execution model.
   - Preserved hybrid session creation and trial result submission through the
     backend session endpoints.
   - Made unimplemented cloud remote execution fail closed with guidance to use
-    hybrid for portal-tracked optimization.
+    the supported local-trial optimization path.
   - Removed production mock cloud session/trial/agent responses from cloud API
     operation paths.
   - Added regression coverage for hybrid session/result endpoints and cloud
@@ -62,7 +60,7 @@ the SDK, backend, and frontend fake-completion audit.
 ## Notes
 
 - Leave explicit offline/local mock IDs intact where they are gated by
-  `TRAIGENT_OFFLINE_MODE=true` or test-only paths.
+  `TRAIGENT_OFFLINE=1` or test-only paths.
 - Do not treat `hybrid` portal tracking as fake cloud execution.
 - The unused frontend `GenerateExamplesModalSimple` still has a normal
   synchronous success toast after an authoritative POST response. It is not

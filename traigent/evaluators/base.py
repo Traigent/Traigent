@@ -2032,29 +2032,19 @@ class BaseEvaluator(ABC):
             if captured is None:
                 return {}, None
 
-            original_prompt: Any | None = self._extract_original_prompt(
-                example.input_data
+            original_prompt: Any | None = None
+            response_text: str | None = None
+            prompt_repr = (
+                str(example.input_data)
+                if not isinstance(example.input_data, dict)
+                else str(example.input_data.get("text") or example.input_data)
             )
-            response_text: str | None = (
-                result.actual_output if isinstance(result.actual_output, str) else None
+            prompt_length: int | None = len(prompt_repr)
+            response_length: int | None = (
+                len(str(result.actual_output))
+                if result.actual_output is not None
+                else 0
             )
-            prompt_length: int | None = None
-            response_length: int | None = None
-
-            if getattr(self, "privacy_enabled", False):
-                original_prompt = None
-                response_text = None
-                prompt_repr = (
-                    str(example.input_data)
-                    if not isinstance(example.input_data, dict)
-                    else str(example.input_data.get("text") or example.input_data)
-                )
-                prompt_length = len(prompt_repr)
-                response_length = (
-                    len(str(result.actual_output))
-                    if result.actual_output is not None
-                    else 0
-                )
 
             response_metrics = extract_llm_metrics(
                 captured,
@@ -2167,13 +2157,10 @@ class BaseEvaluator(ABC):
         if not available or record_fn is None:
             return
 
-        actual_output = (
-            None if getattr(self, "privacy_enabled", False) else result.actual_output
-        )
         record_fn(
             span,
             success=result.success,
-            actual_output=actual_output,
+            actual_output=None,
             metrics=result.metrics,
             error=result.error_message,
             execution_time=result.execution_time,
@@ -2201,16 +2188,11 @@ class BaseEvaluator(ABC):
             yield None
             return
 
-        # Get input/output data for tracing (respect privacy settings)
-        privacy_enabled = getattr(self, "privacy_enabled", False)
-        input_data = None if privacy_enabled else example.input_data
-        expected_output = None if privacy_enabled else example.expected_output
-
         with span_fn(
             example_id=example_id,
             example_index=example_index,
-            input_data=input_data,
-            expected_output=expected_output,
+            input_data=None,
+            expected_output=None,
         ) as span:
             yield span
 
@@ -2301,10 +2283,7 @@ class BaseEvaluator(ABC):
         example_id = _example_correlation_key(example, example_index)
         start_time = time.time()
 
-        if getattr(self, "privacy_enabled", False):
-            logger.debug(f"Evaluating example {example_id}: [redacted]")
-        else:
-            logger.debug(f"Evaluating example {example_id}: {example.input_data}")
+        logger.debug("Evaluating example %s: [content-free]", example_id)
 
         # Wrap example evaluation in tracing span
         with self._example_trace_context(example_id, example_index, example) as span:

@@ -21,7 +21,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -64,7 +66,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
     },
     eval_dataset=DATASET,
     objectives=["accuracy", "cost", "response_time"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def sentiment_analysis(text: str) -> str:

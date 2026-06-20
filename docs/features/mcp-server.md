@@ -47,7 +47,7 @@ Mock mode sets local safe defaults for the run:
 
 ```bash
 TRAIGENT_MOCK_LLM=true
-TRAIGENT_OFFLINE_MODE=true
+TRAIGENT_OFFLINE=1
 ```
 
 Real mode is refused unless `confirm=true` and `cost_limit` is set. Real mode

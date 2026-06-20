@@ -19,7 +19,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -118,7 +120,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     # Report summary_f1 as 'accuracy' for a meaningful single objective
     metric_functions={"accuracy": _summary_f1},
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def intelligent_assistant(query: str) -> str:

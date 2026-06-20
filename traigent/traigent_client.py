@@ -286,27 +286,28 @@ class TraigentClient:
                         # Continue with next trial
 
                 # Finalize and get results. If the backend is unreachable at
-                # finalize, degrade to local-only instead of crashing the whole
-                # optimize() call: the trials are already computed, so return
-                # the locally-tracked best result marked source="local" and warn
-                # loudly (issue #1265).
+                # finalize, keep the optimization provenance honest and record
+                # persistence_status separately.
                 try:
                     final_results = await self.backend_client.finalize_hybrid_session(
                         session_id
                     )
-                    final_results.setdefault("source", "backend")
+                    final_results.setdefault("source", "cloud_brain")
+                    final_results.setdefault("persistence_status", "succeeded")
                 except (CloudServiceError, ConnectionError, OSError, TimeoutError) as e:
                     logger.warning(
                         "⚠️  Traigent backend unreachable at finalize (%s); "
-                        "returning LOCAL-ONLY results (source='local'). %d trial(s) "
-                        "were completed locally; they will sync on the next "
-                        "successful run.",
+                        "returning computed results with persistence_status='failed'. "
+                        "%d trial(s) were completed locally; they will sync on the "
+                        "next successful run.",
                         e,
                         completed_trials,
                     )
                     final_results = {
-                        "source": "local",
+                        "source": "cloud_brain",
                         "backend_finalized": False,
+                        "persistence_status": "failed",
+                        "persistence_error": str(e),
                     }
 
                 # Enhance with local best result if backend doesn't have it

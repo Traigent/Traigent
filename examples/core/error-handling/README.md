@@ -14,7 +14,7 @@ Demonstrates graceful failure modes and fallback patterns with Traigent.
 
 ```bash
 # Mock mode (no API key needed)
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python run.py
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 python run.py
 
 # Real mode (requires API keys)
 python run.py

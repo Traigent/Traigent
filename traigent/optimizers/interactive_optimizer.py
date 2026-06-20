@@ -300,7 +300,33 @@ class InteractiveOptimizer(BaseOptimizer):
 
         except Exception as e:
             logger.error(f"Failed to get next suggestion: {e}")
-            raise OptimizationError(f"Failed to get suggestion: {e}") from None
+            raise OptimizationError(f"Failed to get suggestion: {e}") from e
+
+    async def suggest_next_trial_async(
+        self,
+        history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Async BaseOptimizer interface backed by the cloud next-trial API."""
+
+        context = remote_context or {}
+        dataset_size = int(
+            context.get("dataset_size") or self.dataset_metadata.get("size") or 0
+        )
+        suggestion = await self.get_next_suggestion(
+            dataset_size=max(dataset_size, 1),
+        )
+        if suggestion is None:
+            raise OptimizationError("Cloud brain returned no further suggestions")
+
+        config = dict(suggestion.config or {})
+        config["_traigent_backend_trial_id"] = suggestion.trial_id
+        config["_traigent_cloud_trial_number"] = suggestion.trial_number
+        subset = getattr(suggestion, "dataset_subset", None)
+        subset_indices = getattr(subset, "indices", None)
+        if subset_indices:
+            config["__subset_indices__"] = list(subset_indices)
+        return config
 
     async def report_results(
         self,

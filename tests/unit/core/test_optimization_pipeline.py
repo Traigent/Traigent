@@ -127,6 +127,8 @@ class TestCollectOrchestratorKwargsRemovedBudgetKeys:
 
 @pytest.fixture
 def workflow_trace_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example")
     monkeypatch.setenv("TRAIGENT_API_KEY", "api-key")
     monkeypatch.delenv("TRAIGENT_TRACE_ENABLED", raising=False)

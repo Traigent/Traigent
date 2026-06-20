@@ -46,7 +46,7 @@ import inspect
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -75,10 +75,12 @@ from traigent.config.parallel import (
 )
 from traigent.config.types import (
     ExecutionMode,
+    ExecutionIntent,
+    ResolvedExecutionPolicy,
+    resolve_execution_policy,
     InjectionMode,
     is_traigent_disabled,
-    resolve_execution_mode,
-    validate_execution_mode,
+    validate_algorithm_name,
 )
 from traigent.core.objectives import (
     ObjectiveSchema,
@@ -154,6 +156,33 @@ class InjectionOptions(BaseModel):
         return v
 
 
+class HybridAPIOptions(BaseModel):
+    """External Hybrid API evaluator configuration."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    endpoint: str | None = None
+    tunable_id: str | None = None
+    transport: Any | None = None
+    transport_type: str = "auto"
+    batch_size: int = Field(default=1, ge=1)
+    batch_parallelism: int = Field(default=1, ge=1)
+    keep_alive: bool = True
+    heartbeat_interval: float = Field(default=30.0, gt=0)
+    timeout: float | None = None
+    auth_header: str | None = None
+    auto_discover_tvars: bool = False
+
+
+class ExternalServiceEvaluator(BaseModel):
+    """Evaluator bundle for external services used by optimization."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    kind: Literal["hybrid_api"] = "hybrid_api"
+    hybrid_api: HybridAPIOptions = Field(default_factory=HybridAPIOptions)
+
+
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
@@ -163,20 +192,15 @@ class ExecutionOptions(BaseModel):
         package for JavaScript optimization.
 
     Attributes:
-        execution_mode: Execution mode. Use ``edge_analytics`` for local
-            execution, ``hybrid`` for local trials plus backend/portal
-            tracking, or ``hybrid_api`` for external-agent API optimization.
-            ``cloud`` is reserved for future remote execution and currently
-            fails closed with guidance to use ``hybrid``.
+        algorithm: Optimizer selector. ``auto`` (default) resolves to the
+            cloud-brain policy, ``grid``/``random`` stay local, and known smart
+            algorithms require cloud.
+        offline: Force local-only, zero-egress resolution.
         local_storage_path: Path for local result storage.
         minimal_logging: Whether to minimize logging output.
         parallel_config: Configuration for parallel execution.
-        privacy_enabled: Whether to enable privacy-preserving mode.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
-        cloud_fallback_policy: Legacy/future cloud fallback behavior. It does
-            not enable ``execution_mode="cloud"`` today; cloud remote execution
-            is not available yet.
         reps_per_trial: Number of repetitions per configuration for statistical
             stability. Only the default ``1`` (no repetition) is available in the
             OSS SDK; passing any other value raises ``pydantic.ValidationError`` at
@@ -191,7 +215,7 @@ class ExecutionOptions(BaseModel):
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
-        extra="forbid",
+        extra="allow",
         validate_assignment=True,
     )
 
@@ -202,28 +226,32 @@ class ExecutionOptions(BaseModel):
             _reject_removed_js_bridge_options(data)
         return data
 
-    execution_mode: str = "edge_analytics"
+    algorithm: str = "auto"
+    offline: bool = False
+    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None = (
+        None
+    )
     local_storage_path: str | None = None
     minimal_logging: bool = True
     parallel_config: ParallelConfig | dict[str, Any] | None = None
-    privacy_enabled: bool | None = None
     max_total_examples: int | None = None
     samples_include_pruned: bool = True
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
-    # Hybrid API options
-    hybrid_api_endpoint: str | None = None
-    tunable_id: str | None = None
-    hybrid_api_transport: Any | None = None
-    hybrid_api_transport_type: str = "auto"
-    hybrid_api_batch_size: int = Field(default=1, ge=1)
-    hybrid_api_batch_parallelism: int = Field(default=1, ge=1)
-    hybrid_api_keep_alive: bool = True
-    hybrid_api_heartbeat_interval: float = Field(default=30.0, gt=0)
-    hybrid_api_timeout: float | None = None
-    hybrid_api_auth_header: str | None = None
-    hybrid_api_auto_discover_tvars: bool = False
-    cloud_fallback_policy: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_legacy_execution_fields(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            _warn_for_legacy_execution_options(set(data))
+            legacy_hybrid_values = {
+                option_key: data[legacy_key]
+                for legacy_key, option_key in _LEGACY_HYBRID_API_OPTION_MAP.items()
+                if legacy_key in data
+            }
+            if legacy_hybrid_values:
+                HybridAPIOptions.model_validate(legacy_hybrid_values)
+        return data
 
     @field_validator("reps_per_trial")
     @classmethod
@@ -237,6 +265,18 @@ class ExecutionOptions(BaseModel):
                 "Per-configuration repetitions for statistical stability "
                 "require Traigent Enterprise. Contact sales@traigent.ai."
             )
+        return v
+
+    @field_validator("algorithm")
+    @classmethod
+    def _validate_algorithm(cls, v: str) -> str:
+        return validate_algorithm_name(v)
+
+    @field_validator("offline")
+    @classmethod
+    def _validate_offline(cls, v: bool) -> bool:
+        if not isinstance(v, bool):
+            raise ValueError("offline must be a bool")
         return v
 
     @field_validator("reps_aggregation")
@@ -405,23 +445,12 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
     "effectuation": False,
-    "execution_mode": "edge_analytics",
-    "hybrid_api_endpoint": None,
-    "tunable_id": None,
-    "hybrid_api_transport": None,
-    "hybrid_api_transport_type": "auto",
-    "hybrid_api_batch_size": 1,
-    "hybrid_api_batch_parallelism": 1,
-    "hybrid_api_keep_alive": True,
-    "hybrid_api_heartbeat_interval": 30.0,
-    "hybrid_api_timeout": None,
-    "hybrid_api_auth_header": None,
-    "hybrid_api_auto_discover_tvars": False,
-    "cloud_fallback_policy": None,
+    "algorithm": "auto",
+    "offline": False,
+    "evaluator": None,
     "local_storage_path": None,
     "minimal_logging": True,
     "parallel_config": None,
-    "privacy_enabled": None,
     "max_total_examples": None,
     "samples_include_pruned": True,
     "mock_mode_config": None,
@@ -432,7 +461,6 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
-    "algorithm": "random",
     "max_trials": 50,
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
@@ -460,7 +488,30 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "auto_detect_tvars_exclude": None,  # Optional names to exclude
 }
 
-_DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
+_LEGACY_HYBRID_API_OPTION_MAP = {
+    "hybrid_api_endpoint": "endpoint",
+    "tunable_id": "tunable_id",
+    "hybrid_api_transport": "transport",
+    "hybrid_api_transport_type": "transport_type",
+    "hybrid_api_batch_size": "batch_size",
+    "hybrid_api_batch_parallelism": "batch_parallelism",
+    "hybrid_api_keep_alive": "keep_alive",
+    "hybrid_api_heartbeat_interval": "heartbeat_interval",
+    "hybrid_api_timeout": "timeout",
+    "hybrid_api_auth_header": "auth_header",
+    "hybrid_api_auto_discover_tvars": "auto_discover_tvars",
+}
+_LEGACY_EXECUTION_OPTION_KEYS = frozenset(
+    {
+        "execution_mode",
+        "privacy_enabled",
+        "cloud_fallback_policy",
+        *_LEGACY_HYBRID_API_OPTION_MAP.keys(),
+    }
+)
+_DIRECT_OPTION_KEYS = (
+    frozenset(_OPTIMIZE_DEFAULTS.keys()) | _LEGACY_EXECUTION_OPTION_KEYS
+)
 _JS_BRIDGE_REMOVED_MESSAGE = (
     "JS bridge removed. Use the traigent-js npm package for JavaScript optimization."
 )
@@ -498,6 +549,41 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "tvl_parameter_agents",
     )
 )
+
+
+def _warn_for_legacy_execution_options(keys: set[str]) -> None:
+    """Emit coarse deprecation warnings for legacy execution option names."""
+    import warnings
+
+    if keys & {"execution_mode"}:
+        warnings.warn(
+            "execution_mode is deprecated as a public optimizer selector. Use "
+            "algorithm='auto'|'grid'|'random' and offline=True for no egress.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+    if keys & {"privacy_enabled"}:
+        warnings.warn(
+            "privacy_enabled is deprecated and has no effect. Use offline=True "
+            "for no egress.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+    if keys & {"cloud_fallback_policy"}:
+        warnings.warn(
+            "cloud_fallback_policy is deprecated and has no effect. Set "
+            "TRAIGENT_REQUIRE_CLOUD=1 to disable fallback.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+    if keys & set(_LEGACY_HYBRID_API_OPTION_MAP):
+        warnings.warn(
+            "Flat hybrid_api_* optimize options are deprecated. Pass "
+            "evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...)) "
+            "instead.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
 
 
 def _removed_parameter_message(parameter_name: str) -> str:
@@ -577,8 +663,12 @@ class LegacyOptimizeArgs:
     evaluation: EvaluationOptions | dict[str, Any] | None = None
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
+    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None = (
+        None
+    )
     mock: MockModeOptions | dict[str, Any] | None = None
     algorithm: str | None = None
+    offline: bool | None = None
     max_trials: int | None = None
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None
@@ -667,8 +757,10 @@ class LegacyOptimizeArgs:
             ("evaluation", self.evaluation),
             ("injection", self.injection),
             ("execution", self.execution),
+            ("evaluator", self.evaluator),
             ("mock", self.mock),
             ("algorithm", self.algorithm),
+            ("offline", self.offline),
             ("max_trials", self.max_trials),
             ("agents", self.agents),
             ("agent_prefixes", self.agent_prefixes),
@@ -810,6 +902,13 @@ def _build_settings_recorder(
         existing_source = provided_sources.get(key)
         if existing_source is not None:
             existing_value = combined_settings[key]
+            default_value = _OPTIMIZE_DEFAULTS.get(key, _DEFAULT_SENTINEL)
+            if (
+                source == "optimize parameter"
+                and default_value is not _DEFAULT_SENTINEL
+                and value == default_value
+            ):
+                return
             if existing_value != value:
                 raise TypeError(
                     f"Conflicting values for {key!r} supplied via both {existing_source} "
@@ -1053,25 +1152,15 @@ def _resolve_injection_bundle_options(
 class ResolvedExecutionOptions:
     """Resolved execution options after merging direct and bundled settings."""
 
-    execution_mode: Any
-    hybrid_api_endpoint: Any
-    tunable_id: Any
-    hybrid_api_transport: Any
-    hybrid_api_transport_type: Any
-    hybrid_api_batch_size: Any
-    hybrid_api_batch_parallelism: Any
-    hybrid_api_keep_alive: Any
-    hybrid_api_heartbeat_interval: Any
-    hybrid_api_timeout: Any
-    hybrid_api_auth_header: Any
-    hybrid_api_auto_discover_tvars: Any
-    cloud_fallback_policy: Any
+    algorithm: Any
+    offline: Any
+    evaluator: Any
     local_storage_path: Any
     minimal_logging: Any
     parallel_config: Any
-    privacy_enabled: Any
     max_total_examples: Any
     samples_include_pruned: Any
+    legacy_options: dict[str, Any] = field(default_factory=dict)
 
 
 def _resolve_execution_bundle_options(
@@ -1104,83 +1193,35 @@ def _resolve_execution_bundle_options(
             "Contact sales@traigent.ai for more information."
         )
 
+    extra = getattr(execution_bundle, "__pydantic_extra__", None) or {}
+    legacy_options = {**base_options.legacy_options}
+    for key in _LEGACY_EXECUTION_OPTION_KEYS:
+        if key in extra:
+            existing = legacy_options.get(key, _DEFAULT_SENTINEL)
+            if existing is not _DEFAULT_SENTINEL and existing != extra[key]:
+                raise TypeError(
+                    f"Conflicting values for {key!r} supplied via both direct "
+                    "arguments and ExecutionOptions. Remove one of the definitions."
+                )
+            legacy_options[key] = extra[key]
+
     return ResolvedExecutionOptions(
-        execution_mode=_resolve_option(
-            "execution_mode",
-            base_options.execution_mode,
-            execution_bundle.execution_mode,
+        algorithm=_resolve_option(
+            "algorithm",
+            base_options.algorithm,
+            execution_bundle.algorithm,
             defaults,
         ),
-        hybrid_api_endpoint=_resolve_option(
-            "hybrid_api_endpoint",
-            base_options.hybrid_api_endpoint,
-            execution_bundle.hybrid_api_endpoint,
+        offline=_resolve_option(
+            "offline",
+            base_options.offline,
+            execution_bundle.offline,
             defaults,
         ),
-        tunable_id=_resolve_option(
-            "tunable_id",
-            base_options.tunable_id,
-            execution_bundle.tunable_id,
-            defaults,
-        ),
-        hybrid_api_transport=_resolve_option(
-            "hybrid_api_transport",
-            base_options.hybrid_api_transport,
-            execution_bundle.hybrid_api_transport,
-            defaults,
-        ),
-        hybrid_api_transport_type=_resolve_option(
-            "hybrid_api_transport_type",
-            base_options.hybrid_api_transport_type,
-            execution_bundle.hybrid_api_transport_type,
-            defaults,
-        ),
-        hybrid_api_batch_size=_resolve_option(
-            "hybrid_api_batch_size",
-            base_options.hybrid_api_batch_size,
-            execution_bundle.hybrid_api_batch_size,
-            defaults,
-        ),
-        hybrid_api_batch_parallelism=_resolve_option(
-            "hybrid_api_batch_parallelism",
-            base_options.hybrid_api_batch_parallelism,
-            execution_bundle.hybrid_api_batch_parallelism,
-            defaults,
-        ),
-        hybrid_api_keep_alive=_resolve_option(
-            "hybrid_api_keep_alive",
-            base_options.hybrid_api_keep_alive,
-            execution_bundle.hybrid_api_keep_alive,
-            defaults,
-        ),
-        hybrid_api_heartbeat_interval=_resolve_option(
-            "hybrid_api_heartbeat_interval",
-            base_options.hybrid_api_heartbeat_interval,
-            execution_bundle.hybrid_api_heartbeat_interval,
-            defaults,
-        ),
-        hybrid_api_timeout=_resolve_option(
-            "hybrid_api_timeout",
-            base_options.hybrid_api_timeout,
-            execution_bundle.hybrid_api_timeout,
-            defaults,
-        ),
-        hybrid_api_auth_header=_resolve_option(
-            "hybrid_api_auth_header",
-            base_options.hybrid_api_auth_header,
-            execution_bundle.hybrid_api_auth_header,
-            defaults,
-        ),
-        hybrid_api_auto_discover_tvars=_resolve_option(
-            "hybrid_api_auto_discover_tvars",
-            base_options.hybrid_api_auto_discover_tvars,
-            execution_bundle.hybrid_api_auto_discover_tvars,
-            defaults,
-        ),
-        cloud_fallback_policy=_resolve_option(
-            "cloud_fallback_policy",
-            base_options.cloud_fallback_policy,
-            execution_bundle.cloud_fallback_policy,
+        evaluator=_resolve_option(
+            "evaluator",
+            base_options.evaluator,
+            execution_bundle.evaluator,
             defaults,
         ),
         local_storage_path=_resolve_option(
@@ -1201,12 +1242,6 @@ def _resolve_execution_bundle_options(
             execution_bundle.parallel_config,
             defaults,
         ),
-        privacy_enabled=_resolve_option(
-            "privacy_enabled",
-            base_options.privacy_enabled,
-            execution_bundle.privacy_enabled,
-            defaults,
-        ),
         max_total_examples=_resolve_option(
             "max_total_examples",
             base_options.max_total_examples,
@@ -1219,6 +1254,7 @@ def _resolve_execution_bundle_options(
             execution_bundle.samples_include_pruned,
             defaults,
         ),
+        legacy_options=legacy_options,
     )
 
 
@@ -1249,38 +1285,167 @@ def _resolve_injection_mode_enum(
         return injection_mode
 
 
-def _resolve_execution_mode_enum(
-    execution_mode: str | ExecutionMode,
-    privacy_enabled: bool | None,
-) -> tuple[ExecutionMode, bool | None]:
-    """Resolve execution mode enum against the public support contract."""
-    raw_execution_mode = (
-        execution_mode.value
-        if isinstance(execution_mode, ExecutionMode)
-        else str(execution_mode)
-    )
-    requested_privacy_alias = raw_execution_mode.strip().lower() == "privacy"
+def _resolve_execution_policy_from_options(
+    *,
+    algorithm: str,
+    offline: bool,
+    legacy_options: Mapping[str, Any],
+    source_hint: str,
+) -> ResolvedExecutionPolicy:
+    """Resolve public and legacy execution controls into a policy object."""
     try:
-        requested_mode = resolve_execution_mode(execution_mode)
-        execution_mode_enum = validate_execution_mode(requested_mode)
-    except ConfigurationError:
-        raise
+        return resolve_execution_policy(
+            algorithm=algorithm,
+            offline=offline,
+            execution_mode=legacy_options.get("execution_mode"),
+            privacy_enabled=legacy_options.get("privacy_enabled"),
+            cloud_fallback_policy=legacy_options.get("cloud_fallback_policy"),
+            source_hint=source_hint,
+        )
     except (TypeError, ValueError) as exc:
         raise ConfigurationError(str(exc)) from None
 
-    if requested_privacy_alias:
-        import warnings
 
-        warnings.warn(
-            "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
-            "with privacy_enabled=True. Mapping automatically.",
-            DeprecationWarning,
-            stacklevel=8,
+def _coerce_external_service_evaluator(
+    value: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None,
+) -> ExternalServiceEvaluator | None:
+    """Normalize evaluator/external-service config to a typed bundle."""
+
+    if value is None:
+        return None
+    if isinstance(value, ExternalServiceEvaluator):
+        return value
+    if isinstance(value, HybridAPIOptions):
+        return ExternalServiceEvaluator(hybrid_api=value)
+    if isinstance(value, dict):
+        if "hybrid_api" in value or "kind" in value:
+            return ExternalServiceEvaluator.model_validate(value)
+        return ExternalServiceEvaluator(
+            hybrid_api=HybridAPIOptions.model_validate(value)
         )
-        if privacy_enabled is None:
-            privacy_enabled = True
 
-    return execution_mode_enum, privacy_enabled
+    # Some full-suite reload paths can hand us a pydantic model instance from a
+    # previous import of this module. Accept the current public shape rather
+    # than relying only on class identity.
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        payload = model_dump()
+        hybrid_payload = (
+            payload.get("hybrid_api") if isinstance(payload, dict) else None
+        )
+        hybrid_dump = getattr(hybrid_payload, "model_dump", None)
+        if callable(hybrid_dump):
+            payload["hybrid_api"] = hybrid_dump()
+        if isinstance(payload, dict) and ("hybrid_api" in payload or "kind" in payload):
+            return ExternalServiceEvaluator.model_validate(payload)
+
+    if hasattr(value, "hybrid_api"):
+        hybrid_value = value.hybrid_api
+        hybrid_dump = getattr(hybrid_value, "model_dump", None)
+        hybrid_payload = hybrid_dump() if callable(hybrid_dump) else hybrid_value
+        return ExternalServiceEvaluator.model_validate(
+            {
+                "kind": getattr(value, "kind", "hybrid_api"),
+                "hybrid_api": hybrid_payload,
+            }
+        )
+
+    if any(hasattr(value, field) for field in ("endpoint", "transport", "tunable_id")):
+        hybrid_payload = {
+            field: getattr(value, field)
+            for field in HybridAPIOptions.model_fields
+            if hasattr(value, field)
+        }
+        return ExternalServiceEvaluator(
+            hybrid_api=HybridAPIOptions.model_validate(hybrid_payload)
+        )
+
+    raise TypeError(
+        "evaluator must be an ExternalServiceEvaluator, HybridAPIOptions, dict, or None"
+    )
+
+
+def _merge_hybrid_api_options(
+    current: HybridAPIOptions | None,
+    legacy_values: dict[str, Any],
+) -> HybridAPIOptions | None:
+    """Merge deprecated flat Hybrid API kwargs into a typed option bundle."""
+
+    if not legacy_values:
+        return current
+
+    import warnings
+
+    warnings.warn(
+        "Flat hybrid_api_* optimize options are deprecated. Use "
+        "HybridAPIOptions via evaluator=ExternalServiceEvaluator(...).",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    current_data = current.model_dump() if current is not None else {}
+    merged = dict(current_data)
+    for legacy_key, option_key in _LEGACY_HYBRID_API_OPTION_MAP.items():
+        if legacy_key not in legacy_values:
+            continue
+        value = legacy_values[legacy_key]
+        if value is None:
+            continue
+        existing = merged.get(option_key)
+        default = HybridAPIOptions.model_fields[option_key].default
+        if existing not in (None, default) and existing != value:
+            raise TypeError(
+                f"Conflicting values for HybridAPIOptions.{option_key!r} supplied "
+                "via both evaluator and legacy flat hybrid_api_* arguments."
+            )
+        merged[option_key] = value
+    return HybridAPIOptions.model_validate(merged)
+
+
+def _resolve_external_service_evaluator(
+    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None,
+    legacy_options: Mapping[str, Any],
+) -> ExternalServiceEvaluator | None:
+    """Resolve new evaluator config plus deprecated flat Hybrid API kwargs."""
+
+    resolved = _coerce_external_service_evaluator(evaluator)
+    legacy_hybrid_values = {
+        key: value
+        for key, value in legacy_options.items()
+        if key in _LEGACY_HYBRID_API_OPTION_MAP
+    }
+    hybrid_api_options = _merge_hybrid_api_options(
+        resolved.hybrid_api if resolved is not None else None,
+        legacy_hybrid_values,
+    )
+    if hybrid_api_options is None:
+        return resolved
+    return ExternalServiceEvaluator(hybrid_api=hybrid_api_options)
+
+
+def _runtime_algorithm_for_policy(
+    policy: ResolvedExecutionPolicy,
+    external_evaluator: ExternalServiceEvaluator | None,
+) -> str:
+    """Map public algorithm policy to the runtime optimizer selector."""
+
+    if policy.algorithm == "auto" and (
+        policy.intent is ExecutionIntent.LOCAL_ONLY or external_evaluator is not None
+    ):
+        return "random"
+    return policy.algorithm
+
+
+def _runtime_execution_mode_for_policy(
+    policy: ResolvedExecutionPolicy,
+    external_evaluator: ExternalServiceEvaluator | None,
+) -> ExecutionMode:
+    """Compatibility mode for the current runtime constructor."""
+
+    if external_evaluator is not None:
+        return ExecutionMode.HYBRID_API
+    if policy.intent is ExecutionIntent.LOCAL_ONLY:
+        return ExecutionMode.EDGE_ANALYTICS
+    return ExecutionMode.HYBRID
 
 
 _OBJECTIVES_TYPE_ERROR = (
@@ -1329,9 +1494,9 @@ def _resolve_objective_schema(
 def _resolve_actual_execution_mode(
     execution_mode: str,
 ) -> str:
-    """Resolve actual execution mode from provided or global config."""
+    """Resolve legacy execution mode from provided or global config."""
     if (
-        execution_mode == _OPTIMIZE_DEFAULTS["execution_mode"]
+        execution_mode == ExecutionMode.EDGE_ANALYTICS.value
         and "execution_mode" in _GLOBAL_CONFIG
     ):
         result: str = str(_GLOBAL_CONFIG["execution_mode"])
@@ -1458,6 +1623,7 @@ def _process_runtime_overrides(
     normalized_runtime_overrides = _normalize_runtime_override_aliases(
         runtime_overrides
     )
+    _warn_for_legacy_execution_options(set(normalized_runtime_overrides))
 
     for key, value in normalized_runtime_overrides.items():
         if key in _REMOVED_PARAMETERS:
@@ -1747,7 +1913,12 @@ def optimize(  # NOSONAR(S107)
     injection: InjectionOptions | dict[str, Any] | None = None,
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
+    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None = (
+        None
+    ),
     mock: MockModeOptions | dict[str, Any] | None = None,
+    algorithm: str = "auto",
+    offline: bool = False,
     strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     # Multi-agent configuration
@@ -2070,7 +2241,10 @@ def optimize(  # NOSONAR(S107)
         "injection": injection,
         "effectuation": effectuation,
         "execution": execution,
+        "evaluator": evaluator,
         "mock": mock,
+        "algorithm": algorithm,
+        "offline": offline,
         "agents": agents,
         "agent_prefixes": agent_prefixes,
         "agent_measures": agent_measures,
@@ -2147,23 +2321,19 @@ def optimize(  # NOSONAR(S107)
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
     effectuation = combined_settings["effectuation"]
-    execution_mode = combined_settings["execution_mode"]
-    hybrid_api_endpoint = combined_settings["hybrid_api_endpoint"]
-    tunable_id = combined_settings["tunable_id"]
-    hybrid_api_transport = combined_settings["hybrid_api_transport"]
-    hybrid_api_transport_type = combined_settings["hybrid_api_transport_type"]
-    hybrid_api_batch_size = combined_settings["hybrid_api_batch_size"]
-    hybrid_api_batch_parallelism = combined_settings["hybrid_api_batch_parallelism"]
-    hybrid_api_keep_alive = combined_settings["hybrid_api_keep_alive"]
-    hybrid_api_heartbeat_interval = combined_settings["hybrid_api_heartbeat_interval"]
-    hybrid_api_timeout = combined_settings["hybrid_api_timeout"]
-    hybrid_api_auth_header = combined_settings["hybrid_api_auth_header"]
-    hybrid_api_auto_discover_tvars = combined_settings["hybrid_api_auto_discover_tvars"]
-    cloud_fallback_policy = combined_settings["cloud_fallback_policy"]
+    algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
+    offline_value = combined_settings["offline"]
+    if not isinstance(offline_value, bool):
+        raise TypeError("offline must be a bool")
+    evaluator_value = combined_settings["evaluator"]
+    legacy_execution_options = {
+        key: combined_settings[key]
+        for key in _LEGACY_EXECUTION_OPTION_KEYS
+        if key in combined_settings
+    }
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
-    privacy_enabled = combined_settings["privacy_enabled"]
     max_total_examples = combined_settings["max_total_examples"]
     samples_include_pruned = combined_settings["samples_include_pruned"]
     mock_mode_config = combined_settings["mock_mode_config"]
@@ -2191,7 +2361,6 @@ def optimize(  # NOSONAR(S107)
         "best_config_stale_ok_ttl_seconds"
     ]
     enable_auto_load_dev_logs_value = combined_settings["enable_auto_load_dev_logs"]
-    algorithm_value = combined_settings["algorithm"]
     # Optimizer limits
     max_trials_value = combined_settings["max_trials"]
     if max_trials_value is not None and max_trials_value <= 0:
@@ -2267,50 +2436,64 @@ def optimize(  # NOSONAR(S107)
     )
 
     base_execution_options = ResolvedExecutionOptions(
-        execution_mode=execution_mode,
-        hybrid_api_endpoint=hybrid_api_endpoint,
-        tunable_id=tunable_id,
-        hybrid_api_transport=hybrid_api_transport,
-        hybrid_api_transport_type=hybrid_api_transport_type,
-        hybrid_api_batch_size=hybrid_api_batch_size,
-        hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
-        hybrid_api_keep_alive=hybrid_api_keep_alive,
-        hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
-        hybrid_api_timeout=hybrid_api_timeout,
-        hybrid_api_auth_header=hybrid_api_auth_header,
-        hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
-        cloud_fallback_policy=cloud_fallback_policy,
+        algorithm=algorithm_value,
+        offline=offline_value,
+        evaluator=evaluator_value,
         local_storage_path=local_storage_path,
         minimal_logging=minimal_logging,
         parallel_config=parallel_config,
-        privacy_enabled=privacy_enabled,
         max_total_examples=max_total_examples,
         samples_include_pruned=samples_include_pruned,
+        legacy_options=legacy_execution_options,
     )
     resolved_execution = _resolve_execution_bundle_options(
         execution_bundle,
         base_execution_options,
         defaults,
     )
-    execution_mode = resolved_execution.execution_mode
-    hybrid_api_endpoint = resolved_execution.hybrid_api_endpoint
-    tunable_id = resolved_execution.tunable_id
-    hybrid_api_transport = resolved_execution.hybrid_api_transport
-    hybrid_api_transport_type = resolved_execution.hybrid_api_transport_type
-    hybrid_api_batch_size = resolved_execution.hybrid_api_batch_size
-    hybrid_api_batch_parallelism = resolved_execution.hybrid_api_batch_parallelism
-    hybrid_api_keep_alive = resolved_execution.hybrid_api_keep_alive
-    hybrid_api_heartbeat_interval = resolved_execution.hybrid_api_heartbeat_interval
-    hybrid_api_timeout = resolved_execution.hybrid_api_timeout
-    hybrid_api_auth_header = resolved_execution.hybrid_api_auth_header
-    hybrid_api_auto_discover_tvars = resolved_execution.hybrid_api_auto_discover_tvars
-    cloud_fallback_policy = resolved_execution.cloud_fallback_policy
+    algorithm_value = validate_algorithm_name(resolved_execution.algorithm)
+    offline_value = resolved_execution.offline
+    if not isinstance(offline_value, bool):
+        raise TypeError("offline must be a bool")
+    evaluator_value = resolved_execution.evaluator
     local_storage_path = resolved_execution.local_storage_path
     minimal_logging = resolved_execution.minimal_logging
     parallel_config = resolved_execution.parallel_config
-    privacy_enabled = resolved_execution.privacy_enabled
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
+    legacy_execution_options = resolved_execution.legacy_options
+    external_service_evaluator = _resolve_external_service_evaluator(
+        evaluator_value,
+        legacy_execution_options,
+    )
+    hybrid_api_options = (
+        external_service_evaluator.hybrid_api
+        if external_service_evaluator is not None
+        else None
+    )
+    hybrid_api_endpoint = hybrid_api_options.endpoint if hybrid_api_options else None
+    tunable_id = hybrid_api_options.tunable_id if hybrid_api_options else None
+    hybrid_api_transport = hybrid_api_options.transport if hybrid_api_options else None
+    hybrid_api_transport_type = (
+        hybrid_api_options.transport_type if hybrid_api_options else "auto"
+    )
+    hybrid_api_batch_size = hybrid_api_options.batch_size if hybrid_api_options else 1
+    hybrid_api_batch_parallelism = (
+        hybrid_api_options.batch_parallelism if hybrid_api_options else 1
+    )
+    hybrid_api_keep_alive = (
+        hybrid_api_options.keep_alive if hybrid_api_options else True
+    )
+    hybrid_api_heartbeat_interval = (
+        hybrid_api_options.heartbeat_interval if hybrid_api_options else 30.0
+    )
+    hybrid_api_timeout = hybrid_api_options.timeout if hybrid_api_options else None
+    hybrid_api_auth_header = (
+        hybrid_api_options.auth_header if hybrid_api_options else None
+    )
+    hybrid_api_auto_discover_tvars = (
+        hybrid_api_options.auto_discover_tvars if hybrid_api_options else False
+    )
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
@@ -2352,6 +2535,20 @@ def optimize(  # NOSONAR(S107)
         )
 
     _validate_objectives(objectives)
+    execution_policy = _resolve_execution_policy_from_options(
+        algorithm=algorithm_value,
+        offline=offline_value,
+        legacy_options=legacy_execution_options,
+        source_hint="optimize",
+    )
+    runtime_execution_mode = _runtime_execution_mode_for_policy(
+        execution_policy,
+        external_service_evaluator,
+    )
+    runtime_algorithm_value = _runtime_algorithm_for_policy(
+        execution_policy,
+        external_service_evaluator,
+    )
 
     def decorator(func: Callable[..., Any]) -> OptimizedFunction:
         """Actual decorator function.
@@ -2368,18 +2565,13 @@ def optimize(  # NOSONAR(S107)
 
         resolved_schema = _resolve_objective_schema(objectives)
 
-        requested_execution_mode = execution_mode
-        actual_execution_mode = _resolve_actual_execution_mode(execution_mode)
+        requested_execution_mode = legacy_execution_options.get("execution_mode")
+        actual_execution_mode = runtime_execution_mode.value
 
         actual_injection_mode = _resolve_injection_mode_enum(injection_mode)
 
-        execution_mode_enum, effective_privacy_enabled = _resolve_execution_mode_enum(
-            actual_execution_mode, privacy_enabled
-        )
-        actual_execution_mode = execution_mode_enum.value
-
         _log_execution_mode_warnings(
-            execution_mode_enum,
+            runtime_execution_mode,
             actual_execution_mode,
             local_storage_path,
             minimal_logging,
@@ -2443,7 +2635,7 @@ def optimize(  # NOSONAR(S107)
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
             configuration_space=resolved_configuration_space,
-            algorithm=algorithm_value,
+            algorithm=runtime_algorithm_value,
             default_config=resolved_default_config,
             constraints=normalized_constraints,
             safety_constraints=safety_constraints,
@@ -2452,7 +2644,7 @@ def optimize(  # NOSONAR(S107)
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
             effectuation=bool(effectuation),
-            execution_mode=execution_mode_enum,
+            execution_mode=runtime_execution_mode,
             hybrid_api_endpoint=hybrid_api_endpoint,
             tunable_id=tunable_id,
             hybrid_api_transport=hybrid_api_transport,
@@ -2464,13 +2656,11 @@ def optimize(  # NOSONAR(S107)
             hybrid_api_timeout=hybrid_api_timeout,
             hybrid_api_auth_header=hybrid_api_auth_header,
             hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
-            cloud_fallback_policy=cloud_fallback_policy,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
             parallel_config=combined_parallel_config,
-            privacy_enabled=effective_privacy_enabled,
             mock_mode_config=mock_mode_config,
             custom_evaluator=custom_evaluator,
             scoring_function=scoring_function,
@@ -2505,6 +2695,10 @@ def optimize(  # NOSONAR(S107)
             skill_train=skill_train,
             **combined_runtime_overrides,
         )
+        optimized_func.execution_policy = execution_policy
+        optimized_func.external_service_evaluator = external_service_evaluator
+        optimized_func.hybrid_api_options = hybrid_api_options
+        optimized_func.offline = execution_policy.offline
 
         effective_name = experiment_name_value or func.__name__
         logger.info(

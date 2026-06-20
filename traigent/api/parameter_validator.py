@@ -11,7 +11,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
-from traigent.config.types import ExecutionMode, InjectionMode, validate_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    InjectionMode,
+    ResolvedExecutionPolicy,
+    resolve_execution_policy,
+    validate_algorithm_name,
+    validate_execution_mode,
+)
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
@@ -34,7 +41,10 @@ class OptimizeParameters:
     config_param: str | None = None
     auto_override_frameworks: bool = False  # Requires traigent-integrations plugin
     framework_targets: list[str] | None = None
-    execution_mode: str | ExecutionMode = ExecutionMode.EDGE_ANALYTICS
+    algorithm: str = "auto"
+    offline: bool = False
+    execution_policy: ResolvedExecutionPolicy | None = None
+    execution_mode: str | ExecutionMode | None = None
     local_storage_path: str | None = None
     minimal_logging: bool = True
     privacy_enabled: bool | None = None
@@ -44,11 +54,6 @@ class OptimizeParameters:
 class ParameterValidator:
     """Validates and normalizes parameters for the optimize decorator."""
 
-    VALID_EXECUTION_MODES = {
-        ExecutionMode.EDGE_ANALYTICS.value,
-        ExecutionMode.HYBRID.value,
-        ExecutionMode.HYBRID_API.value,
-    }
     VALID_INJECTION_MODES = {
         InjectionMode.CONTEXT,
         InjectionMode.PARAMETER,
@@ -69,8 +74,9 @@ class ParameterValidator:
             ValidationError: If any parameter is invalid
         """
         # Validate individual parameter groups
-        privacy_alias_requested = self._is_privacy_alias(params.execution_mode)
-        execution_mode_enum = self._validate_execution_mode(params.execution_mode)
+        params.algorithm = self._validate_algorithm(params.algorithm)
+        self._validate_offline(params.offline)
+        params.execution_policy = self._resolve_execution_policy(params)
         self._validate_injection_mode(params.injection_mode)
         self._validate_dataset(params.eval_dataset)
         self._validate_objectives(params.objectives)
@@ -80,9 +86,7 @@ class ParameterValidator:
 
         # Normalize parameters
         params.injection_mode = self._normalize_injection_mode(params.injection_mode)
-        if privacy_alias_requested and params.privacy_enabled is None:
-            params.privacy_enabled = True
-        params.execution_mode = execution_mode_enum.value
+        params.execution_mode = params.execution_policy.legacy_execution_mode.value
 
         return params
 
@@ -95,17 +99,46 @@ class ParameterValidator:
     def _validate_execution_mode(
         self, execution_mode: str | ExecutionMode
     ) -> ExecutionMode:
-        """Validate execution mode parameter."""
+        """Validate deprecated execution mode parameter."""
         from traigent.utils.exceptions import ConfigurationError
 
         try:
             return validate_execution_mode(execution_mode)
         except (TypeError, ValueError, ConfigurationError) as exc:
-            valid_modes = ", ".join(sorted(self.VALID_EXECUTION_MODES))
             raise ValidationError(
                 f"Invalid execution_mode '{execution_mode}'. {exc}. "
-                f"Valid modes: {valid_modes}"
+                "Use algorithm='auto'|'grid'|'random' and offline=True for no egress."
             ) from exc
+
+    def _validate_algorithm(self, algorithm: str) -> str:
+        """Validate the algorithm selector."""
+        try:
+            return validate_algorithm_name(algorithm)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(str(exc)) from exc
+
+    @staticmethod
+    def _validate_offline(offline: bool) -> None:
+        """Validate offline flag."""
+        if not isinstance(offline, bool):
+            raise ValidationError("offline must be a bool")
+
+    def _resolve_execution_policy(
+        self, params: OptimizeParameters
+    ) -> ResolvedExecutionPolicy:
+        """Resolve policy from new controls plus deprecated legacy fields."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        try:
+            return resolve_execution_policy(
+                algorithm=params.algorithm,
+                offline=params.offline,
+                execution_mode=params.execution_mode,
+                privacy_enabled=params.privacy_enabled,
+                source_hint="parameter_validator",
+            )
+        except (TypeError, ValueError, ConfigurationError) as exc:
+            raise ValidationError(str(exc)) from exc
 
     def _validate_injection_mode(self, injection_mode: str | InjectionMode) -> None:
         """Validate injection mode parameter."""

@@ -242,6 +242,11 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.api.strategy_presets",
         "select_strategy_preset",
     ),
+    "ExternalServiceEvaluator": (
+        "traigent.api.decorators",
+        "ExternalServiceEvaluator",
+    ),
+    "HybridAPIOptions": ("traigent.api.decorators", "HybridAPIOptions"),
     "ConstraintValidator": (
         "traigent.api.validation_protocol",
         "ConstraintValidator",
@@ -263,6 +268,12 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     # Context and config helpers
     "copy_context_to_thread": ("traigent.config.context", "copy_context_to_thread"),
     "get_trial_context": ("traigent.config.context", "get_trial_context"),
+    "ExecutionIntent": ("traigent.config.types", "ExecutionIntent"),
+    "ExecutionMode": ("traigent.config.types", "ExecutionMode"),
+    "ResolvedExecutionPolicy": (
+        "traigent.config.types",
+        "ResolvedExecutionPolicy",
+    ),
     "TraigentConfig": ("traigent.config.types", "TraigentConfig"),
     "TraigentMetadata": ("traigent.core.meta_types", "TraigentMetadata"),
     "is_traigent_metadata": ("traigent.core.meta_types", "is_traigent_metadata"),
@@ -500,7 +511,12 @@ __all__ = [
     "set_strategy",
     "with_usage",  # New: wrap multi-agent workflow responses with usage metadata
     # Configuration types
+    "ExecutionIntent",
+    "ExecutionMode",
+    "ResolvedExecutionPolicy",
     "TraigentConfig",
+    "ExternalServiceEvaluator",
+    "HybridAPIOptions",
     # Lifecycle and state
     "OptimizationState",
     # Thread context helpers

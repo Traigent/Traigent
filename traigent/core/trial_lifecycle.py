@@ -121,8 +121,14 @@ class TrialLifecycle:
             config = orchestrator._apply_knob_resolution(config)
         if config is None:
             try:
-                config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
-                config = orchestrator._apply_knob_resolution(config)
+                suggest_next = getattr(orchestrator, "_suggest_next_trial_config", None)
+                if callable(suggest_next):
+                    config = await suggest_next(dataset)
+                else:
+                    config = orchestrator.optimizer.suggest_next_trial(
+                        orchestrator._trials
+                    )
+                    config = orchestrator._apply_knob_resolution(config)
             except OptimizationError:
                 raise
             except (ValueError, TypeError, KeyError, AttributeError) as e:
@@ -217,7 +223,7 @@ class TrialLifecycle:
         try:
             trial_result = await self.run_trial(
                 func,
-                config_for_run,
+                config,
                 dataset,
                 trial_count,
                 session_id,
@@ -286,8 +292,17 @@ class TrialLifecycle:
         """
         # Phase 1: Setup trial context
         optuna_trial_id = extract_optuna_trial_id(config, optuna_trial_id)
-        trial_id = self._generate_trial_id(
-            config, trial_number, session_id, dataset, optuna_trial_id
+        backend_trial_id = (
+            config.get("_traigent_backend_trial_id")
+            if isinstance(config, dict)
+            else None
+        )
+        trial_id = (
+            str(backend_trial_id)
+            if isinstance(backend_trial_id, str) and backend_trial_id
+            else self._generate_trial_id(
+                config, trial_number, session_id, dataset, optuna_trial_id
+            )
         )
 
         start_time = time.time()
@@ -306,6 +321,9 @@ class TrialLifecycle:
                 func=func,
                 dataset=dataset,
                 trial_id=trial_id,
+                backend_trial_id=(
+                    backend_trial_id if isinstance(backend_trial_id, str) else None
+                ),
                 evaluation_config=evaluation_config,
                 start_time=start_time,
                 optuna_trial_id=optuna_trial_id,
@@ -320,6 +338,7 @@ class TrialLifecycle:
         func: Callable[..., Any],
         dataset: Dataset,
         trial_id: str,
+        backend_trial_id: str | None,
         evaluation_config: dict[str, Any],
         start_time: float,
         optuna_trial_id: int | None,
@@ -401,6 +420,11 @@ class TrialLifecycle:
                     lambda: frozenset(),
                 )(),
             )
+            if isinstance(backend_trial_id, str) and backend_trial_id:
+                metadata = dict(result.metadata or {})
+                metadata["backend_trial_id_acquired"] = True
+                metadata["backend_trial_id_source"] = "cloud_brain"
+                result.metadata = metadata
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
 

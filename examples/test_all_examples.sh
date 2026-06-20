@@ -309,7 +309,7 @@ failed_list=()
 case "$MODE" in
     --mock)
         export TRAIGENT_MOCK_LLM=true
-        export TRAIGENT_OFFLINE_MODE=true
+        export TRAIGENT_OFFLINE=1
         export TRAIGENT_PAUSE_ON_ERROR=false
         export TRAIGENT_BATCH_MODE=true
         export TRAIGENT_COST_APPROVED=true

@@ -12,6 +12,12 @@ from traigent.cloud.session_operations import SessionOperations
 from traigent.utils.exceptions import ValidationError as ValidationException
 
 
+@pytest.fixture(autouse=True)
+def _backend_enabled_for_session_operations(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+
+
 class TrackingLock:
     """Lock stub that records entry count."""
 

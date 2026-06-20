@@ -45,7 +45,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "prompt-ab-test"
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
@@ -281,7 +281,7 @@ def _mock_qa_answer(question: str) -> str:
         "model": MODEL_CHOICES,
         "temperature": TEMPERATURE_CHOICES,
     },
-    execution_mode="edge_analytics",
+    offline=True,
     parallel_config=GLOBAL_PARALLEL_CONFIG,
 )
 def qa_with_variant(question: str) -> str:

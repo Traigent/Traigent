@@ -13,7 +13,9 @@ try:  # pragma: no cover - allow direct execution
 except ImportError:  # pragma: no cover
     import sys
 
-    sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).resolve().parents[3])))
+    sys.path.insert(
+        0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).resolve().parents[3]))
+    )
     import traigent
 
 from traigent.metrics import configure_ragas_defaults  # noqa: E402
@@ -107,7 +109,7 @@ _HEDGED_RESPONSES = {
         "evidence_policy": ["cite_context", "omit_context"],
         "answer_style": ["succinct", "speculative"],
     },
-    execution_mode="edge_analytics",
+    offline=True,
     metric_functions=_METRIC_FUNCTIONS,
 )
 def answer_question(question: str) -> str:

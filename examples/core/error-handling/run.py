@@ -59,7 +59,7 @@ DATASET = str(DATASET_PATH)
 
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception as exc:  # noqa: BLE001
         print(f"Warning: Traigent mock initialization skipped: {exc}")
 
@@ -117,7 +117,7 @@ def _mock_answer(text: str) -> str:
         "temperature": [0.0, 0.7],
     },
     injection_mode="seamless",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def explain_concept(text: str) -> str:
     """Explain a technical concept."""
@@ -150,7 +150,7 @@ async def demo_invalid_config():
                 "model": "not-a-list",  # Must be a list - this triggers ValueError
             },
             injection_mode="seamless",
-            execution_mode="edge_analytics",
+            offline=True,
         )
         def bad_function(text: str) -> str:
             return text

@@ -1,6 +1,6 @@
 # Examples 02–10: Story-Driven Drafts (One Feature Each)
 
-- All examples run in Edge Analytics mode (execution_mode: "edge_analytics").
+- All examples run with `offline=True` unless they explicitly demonstrate cloud-first auto.
 - Each example tunes 2–3 dimensions via configuration_space.
 - Injection modes showcased across the set: context, parameter, seamless.
 - Batch/parallel settings are shown where relevant.
@@ -13,7 +13,7 @@
 - Hook: "Ever fought over which k and selection strategy make your few-shot prompt actually work?"
 - Use-case: Sentiment classification for ambiguous short texts.
 - Feature: Few-shot prompting via parameter injection.
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: parameter (config_param: "config")
 - Algorithm: grid
 - Dimensions:
@@ -31,7 +31,7 @@
 - Hook: "Balancing accuracy against cost and tokens—what’s the sweet spot for your QA?"
 - Use-case: Short QA with budget sensitivity.
 - Feature: Multi-objective optimization (accuracy vs cost).
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: seamless (auto_override_frameworks=True)
 - Algorithm: bayesian
 - Dimensions:
@@ -49,7 +49,7 @@
 - Hook: "Need tight summaries under a strict token budget without losing key facts?"
 - Use-case: Meeting-note summarization with keyphrase retention.
 - Feature: Token budget control (parameter injection of `max_tokens`).
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: context (default)
 - Algorithm: random
 - Dimensions:
@@ -67,7 +67,7 @@
 - Hook: "Struggling to get clean, valid JSON back from messy text?"
 - Use-case: Field extraction from mini-invoice snippets.
 - Feature: Custom measure (custom evaluator) for JSON validity and field accuracy.
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: seamless (auto framework override)
 - Algorithm: grid
 - Dimensions:
@@ -85,7 +85,7 @@
 - Hook: "Tired of arithmetic slips? Toggle tool use and watch math answers stabilize."
 - Use-case: Basic math QA that benefits from a calculator.
 - Feature: Parameter injection (toggle tool use) + strategy API usage.
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: parameter (config_param: "config")
 - Algorithm: random (via strategy object)
 - Dimensions:
@@ -103,7 +103,7 @@
 - Hook: "Battling tone and style? Bullet points or narrative—let the data decide."
 - Use-case: Email drafting with explicit style requirements.
 - Feature: Seamless injection (style/tone parameters injected without function signature changes).
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: seamless
 - Algorithm: bayesian
 - Dimensions:
@@ -121,7 +121,7 @@
 - Hook: "Long docs, shallow answers? Tune chunking and top_k to lift grounded QA."
 - Use-case: Long-context QA over multiple documents.
 - Feature: RAG pipeline chunking/windowing optimization.
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: context (default)
 - Algorithm: grid
 - Dimensions:
@@ -139,7 +139,7 @@
 - Hook: "Need consistent refusals on unsafe prompts without over-blocking legit queries?"
 - Use-case: Refusal behavior on toxic/PII prompts.
 - Feature: Custom measure (custom evaluator) for refusal correctness; policy strength tuning.
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: context (default)
 - Algorithm: random
 - Dimensions:
@@ -157,7 +157,7 @@
 - Hook: "Prompt A vs B—stop guessing; run an A/B that picks a winner."
 - Use-case: Choosing the best performing prompt template for QA.
 - Feature: Prompt template selection via parameter injection.
-- Execution: Edge Analytics
+- Execution: Offline local
 - Injection: context (default)
 - Algorithm: grid
 - Dimensions:
@@ -172,10 +172,10 @@
 ---
 
 ## Coverage Matrix (Quick Check)
-- Execution Mode: All "edge_analytics" ✅
+- Execution: Offline local by default
 - Injection Modes: context (04,08,09,10), parameter (02,06), seamless (03,05,07) ✅
 - Parallel/Batch: example_concurrency (04), trial_concurrency (03,06,08,10) ✅
 - Multi-Objective: 03 ✅
 - Custom Measure: 05, 09 ✅
 - Search Strategies: grid (02,05,08,10), random (04,06,09), bayesian (03,07) ✅
-- Optimize API Surface: decorator kwargs (algorithm, execution_mode, parallel_config) and runtime overrides ✅
+- Optimize API Surface: decorator kwargs (algorithm, offline, parallel_config) and runtime overrides

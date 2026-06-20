@@ -30,7 +30,12 @@ from pathlib import Path
 import numpy as np
 
 # Add project root to path for imports
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)))
+sys.path.insert(
+    0,
+    os.environ.get(
+        "TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)
+    ),
+)
 
 try:
     import traigent
@@ -183,7 +188,7 @@ def _create_dummy_eval_dataset() -> str:
         "-selection_latency_ms",  # Secondary: minimize latency
         "diversity_score",  # Secondary: maximize diversity
     ],  # We want to maximize our primary objectives
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_few_shot_selection(
     selection_method: str = "random",
@@ -225,7 +230,6 @@ def run_baseline_comparison(tasks: list[FewShotTask]) -> dict[str, dict[str, flo
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-
         for name, strategy in baseline_strategies.items():
             task = progress.add_task(f"Running {name}...", total=1)
 
@@ -274,7 +278,7 @@ def display_results(
         table.add_row(
             f"{name.replace('_', ' ').title()}",
             f"{results['accuracy']:.3f}",
-            f"{results.get('consistency', 1-results['variance']):.3f}",
+            f"{results.get('consistency', 1 - results['variance']):.3f}",
             f"{results['selection_latency_ms']:.1f}",
             f"{results['diversity_score']:.3f}",
             status,
@@ -434,10 +438,10 @@ async def main() -> None:
     # Configure Traigent optimization
     # traigent.configure(
     #     evaluator=evaluation_function,
-    #     execution_mode="edge_analytics",  # Run in Edge Analytics mode for demo
+    #     offline=True,  # Run locally for demo
     #     verbose=True
     # )
-    # Note: evaluator, execution_mode, and verbose parameters don't exist in traigent.configure() API
+    # Note: evaluator and verbose parameters don't exist in traigent.configure() API
 
     console.print("\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print(
@@ -447,7 +451,8 @@ async def main() -> None:
     # Run the optimization
     try:
         optimization_results = await optimize_few_shot_selection.optimize(
-            max_trials=100, timeout=1800  # 30 minutes
+            max_trials=100,
+            timeout=1800,  # 30 minutes
         )
 
         # Display results

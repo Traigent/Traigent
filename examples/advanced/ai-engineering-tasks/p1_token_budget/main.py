@@ -31,7 +31,12 @@ from pathlib import Path
 from typing import Any
 
 # Add project root to path for imports
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)))
+sys.path.insert(
+    0,
+    os.environ.get(
+        "TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)
+    ),
+)
 
 try:
     import traigent
@@ -176,7 +181,7 @@ def _create_dummy_eval_dataset() -> str:
         "token_utilization",  # Secondary: efficient token usage
         "-avg_processing_time_ms",  # Secondary: minimize latency
     ],  # We want to maximize our primary objectives
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_token_budget(
     allocation_strategy: str = "importance_weighted",
@@ -223,7 +228,6 @@ def run_baseline_comparison(
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-
         for baseline_config in baseline_configs:
             name = baseline_config.pop("name")
             task = progress.add_task(f"Running {name}...", total=1)
@@ -328,7 +332,9 @@ def display_results(
         content_status = (
             "✅"
             if content_preservation >= 0.85
-            else "⚠️" if content_preservation >= 0.75 else "❌"
+            else "⚠️"
+            if content_preservation >= 0.75
+            else "❌"
         )
         console.print(
             f"{content_status} Content Preservation: {content_preservation:.1%} (target: ≥85%)"
@@ -339,7 +345,9 @@ def display_results(
         efficiency_status = (
             "✅"
             if token_efficiency >= 1000
-            else "⚠️" if token_efficiency >= 500 else "❌"
+            else "⚠️"
+            if token_efficiency >= 500
+            else "❌"
         )
         console.print(
             f"{efficiency_status} Token Efficiency: {token_efficiency:.0f} (target: ≥1000)"
@@ -524,7 +532,8 @@ async def main() -> None:
     # Run the optimization
     try:
         optimization_results = await optimize_token_budget.optimize(
-            max_trials=120, timeout=2400  # 40 minutes
+            max_trials=120,
+            timeout=2400,  # 40 minutes
         )
 
         # Display results

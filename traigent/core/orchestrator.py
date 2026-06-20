@@ -53,6 +53,15 @@ from traigent.core.cost_enforcement import (
 )
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import VendorErrorCategory
+from traigent.core.execution_policy_runtime import (
+    CloudBrainUnavailableError,
+    SOURCE_CLOUD_BRAIN,
+    SOURCE_LOCAL_FALLBACK,
+    backend_egress_disabled,
+    is_offline_requested,
+    policy_from_config,
+    policy_is_cloud_brain,
+)
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
@@ -93,7 +102,6 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import OptimizationError, VendorPauseError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
@@ -648,7 +656,27 @@ class OptimizationOrchestrator:
 
     def _initialize_backend_client(self) -> BackendIntegratedClient | None:
         """Initialize backend client. Delegates to BackendSessionManager."""
+        if backend_egress_disabled(self.traigent_config):
+            return None
         return BackendSessionManager.create_backend_client(self.traigent_config)
+
+    def _is_cloud_brain_run(self) -> bool:
+        """Whether this orchestrator is running cloud-brain guidance."""
+
+        return bool(
+            policy_is_cloud_brain(policy_from_config(self.traigent_config))
+            and getattr(self.traigent_config, "result_source", None)
+            == SOURCE_CLOUD_BRAIN
+            and not backend_egress_disabled(self.traigent_config)
+        )
+
+    def _optimizer_uses_remote_guidance(self) -> bool:
+        """Whether the active optimizer would call remote next-trial guidance."""
+
+        return bool(
+            getattr(self.optimizer, "remote_service", None) is not None
+            and callable(getattr(self.optimizer, "get_next_suggestion", None))
+        )
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
@@ -672,6 +700,7 @@ class OptimizationOrchestrator:
         self._trials_prevented = 0
         self._examples_capped = 0
         self._cached_results_reused = 0
+        self._cloud_guidance_client: Any | None = None
         self._ci_blocks = 0
         self._successful_trials = 0
         self._failed_trials = 0
@@ -1181,6 +1210,18 @@ class OptimizationOrchestrator:
     async def _cleanup_backend_client(self) -> None:
         """Close backend HTTP session if one was opened."""
 
+        guidance_client = getattr(self, "_cloud_guidance_client", None)
+        if guidance_client is not None:
+            closer = getattr(guidance_client, "close", None)
+            if callable(closer):
+                try:
+                    result = closer()
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as exc:
+                    logger.debug("Cloud guidance client cleanup failed: %s", exc)
+            self._cloud_guidance_client = None
+
         client = self.backend_client
         if client is None:
             return
@@ -1558,6 +1599,38 @@ class OptimizationOrchestrator:
             )
         return dict(resolved.config)
 
+    async def _suggest_next_trial_config(self, dataset: Dataset) -> dict[str, Any]:
+        """Get the next trial config, using async cloud guidance when available."""
+
+        if self._optimizer_uses_remote_guidance() and (
+            backend_egress_disabled(self.traigent_config)
+            or getattr(self.traigent_config, "result_source", None)
+            == SOURCE_LOCAL_FALLBACK
+        ):
+            reason = (
+                getattr(self.traigent_config, "fallback_reason", None)
+                or self.backend_session_manager.fallback_reason
+                or "backend egress disabled"
+            )
+            raise CloudBrainUnavailableError("next-trial", str(reason))
+
+        remote_context = {
+            "privacy_enabled": getattr(self.traigent_config, "privacy_enabled", False),
+            "mode": (
+                SOURCE_CLOUD_BRAIN
+                if self._is_cloud_brain_run()
+                else self.traigent_config.execution_mode
+            ),
+            "dataset_size": len(dataset),
+            "session_id": self._active_session_id,
+            "completed_trials": len(self._trials),
+        }
+        config = await self.optimizer.suggest_next_trial_async(
+            self._trials,
+            remote_context=remote_context,
+        )
+        return self._apply_knob_resolution(config)
+
     def _build_trial_descriptors(
         self,
         configs: list[dict[str, Any]],
@@ -1581,9 +1654,9 @@ class OptimizationOrchestrator:
             cfg_eval = prepare_evaluation_config(cfg_copy)
 
             ds_for_trial = dataset
-            if isinstance(cfg_eval, dict) and "__subset_indices__" in cfg_eval:
+            if isinstance(cfg_copy, dict) and "__subset_indices__" in cfg_copy:
                 try:
-                    idxs = list(cfg_eval.pop("__subset_indices__"))
+                    idxs = list(cfg_copy.get("__subset_indices__") or [])
                     examples = [
                         dataset.examples[j]
                         for j in idxs
@@ -1683,7 +1756,7 @@ class OptimizationOrchestrator:
             tasks.append(
                 self._trial_lifecycle.run_trial(
                     func,
-                    cfg_eval,
+                    cfg,
                     ds_for_trial,
                     trial_index,
                     session_id,
@@ -1983,8 +2056,8 @@ class OptimizationOrchestrator:
         if not self.traigent_config.enable_usage_analytics:
             return
 
-        if is_backend_offline():
-            logger.debug("Skipping analytics submission: backend is offline")
+        if backend_egress_disabled(self.traigent_config):
+            logger.debug("Skipping analytics submission: backend egress is disabled")
             return
 
         try:
@@ -2004,6 +2077,8 @@ class OptimizationOrchestrator:
 
     async def _submit_workflow_traces(self, session_id: str | None = None) -> None:
         """Submit collected workflow traces. Delegates to WorkflowTraceManager."""
+        if backend_egress_disabled(self.traigent_config):
+            return
         await self._workflow_trace_manager.submit_traces(session_id)
 
     def _initialize_optimization_run(
@@ -2077,6 +2152,11 @@ class OptimizationOrchestrator:
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
+        self._bind_interactive_optimizer_session(
+            session_id=session_id,
+            function_name=experiment_display_name or descriptor.identifier,
+            dataset=dataset,
+        )
 
         if session_id:
             self._initialize_logger(
@@ -2093,6 +2173,65 @@ class OptimizationOrchestrator:
         )
 
         return session_id
+
+    def _bind_interactive_optimizer_session(
+        self,
+        *,
+        session_id: str | None,
+        function_name: str,
+        dataset: Dataset,
+    ) -> None:
+        """Bind a backend-created session to InteractiveOptimizer."""
+
+        if (
+            self._optimizer_uses_remote_guidance()
+            and getattr(self.traigent_config, "result_source", None)
+            == SOURCE_LOCAL_FALLBACK
+        ):
+            reason = (
+                getattr(self.traigent_config, "fallback_reason", None)
+                or self.backend_session_manager.fallback_reason
+                or "backend session creation failed"
+            )
+            raise CloudBrainUnavailableError("session-create", str(reason))
+
+        if not self._is_cloud_brain_run():
+            return
+
+        if not session_id or not self.backend_session_manager.backend_tracking_enabled:
+            raise CloudBrainUnavailableError(
+                "session-create",
+                "backend session was not created",
+            )
+
+        try:
+            from traigent.cloud.models import (
+                OptimizationSession,
+                OptimizationSessionStatus,
+            )
+        except ModuleNotFoundError as exc:  # pragma: no cover - optional install guard
+            raise CloudBrainUnavailableError(
+                "session-create",
+                "cloud models are unavailable",
+                original=exc,
+            ) from exc
+
+        self.optimizer.session = OptimizationSession(
+            session_id=session_id,
+            function_name=function_name,
+            configuration_space=getattr(self.optimizer, "config_space", {}) or {},
+            objectives=list(getattr(self.optimizer, "objectives", []) or []),
+            max_trials=self.max_trials if self.max_trials is not None else 10,
+            status=OptimizationSessionStatus.ACTIVE,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            metadata={
+                "dataset_size": len(dataset),
+                "source": SOURCE_CLOUD_BRAIN,
+            },
+        )
+        self.optimizer.session_id = session_id
+        self.optimizer._start_time = time.time()
 
     @property
     def max_trials(self) -> int | None:
@@ -2147,6 +2286,11 @@ class OptimizationOrchestrator:
         identifier = function_name or (
             descriptor.identifier if descriptor is not None else "unknown_function"
         )
+
+        if backend_egress_disabled(self.traigent_config):
+            mock_session_id = f"mock-session-{self._optimization_id[:8]}"
+            logger.debug("Created local-only mock session: %s", mock_session_id)
+            return mock_session_id
 
         if self.backend_client:
             # Ensure max_trials is not None
@@ -2531,31 +2675,54 @@ class OptimizationOrchestrator:
                 exc_info=True,
             )
 
-        await self.backend_session_manager.update_weighted_scores(result, session_id)
-        self.backend_session_manager.submit_session_aggregation(result, session_id)
-
-        session_summary = self.backend_session_manager.finalize_session(
-            session_id,
-            self._status,
-            certified_selection=self._build_certified_selection_report(),
-        )
-        self.backend_session_manager.attach_session_metadata(
-            result, session_id, session_summary
-        )
-
-        # Populate experiment_id and cloud_url from session metadata
-        exp_id = (result.metadata or {}).get("experiment_id")
-        if exp_id:
-            result.experiment_id = exp_id
+        persistence_status = "skipped"
+        if (
+            self.backend_session_manager.backend_tracking_enabled
+            and not backend_egress_disabled(self.traigent_config)
+            and session_id is not None
+        ):
             try:
-                from traigent.cloud.sync_manager import build_experiment_url
-                from traigent.config.backend_config import BackendConfig
-
-                result.cloud_url = build_experiment_url(
-                    BackendConfig.get_cloud_backend_url(), exp_id
+                await self.backend_session_manager.update_weighted_scores(
+                    result, session_id
                 )
+                self.backend_session_manager.submit_session_aggregation(
+                    result, session_id
+                )
+
+                session_summary = self.backend_session_manager.finalize_session(
+                    session_id,
+                    self._status,
+                    certified_selection=self._build_certified_selection_report(),
+                )
+                self.backend_session_manager.attach_session_metadata(
+                    result, session_id, session_summary
+                )
+                persistence_status = "succeeded"
             except Exception as exc:
-                logger.debug("Cloud URL construction failed: %s", exc)
+                persistence_status = "failed"
+                result.metadata["persistence_error"] = str(exc)
+                logger.warning(
+                    "Backend persistence failed after optimization; keeping result "
+                    "source=%s and marking persistence_status=failed: %s",
+                    result.source,
+                    exc,
+                )
+
+            # Populate experiment_id and cloud_url from session metadata
+            exp_id = (result.metadata or {}).get("experiment_id")
+            if exp_id:
+                result.experiment_id = exp_id
+                try:
+                    from traigent.cloud.sync_manager import build_experiment_url
+                    from traigent.config.backend_config import BackendConfig
+
+                    result.cloud_url = build_experiment_url(
+                        BackendConfig.get_cloud_backend_url(), exp_id
+                    )
+                except Exception as exc:
+                    logger.debug("Cloud URL construction failed: %s", exc)
+        result.metadata["persistence_status"] = persistence_status
+        self.traigent_config.persistence_status = persistence_status
 
         await self._submit_usage_analytics()
 
@@ -2570,7 +2737,8 @@ class OptimizationOrchestrator:
         # is the final, unmissable summary tied to the result's source marker).
         if self.backend_session_manager.backend_degraded:
             logger.warning(
-                "⚠️  Optimization %s finished in LOCAL-ONLY mode (source='local'): "
+                "⚠️  Optimization %s finished in LOCAL-ONLY mode "
+                "(source='local_fallback'): "
                 "the Traigent backend was unreachable during the run, so results "
                 "were computed and stored locally and are NOT on the cloud "
                 "backend. They will sync on the next successful run.",
@@ -2963,7 +3131,7 @@ class OptimizationOrchestrator:
             )
 
         # Flag offline mode so callbacks can show appropriate hints
-        if is_backend_offline():
+        if is_offline_requested(policy_from_config(self.traigent_config)):
             metadata["offline_mode"] = True
 
         return metadata
@@ -3105,6 +3273,16 @@ class OptimizationOrchestrator:
         # backend-tracking run degraded to local-only mid-flight.
         source = self.backend_session_manager.result_source(len(self._trials))
         result_metadata["source"] = source
+        fallback_reason = (
+            getattr(self.traigent_config, "fallback_reason", None)
+            or self.backend_session_manager.fallback_reason
+        )
+        if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
+            result_metadata["fallback_reason"] = fallback_reason
+        if getattr(self.traigent_config, "persistence_status", None):
+            result_metadata["persistence_status"] = (
+                self.traigent_config.persistence_status
+            )
 
         # Create optimization result
         optimization_result = OptimizationResult(

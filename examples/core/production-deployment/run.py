@@ -64,7 +64,7 @@ SAVED_CONFIG_PATH = CONFIG_DIR / "best_config.json"
 
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception as exc:  # noqa: BLE001
         print(f"Warning: Traigent mock initialization skipped: {exc}")
 
@@ -128,7 +128,7 @@ def _mock_answer(query: str) -> str:
         "max_tokens": [256, 512, 1024],
     },
     injection_mode="seamless",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_query(query: str) -> str:
     """Answer a customer support query using the current configuration."""

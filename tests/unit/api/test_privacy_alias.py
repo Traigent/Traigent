@@ -3,7 +3,7 @@ from __future__ import annotations
 from traigent.api.decorators import optimize
 
 
-def test_decorator_privacy_alias_maps_to_hybrid():
+def test_decorator_privacy_alias_maps_to_cloud_brain_policy():
     @optimize(
         configuration_space={"x": [1]},
         objectives=["accuracy"],
@@ -12,12 +12,9 @@ def test_decorator_privacy_alias_maps_to_hybrid():
     def f(v: int) -> int:
         return v
 
-    # execution_mode should map to hybrid with privacy
-    assert getattr(f, "execution_mode", None) in (
-        "hybrid",
-        "privacy",
-        None,
-    )  # compat: some wrappers may store different values
+    assert f.execution_policy.intent.value == "cloud_brain"
+    assert f.execution_policy.offline is False
+    assert getattr(f, "execution_mode", None) == "hybrid"
 
     # The optimized function exposes traigent_config on optimize() path; just ensure callable and configured
     async def run():
