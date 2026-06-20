@@ -22,14 +22,11 @@ from utils.mock_answers import (
 )
 
 import traigent
-from traigent import TraigentConfig
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -84,7 +81,7 @@ def mock_accuracy_score(
     scoring_function=mock_accuracy_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
-    execution_mode="edge_analytics",
+    offline=True,
     mock_mode_config=MOCK_MODE_CONFIG,
 )
 def ai_agent_classify_text_sentiment(text: str) -> str:
@@ -141,4 +138,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

@@ -106,7 +106,7 @@ def _greeting_accuracy(
     eval_dataset=DATASET_FILE,
     objectives=["cost", "accuracy"],
     metric_functions={"accuracy": _greeting_accuracy},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def my_llm_function(prompt: str) -> str:

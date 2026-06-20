@@ -125,7 +125,7 @@ def _contains_accuracy(
     eval_dataset=DATASET,
     objectives=["accuracy", "cost"],
     metric_functions={"accuracy": _contains_accuracy},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def answer_with_context(context: str, question: str) -> str:

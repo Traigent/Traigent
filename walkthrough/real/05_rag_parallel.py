@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 5: RAG Optimization - Parallel evaluation (default on).
 
 Usage (run in a terminal from repo root, works without activating venv):
@@ -50,7 +51,7 @@ logging.getLogger("tokencost.costs").setLevel(logging.ERROR)
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -104,7 +105,7 @@ def get_vectorstore() -> FAISS:
     scoring_function=semantic_overlap_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def rag_qa(question: str) -> str:
     """RAG question answering."""
@@ -199,4 +200,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

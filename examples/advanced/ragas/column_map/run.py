@@ -12,7 +12,9 @@ try:  # pragma: no cover - allow direct execution
 except ImportError:  # pragma: no cover
     import sys
 
-    sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).resolve().parents[3])))
+    sys.path.insert(
+        0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).resolve().parents[3]))
+    )
     import traigent
 
 from traigent.metrics import configure_ragas_defaults  # noqa: E402
@@ -39,7 +41,7 @@ _RESPONSES = {
         "strategy": ["lookup", "summary_report"],
         "tone": ["concise", "storytelling"],
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer(prompt: str) -> str:
     cfg = traigent.get_trial_config()

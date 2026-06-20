@@ -13,8 +13,8 @@ multi-agent scenarios. Run them from the repository root.
   dry run never calls AWS.
 - Generator agent: `litellm.acompletion(model="bedrock/<us inference profile>")`
   with a grid search of one trial per model.
-- Observability: `execution_mode="edge_analytics"` plus declared retriever and
-  generator agents. When `TRAIGENT_BACKEND_URL`, scoped `TRAIGENT_API_KEY`, and
+- Observability: `offline=True` for local trial execution plus declared
+  retriever and generator agents. When `TRAIGENT_BACKEND_URL`, scoped `TRAIGENT_API_KEY`, and
   `TRAIGENT_TRACE_ENABLED=true` are configured, the public span API emits
   per-agent workflow trace boxes. Without those variables, the script still runs
   fully offline.

@@ -696,6 +696,34 @@ class TestOAuth2RefreshHardening:
         assert "password" not in result.error_message
 
     @pytest.mark.asyncio
+    async def test_refresh_jwt_respects_no_egress(self, config):
+        """Runtime no_egress policy should block JWT refresh before transport."""
+        tm = TokenManager(config, no_egress=True)
+
+        with patch(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            new=AsyncMock(return_value={"access_token": "should-not-be-used"}),
+        ) as execute:
+            result = await tm.refresh_jwt_secure("refresh_token_placeholder")
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_respects_no_egress(self, config):
+        """Runtime no_egress policy should block OAuth2 refresh before transport."""
+        config.cloud_base_url = "https://api.example.test"
+        tm = TokenManager(config, no_egress=True)
+
+        with patch("traigent.cloud.token_manager.aiohttp.ClientSession") as session:
+            result = await tm.refresh_oauth2()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        session.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_refresh_oauth2_returns_authresult_on_non_200(self, config):
         """refresh_oauth2 must report HTTP failures as AuthResult, not raise.
 

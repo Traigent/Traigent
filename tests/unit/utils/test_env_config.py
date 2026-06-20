@@ -202,3 +202,9 @@ def test_backend_offline_accepts_standard_truthy_values(monkeypatch, raw_value):
     """Offline mode should honor the standard truthy env vocabulary."""
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", raw_value)
     assert env_config.is_backend_offline() is True
+
+
+def test_backend_offline_accepts_consolidated_offline_alias(monkeypatch):
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "1")
+    assert env_config.is_backend_offline() is True

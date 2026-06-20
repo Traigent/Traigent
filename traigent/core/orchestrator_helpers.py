@@ -247,7 +247,13 @@ def prepare_evaluation_config(config: dict[str, Any]) -> dict[str, Any]:
     """
     if isinstance(config, dict):
         return {
-            key: value for key, value in config.items() if not key.startswith("_optuna")
+            key: value
+            for key, value in config.items()
+            if not (
+                key.startswith("_optuna")
+                or key.startswith("_traigent")
+                or key == "__subset_indices__"
+            )
         }
     return config
 

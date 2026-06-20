@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Guided phase runner for observing, optimizing, and re-running with best config.
 
 This script is designed to be called by the interactive bash wrapper:
@@ -145,7 +146,9 @@ def get_saved_experiment_run_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def build_runtime(args: argparse.Namespace, *, trace_name: str) -> shared.RuntimeSettings:
+def build_runtime(
+    args: argparse.Namespace, *, trace_name: str
+) -> shared.RuntimeSettings:
     runtime_args = argparse.Namespace(
         mode=args.mode,
         scale=args.scale,
@@ -303,7 +306,7 @@ def create_guided_agent(
         configuration_space=runtime.config_space,
         default_config=DEFAULT_BASELINE_CONFIG,
         injection_mode="context",
-        execution_mode="edge_analytics",
+        offline=True,
         mock_mode_config={
             "base_accuracy": 0.85,
             "variance": 0.0,
@@ -393,8 +396,12 @@ async def run_phase(args: argparse.Namespace) -> None:
             )
         persisted_results = load_saved_optimization_results(results_path)
         best_config_for_post = dict(persisted_results.get("best_config") or {})
-        persisted_optimization_id = as_optional_text(persisted_results.get("optimization_id"))
-        persisted_experiment_id = as_optional_text(persisted_results.get("experiment_id"))
+        persisted_optimization_id = as_optional_text(
+            persisted_results.get("optimization_id")
+        )
+        persisted_experiment_id = as_optional_text(
+            persisted_results.get("experiment_id")
+        )
         persisted_experiment_run_id = get_saved_experiment_run_id(persisted_results)
 
     trace_name = build_trace_name(args.phase, active_config=best_config_for_post)
@@ -478,7 +485,9 @@ async def run_phase(args: argparse.Namespace) -> None:
                 show_progress=True,
                 random_seed=42,
             )
-            optimization_id = as_optional_text(getattr(results, "optimization_id", None))
+            optimization_id = as_optional_text(
+                getattr(results, "optimization_id", None)
+            )
             experiment_id = as_optional_text(getattr(results, "experiment_id", None))
             experiment_run_id = get_saved_experiment_run_id(
                 {

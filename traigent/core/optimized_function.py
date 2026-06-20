@@ -49,13 +49,31 @@ from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import (
     ExecutionMode,
+    ResolvedExecutionPolicy,
     TraigentConfig,
-    resolve_execution_mode,
+    resolve_execution_policy,
     validate_execution_mode,
 )
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
+from traigent.core.execution_policy_runtime import (
+    SOURCE_CLOUD_BRAIN,
+    SOURCE_EXPLICIT_LOCAL,
+    SOURCE_LOCAL_FALLBACK,
+    SOURCE_OFFLINE,
+    CloudBrainUnavailableError,
+    backend_egress_disabled,
+    exception_is_connectivity,
+    initial_result_source,
+    is_offline_requested,
+    mark_local_fallback,
+    policy_allows_cloud_fallback,
+    policy_from_config,
+    policy_is_cloud_brain,
+    policy_is_cloud_required,
+    policy_requires_cloud,
+)
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -362,6 +380,15 @@ class OptimizedFunction:
         """
         # Extract decorator-provided metadata before core storage
         self._requested_execution_mode = kwargs.pop("requested_execution_mode", None)
+        provided_execution_policy = kwargs.pop("execution_policy", None)
+        self.execution_policy = (
+            provided_execution_policy
+            if isinstance(provided_execution_policy, ResolvedExecutionPolicy)
+            else None
+        )
+        self.external_service_evaluator: Any = None
+        self.hybrid_api_options: Any = None
+        self.offline: bool = False
         # Config persistence parameters
         self._auto_load_best = kwargs.pop("auto_load_best", False)
         self._load_from = kwargs.pop("load_from", None)
@@ -462,17 +489,29 @@ class OptimizedFunction:
         self.framework_targets = framework_targets or []
 
         # Execution mode configuration
+        if self.execution_policy is None:
+            self.execution_policy = resolve_execution_policy(
+                execution_mode=execution_mode,
+                source_hint="optimized_function",
+            )
+        else:
+            execution_mode = self._requested_execution_mode or execution_mode
+
         try:
-            requested_mode_enum = resolve_execution_mode(execution_mode)
-            effective_mode_enum = validate_execution_mode(requested_mode_enum)
+            effective_mode_enum = validate_execution_mode(execution_mode)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from None
 
-        privacy_alias_requested = False
+        privacy_alias_requested = any(
+            isinstance(value, str) and value.strip().lower() == "privacy"
+            for value in (execution_mode, self._requested_execution_mode)
+        )
 
         self._effective_execution_mode = effective_mode_enum
         self.execution_mode = effective_mode_enum.value
+        self.offline = self.execution_policy.offline
         self._privacy_alias_requested = privacy_alias_requested
+        self._privacy_alias_enabled = False
         self.local_storage_path = local_storage_path
         self.minimal_logging = minimal_logging
 
@@ -630,6 +669,7 @@ class OptimizedFunction:
         )
         if getattr(self, "_privacy_alias_requested", False):
             self.privacy_enabled = True
+            self._privacy_alias_enabled = True
             kwargs["privacy_enabled"] = True
             self._privacy_alias_requested = False
 
@@ -1848,50 +1888,118 @@ class OptimizedFunction:
         timeout: float | None,
         effective_config_space: dict[str, Any],
         algorithm_kwargs: dict[str, Any],
+        traigent_config: TraigentConfig,
+        effective_privacy_enabled: bool,
+        effective_parallel_trials: int | None,
+        samples_include_pruned_value: bool,
+        callbacks: list[Callable[..., Any]] | None,
+        save_to: str | None,
     ) -> OptimizationResult | None:
-        """Try cloud execution, returning None if fallback to local is needed."""
-        use_cloud = self._is_cloud_execution_mode() and (
-            max_trials is None or max_trials > 0
-        )
-        if not use_cloud:
+        """Try cloud-brain execution, returning None for allowed local fallback."""
+
+        policy = policy_from_config(traigent_config)
+        if (
+            policy is None
+            or getattr(self, "external_service_evaluator", None) is not None
+            or self.execution_mode == ExecutionMode.HYBRID_API.value
+            or is_offline_requested(policy)
+        ):
+            if policy_is_cloud_required(policy) and is_offline_requested(policy):
+                raise ConfigurationError(
+                    "Cloud execution is required but offline mode is set"
+                )
             return None
 
-        from traigent.cloud.client import (
-            CloudRemoteExecutionUnavailableError,
-            CloudServiceError,
-        )
+        if not (policy_is_cloud_brain(policy) or policy_is_cloud_required(policy)):
+            return None
+
+        if max_trials is not None and max_trials <= 0:
+            return None
 
         try:
-            return await self._optimize_with_cloud_service(
-                dataset,
-                max_trials,
-                timeout,
-                configuration_space=effective_config_space,
-                **algorithm_kwargs,
+            from traigent.cloud.client import TraigentCloudClient
+            from traigent.cloud.remote_guidance import (
+                TraigentCloudRemoteGuidanceAdapter,
+            )
+            from traigent.config.backend_config import BackendConfig
+            from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
+
+            cloud_client = TraigentCloudClient(
+                api_key=BackendConfig.get_api_key(),
+                base_url=BackendConfig.get_backend_url(),
+                enable_fallback=False,
+                no_egress=backend_egress_disabled(traigent_config),
+            )
+            remote_service = TraigentCloudRemoteGuidanceAdapter(cloud_client)
+            optimizer_kwargs = dict(algorithm_kwargs)
+            optimizer_kwargs.pop("cost_approved", None)
+            optimizer_kwargs.pop("invocations_per_example", None)
+            if max_trials:
+                optimizer_kwargs["max_trials"] = max_trials
+
+            optimizer = InteractiveOptimizer(
+                effective_config_space,
+                self.objectives,
+                remote_service=remote_service,
+                dataset_metadata={
+                    "size": len(dataset),
+                    "name": getattr(dataset, "name", "dataset"),
+                },
+                optimization_strategy={
+                    "algorithm": policy.algorithm,
+                    "source": SOURCE_CLOUD_BRAIN,
+                },
+                context=traigent_config,
+                **optimizer_kwargs,
+            )
+            evaluator = self._create_effective_evaluator(
+                timeout=timeout,
+                custom_evaluator=None,
+                effective_batch_size=None,
+                effective_thread_workers=None,
+                effective_privacy_enabled=effective_privacy_enabled,
+            )
+            orchestrator = self._build_optimization_orchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=max_trials,
+                max_total_examples_value=getattr(self, "max_total_examples", None),
+                timeout=timeout,
+                callbacks=callbacks,
+                traigent_config=traigent_config,
+                effective_parallel_trials=effective_parallel_trials,
+                samples_include_pruned_value=samples_include_pruned_value,
+                algorithm_kwargs=algorithm_kwargs,
+            )
+            orchestrator._cloud_guidance_client = cloud_client
+            return await self._run_and_finalize_optimization(
+                orchestrator=orchestrator,
+                dataset=dataset,
+                effective_config_space=effective_config_space,
+                save_to=save_to,
             )
         except (AuthenticationError, ConfigurationError, ValidationError):
             raise
-        except CloudRemoteExecutionUnavailableError:
-            raise
-        except CloudServiceError as e:
-            if self.cloud_fallback_policy == "never":
-                raise
-            logger.warning("Cloud optimization failed, falling back to local: %s", e)
-        except OSError as e:  # Includes TimeoutError and ConnectionError (subclasses)
-            if self.cloud_fallback_policy == "never":
-                raise
-            logger.warning(
-                "Cloud optimization failed (transient), falling back to local: %s", e
-            )
         except Exception as e:
-            if self.cloud_fallback_policy == "never":
+            if policy_requires_cloud(policy) or not policy_allows_cloud_fallback(
+                policy
+            ):
                 raise
-            logger.warning(
-                "Cloud optimization failed unexpectedly, falling back to local: %s",
-                e,
-                exc_info=True,
-            )
-        return None
+            if not exception_is_connectivity(e):
+                raise
+            reason = str(getattr(e, "reason", None) or e)
+            mark_local_fallback(traigent_config, reason)
+            if not (
+                isinstance(e, CloudBrainUnavailableError)
+                and e.stage == "session-create"
+            ):
+                logger.warning(
+                    "traigent.cloud_brain_fallback source=%s fallback_reason=%s "
+                    "stage=next-trial",
+                    SOURCE_LOCAL_FALLBACK,
+                    reason,
+                )
+            return None
 
     def _apply_mock_config_overrides(
         self, algorithm: str, optimizer_kwargs: dict[str, Any]
@@ -2103,12 +2211,34 @@ Remediation:
             fallback_max_trials=getattr(self, "max_trials", None),
         )
 
+        execution_policy = getattr(self, "execution_policy", None)
+        if not isinstance(execution_policy, ResolvedExecutionPolicy):
+            execution_policy = None
+        external_evaluator = (
+            getattr(self, "external_service_evaluator", None) is not None
+            or self.execution_mode == ExecutionMode.HYBRID_API.value
+        )
+        result_source = initial_result_source(
+            execution_policy,
+            external_evaluator=external_evaluator,
+        )
+        no_egress = result_source in {
+            SOURCE_OFFLINE,
+            SOURCE_EXPLICIT_LOCAL,
+        }
+
         # Phase 2: Create TraigentConfig and check CI approval
         traigent_config = create_traigent_config(
             execution_mode=self.execution_mode,
             local_storage_path=self.local_storage_path,
             minimal_logging=self.minimal_logging,
-            privacy_enabled=getattr(self, "privacy_enabled", False),
+            privacy_enabled=(
+                bool(getattr(self, "privacy_enabled", False))
+                and not bool(getattr(self, "_privacy_alias_enabled", False))
+            ),
+            execution_policy=execution_policy,
+            no_egress=no_egress,
+            result_source=result_source,
         )
         self.traigent_config = traigent_config
         self._check_ci_approval()
@@ -2135,14 +2265,7 @@ Remediation:
             ),
         )
 
-        # Phase 4: Try cloud execution if applicable
-        cloud_result = await self._try_cloud_execution(
-            dataset, max_trials, timeout, effective_config_space, algorithm_kwargs
-        )
-        if cloud_result is not None:
-            return cloud_result
-
-        # Phase 5: Resolve parallel configuration
+        # Phase 4: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
             resolve_effective_parallel_config(
                 algorithm_kwargs,
@@ -2151,6 +2274,30 @@ Remediation:
                 is_async_func=asyncio.iscoroutinefunction(self.func),
             )
         )
+
+        # Phase 5: Try cloud execution if applicable
+        cloud_result = await self._try_cloud_execution(
+            dataset,
+            max_trials,
+            timeout,
+            effective_config_space,
+            algorithm_kwargs,
+            traigent_config,
+            effective_privacy_enabled,
+            effective_parallel_trials,
+            samples_include_pruned_value,
+            callbacks,
+            save_to,
+        )
+        if cloud_result is not None:
+            return cloud_result
+
+        if (
+            traigent_config.result_source
+            in {SOURCE_LOCAL_FALLBACK, SOURCE_OFFLINE, SOURCE_EXPLICIT_LOCAL}
+            and algorithm == "auto"
+        ):
+            algorithm = "random"
 
         # Phase 5.5: Pop legacy cost-estimation param before optimizer creation.
         # It is not consumed by orchestrator and should not leak into optimizer kwargs.
@@ -2181,7 +2328,9 @@ Remediation:
         )
 
         # Update TraigentConfig with final privacy setting
-        traigent_config.privacy_enabled = effective_privacy_enabled
+        traigent_config.privacy_enabled = effective_privacy_enabled and not bool(
+            getattr(self, "_privacy_alias_enabled", False)
+        )
 
         # Phase 8: Build orchestrator
         orchestrator = self._build_optimization_orchestrator(

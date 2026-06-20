@@ -20,7 +20,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -162,7 +164,7 @@ def _min_quality_score(
     },
     eval_dataset=DATASET_FILE,
     objectives=["cost"],  # Minimize cost only
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def cost_optimized_bot(query: str) -> str:
@@ -181,7 +183,7 @@ def cost_optimized_bot(query: str) -> str:
     },
     eval_dataset=DATASET_FILE,
     objectives=BALANCED_SUPPORT_OBJECTIVES,
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def balanced_support_bot(query: str) -> str:
@@ -214,7 +216,7 @@ def balanced_support_bot(query: str) -> str:
         _max_cost_per_call,
         _min_quality_score,
     ],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def quality_constrained_bot(query: str) -> str:

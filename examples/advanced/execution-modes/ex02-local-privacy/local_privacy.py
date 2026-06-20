@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execution Modes - Local Privacy Mode.
 
-Adapted from docs: demonstrates privacy-enabled optimization in Edge Analytics mode.
+Adapted from docs: demonstrates offline optimization with no Traigent backend egress.
 """
 
 from __future__ import annotations
@@ -135,8 +135,7 @@ def _processed_accuracy(
     eval_dataset=DATASET_FILE,
     objectives=["cost", "accuracy"],
     metric_functions={"accuracy": _processed_accuracy},
-    privacy_enabled=True,
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def sensitive_function(customer_data: str) -> str:

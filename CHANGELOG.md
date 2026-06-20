@@ -4,6 +4,18 @@ All notable changes to Traigent SDK are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Added a no-content-egress cloud-brain canary test that captures serialized
+  session, next-trial, metrics, and finalize payloads and asserts dataset
+  example content never crosses the backend boundary.
+
+### Changed
+- Rewrote execution-mode guidance around `algorithm` and `offline`: cloud-first
+  `auto`, explicit local `grid`/`random`, zero-egress offline mode, result
+  provenance, and legacy selector deprecations.
+
 ## [0.14.3] - 2026-06-20
 
 ### Changed

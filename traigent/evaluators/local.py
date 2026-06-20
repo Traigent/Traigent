@@ -191,7 +191,6 @@ class LocalEvaluator(BaseEvaluator):
         max_workers: int = 1,
         detailed: bool = False,
         execution_mode: str | None = None,
-        privacy_enabled: bool = False,
         mock_mode_config: dict[str, Any] | None = None,
         metric_functions: dict[str, Callable[..., Any]] | None = None,
         **kwargs: Any,
@@ -206,6 +205,17 @@ class LocalEvaluator(BaseEvaluator):
             execution_mode: Execution mode ("edge_analytics", "hybrid", or "hybrid_api") for determining submission format
             **kwargs: Additional configuration
         """
+        if "privacy_enabled" in kwargs:
+            import warnings
+
+            kwargs.pop("privacy_enabled")
+            warnings.warn(
+                "LocalEvaluator privacy_enabled is deprecated and ignored; local "
+                "evaluator traces and results are content-free by default.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         _ensure_metadata_capture_patches()
 
         if metrics is None and metric_functions:
@@ -221,7 +231,6 @@ class LocalEvaluator(BaseEvaluator):
         self.execution_mode = (
             self.execution_mode_enum.value if self.execution_mode_enum else None
         )
-        self.privacy_enabled = privacy_enabled
         # ``mock_mode_config`` is retained as an accepted parameter for
         # backward compatibility with public APIs that thread it through
         # (e.g. ``@traigent.optimize(mock_mode_config=...)``), but it no
@@ -241,8 +250,8 @@ class LocalEvaluator(BaseEvaluator):
     ) -> PromptInfo:
         """Extract prompt information for metrics calculation.
 
-        Handles both privacy mode (storing lengths only) and normal mode
-        (reconstructing full prompts).
+        Keeps prompt content out of metric extraction while retaining lengths
+        for downstream cost estimation.
 
         Args:
             example_input: Input data from dataset example
@@ -251,7 +260,7 @@ class LocalEvaluator(BaseEvaluator):
                 template-aware length calculation when available)
 
         Returns:
-            PromptInfo with prompt data or lengths based on privacy mode
+            PromptInfo with content-free prompt lengths.
         """
         prompt_length: int | None = None
         response_length: int | None = None
@@ -259,13 +268,6 @@ class LocalEvaluator(BaseEvaluator):
 
         prompt_length = self._calculate_input_length(example_input, config=config)
         response_length = self._extract_response_length(output)
-
-        if self.privacy_enabled:
-            # In privacy mode, keep only lengths for downstream cost estimation.
-            original_prompt = None
-        else:
-            # Non-privacy mode keeps the reconstructed prompt for real cost paths.
-            original_prompt = self._reconstruct_prompt(example_input)
 
         return PromptInfo(
             original_prompt=original_prompt,
@@ -818,13 +820,9 @@ class LocalEvaluator(BaseEvaluator):
             prompt_length = prompt_info.prompt_length
             response_length = prompt_info.response_length
 
-        # Determine response text for scoring logic
+        # Determine response length without passing content to metric extraction.
         response_text = self._extract_response_text(output)
-        if (
-            self.privacy_enabled
-            and response_text is not None
-            and response_length is None
-        ):
+        if response_text is not None and response_length is None:
             response_length = len(response_text)
 
         # Get best metrics source using helper
@@ -837,7 +835,7 @@ class LocalEvaluator(BaseEvaluator):
             response=metrics_source,
             model_name=model_name,
             original_prompt=original_prompt,
-            response_text=response_text,
+            response_text=None,
             prompt_length=prompt_length,
             response_length=response_length,
         )
@@ -1597,4 +1595,7 @@ class LocalEvaluator(BaseEvaluator):
             Dictionary of metric name to value
         """
         # Use the base class implementation which now includes all default metrics
-        return super().compute_metrics(outputs, expected_outputs, errors, **context)
+        return cast(
+            dict[str, float],
+            super().compute_metrics(outputs, expected_outputs, errors, **context),
+        )

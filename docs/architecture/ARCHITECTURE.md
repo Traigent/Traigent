@@ -9,10 +9,9 @@ Traigent is a zero-code LLM optimization SDK that automatically finds the best c
 - **Parameter Optimization**: Automatically tune model selection, temperature, prompts, and other parameters
 - **Multi-Objective Optimization**: Balance accuracy, cost, latency, and other metrics simultaneously
 - **Framework Integration**: Native support for LangChain, DSPy, OpenAI, Anthropic, and more
-- **Flexible Execution**: Run locally (`edge_analytics`), with backend tracking
-  (`hybrid`), or through an external Hybrid API service (`hybrid_api`).
-  `privacy` is a legacy alias for `hybrid` with privacy enabled; `cloud` is
-  reserved and fails closed.
+- **Flexible Execution**: Use cloud-first `algorithm="auto"`, explicit local
+  `algorithm="grid"` / `"random"`, `offline=True` for zero Traigent backend
+  egress, or `ExternalServiceEvaluator` for external Hybrid API services.
 - **TVL Specifications**: Define optimization specs in YAML for version control and collaboration
 
 ---
@@ -197,7 +196,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    subgraph EdgeAnalytics["Edge Analytics Mode"]
+    subgraph EdgeAnalytics["Offline Local Mode"]
         direction TB
         ea_desc["Local optimization<br/>Data stays on-premise<br/>Optional telemetry"]
         ea_local["Local Storage"]

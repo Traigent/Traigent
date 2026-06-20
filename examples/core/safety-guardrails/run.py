@@ -74,7 +74,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "safety-guardrails"
 if MOCK:
     # Initialize with local-only mode for mock runs
-    traigent.initialize(execution_mode="edge_analytics")
+    traigent.initialize(offline=True)
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 
@@ -206,7 +206,7 @@ def safety_accuracy_metric(output: str, expected: str, **_: object) -> float:
         "temperature": [0.0],
     },
     metric_functions={"safety_accuracy": safety_accuracy_metric},
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def respond_safely(prompt_input: str) -> str:
     if MOCK:

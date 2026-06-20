@@ -115,7 +115,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     # Report as 'accuracy' while using a summary-friendly F1 metric
     metric_functions={"accuracy": _summary_f1},
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def intelligent_content_system(topic: str) -> str:

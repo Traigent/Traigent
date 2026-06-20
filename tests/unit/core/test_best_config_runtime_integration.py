@@ -397,6 +397,8 @@ def test_fresh_process_cloud_publish_then_fetch_uses_backend_network_contract(tm
             "TRAIGENT_CONTRACT_REQUESTS": str(requests_path),
             "TRAIGENT_CONTRACT_STATE": str(state_path),
             "TRAIGENT_ENV": "development",
+            "TRAIGENT_OFFLINE": "false",
+            "TRAIGENT_OFFLINE_MODE": "false",
         }
     )
     repo_root = Path(__file__).resolve().parents[3]

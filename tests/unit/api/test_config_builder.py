@@ -14,7 +14,7 @@ from traigent.api.config_builder import (
     update_global_config,
 )
 from traigent.api.parameter_validator import OptimizeParameters
-from traigent.config.types import InjectionMode
+from traigent.config.types import ExecutionIntent, InjectionMode
 from traigent.core.objectives import ObjectiveSchema
 from traigent.utils.exceptions import ConfigurationError
 
@@ -27,28 +27,25 @@ class TestConfigurationBuilder:
         clear_global_config()
         self.builder = ConfigurationBuilder()
 
-    def test_resolve_execution_mode_default(self):
-        """Test execution mode resolution with default values."""
-        # Mock global config with execution mode
+    def test_resolve_execution_policy_uses_global_legacy_mode(self):
+        """Global legacy execution_mode feeds the resolved policy."""
         self.builder.global_config = {"execution_mode": "privacy"}
 
-        with patch(
-            "traigent.api.config_builder.get_optimize_default",
-            return_value="edge_analytics",
-        ):
-            result = self.builder._resolve_execution_mode(
-                "edge_analytics", "edge_analytics"
-            )
-            assert result == "hybrid"  # privacy alias from global config
+        params = OptimizeParameters()
+        policy = self.builder._resolve_execution_policy(params, None)
 
-    def test_resolve_execution_mode_explicit(self):
-        """Test execution mode resolution with explicit values."""
+        assert policy.intent is ExecutionIntent.CLOUD_BRAIN
+        assert policy.legacy_execution_mode.value == "hybrid"
+
+    def test_resolve_execution_policy_explicit_local_legacy_mode(self):
+        """Legacy local mode resolves to local-only/no-egress policy."""
         self.builder.global_config = {"execution_mode": "privacy"}
 
-        result = self.builder._resolve_execution_mode(
-            "edge_analytics", "edge_analytics"
-        )
-        assert result == "hybrid"  # privacy alias from global config
+        params = OptimizeParameters(execution_mode="edge_analytics")
+        policy = self.builder._resolve_execution_policy(params, "edge_analytics")
+
+        assert policy.intent is ExecutionIntent.LOCAL_ONLY
+        assert policy.offline is True
 
     def test_resolve_injection_mode_parameter_valid(self):
         """Test injection mode resolution for parameter mode."""
@@ -79,24 +76,6 @@ class TestConfigurationBuilder:
 
         assert "injection_mode must be a str or InjectionMode" in str(exc_info.value)
 
-    def test_resolve_privacy_settings_explicit(self):
-        """Test privacy settings with explicit value."""
-        result = self.builder._resolve_privacy_settings(True, "edge_analytics")
-        assert result is True
-
-        result = self.builder._resolve_privacy_settings(False, "privacy")
-        assert result is False
-
-    def test_resolve_privacy_settings_auto_privacy(self):
-        """Test automatic privacy enabling for privacy mode."""
-        result = self.builder._resolve_privacy_settings(None, "privacy")
-        assert result is True
-
-    def test_resolve_privacy_settings_no_auto(self):
-        """Test privacy settings without auto-enabling."""
-        result = self.builder._resolve_privacy_settings(None, "edge_analytics")
-        assert result is None
-
     def test_build_configuration_complete(self):
         """Test complete configuration building."""
         params = OptimizeParameters(
@@ -115,9 +94,11 @@ class TestConfigurationBuilder:
         assert isinstance(config["objectives"], ObjectiveSchema)
         assert [obj.name for obj in config["objectives"].objectives] == ["accuracy"]
         assert config["execution_mode"] == "edge_analytics"
+        assert config["execution_policy"].intent is ExecutionIntent.LOCAL_ONLY
+        assert config["offline"] is True
         assert config["injection_mode"] == InjectionMode.CONTEXT
         assert config["parallel_config"].example_concurrency == 5
-        assert config["privacy_enabled"] is True
+        assert "privacy_enabled" not in config
         assert "func" in config
 
     def test_update_global_config(self):
@@ -145,7 +126,7 @@ class TestModuleFunctions:
         clear_global_config()
 
     def test_build_optimize_configuration_deprecated_cloud_resolves(self):
-        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        """Deprecated cloud mode resolves to cloud-first policy with warning."""
         import warnings
 
         params = OptimizeParameters(eval_dataset="test.jsonl", execution_mode="cloud")
@@ -153,7 +134,9 @@ class TestModuleFunctions:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             config = build_optimize_configuration(params, "cloud")
-        assert config["execution_mode"] == "edge_analytics"
+        assert config["execution_policy"].intent is ExecutionIntent.CLOUD_BRAIN
+        assert config["execution_policy"].offline is False
+        assert config["execution_mode"] == "hybrid"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_global_config_functions(self):
@@ -205,7 +188,8 @@ class TestConfigurationBuilderIntegration:
 
         import warnings
 
-        # Build configuration — "cloud" is a deprecated alias; global "privacy" sets privacy_enabled
+        # Build configuration: original legacy cloud mode takes precedence and
+        # maps to the consolidated cloud-first policy.
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             config = build_optimize_configuration(params, "cloud")
@@ -223,5 +207,6 @@ class TestConfigurationBuilderIntegration:
         assert config["config_param"] == "llm_config"
         assert config["parallel_config"].example_concurrency == 10
         assert config["parallel_config"].trial_concurrency == 3
-        assert config["execution_mode"] == "hybrid"  # privacy alias from global config
-        assert config["privacy_enabled"] is True
+        assert config["execution_mode"] == "hybrid"
+        assert config["execution_policy"].intent is ExecutionIntent.CLOUD_BRAIN
+        assert "privacy_enabled" not in config

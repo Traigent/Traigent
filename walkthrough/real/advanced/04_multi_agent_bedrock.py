@@ -358,7 +358,7 @@ generator_agent = AgentDefinition(
     agent_type="llm",
 )
 
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 
 @traigent.optimize(
@@ -376,7 +376,7 @@ traigent.initialize(execution_mode="edge_analytics")
         "retriever": retriever_agent,
         "generator": generator_agent,
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 async def bedrock_multi_agent_rag(question: str) -> str:
     """Answer a Traigent RAG question with retriever and generator spans."""

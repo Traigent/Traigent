@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Example 6: Custom Evaluator with LLM-as-Judge - AI-powered code quality assessment.
 
 This example demonstrates using an LLM as a judge to evaluate code generation quality.
@@ -42,7 +43,7 @@ configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -164,7 +165,7 @@ def llm_code_evaluator(output: str, expected: str, **kwargs) -> float:
     scoring_function=llm_code_evaluator,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def generate_code(task: str) -> str:
     """Generate code with configurable style."""
@@ -236,4 +237,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

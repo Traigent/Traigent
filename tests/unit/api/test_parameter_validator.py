@@ -12,7 +12,7 @@ from traigent.api.parameter_validator import (
     validate_optimize_parameters,
 )
 from traigent.api.safety import hallucination_rate
-from traigent.config.types import ExecutionMode, InjectionMode
+from traigent.config.types import ExecutionIntent, ExecutionMode, InjectionMode
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
@@ -27,7 +27,9 @@ class TestOptimizeParameters:
         assert params.eval_dataset is None
         assert params.objectives is None
         assert params.injection_mode == InjectionMode.CONTEXT
-        assert params.execution_mode == "edge_analytics"
+        assert params.algorithm == "auto"
+        assert params.offline is False
+        assert params.execution_mode is None
         assert params.minimal_logging is True
         assert params.kwargs == {}
 
@@ -48,9 +50,11 @@ class TestParameterValidator:
         result = self.validator._validate_execution_mode("edge_analytics")
         assert result is ExecutionMode.EDGE_ANALYTICS
         assert self.validator._validate_execution_mode("hybrid") is ExecutionMode.HYBRID
-        assert (
-            self.validator._validate_execution_mode("privacy") is ExecutionMode.HYBRID
-        )
+        with pytest.warns(DeprecationWarning):
+            assert (
+                self.validator._validate_execution_mode("privacy")
+                is ExecutionMode.HYBRID
+            )
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""
@@ -358,29 +362,31 @@ class TestParameterValidatorIntegration:
     def test_real_world_parameters(self):
         """Test validation with realistic parameter combinations."""
         # Example from documentation
-        params = validate_optimize_parameters(
-            eval_dataset=["qa_test.jsonl", "qa_validation.jsonl"],
-            objectives=["accuracy", "cost", "latency"],
-            configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4"],
-                "temperature": (0.1, 1.0),
-                "max_tokens": [100, 500, 1000],
-            },
-            constraints=[lambda config: config.get("temperature", 0) < 0.9],
-            execution_mode="privacy",
-            parallel_config={
-                "example_concurrency": 5,
-                "trial_concurrency": 3,
-            },
-            custom_evaluator="my_evaluator",
-        )
+        with pytest.warns(DeprecationWarning):
+            params = validate_optimize_parameters(
+                eval_dataset=["qa_test.jsonl", "qa_validation.jsonl"],
+                objectives=["accuracy", "cost", "latency"],
+                configuration_space={
+                    "model": ["gpt-3.5-turbo", "gpt-4"],
+                    "temperature": (0.1, 1.0),
+                    "max_tokens": [100, 500, 1000],
+                },
+                constraints=[lambda config: config.get("temperature", 0) < 0.9],
+                execution_mode="privacy",
+                parallel_config={
+                    "example_concurrency": 5,
+                    "trial_concurrency": 3,
+                },
+                custom_evaluator="my_evaluator",
+            )
 
         assert len(params.eval_dataset) == 2
         assert len(params.objectives) == 3
         assert "model" in params.configuration_space
         assert len(params.constraints) == 1
         assert params.execution_mode == "hybrid"
-        assert params.privacy_enabled is True
+        assert params.privacy_enabled is None
+        assert params.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
         assert params.kwargs["parallel_config"]["example_concurrency"] == 5
         assert params.kwargs["parallel_config"]["trial_concurrency"] == 3
         assert params.kwargs["custom_evaluator"] == "my_evaluator"

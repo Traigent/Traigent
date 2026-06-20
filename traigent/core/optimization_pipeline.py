@@ -20,7 +20,13 @@ from traigent.config.parallel import (
     merge_parallel_configs,
     resolve_parallel_config,
 )
-from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    ResolvedExecutionPolicy,
+    TraigentConfig,
+    resolve_execution_mode,
+)
+from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
@@ -96,6 +102,11 @@ def create_traigent_config(
     local_storage_path: str | None,
     minimal_logging: bool,
     privacy_enabled: bool,
+    execution_policy: ResolvedExecutionPolicy | None = None,
+    no_egress: bool = False,
+    result_source: str | None = None,
+    fallback_reason: str | None = None,
+    persistence_status: str | None = None,
 ) -> TraigentConfig:
     """Create TraigentConfig for the optimization run.
 
@@ -121,6 +132,11 @@ def create_traigent_config(
         local_storage_path=local_storage_path,
         minimal_logging=minimal_logging,
         privacy_enabled=privacy_enabled,
+        execution_policy=execution_policy,
+        no_egress=no_egress,
+        result_source=result_source,
+        fallback_reason=fallback_reason,
+        persistence_status=persistence_status,
     )
 
 
@@ -432,7 +448,6 @@ def _create_local_evaluator(
     timeout: float | None,
     effective_batch_size: int | None,
     effective_thread_workers: int | None,
-    effective_privacy_enabled: bool,
     *,
     objectives: Sequence[str],
     execution_mode: str,
@@ -454,7 +469,6 @@ def _create_local_evaluator(
             max_workers=effective_workers,
             detailed=True,
             execution_mode=execution_mode,
-            privacy_enabled=effective_privacy_enabled,
             mock_mode_config=mock_mode_config,
             metric_functions=effective_metric_fns or None,
         ),
@@ -522,7 +536,6 @@ def create_effective_evaluator(
         timeout,
         effective_batch_size,
         effective_thread_workers,
-        effective_privacy_enabled,
         objectives=objectives,
         execution_mode=execution_mode,
         mock_mode_config=mock_mode_config,
@@ -537,7 +550,7 @@ def create_effective_evaluator(
 
 
 def create_workflow_traces_tracker(
-    _traigent_config: TraigentConfig,  # noqa: ARG001
+    _traigent_config: TraigentConfig,
 ) -> Any:
     """Create workflow traces tracker if backend is configured.
 
@@ -547,6 +560,9 @@ def create_workflow_traces_tracker(
     Returns:
         WorkflowTracesTracker instance if backend is configured, None otherwise
     """
+    if backend_egress_disabled(_traigent_config):
+        return None
+
     backend_url = os.environ.get("TRAIGENT_BACKEND_URL")
     api_key = os.environ.get("TRAIGENT_API_KEY")
 

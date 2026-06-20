@@ -68,9 +68,9 @@ if not DATASET_PATH.is_file():
 DATASET = str(DATASET_PATH)
 
 if MOCK:
-    # Initialize in edge_analytics mode for local execution
+    # Initialize in offline mode for local execution.
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception as exc:  # noqa: BLE001
         print(f"Warning: Traigent mock initialization skipped: {exc}")
 
@@ -134,7 +134,9 @@ def _print_results_summary(result) -> None:
         widths.append(max([len(header), *(len(row[index]) for row in rows)]))
 
     print("\nResults Summary:")
-    print(" | ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print(
+        " | ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+    )
     print("-+-".join("-" * width for width in widths))
     for row in rows:
         print(" | ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
@@ -153,8 +155,8 @@ def _print_results_summary(result) -> None:
     },
     # 4. How parameters are injected (seamless = auto-injected into traigent.get_config())
     injection_mode="seamless",
-    # 5. Execution mode (edge_analytics = local execution + analytics)
-    execution_mode="edge_analytics",
+    # 5. Offline mode keeps this tutorial local.
+    offline=True,
 )
 def summarize_text(text: str) -> str:
     """Summarize the input text based on the current configuration.

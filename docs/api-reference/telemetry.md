@@ -24,8 +24,7 @@ During optimization runs, Traigent collects:
 - Algorithm used (grid, random, bayesian, optuna)
 - Number of trials executed
 - Total optimization duration
-- Execution mode (`edge_analytics`, `hybrid`, `hybrid_api`; `privacy` is a
-  legacy alias for `hybrid`, and `cloud` is reserved/fails closed)
+- Result source (`cloud_brain`, `local_fallback`, `explicit_local`, or `offline`)
 - Stop conditions triggered
 - Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set `TRAIGENT_TVAR_OBSERVATION=off` to disable them, or use `TRAIGENT_TVAR_OBSERVATION=hashed` (default) to hash free-form string values. Only `off` and `hashed` are supported; unsupported values fall back to `hashed`.
 
@@ -46,25 +45,32 @@ Traigent does **not** collect:
 - **API keys or credentials**
 - **Source code or function implementations**
 
-### Privacy Mode
+### Privacy and Offline Mode
 
-When `privacy_enabled=True` is set in ExecutionOptions:
+The cloud-brain path sends configuration identifiers and numeric metrics. It
+does not send dataset example inputs, expected outputs, prompts, responses, or
+example metadata. Use `offline=True` when your policy requires no Traigent
+backend egress at all:
 
 ```python
 @traigent.optimize(
-    execution={
-        "privacy_enabled": True,
-    },
+    algorithm="grid",
+    offline=True,
     ...
 )
 ```
 
-Traigent will:
-- Redact prompts/responses from stored evaluation artifacts when possible
-- Minimize logged content while keeping metrics and configuration metadata
-- Keep results local in open-source builds
+Offline runs keep Traigent optimization metadata local while still allowing your
+own function to call LLM providers or other services.
 
-Privacy mode does not disable telemetry; use `TRAIGENT_DISABLE_TELEMETRY=true` for a full opt-out.
+`TRAIGENT_OFFLINE=1` and the legacy `TRAIGENT_OFFLINE_MODE=1` enable the same
+zero-egress routing without changing code. Set `TRAIGENT_REQUIRE_CLOUD=1` when
+`algorithm="auto"` must hard-error instead of falling back locally.
+
+`privacy_enabled` is deprecated and does not disable telemetry or network
+access. The default cloud-brain path is already content-free. Use
+`TRAIGENT_DISABLE_TELEMETRY=true` for telemetry opt-out and `offline=True` for
+zero Traigent backend egress.
 
 ### OpenTelemetry Tracing
 
@@ -121,14 +127,14 @@ Telemetry data is used for:
 
 ## Data Retention
 
-**Edge Analytics Mode** (default):
+**Offline mode**:
 - All data is stored **locally** on your machine
 - Data is kept in `~/.traigent/` or your specified `local_storage_path`
 - You control retention - delete files as needed
-- No data is sent to external servers
+- No data is sent to the Traigent backend
 
-**Cloud/Hybrid Mode** (managed service only):
-- Metadata can be sent to Traigent backend for optimization coordination
+**Cloud-brain mode**:
+- Configuration IDs/schema and numeric metrics can be sent to Traigent backend for optimization coordination
 - Retention policies depend on your managed-service agreement
 - You can request data deletion at any time
 
@@ -234,7 +240,7 @@ Each event includes:
 
 ## Local Storage Structure
 
-When using edge_analytics mode, data is stored locally:
+When using offline mode, data is stored locally:
 
 ```
 ~/.traigent/
@@ -251,9 +257,7 @@ You can customize the storage location:
 
 ```python
 @traigent.optimize(
-    execution={
-        "local_storage_path": "./my_optimizations",
-    },
+    local_storage_path="./my_optimizations",
     ...
 )
 ```
@@ -353,10 +357,11 @@ Traigent SDK is designed to be GDPR-compliant:
 
 For HIPAA compliance or handling sensitive data:
 
-1. **Enable Privacy Mode**:
+1. **Use Offline Mode for Zero Traigent Egress**:
    ```python
    @traigent.optimize(
-       execution={"privacy_enabled": True},
+       algorithm="grid",
+       offline=True,
        ...
    )
    ```
@@ -369,10 +374,9 @@ For HIPAA compliance or handling sensitive data:
 3. **Use Local Storage Only**:
    ```python
    @traigent.optimize(
-       execution={
-           "execution_mode": "edge_analytics",
-           "local_storage_path": "/secure/location",
-       },
+       algorithm="grid",
+       offline=True,
+       local_storage_path="/secure/location",
        ...
    )
    ```
@@ -383,7 +387,9 @@ For HIPAA compliance or handling sensitive data:
 
 ### Q: Is telemetry enabled by default?
 
-**A**: Yes, but only for local optimization metadata. In the default `edge_analytics` mode, all data stays on your machine.
+**A**: Yes, for local optimization metadata. The default cloud-brain path sends
+configuration IDs/schema and numeric metrics only; use `offline=True` for zero
+Traigent backend egress.
 
 ### Q: How do I verify telemetry is disabled?
 
@@ -404,11 +410,13 @@ print(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
 
 ### Q: Can I enable telemetry for some optimizations but not others?
 
-**A**: The `TRAIGENT_DISABLE_TELEMETRY` environment variable is process-wide. `privacy_enabled` reduces stored content but does not disable telemetry.
+**A**: The `TRAIGENT_DISABLE_TELEMETRY` environment variable is process-wide.
+Use `offline=True` when you need to disable Traigent backend egress for a run.
 
 ### Q: Where can I see what telemetry data was collected?
 
-**A**: In edge_analytics mode, check the JSON files in `~/.traigent/sessions/`. They contain the same trial metadata and metrics emitted to telemetry listeners.
+**A**: In offline mode, check the JSON files in `~/.traigent/sessions/`. They
+contain the same trial metadata and metrics emitted to telemetry listeners.
 
 ### Q: Can I contribute telemetry data to improve Traigent?
 
@@ -417,6 +425,6 @@ print(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
 ## Related Documentation
 
 - [Decorator Reference](./decorator-reference.md) - Configuration options
-- [Execution Modes Guide](../guides/execution-modes.md) - Edge Analytics vs Cloud
+- [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md) - cloud-first auto, explicit local, offline, env vars, and migration guidance
 - [Privacy & Security](../contributing/SECURITY.md) - Security practices
 - [API Reference](./complete-function-specification.md) - Full API documentation

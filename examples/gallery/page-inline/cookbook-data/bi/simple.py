@@ -80,7 +80,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "bi_eval.jsonl")
     configuration_space={"temperature": [0.2, 0.6]},
     eval_dataset=DATASET,
     objectives=["cost", "response_time"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def summarize_kpis(kpis: str) -> str:

@@ -36,7 +36,12 @@ from typing import Any
 import numpy as np
 
 # Add project root to path for imports
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)))
+sys.path.insert(
+    0,
+    os.environ.get(
+        "TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)
+    ),
+)
 
 try:
     import traigent
@@ -228,7 +233,7 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
         "retrieval_f1",  # Secondary: maximize retrieval accuracy
         "-latency_p95_ms",  # Secondary: minimize latency (- prefix means minimize)
     ],
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
     # REMOVED: direction, max_trials, timeout_minutes (these don't exist in decorator API)
 )
 def optimize_context_engineering(
@@ -278,7 +283,6 @@ def run_baseline_comparison(dataset: RAGDataset) -> dict[str, dict[str, float]]:
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-
         for name, config in baseline_configs.items():
             task = progress.add_task(f"Running {name}...", total=1)
 
@@ -529,10 +533,10 @@ async def main() -> None:
     # Configure Traigent optimization
     # traigent.configure(
     #     evaluator=evaluation_function,
-    #     execution_mode="edge_analytics",  # Run in Edge Analytics mode for demo
+    #     offline=True,  # Run locally for demo
     #     verbose=True
     # )
-    # Note: evaluator, execution_mode, and verbose parameters don't exist in traigent.configure() API
+    # Note: evaluator and verbose parameters don't exist in traigent.configure() API
 
     console.print("\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print("[dim]This will systematically explore RAG configurations...[/dim]\n")
@@ -544,7 +548,7 @@ async def main() -> None:
             custom_evaluator=evaluation_function,
             max_trials=100,  # Moved here from decorator
             timeout=1800,  # 30 minutes in seconds (was timeout_minutes=30)
-            algorithm="bayesian",  # Or "grid", "random"
+            algorithm="random",  # Offline local example; smart algorithms require cloud
         )
 
         # Display results

@@ -19,16 +19,16 @@ pip install -e ".[dev]"
 ```bash
 # Run all tests through the legacy shell fixture path
 # (may emit DeprecationWarning; prefer enable_mock_mode_for_quickstart() in code)
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest
 
 # Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=html
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=html
 
 # Run all unit tests with repo-default ignores
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest tests/unit -q --tb=short
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest tests/unit -q --tb=short
 
 # Run tests matching a pattern
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest -k "test_optimization" -v
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest -k "test_optimization" -v
 ```
 
 ## Test Dependencies
@@ -162,10 +162,10 @@ pip install -e ".[dev]"
 
 ```bash
 # Run all tests through the legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest
 
 # Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=term-missing
+TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
 ruff check traigent/

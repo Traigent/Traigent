@@ -207,7 +207,9 @@ The walkthrough examples use local mock mode through the quickstart/testing help
 
 Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate. Portal tracking is enabled automatically when `TRAIGENT_API_KEY` is set — you do not need to set `execution_mode`. The SDK auto-selects the mode based on algorithm and transport.
 
-`execution_mode=”cloud”` is reserved for future remote agent execution and is not available yet.
+For local-only runs with no Traigent backend egress, pass `offline=True`. For
+portal-tracked optimization, set `TRAIGENT_API_KEY` and omit the legacy
+execution-mode field.
 
 1. **Sign up** at [portal.traigent.ai](https://portal.traigent.ai) — verify your email to activate
 2. **Create an API key** — click your name (top-right) → **API Keys** → **+ Create API Key**

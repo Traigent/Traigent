@@ -290,7 +290,7 @@ class ScenarioConfig:
     name: str
     description: str
     scenario_notes: str
-    execution_mode: str
+    offline: bool
     objectives: list[str]
     algorithm: str
     max_trials: int
@@ -301,7 +301,6 @@ class ScenarioConfig:
     framework_targets: list[str]
     dataset: str
     parallel_config: dict[str, Any]
-    privacy_enabled: bool
     mock_mode: bool
     integration: str
 
@@ -549,7 +548,7 @@ def _parse_row_config(row_id: int) -> ScenarioConfig:
         name=row.get("name", f"Scenario {row_id}"),
         description=row.get("description", ""),
         scenario_notes=row.get("scenario_notes", ""),
-        execution_mode=(row.get("execution_mode") or "edge_analytics").strip(),
+        offline=_to_bool(row.get("offline", "false")),
         objectives=_parse_json(row.get("objectives"), ["accuracy"]) or ["accuracy"],
         algorithm=(row.get("algorithm") or "grid").strip(),
         max_trials=int(row.get("max_trials") or 6),
@@ -563,7 +562,6 @@ def _parse_row_config(row_id: int) -> ScenarioConfig:
             or "examples/datasets/rag-optimization/evaluation_set.jsonl"
         ).strip(),
         parallel_config=parallel_config,
-        privacy_enabled=_to_bool(row.get("privacy_enabled", "false")),
         mock_mode=_to_bool(row.get("mock_mode", "false")),
         integration=(row.get("integration") or "none").strip(),
     )
@@ -581,10 +579,9 @@ def _build_optimize_kwargs(config: ScenarioConfig, dataset_path: str) -> dict[st
         "eval_dataset": dataset_path,
         "objectives": config.objectives,
         "configuration_space": config.configuration_space,
-        "execution_mode": config.execution_mode,
+        "offline": config.offline,
         "injection_mode": config.injection_mode,
         "framework_targets": config.framework_targets,
-        "privacy_enabled": config.privacy_enabled,
         "parallel_config": config.parallel_config,
     }
 
@@ -651,7 +648,7 @@ def main() -> None:
         )
         print({"best_config": res.best_config, "best_score": res.best_score})
 
-        if config.execution_mode != "edge_analytics":
+        if not config.offline:
             df = res.to_aggregated_dataframe(
                 primary_objective=config.objectives[0] if config.objectives else None
             )

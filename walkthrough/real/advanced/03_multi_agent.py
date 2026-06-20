@@ -44,7 +44,7 @@ except ImportError:
     exit(1)
 
 # Initialize Traigent
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Sample documents for the vector store
 SAMPLE_DOCS = [
@@ -87,7 +87,7 @@ generator_agent = AgentDefinition(
     },
     objectives=["accuracy", "latency"],
     eval_dataset=DATASET_PATH,
-    execution_mode="edge_analytics",
+    offline=True,
 )
 async def rag_agent(question: str) -> str:
     """Real RAG agent with LangChain."""

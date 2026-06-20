@@ -9,10 +9,9 @@ Traceability: CONC-Layer-API CONC-Quality-Maintainability CONC-Quality-Usability
 import logging
 from typing import Any
 
-from traigent.api.decorators import get_optimize_default
 from traigent.api.parameter_validator import OptimizeParameters
 from traigent.config.parallel import coerce_parallel_config
-from traigent.config.types import ExecutionMode, InjectionMode, validate_execution_mode
+from traigent.config.types import InjectionMode, resolve_execution_policy
 from traigent.core.objectives import normalize_objectives
 from traigent.utils.exceptions import ConfigurationError
 
@@ -30,7 +29,7 @@ class ConfigurationBuilder:
         self.global_config = global_config or _GLOBAL_CONFIG
 
     def build_configuration(
-        self, params: OptimizeParameters, original_execution_mode: str
+        self, params: OptimizeParameters, original_execution_mode: str | None = None
     ) -> dict[str, Any]:
         """
         Build final configuration for OptimizedFunction.
@@ -42,13 +41,10 @@ class ConfigurationBuilder:
         Returns:
             Configuration dictionary for OptimizedFunction
         """
-        # Handle execution mode with proper precedence
-        actual_execution_mode = self._resolve_execution_mode(
-            params.execution_mode, original_execution_mode
+        execution_policy = params.execution_policy or self._resolve_execution_policy(
+            params, original_execution_mode
         )
-        privacy_alias_requested = self._is_privacy_alias(
-            original_execution_mode
-        ) or self._selected_execution_mode_is_privacy_alias(params.execution_mode)
+        actual_execution_mode = execution_policy.legacy_execution_mode.value
 
         # Resolve injection mode with validation
         # At this point, injection_mode should be normalized to InjectionMode enum in validation
@@ -69,13 +65,6 @@ class ConfigurationBuilder:
             injection_mode_enum, params.config_param
         )
 
-        # Determine effective privacy setting
-        effective_privacy_enabled = self._resolve_privacy_settings(
-            params.privacy_enabled, actual_execution_mode
-        )
-        if effective_privacy_enabled is None and privacy_alias_requested:
-            effective_privacy_enabled = True
-
         resolved_schema = normalize_objectives(params.objectives)
 
         extra_kwargs = params.kwargs.copy()
@@ -95,54 +84,34 @@ class ConfigurationBuilder:
             "config_param": params.config_param,
             "auto_override_frameworks": params.auto_override_frameworks,
             "framework_targets": params.framework_targets,
+            "algorithm": execution_policy.algorithm,
+            "offline": execution_policy.offline,
+            "execution_policy": execution_policy,
             "execution_mode": actual_execution_mode,
             "local_storage_path": params.local_storage_path,
             "minimal_logging": params.minimal_logging,
-            "privacy_enabled": effective_privacy_enabled,
             **extra_kwargs,
         }
 
         return config
 
-    def _resolve_execution_mode(
-        self, param_execution_mode: str, original_execution_mode: str
-    ) -> str:
-        """Resolve execution mode with proper precedence."""
-        selected_mode, source = self._select_execution_mode_input(param_execution_mode)
-        actual_mode = validate_execution_mode(selected_mode)
-        logger.debug("Using execution mode from %s: %s", source, actual_mode.value)
-        return actual_mode.value
+    def _resolve_execution_policy(
+        self, params: OptimizeParameters, original_execution_mode: str | None
+    ):
+        """Resolve execution policy with global legacy-mode fallback."""
+        legacy_execution_mode = params.execution_mode
+        if legacy_execution_mode is None and original_execution_mode:
+            legacy_execution_mode = original_execution_mode
+        if legacy_execution_mode is None and "execution_mode" in self.global_config:
+            legacy_execution_mode = self.global_config["execution_mode"]
 
-    def _select_execution_mode_input(
-        self, param_execution_mode: str | ExecutionMode
-    ) -> tuple[str | ExecutionMode, str]:
-        default_execution_mode = validate_execution_mode(
-            get_optimize_default("execution_mode")
+        return resolve_execution_policy(
+            algorithm=params.algorithm,
+            offline=params.offline,
+            execution_mode=legacy_execution_mode,
+            privacy_enabled=params.privacy_enabled,
+            source_hint="config_builder",
         )
-        param_mode = validate_execution_mode(param_execution_mode)
-
-        if (
-            param_mode == default_execution_mode
-            and "execution_mode" in self.global_config
-        ):
-            return self.global_config["execution_mode"], "global config"
-
-        return param_execution_mode, "explicitly provided parameter"
-
-    def _selected_execution_mode_is_privacy_alias(
-        self, param_execution_mode: str | ExecutionMode
-    ) -> bool:
-        try:
-            selected_mode, _ = self._select_execution_mode_input(param_execution_mode)
-        except (TypeError, ValueError, ConfigurationError):
-            return False
-        return self._is_privacy_alias(selected_mode)
-
-    @staticmethod
-    def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
-        if isinstance(execution_mode, str):
-            return execution_mode.strip().lower() == "privacy"
-        return False
 
     def _resolve_injection_mode(
         self, injection_mode: InjectionMode, config_param: str | None
@@ -173,31 +142,6 @@ class ConfigurationBuilder:
 
         return injection_mode
 
-    def _resolve_privacy_settings(
-        self,
-        privacy_enabled: bool | None,
-        execution_mode: ExecutionMode | str,
-    ) -> bool | None:
-        """
-        Resolve privacy settings based on execution mode.
-
-        Args:
-            privacy_enabled: Explicit privacy setting
-            execution_mode: Current execution mode
-
-        Returns:
-            Effective privacy setting
-        """
-        if privacy_enabled is not None:
-            return privacy_enabled
-
-        # Auto-enable privacy for the legacy privacy alias.
-        if self._is_privacy_alias(execution_mode):
-            logger.debug("Auto-enabling privacy for 'privacy' execution mode")
-            return True
-
-        return None
-
     def update_global_config(self, **config_updates: Any) -> None:
         """Update global configuration."""
         self.global_config.update(config_updates)
@@ -213,12 +157,15 @@ class ConfigurationBuilder:
     @staticmethod
     def _normalize_execution_mode(execution_mode: str) -> str:
         """Normalize execution mode labels (deprecated)."""
-        return validate_execution_mode(execution_mode).value
+        return resolve_execution_policy(
+            execution_mode=execution_mode,
+            source_hint="config_builder.normalize_execution_mode",
+        ).legacy_execution_mode.value
 
 
 # Module-level functions for backward compatibility
 def build_optimize_configuration(
-    params: OptimizeParameters, original_execution_mode: str
+    params: OptimizeParameters, original_execution_mode: str | None = None
 ) -> dict[str, Any]:
     """
     Build configuration for OptimizedFunction.

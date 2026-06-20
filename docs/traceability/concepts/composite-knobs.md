@@ -197,7 +197,7 @@ from traigent.knobs.telemetry import composite_measures, merge_composite_measure
     objectives=["accuracy"],
     configuration_space={"variant": ["cheap", "strong"]},
     default_config={"variant": "cheap"},
-    execution_mode="hybrid",
+    algorithm="auto",
 )
 def answer(text: str) -> tuple[str, dict[str, float]]:
     cfg = traigent.get_config()

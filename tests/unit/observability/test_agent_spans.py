@@ -177,6 +177,8 @@ def test_add_agent_span_drops_text_metadata() -> None:
 def test_declared_agents_and_agent_prefixes_register_graph_nodes(
     monkeypatch: Any,
 ) -> None:
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     monkeypatch.setattr(
         BackendSessionManager,
         "create_backend_client",

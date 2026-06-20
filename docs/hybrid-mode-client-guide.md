@@ -25,7 +25,7 @@ Before running optimization, verify:
 3. `POST /traigent/v1/execute` enforces capability matching and returns `operational_metrics.total_cost_usd`.
 4. `POST /traigent/v1/evaluate` is implemented when `supports_evaluate=true`.
 5. Optional fields (`constraints`, `objectives`, `exploration`, `promotion_policy`, `defaults`, `measures`) are omitted unless intentionally used.
-6. Auth behavior is consistent across all endpoints if authentication is required; accept both `Authorization` and `x-api-key` because the SDK sends both from `hybrid_api_auth_header`.
+6. Auth behavior is consistent across all endpoints if authentication is required; accept both `Authorization` and `x-api-key` because the SDK sends both from `HybridAPIOptions.auth_header`.
 7. Timeout/error behavior is explicit for `400/401/404/408/429/500/503` and client retry logic is implemented.
 
 ## Privacy-Preserving Mode (Default)
@@ -590,12 +590,18 @@ Once your service implements the API, optimize it with Traigent:
 
 ```python
 import traigent
+from traigent.api.decorators import ExternalServiceEvaluator, HybridAPIOptions
 
 @traigent.optimize(
-    execution_mode="hybrid_api",
-    hybrid_api_endpoint="http://your-service:8080",
-    tunable_id="my_agent",
-    hybrid_api_auth_header="Bearer <token>",  # Optional
+    evaluator=ExternalServiceEvaluator(
+        hybrid_api=HybridAPIOptions(
+            endpoint="http://your-service:8080",
+            tunable_id="my_agent",
+            auth_header="Bearer <token>",  # Optional
+            batch_size=10,
+            batch_parallelism=2,
+        )
+    ),
     eval_dataset=my_dataset,
 
     # Provide tunables/configuration space for optimizer search
@@ -607,8 +613,6 @@ import traigent
     # Optimization settings
     max_trials=50,
     cost_limit=10.0,
-    hybrid_api_batch_size=10,
-    hybrid_api_batch_parallelism=2,
 
     # Objectives (use your custom metric names)
     objectives=["accuracy", "cost", "latency"],
@@ -625,7 +629,7 @@ print(f"Best metrics: {result.best_metrics}")
 
 To ensure runs appear in Traigent backend UI:
 
-1. Set `TRAIGENT_OFFLINE_MODE=false`.
+1. Leave `offline=False` and do not set `TRAIGENT_OFFLINE=1`.
 2. Set a reachable backend (`TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL`).
 3. Set `TRAIGENT_API_KEY` (or `TRAIGENT_ACCESS_TOKEN`).
 4. Ensure network/DNS reachability to the backend from the runtime environment.
@@ -886,7 +890,7 @@ Backend tracking unavailable ... Results will be saved locally
 ```
 
 **Solution**:
-- Confirm `TRAIGENT_OFFLINE_MODE=false`
+- Confirm `TRAIGENT_OFFLINE` is unset or false
 - Confirm `TRAIGENT_BACKEND_URL` / `TRAIGENT_API_URL` points to reachable backend
 - Confirm `TRAIGENT_API_KEY` is present and valid
 - Check DNS/network reachability from the runtime host

@@ -584,28 +584,39 @@ class TestOptimizationOrchestrator:
 
     def test_result_source_is_local_when_backend_degraded(self, orchestrator):
         """Issue #1265: when the backend becomes unreachable mid-run, the
-        result is marked source='local' (top-level field and metadata) rather
+        result is marked source='local_fallback' (top-level field and metadata) rather
         than appearing as a cloud-tracked run."""
         bsm = orchestrator.backend_session_manager
+        orchestrator.traigent_config.execution_mode = "hybrid"
         bsm._backend_tracking_enabled = True
         # Simulate the mid-run outage signal raised inside _log_trial_to_backend.
         bsm._flag_backend_degraded("trial submission")
 
         result = orchestrator._create_optimization_result()
 
-        assert result.source == "local"
-        assert result.metadata["source"] == "local"
+        assert result.source == "local_fallback"
+        assert result.metadata["source"] == "local_fallback"
 
-    def test_result_source_is_backend_when_tracking_healthy(self, orchestrator):
-        """A healthy, cloud-tracked run is marked source='backend'."""
+    def test_result_source_is_backend_when_tracking_healthy(
+        self, orchestrator, monkeypatch
+    ):
+        """A healthy, cloud-tracked run is marked source='cloud_brain'."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
         bsm = orchestrator.backend_session_manager
+        orchestrator.traigent_config.execution_mode = "hybrid"
+        orchestrator.traigent_config.no_egress = False
+        orchestrator.traigent_config.result_source = "cloud_brain"
+        orchestrator.traigent_config.fallback_reason = None
+        bsm._runtime_degraded = False
+        bsm._no_egress = False
         bsm._backend_tracking_enabled = True
         bsm._acknowledged_trials.add(("session", "trial"))
 
         result = orchestrator._create_optimization_result()
 
-        assert result.source == "backend"
-        assert result.metadata["source"] == "backend"
+        assert result.source == "cloud_brain"
+        assert result.metadata["source"] == "cloud_brain"
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(10)
@@ -1380,10 +1391,18 @@ class TestOptimizationOrchestrator:
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
     async def test_optimize_with_legacy_logger(
-        self, mock_optimizer, mock_evaluator, sample_dataset, objective_schema
+        self,
+        monkeypatch,
+        mock_optimizer,
+        mock_evaluator,
+        sample_dataset,
+        objective_schema,
     ):
         """Test optimization with unified legacy logger."""
         import tempfile
+
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config = TraigentConfig(

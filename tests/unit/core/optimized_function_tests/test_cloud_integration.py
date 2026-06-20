@@ -25,6 +25,7 @@ class TestCloudIntegration:
             )
         assert opt_func.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
         assert opt_func._effective_execution_mode is ExecutionMode.EDGE_ANALYTICS
+        assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_cloud_mode_with_fallback_policy_emits_deprecation(

@@ -116,34 +116,23 @@ def my_agent(question: str) -> str:
 | --- | --- | --- |
 | `evaluation` | `EvaluationOptions \| dict \| None` | Bundle for `eval_dataset`, `custom_evaluator`, `scoring_function`, and `metric_functions`. |
 | `injection` | `InjectionOptions \| dict \| None` | Bundle for `injection_mode`, `config_param`, `auto_override_frameworks`, and `framework_targets`. |
-| `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, and `max_total_examples`. |
+| `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `algorithm`, `offline`, `local_storage_path`, `parallel_config`, and `max_total_examples`. |
 | `mock` | `MockModeOptions \| dict \| None` | **Deprecated — all fields inert.** Retained on the schema for backwards compatibility (config round-trip). Mock mode is enabled by calling `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code, not via this object. The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility but emits `DeprecationWarning` when users set it directly. See issue #874. |
 
 **ExecutionOptions Fields**
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` runs locally. `"hybrid"` runs trials locally and submits sessions/trial metrics to the backend for portal tracking. `"hybrid_api"` delegates trial execution to an external service implementing the Traigent Hybrid API contract. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. `"cloud"` is reserved for future remote execution and fails closed with guidance to use `"hybrid"`. |
+| `algorithm` | `str` | `"auto"` | Optimizer selector. `"auto"` is cloud-first with local fallback on connectivity failures; `"grid"` and `"random"` run locally; smart algorithms require cloud. |
+| `offline` | `bool` | `False` | Force local-only operation with zero Traigent backend egress. |
 | `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
 | `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
-| `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
 | `reps_per_trial` | `int` | `1` | Number of repetitions per configuration. OSS SDK accepts only `1`; other values raise `pydantic.ValidationError` and require Traigent Enterprise. |
 | `reps_aggregation` | `str` | `"mean"` | Repetition aggregation method. OSS SDK accepts only `"mean"`; other values raise `pydantic.ValidationError` and require Traigent Enterprise. |
-| `hybrid_api_endpoint` | `str \| None` | `None` | External-agent Hybrid API base endpoint. |
-| `tunable_id` | `str \| None` | `None` | Optional Hybrid API tunable identifier. |
-| `hybrid_api_transport` | `Any \| None` | `None` | Custom Hybrid API transport object. |
-| `hybrid_api_transport_type` | `str` | `"auto"` | Hybrid API transport type selector. |
-| `hybrid_api_batch_size` | `int` | `1` | Number of examples per Hybrid API execute request. |
-| `hybrid_api_batch_parallelism` | `int` | `1` | Concurrent Hybrid API batch execution limit. |
-| `hybrid_api_keep_alive` | `bool` | `True` | Reuse Hybrid API HTTP connections. |
-| `hybrid_api_heartbeat_interval` | `float` | `30.0` | Heartbeat interval for Hybrid API transports. |
-| `hybrid_api_timeout` | `float \| None` | `None` | Hybrid API request timeout override. |
-| `hybrid_api_auth_header` | `str \| None` | `None` | Auth token/header value sent as both `Authorization` and `x-api-key`. |
-| `hybrid_api_auto_discover_tvars` | `bool` | `False` | Auto-discover Hybrid API tuned variables when supported. |
-| `cloud_fallback_policy` | `str \| None` | `None` | Legacy/future cloud fallback policy. It does not enable `execution_mode="cloud"` in 0.12.0. |
+| `evaluator` | `ExternalServiceEvaluator \| HybridAPIOptions \| dict \| None` | `None` | External service evaluator bundle. Use `ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))` for Hybrid API services. The optimizer still runs locally; the evaluator dispatches each trial to the external HTTP or MCP service. |
 
 **Legacy Compatibility**
 
@@ -154,11 +143,13 @@ def my_agent(question: str) -> str:
 
 **Usage Notes**
 
-- The default execution mode is `"edge_analytics"`. Use `"hybrid"` for portal-tracked optimization with local trial execution.
+- The default path is `algorithm="auto"`: cloud-first optimizer decisions with local trial execution and local fallback on connectivity failures.
+- Set `TRAIGENT_REQUIRE_CLOUD=1` to turn that connectivity fallback into a hard error.
 - Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts. `MockModeOptions` is **deprecated** (all fields inert; see the `mock` row above and issue #874) — do not use it for new code.
 - `parallel_config=ParallelConfig(...)` remains the primary way to control concurrency. Set global defaults via `traigent.configure(parallel_config=...)`, override them in the decorator, and fine-tune per `.optimize()` call. Later scopes override earlier ones field-by-field.
 - `ParallelConfig` lives in `traigent.config.parallel`. You can pass either an instance or a simple `dict` with the same keys.
-- `privacy_enabled=True` applies in local and hybrid contexts. `cloud` remote execution is not available yet.
+- Use `offline=True` when policy requires zero Traigent backend egress. `TRAIGENT_OFFLINE=1` and the legacy `TRAIGENT_OFFLINE_MODE=1` provide the same routing at the environment level.
+- `privacy_enabled` and `cloud_fallback_policy` are deprecated no-ops. `execution_mode` is deprecated compatibility input only; migrate to `algorithm`, `offline`, and `evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))`.
 - `config_param` is required whenever you choose `injection_mode="parameter"`; forgetting it leaves your function without injected configs.
 - Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
 - Inline tuned-variable definitions accept `Range`, `IntRange`, `LogRange`, `Choices`, or numeric `(low, high)` tuples. Inline lists are not recognized; use `Choices([...])` instead.
@@ -189,7 +180,8 @@ Later scopes override earlier ones field-by-field. The runtime resolution logs t
         "temperature": (0.0, 1.0)
     },
     evaluation={"eval_dataset": "evals.jsonl"},  # Grouped option bundle
-    execution={"execution_mode": "edge_analytics"},
+    algorithm="grid",
+    offline=True,
 )
 def my_agent(query: str) -> str:
     return process_query(query)
@@ -228,7 +220,7 @@ async def optimize(
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `algorithm` | `str \| None` | Decorator default | Optimizer to use: `"grid"`, `"random"`, `"bayesian"`, `"optuna"`. |
+| `algorithm` | `str \| None` | Decorator default | Optimizer to use. `"auto"` is cloud-first with local fallback on connectivity failures; `"grid"` and `"random"` stay local; explicit smart algorithms such as `"bayesian"`, `"tpe"`, `"optuna_tpe"`, `"optuna_random"`, `"optuna_grid"`, `"optuna_cmaes"`, `"optuna_nsga2"`, `"nsga2"`, `"nsgaii"`, `"nsga_ii"`, `"cmaes"`, and `"cma_es"` require cloud and hard-error when unavailable or offline. |
 | `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. `None` means unlimited. |
 | `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. |
 | `save_to` | `str \| None` | `None` | Optional path to persist results after completion. |
@@ -534,6 +526,9 @@ class OptimizationResult:
 - `total_trials`: Total number of trials executed
 - `successful_trials`: List of trials that completed successfully
 - `success_rate`: Ratio of successful trials to total trials
+
+`metadata["source"]` records result provenance as one of `cloud_brain`,
+`local_fallback`, `explicit_local`, or `offline`.
 
 ### TrialResult
 

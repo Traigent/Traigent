@@ -489,11 +489,11 @@ from traigent.config.parallel import ParallelConfig
 
 @traigent.optimize(
     execution=ExecutionOptions(
-        execution_mode="edge_analytics",
+        algorithm="grid",
+        offline=True,
         local_storage_path="./my_results",
         minimal_logging=True,
         parallel_config=ParallelConfig(thread_workers=4, trial_concurrency=2),
-        privacy_enabled=False,
         max_total_examples=1000,
         samples_include_pruned=True,
         reps_per_trial=1,
@@ -505,17 +505,16 @@ from traigent.config.parallel import ParallelConfig
 
 **ExecutionOptions Fields**:
 
-- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "hybrid_api" for external API-backed trial execution; "privacy" as a legacy alias for "hybrid" with privacy enabled; "cloud" is reserved for future remote execution and fails closed.
+- `algorithm`: optimizer selector. `"auto"` is cloud-first and falls back to local grid/random on connectivity failures; `"grid"` and `"random"` are explicit local optimizers; smart algorithms require cloud and hard-error when unavailable or offline.
+- `offline`: force local-only operation with zero Traigent backend egress. `TRAIGENT_OFFLINE=1` and legacy `TRAIGENT_OFFLINE_MODE=1` provide the same behavior via environment variables.
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
 - `parallel_config`: Concurrency configuration
-- `privacy_enabled`: Redact sensitive data
 - `max_total_examples`: Global sample budget
 - `samples_include_pruned`: Count pruned trials in budget
 - `reps_per_trial`: Repetitions per configuration. OSS SDK accepts only `1`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
 - `reps_aggregation`: Repetition aggregation method. OSS SDK accepts only `"mean"`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
-- `hybrid_api_endpoint`, `tunable_id`, `hybrid_api_transport`, `hybrid_api_transport_type`, `hybrid_api_batch_size`, `hybrid_api_batch_parallelism`, `hybrid_api_keep_alive`, `hybrid_api_heartbeat_interval`, `hybrid_api_timeout`, `hybrid_api_auth_header`, `hybrid_api_auto_discover_tvars`: Hybrid API execution controls.
-- `cloud_fallback_policy`: Legacy/future cloud fallback behavior. It does not enable `execution_mode="cloud"` in 0.12.0.
+- `evaluator`: external evaluator bundle, including `ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))`. This does not change optimizer routing; it only changes how each trial is evaluated.
 
 #### `mock`
 
@@ -564,6 +563,12 @@ The `**runtime_overrides` parameter accepts additional settings:
     ...
 )
 ```
+
+Deprecated execution inputs:
+
+- `execution_mode=` is deprecated compatibility input only; migrate to `algorithm=` / `offline=`.
+- `privacy_enabled` is a deprecated no-op. Cloud-brain optimization already avoids dataset-content egress; use `offline=True` for zero Traigent backend egress.
+- `cloud_fallback_policy` is a deprecated no-op. Use `TRAIGENT_REQUIRE_CLOUD=1` to disable `algorithm="auto"` fallback.
 
 Run controls such as `max_trials` and `timeout` are passed to `.optimize()`:
 
@@ -642,16 +647,15 @@ def answer_question(question: str) -> str:
         lambda cfg, metrics: metrics.get("cost", 0) <= 0.10 if metrics else True,
     ],
     evaluation={"eval_dataset": "support_tickets.jsonl"},
-    execution={
-        "execution_mode": "edge_analytics",
-        "parallel_config": {"thread_workers": 4},
-    },
+    algorithm="grid",
+    offline=True,
+    parallel_config={"thread_workers": 4},
 )
 def process_ticket(ticket: str) -> str:
     return support_chain.run(ticket)
 ```
 
-### Edge Analytics with Privacy
+### Offline Local Storage
 
 ```python
 @traigent.optimize(
@@ -661,12 +665,10 @@ def process_ticket(ticket: str) -> str:
         "temperature": [0.1, 0.3, 0.5],
     },
     evaluation={"eval_dataset": "medical_qa.jsonl"},
-    execution={
-        "execution_mode": "edge_analytics",
-        "local_storage_path": "./medical_optimizations",
-        "privacy_enabled": True,
-        "minimal_logging": True,
-    },
+    algorithm="grid",
+    offline=True,
+    local_storage_path="./medical_optimizations",
+    minimal_logging=True,
 )
 def medical_assistant(query: str) -> str:
     return process_medical_query(query)
@@ -700,7 +702,7 @@ def my_agent(query: str) -> str:
 - [Complete Function Specification](./complete-function-specification.md) - Full API reference
 - [Evaluation Guide](../user-guide/evaluation_guide.md) - Understanding accuracy metrics, evaluation methods, and troubleshooting
 - [Injection Modes Guide](../user-guide/injection_modes.md) - Configuration injection patterns
-- [Execution Modes Guide](../guides/execution-modes.md) - Execution mode details
+- [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md) - Cloud-first auto, explicit local, offline, and migration guidance
 - [Thread Pool Examples](./thread-pool-examples.md) - Context propagation with threads
 - [Telemetry Documentation](./telemetry.md) - Data collection and privacy
 - Custom evaluator walkthrough in the repository examples - LLM-as-Judge implementation

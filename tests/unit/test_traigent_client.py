@@ -37,7 +37,8 @@ class TestTraigentClientInitialization:
         assert client.api_key == "explicit_key"  # pragma: allowlist secret
         assert client.backend_url == "https://explicit.url"
         assert client._explicit_api_key is True
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert client.execution_mode == ExecutionMode.HYBRID
+        mock_backend_client.assert_called_once()
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -108,7 +109,7 @@ class TestDetermineExecutionMode:
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_explicit_cloud_mode_deprecated_resolves_to_edge_analytics(self) -> None:
-        """Deprecated cloud mode emits DeprecationWarning and resolves to edge_analytics."""
+        """Deprecated cloud mode warns and resolves to edge_analytics."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -134,76 +135,74 @@ class TestDetermineExecutionMode:
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_LOCAL": "1"})
-    def test_auto_mode_with_force_local(
+    def test_legacy_execution_mode_auto_resolves_to_edge_analytics(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode detection with TRAIGENT_FORCE_LOCAL."""
+        """Legacy execution_mode='auto' keeps the develop edge_analytics mapping."""
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
         client = TraigentClient(execution_mode="auto")
+
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert client.backend_client is None
+        mock_backend_client.assert_not_called()
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_HYBRID": "1"})
-    def test_auto_mode_with_force_hybrid(
+    def test_algorithm_auto_with_force_hybrid_uses_cloud_brain_policy(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode with TRAIGENT_FORCE_HYBRID defaults to edge_analytics.
-
-        Cloud remote execution is not yet supported, so auto resolves to edge_analytics.
-        """
+        """The new algorithm selector remains cloud-first."""
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="auto")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        client = TraigentClient(algorithm="auto")
+        assert client.execution_mode == ExecutionMode.HYBRID
+        mock_backend_client.assert_called_once()
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_CLOUD": "1"})
-    def test_auto_mode_with_force_cloud(
+    def test_algorithm_auto_with_force_cloud_uses_cloud_brain_policy(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode with TRAIGENT_FORCE_CLOUD defaults to edge_analytics.
-
-        Cloud mode is not yet supported, so auto always resolves to edge_analytics.
-        """
+        """The new algorithm selector remains cloud-first."""
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="auto")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        client = TraigentClient(algorithm="auto")
+        assert client.execution_mode == ExecutionMode.HYBRID
+        mock_backend_client.assert_called_once()
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {}, clear=True)
-    def test_auto_mode_with_explicit_api_key(
+    def test_algorithm_auto_with_explicit_api_key_uses_cloud_brain_policy(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode defaults to edge_analytics even with API key.
-
-        Cloud mode is not yet supported, so auto always resolves to edge_analytics.
-        """
+        """The new algorithm selector stays cloud-first with explicit credentials."""
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(api_key="explicit_key", execution_mode="auto")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        client = TraigentClient(api_key="explicit_key", algorithm="auto")
+        assert client.execution_mode == ExecutionMode.HYBRID
+        mock_backend_client.assert_called_once()
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {}, clear=True)
-    def test_auto_mode_without_api_key(
+    def test_algorithm_auto_without_api_key_uses_cloud_brain_policy(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode defaults to edge analytics without API key."""
+        """The new algorithm selector uses cloud-brain orchestration."""
         mock_backend_config.get_api_key.return_value = None
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="auto")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        client = TraigentClient(algorithm="auto")
+        assert client.execution_mode == ExecutionMode.HYBRID
+        mock_backend_client.assert_called_once()
 
 
 class TestCheckPrivacyRequirements:
@@ -219,7 +218,7 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="auto")
+        client = TraigentClient(algorithm="auto")
         assert client._check_privacy_requirements() is True
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
@@ -232,7 +231,7 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="auto")
+        client = TraigentClient(algorithm="auto")
         assert client._check_privacy_requirements() is True
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
@@ -249,7 +248,7 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="auto")
+        client = TraigentClient(algorithm="auto")
         assert client._check_privacy_requirements() is True
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
@@ -266,7 +265,7 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="auto")
+        client = TraigentClient(algorithm="auto")
         assert client._check_privacy_requirements() is False
 
 

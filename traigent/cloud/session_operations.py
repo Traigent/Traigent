@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
-from traigent.cloud.client import CloudServiceError, SessionContractError
+from traigent.cloud.client import (
+    CloudEgressBlockedError,
+    CloudServiceError,
+    SessionContractError,
+    raise_if_cloud_egress_disabled,
+)
 from traigent.cloud.models import (
     OptimizationFinalizationResponse,
     OptimizationSession,
@@ -29,7 +34,7 @@ from traigent.cloud.session_types import (
     SessionCreationResult,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import resolve_environment_label
+from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
@@ -91,6 +96,14 @@ class SessionOperations:
     def _validate_positive_int(value: int, field_name: str) -> None:
         """Validate that an integer is positive."""
         validate_or_raise(CoreValidators.validate_positive_int(value, field_name))
+
+    def _raise_if_backend_egress_disabled(self, operation: str) -> None:
+        """Fail closed before any backend HTTP request."""
+
+        raise_if_cloud_egress_disabled(
+            operation,
+            no_egress=getattr(self.client, "no_egress", False),
+        )
 
     async def _reset_client_session(self, reason: str) -> None:
         closer = getattr(self.client, "_reset_http_session", None)
@@ -344,7 +357,23 @@ class SessionOperations:
         governed = bool(promotion_policy or tvl_governance)
 
         def _must_fail_loud(exc: Exception) -> bool:
-            return governed or isinstance(exc, SessionContractError)
+            return governed or isinstance(
+                exc, (CloudEgressBlockedError, SessionContractError)
+            )
+
+        if is_backend_offline():
+            logger.debug(
+                "Offline mode enabled — skipping backend session creation for %s",
+                function_name,
+            )
+            fallback_id = self._create_local_fallback_session(
+                function_name, search_space, optimization_goal, metadata
+            )
+            return SessionCreationResult.fallback(
+                session_id=fallback_id,
+                reason=SessionCreationFailureReason.SESSION_FAILED,
+                detail="Offline mode enabled",
+            )
 
         async def _create_session_async() -> SessionCreationResult:
             # Preflight: check if API key exists before attempting any HTTP call
@@ -416,6 +445,7 @@ class SessionOperations:
 
             try:
                 logger.info("Creating session via Traigent session endpoints")
+                self._raise_if_backend_egress_disabled("create session")
                 (
                     session_id,
                     experiment_id,
@@ -680,6 +710,7 @@ class SessionOperations:
             raise CloudServiceError("aiohttp not available for hybrid sessions")
 
         logger.info("Creating hybrid execution session")
+        self._raise_if_backend_egress_disabled("create hybrid session")
 
         session = await self.client._ensure_session()
 
@@ -750,6 +781,7 @@ class SessionOperations:
         if not AIOHTTP_AVAILABLE:
             raise CloudServiceError("aiohttp not available")
 
+        self._raise_if_backend_egress_disabled("get hybrid session status")
         session = await self.client._ensure_session()
 
         try:
@@ -796,6 +828,7 @@ class SessionOperations:
         if not AIOHTTP_AVAILABLE:
             raise CloudServiceError("aiohttp not available")
 
+        self._raise_if_backend_egress_disabled("finalize hybrid session")
         session = await self.client._ensure_session()
 
         try:
@@ -1093,6 +1126,7 @@ class SessionOperations:
         if not AIOHTTP_AVAILABLE:
             logger.debug("aiohttp not available, skipping API finalization")
             return None
+        self._raise_if_backend_egress_disabled("finalize session")
 
         try:
             # Prepare headers with API key

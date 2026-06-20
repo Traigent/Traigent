@@ -67,7 +67,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "tool-use-calculator"
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
@@ -199,7 +199,7 @@ def _calc(expr: str, max_calls: int) -> str:
     },
     injection_mode="parameter",
     config_param="config",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def solve_math(expr: str, config: dict | None = None) -> str:
     if MOCK:

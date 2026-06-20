@@ -30,7 +30,11 @@ from traigent.cloud.backend_components import (
     BackendSessionManager,
     BackendTrialManager,
 )
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import (
+    CloudServiceError,
+    cloud_backend_egress_disabled,
+    raise_if_cloud_egress_disabled,
+)
 from traigent.cloud.cloud_operations import CloudOperations
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -152,6 +156,7 @@ class BackendIntegratedClient:
         rate_limit_calls: int = 100,
         rate_limit_period: float = 60.0,
         local_storage_path: str | None = None,
+        no_egress: bool = False,
     ) -> None:
         """Initialize backend integrated client.
 
@@ -165,6 +170,7 @@ class BackendIntegratedClient:
             enable_rate_limiting: Enable rate limiting
             rate_limit_calls: Maximum calls within rate limit period
             rate_limit_period: Rate limit period in seconds
+            no_egress: Runtime policy flag that forbids backend transport
         """
         if isinstance(api_key, BackendClientConfig) and backend_config is None:
             backend_config = api_key
@@ -219,6 +225,7 @@ class BackendIntegratedClient:
         self.backend_config.api_base_url = self.api_base_url
 
         self.enable_fallback = enable_fallback
+        self.no_egress = bool(no_egress)
         self._api_key_fallback = api_key
         self.enable_rate_limiting = enable_rate_limiting
         self.rate_limit_calls = rate_limit_calls
@@ -231,6 +238,7 @@ class BackendIntegratedClient:
             api_key,
             effective_rate_limit,
             rate_limit_period,
+            no_egress=self.no_egress,
         )
         self.auth = self.auth_manager.auth
         self.session_manager = BackendSessionManager(
@@ -411,6 +419,8 @@ class BackendIntegratedClient:
 
     async def __aenter__(self) -> "BackendIntegratedClient":
         """Async context manager entry."""
+        if cloud_backend_egress_disabled(self.no_egress):
+            return self
         if AIOHTTP_AVAILABLE:
             # Try to get headers, but don't fail if authentication is not available
             # B4 ROUND 4: ``AuthenticationError`` must propagate -- a
@@ -447,6 +457,7 @@ class BackendIntegratedClient:
     async def _ensure_session(self) -> AioClientSession:
         """Ensure session exists with current auth headers."""
 
+        self._raise_if_backend_egress_disabled("backend request")
         existing = self._session
         if existing is not None and not _session_is_closed(existing):
             return cast(AioClientSession, existing)
@@ -495,6 +506,11 @@ class BackendIntegratedClient:
             )
 
             return cast(AioClientSession, self._session)
+
+    def _raise_if_backend_egress_disabled(self, operation: str) -> None:
+        """Fail closed before any backend HTTP request."""
+
+        raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session."""
@@ -910,6 +926,7 @@ class BackendIntegratedClient:
         if_match: str | None = None,
     ) -> dict[str, Any]:
         """Publish a canonical best-config spec to the backend."""
+        self._raise_if_backend_egress_disabled("publish best config")
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
@@ -954,6 +971,7 @@ class BackendIntegratedClient:
         etag: str | None = None,
     ) -> dict[str, Any] | None:
         """Fetch the current backend best config, returning None on 304/404."""
+        self._raise_if_backend_egress_disabled("fetch best config")
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
@@ -1003,6 +1021,7 @@ class BackendIntegratedClient:
         features: list[dict[str, Any]] | dict[str, Any],
     ) -> bool:
         """Upload per-run example features for backend-side analytics."""
+        self._raise_if_backend_egress_disabled("upload example features")
         if not experiment_run_id or not feature_kind or not features:
             return False
 
@@ -1087,7 +1106,10 @@ class BackendIntegratedClient:
             True if registration succeeded, False if it failed,
             None if the operation was skipped (e.g. offline mode).
         """
-        return await self._trial_ops.register_trial_start(session_id, trial_id, config)
+        return cast(
+            bool | None,
+            await self._trial_ops.register_trial_start(session_id, trial_id, config),
+        )
 
     def register_trial_start_sync(
         self,
@@ -1102,7 +1124,10 @@ class BackendIntegratedClient:
             True if registration succeeded, False if it failed,
             None if the operation was skipped (e.g. offline mode).
         """
-        return self._trial_ops.register_trial_start_sync(session_id, trial_id, config)
+        return cast(
+            bool | None,
+            self._trial_ops.register_trial_start_sync(session_id, trial_id, config),
+        )
 
     async def request_trial_slot(self, session_id: str) -> str | None:
         """Acquire a backend-minted trial id (configuration_run) for a session.
@@ -1113,7 +1138,7 @@ class BackendIntegratedClient:
             acquired (offline / transport unavailable / non-2xx / backend
             declined). ``None`` never means "use a client id".
         """
-        return await self._trial_ops.request_trial_slot(session_id)
+        return cast(str | None, await self._trial_ops.request_trial_slot(session_id))
 
     def _generate_trial_id(
         self,
@@ -1149,7 +1174,21 @@ class BackendIntegratedClient:
             None if the operation was skipped (e.g. offline mode).
         """
         if metadata is None:
-            return await self._trial_ops.submit_trial_result_via_session(
+            return cast(
+                bool | None,
+                await self._trial_ops.submit_trial_result_via_session(
+                    session_id,
+                    trial_id,
+                    config,
+                    metrics,
+                    status,
+                    error_message,
+                    execution_mode,
+                ),
+            )
+        return cast(
+            bool | None,
+            await self._trial_ops.submit_trial_result_via_session(
                 session_id,
                 trial_id,
                 config,
@@ -1157,16 +1196,8 @@ class BackendIntegratedClient:
                 status,
                 error_message,
                 execution_mode,
-            )
-        return await self._trial_ops.submit_trial_result_via_session(
-            session_id,
-            trial_id,
-            config,
-            metrics,
-            status,
-            error_message,
-            execution_mode,
-            metadata=metadata,
+                metadata=metadata,
+            ),
         )
 
     async def _submit_summary_stats(
@@ -1184,8 +1215,11 @@ class BackendIntegratedClient:
             True if submission succeeded, False if it failed,
             None if the operation was skipped (e.g. offline mode).
         """
-        return await self._trial_ops.submit_summary_stats(
-            session_id, trial_id, config, summary_stats, status
+        return cast(
+            bool | None,
+            await self._trial_ops.submit_summary_stats(
+                session_id, trial_id, config, summary_stats, status
+            ),
         )
 
     async def update_trial_weighted_scores(
@@ -1202,8 +1236,11 @@ class BackendIntegratedClient:
             True if update succeeded, False if it failed,
             None if the operation was skipped (e.g. offline mode).
         """
-        return await self._trial_ops.update_trial_weighted_scores(
-            trial_id, weighted_score, normalization_info, objective_weights
+        return cast(
+            bool | None,
+            await self._trial_ops.update_trial_weighted_scores(
+                trial_id, weighted_score, normalization_info, objective_weights
+            ),
         )
 
     def submit_result(

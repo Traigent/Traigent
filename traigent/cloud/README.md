@@ -2,7 +2,9 @@
 
 This module provides backend integration capabilities for Traigent SDK, including portal-tracked hybrid sessions, privacy-preserving session/result submission, authentication, and analytics.
 
-Remote cloud execution is intentionally not implemented yet. `execution_mode="cloud"` fails closed with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
+This module supports backend and portal integration for SDK-run trials. Users
+should select optimization behavior with `algorithm` and `offline`; the legacy
+execution-mode field is kept only for compatibility.
 
 ## Components
 
@@ -65,7 +67,7 @@ from traigent import optimize
 
 @optimize(
     model="gpt-3.5-turbo",
-    execution_mode="hybrid"  # Local trials plus backend/portal tracking
+    algorithm="auto",  # Backend suggestions with SDK-run trials
 )
 def my_function(prompt: str) -> str:
     return "response"

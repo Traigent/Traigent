@@ -66,7 +66,6 @@ except ImportError as exc:  # pragma: no cover - dependency guidance
 import traigent
 from traigent.config.backend_config import BackendConfig
 from traigent.integrations.observability.workflow_traces import (
-    SpanType,
     WorkflowEdge,
     WorkflowGraphPayload,
     WorkflowNode,
@@ -78,7 +77,7 @@ from traigent.integrations.observability.workflow_traces import (
 load_dotenv()
 
 # Initialize Traigent
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 SCRIPT_DIR = Path(__file__).parent  # Current directory (advanced/)
 
@@ -519,7 +518,7 @@ def cost_metric(output: str, expected: str) -> float:
         # Retriever Agent parameters
         "retrieve.top_k": [3, 5],  # Reduced options
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def run_rag_workflow(question: str) -> str:
     """Run the RAG workflow on a question.
@@ -569,8 +568,7 @@ async def main() -> None:
 
     # Check environment
     backend_url = (
-        os.environ.get("TRAIGENT_BACKEND_URL")
-        or BackendConfig.get_cloud_backend_url()
+        os.environ.get("TRAIGENT_BACKEND_URL") or BackendConfig.get_cloud_backend_url()
     )
     api_key = os.environ.get("TRAIGENT_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
@@ -701,4 +699,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

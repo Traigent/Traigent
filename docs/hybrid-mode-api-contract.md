@@ -69,10 +69,10 @@ Example: `http://your-service:8080/traigent/v1/capabilities`
 
 If your service requires authentication, accept the configured token in both
 `Authorization` and `x-api-key` headers. The SDK sets both headers from
-`hybrid_api_auth_header` for compatibility.
+`HybridAPIOptions.auth_header` for compatibility.
 
 Configure the Traigent SDK client with:
-- `hybrid_api_auth_header="Bearer <token>"`
+- `ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(auth_header="Bearer <token>"))`
 
 For current contract compatibility, keep auth policy consistent across all endpoints. RBAC and stronger policy models can be layered later without changing endpoint shapes.
 

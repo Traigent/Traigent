@@ -20,7 +20,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils.mock_answers import configure_mock_notice
 
 import traigent
-from traigent import TraigentConfig
 from traigent.api.parameter_ranges import Choices, Range
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
@@ -32,9 +31,7 @@ DATASET_PATH = str(
 )
 
 # Initialize Traigent in mock mode
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 # Define system prompt variants to optimize
 SYSTEM_PROMPTS = [
@@ -58,7 +55,7 @@ top_p = Range.top_p()  # [0.1, 1.0]
     top_p=top_p,
     objectives=["accuracy"],
     eval_dataset=DATASET_PATH,
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def qa_agent(question: str) -> str:
     """Mock QA agent with tunable system prompt and parameters."""
@@ -170,4 +167,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

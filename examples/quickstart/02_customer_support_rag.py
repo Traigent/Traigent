@@ -91,7 +91,7 @@ def simple_retriever(query: str, k: int = 3) -> list[str]:
         "k": [2, 3, 5],  # RAG retrieval depth
     },
     evaluation=EvaluationOptions(eval_dataset=str(RAG_DATASET_PATH)),
-    execution=ExecutionOptions(execution_mode="edge_analytics"),
+    execution=ExecutionOptions(offline=True),
     max_trials=6,
 )
 def customer_support_agent(query: str) -> str:

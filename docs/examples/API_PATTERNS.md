@@ -146,6 +146,7 @@ results = await async_answer.optimize(max_trials=10)
 print(results.best_config)
 print(results.best_score)
 print(results.status)
+print(results.source)
 
 successful = results.successful_trials
 df = results.to_dataframe()
@@ -153,6 +154,9 @@ df = results.to_dataframe()
 
 `successful_trials` is a list of successful `TrialResult` objects. Use
 `len(results.successful_trials)` when you need a count.
+
+`results.source` tells you which execution path ran:
+`cloud_brain`, `local_fallback`, `explicit_local`, or `offline`.
 
 ## Progressive Runs
 
@@ -171,17 +175,24 @@ refined = await answer.optimize(
 )
 ```
 
-## Hybrid API
+## External Service Evaluator
 
-Use `execution_mode="hybrid_api"` when trials are delegated to an external
-service that implements the Traigent Hybrid API contract.
+Use `ExternalServiceEvaluator` when trials are delegated to an external service
+that implements the Traigent Hybrid API contract. This replaces the removed
+`execution_mode="hybrid_api"` plus flat `hybrid_api_*` arguments; the optimizer
+still runs locally and each trial evaluation is dispatched through the external
+service.
 
 ```python
+from traigent.api.decorators import ExternalServiceEvaluator, HybridAPIOptions
+
 @traigent.optimize(
-    execution={
-        "execution_mode": "hybrid_api",
-        "hybrid_api_endpoint": "http://localhost:8080",
-    },
+    evaluator=ExternalServiceEvaluator(
+        hybrid_api=HybridAPIOptions(
+            endpoint="http://localhost:8080",
+            transport_type="http",
+        )
+    ),
     configuration_space={"temperature": [0.0, 0.3]},
     eval_dataset="data/eval.jsonl",
     scoring_function=my_score,
@@ -192,6 +203,9 @@ def external_agent(_query: str) -> str:
 
 results = await external_agent.optimize(max_trials=10)
 ```
+
+Because the optimizer is local in this setup, successful runs report
+`results.source == "explicit_local"`.
 
 ## Multi-Field Evaluation Inputs
 

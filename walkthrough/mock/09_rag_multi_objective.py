@@ -30,15 +30,12 @@ from utils.mock_answers import (
 )
 
 import traigent
-from traigent import TraigentConfig
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 DATASETS = Path(__file__).parent.parent / "datasets"
 
@@ -140,7 +137,7 @@ def rag_accuracy_scorer(
     scoring_function=rag_accuracy_scorer,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def rag_agent(question: str) -> str:
     """RAG agent: retrieves context up to max_tokens budget, then answers."""
@@ -198,4 +195,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

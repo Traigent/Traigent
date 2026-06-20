@@ -29,6 +29,43 @@ class ExecutionMode(StrEnum):
     HYBRID_API = "hybrid_api"
 
 
+class ExecutionIntent(StrEnum):
+    """Resolved execution intent for the consolidated SDK surface."""
+
+    CLOUD_BRAIN = "cloud_brain"
+    CLOUD_REQUIRED = "cloud_required"
+    LOCAL_ONLY = "local_only"
+
+
+@dataclass(frozen=True)
+class ResolvedExecutionPolicy:
+    """Cloud/local execution policy resolved from public SDK knobs.
+
+    The execution layer consumes this object. Legacy ``ExecutionMode`` remains
+    available as an internal compatibility representation while the public
+    selector moves to ``algorithm`` plus ``offline``.
+    """
+
+    intent: ExecutionIntent
+    offline: bool
+    require_cloud: bool
+    algorithm: str
+    source_hint: str
+    legacy_execution_mode: ExecutionMode = ExecutionMode.EDGE_ANALYTICS
+
+    @property
+    def allows_cloud_fallback(self) -> bool:
+        """Whether cloud-brain resolution may fall back to local execution."""
+
+        return self.intent is ExecutionIntent.CLOUD_BRAIN and not self.require_cloud
+
+    @property
+    def legacy_execution_mode_value(self) -> str:
+        """Compatibility mode string for code not yet wired to policy."""
+
+        return self.legacy_execution_mode.value
+
+
 # Canonical runtime-supported modes and accepted public aliases.
 _SUPPORTED_MODES = (
     ExecutionMode.EDGE_ANALYTICS,
@@ -39,6 +76,91 @@ _EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
     "local": ExecutionMode.EDGE_ANALYTICS,
 }
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+_LOCAL_ALGORITHMS = frozenset({"grid", "random"})
+_SMART_ALGORITHMS = frozenset(
+    {
+        "bayesian",
+        "optuna",
+        "tpe",
+        "optuna_tpe",
+        "optuna_random",
+        "optuna_grid",
+        "optuna_cmaes",
+        "optuna_nsga2",
+        "nsga2",
+        "cmaes",
+        "nsgaii",
+        "nsga_ii",
+        "cma_es",
+    }
+)
+
+
+def _read_bool_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in _TRUTHY_ENV_VALUES
+
+
+def is_traigent_offline_requested() -> bool:
+    """Return whether ``TRAIGENT_OFFLINE`` requests zero-egress local mode."""
+
+    return _read_bool_env("TRAIGENT_OFFLINE")
+
+
+def is_traigent_require_cloud_requested() -> bool:
+    """Return whether ``TRAIGENT_REQUIRE_CLOUD`` disables local fallback."""
+
+    return _read_bool_env("TRAIGENT_REQUIRE_CLOUD")
+
+
+def normalize_algorithm_name(algorithm: str | None) -> str:
+    """Normalize public algorithm names for resolution and validation."""
+
+    if algorithm is None:
+        return "auto"
+    if not isinstance(algorithm, str):
+        raise TypeError(f"algorithm must be a string, got {type(algorithm).__name__}")
+    normalized = algorithm.strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized or "auto"
+
+
+def is_local_algorithm(algorithm: str | None) -> bool:
+    """Return True for local-only algorithms."""
+
+    return normalize_algorithm_name(algorithm) in _LOCAL_ALGORITHMS
+
+
+def is_smart_algorithm(algorithm: str | None) -> bool:
+    """Return True for cloud-required smart optimizer names."""
+
+    normalized = normalize_algorithm_name(algorithm)
+    return normalized in _SMART_ALGORITHMS or normalized.startswith("optuna_")
+
+
+def accepted_algorithm_values() -> tuple[str, ...]:
+    """Return known public algorithm names accepted by policy validation."""
+
+    return tuple(sorted({"auto", *_LOCAL_ALGORITHMS, *_SMART_ALGORITHMS}))
+
+
+def validate_algorithm_name(algorithm: str | None) -> str:
+    """Validate and normalize the public algorithm selector."""
+
+    normalized = normalize_algorithm_name(algorithm)
+    # Validate strictly against KNOWN names only. is_smart_algorithm() keeps a
+    # lenient ``optuna_`` prefix for internal classification/routing, but the
+    # public boundary must reject unknown names (e.g. ``optuna_foo``) rather
+    # than accept-then-fail later.
+    if (
+        normalized == "auto"
+        or normalized in _LOCAL_ALGORITHMS
+        or normalized in _SMART_ALGORITHMS
+    ):
+        return normalized
+    raise ValueError(
+        "algorithm must be 'auto', 'grid', 'random', or a known smart optimizer "
+        f"name, got {algorithm!r}"
+    )
 
 
 def accepted_execution_mode_values() -> tuple[str, ...]:
@@ -53,14 +175,26 @@ def _accepted_execution_mode_message() -> str:
     return f"accepted values are {list(accepted_execution_mode_values())}"
 
 
+def _warn_deprecated_execution_mode_alias(mode: str, message: str) -> None:
+    import warnings
+
+    warnings.warn(
+        f"execution_mode={mode!r} is deprecated. {message}",
+        DeprecationWarning,
+        stacklevel=4,
+    )
+
+
 def resolve_execution_mode(
     mode: ExecutionMode | str | None,
     *,
     default: ExecutionMode = ExecutionMode.EDGE_ANALYTICS,
 ) -> ExecutionMode:
-    """Normalize user-provided execution mode values into an ExecutionMode enum."""
-    import warnings
+    """Normalize legacy execution-mode values into an internal enum.
 
+    New public code should call :func:`resolve_execution_policy` and use the
+    returned :class:`ResolvedExecutionPolicy`.
+    """
     if mode is None:
         return default
     if isinstance(mode, ExecutionMode):
@@ -69,20 +203,33 @@ def resolve_execution_mode(
         normalized = mode.strip().lower()
         if not normalized:
             return default
-        if normalized in ("privacy", "cloud", "standard"):
-            warnings.warn(
-                f"execution_mode={mode!r} is no longer supported. "
-                f"Mapped to 'hybrid' for backward compatibility. "
-                f"Valid modes: {list(accepted_execution_mode_values())}",
-                DeprecationWarning,
-                stacklevel=3,
+        if normalized == "standard":
+            _warn_deprecated_execution_mode_alias(
+                mode,
+                "Omit execution_mode and use algorithm='auto' for cloud-first "
+                "automatic optimization.",
             )
-            return (
-                ExecutionMode.HYBRID
-                if normalized in ("privacy", "standard")
-                else ExecutionMode.EDGE_ANALYTICS
+            return ExecutionMode.HYBRID
+        if normalized == "privacy":
+            _warn_deprecated_execution_mode_alias(
+                mode,
+                "It now maps to cloud-first automatic optimization. Use "
+                "offline=True for a no-egress local run.",
             )
-        if normalized in _EXECUTION_MODE_ALIASES:
+            return ExecutionMode.HYBRID
+        if normalized == "cloud":
+            _warn_deprecated_execution_mode_alias(
+                mode,
+                "Use resolve_execution_policy() for the new cloud-first policy. "
+                "This deprecated compatibility helper still maps it to "
+                "edge_analytics.",
+            )
+            return ExecutionMode.EDGE_ANALYTICS
+        if normalized == "local":
+            _warn_deprecated_execution_mode_alias(
+                mode,
+                "Use offline=True for local-only, zero-egress optimization.",
+            )
             return _EXECUTION_MODE_ALIASES[normalized]
         try:
             return ExecutionMode(normalized)
@@ -98,7 +245,7 @@ def resolve_execution_mode(
 def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     """Resolve *and* validate that an execution mode is currently supported.
 
-    Legacy string values (``privacy``, ``cloud``, ``standard``) emit a
+    Legacy string values (``local``, ``privacy``, ``cloud``, ``standard``) emit a
     DeprecationWarning and are mapped to a canonical mode.
     Raises :class:`~traigent.utils.exceptions.ConfigurationError` for
     unknown mode strings.
@@ -120,6 +267,154 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
         )
 
     return resolved
+
+
+def resolve_execution_policy(
+    *,
+    algorithm: str | None = "auto",
+    offline: bool = False,
+    execution_mode: ExecutionMode | str | None = None,
+    privacy_enabled: bool | None = None,
+    cloud_fallback_policy: str | None = None,
+    require_cloud: bool | None = None,
+    source_hint: str = "decorator",
+) -> ResolvedExecutionPolicy:
+    """Resolve public execution controls into a policy object.
+
+    Semantics:
+    - ``algorithm='auto'`` with egress allowed resolves to cloud-brain mode.
+    - ``grid``/``random`` resolve to local-only mode.
+    - smart algorithms resolve to cloud-required mode.
+    - ``offline=True`` or ``TRAIGENT_OFFLINE=1`` forces local-only mode and
+      rejects smart algorithms.
+    - ``TRAIGENT_REQUIRE_CLOUD=1`` disables cloud-brain fallback.
+    - legacy ``execution_mode`` values warn and map into this policy surface.
+    """
+    import warnings
+
+    from traigent.utils.exceptions import ConfigurationError
+
+    if not isinstance(offline, bool):
+        raise TypeError(f"offline must be a bool, got {type(offline).__name__}")
+
+    normalized_algorithm = validate_algorithm_name(algorithm)
+    offline_requested = offline or is_traigent_offline_requested()
+    require_cloud_requested = (
+        is_traigent_require_cloud_requested()
+        if require_cloud is None
+        else bool(require_cloud)
+    )
+    hint_parts = [source_hint]
+
+    if execution_mode is not None:
+        raw_mode = (
+            execution_mode.value
+            if isinstance(execution_mode, ExecutionMode)
+            else str(execution_mode)
+        )
+        normalized_mode = raw_mode.strip().lower()
+        hint_parts.append(f"legacy_execution_mode={normalized_mode}")
+
+        if normalized_mode in {"", "edge_analytics", "local"}:
+            warnings.warn(
+                f"execution_mode={raw_mode!r} is deprecated. Mapping to "
+                "offline=True / LOCAL_ONLY to preserve the legacy no-egress "
+                "guarantee. Use offline=True directly.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            offline_requested = True
+        elif normalized_mode in {"hybrid", "standard"}:
+            warnings.warn(
+                f"execution_mode={raw_mode!r} is deprecated. Omit "
+                "execution_mode and use algorithm='auto' for cloud-first "
+                "automatic optimization.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        elif normalized_mode == "privacy":
+            warnings.warn(
+                "execution_mode='privacy' is deprecated and no longer means "
+                "no egress. Mapping to cloud-first automatic optimization; use "
+                "offline=True for no egress.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        elif normalized_mode == "cloud":
+            warnings.warn(
+                "execution_mode='cloud' is deprecated and now maps to "
+                "cloud-first automatic optimization. This is a semantic flip "
+                "from the historical local edge_analytics mapping; audit callers "
+                "and use offline=True for no egress.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        elif normalized_mode == "hybrid_api":
+            warnings.warn(
+                "execution_mode='hybrid_api' is deprecated as a public execution "
+                "selector. Configure HybridAPIOptions via the evaluator bundle.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        else:
+            raise ConfigurationError(
+                f"No such mode '{raw_mode}'; legacy execution_mode is no longer "
+                "a public selector. Use algorithm='auto'|'grid'|'random' and "
+                "offline=True when no egress is required."
+            )
+
+    if privacy_enabled is not None:
+        warnings.warn(
+            "privacy_enabled is deprecated and has no effect in execution policy "
+            "resolution. Use offline=True for no egress.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        hint_parts.append("legacy_privacy_enabled")
+
+    if cloud_fallback_policy is not None:
+        warnings.warn(
+            "cloud_fallback_policy is deprecated and has no effect. Set "
+            "TRAIGENT_REQUIRE_CLOUD=1 to disable local fallback.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        hint_parts.append("legacy_cloud_fallback_policy")
+
+    if offline_requested and is_smart_algorithm(normalized_algorithm):
+        raise ConfigurationError(
+            f"algorithm={normalized_algorithm!r} requires cloud execution and "
+            "cannot be used with offline=True or TRAIGENT_OFFLINE=1."
+        )
+
+    if offline_requested:
+        intent = ExecutionIntent.LOCAL_ONLY
+    elif normalized_algorithm == "auto":
+        intent = ExecutionIntent.CLOUD_BRAIN
+    elif normalized_algorithm in _LOCAL_ALGORITHMS:
+        intent = ExecutionIntent.LOCAL_ONLY
+    else:
+        intent = ExecutionIntent.CLOUD_REQUIRED
+
+    legacy_mode = (
+        ExecutionMode.EDGE_ANALYTICS
+        if intent is ExecutionIntent.LOCAL_ONLY
+        else ExecutionMode.HYBRID
+    )
+    if execution_mode == ExecutionMode.HYBRID_API or (
+        isinstance(execution_mode, str)
+        and execution_mode.strip().lower() == ExecutionMode.HYBRID_API.value
+    ):
+        legacy_mode = ExecutionMode.HYBRID_API
+
+    return ResolvedExecutionPolicy(
+        intent=intent,
+        offline=offline_requested,
+        require_cloud=require_cloud_requested,
+        algorithm=normalized_algorithm,
+        source_hint=";".join(hint_parts),
+        legacy_execution_mode=legacy_mode,
+    )
 
 
 class InjectionMode(StrEnum):
@@ -231,6 +526,15 @@ class TraigentConfig:
     analytics_endpoint: str | None = None  # Custom analytics endpoint
     anonymous_user_id: str | None = None  # Anonymous identifier (auto-generated)
 
+    # Execution-policy runtime state. These fields are intentionally omitted
+    # from to_dict()/from_dict() so persisted user config does not capture
+    # run-specific provenance or no-egress decisions.
+    execution_policy: ResolvedExecutionPolicy | None = None
+    no_egress: bool = False
+    result_source: str | None = None
+    fallback_reason: str | None = None
+    persistence_status: str | None = None
+
     def __post_init__(self) -> None:
         """Validate configuration parameters using unified validators."""
         # Validate temperature
@@ -266,7 +570,6 @@ class TraigentConfig:
         mode_enum = validate_execution_mode(requested_mode)
         if isinstance(self.execution_mode, str) and self.execution_mode == "privacy":
             self.privacy_enabled = True
-
         self.execution_mode = cast(
             Literal["edge_analytics", "local", "privacy", "hybrid", "hybrid_api"],
             mode_enum.value,
@@ -523,7 +826,6 @@ class TraigentConfig:
             requested_mode = resolve_execution_mode(value)
             resolved_mode = validate_execution_mode(requested_mode)
             if isinstance(value, str) and value.strip().lower() == "privacy":
-                # Promote legacy alias to hybrid and enable privacy
                 object.__setattr__(self, "privacy_enabled", True)
                 object.__setattr__(self, "_privacy_enforced_by_execution_mode", True)
             value = resolved_mode.value
@@ -534,6 +836,7 @@ class TraigentConfig:
             "auto_sync",
             "privacy_enabled",
             "strict_metrics_nulls",
+            "no_egress",
         }:
             if key == "privacy_enabled" and getattr(
                 self, "_privacy_enforced_by_execution_mode", False

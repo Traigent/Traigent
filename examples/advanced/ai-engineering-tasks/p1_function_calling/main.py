@@ -28,7 +28,12 @@ from pathlib import Path
 from typing import Any
 
 # Add project root to path for imports
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)))
+sys.path.insert(
+    0,
+    os.environ.get(
+        "TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent.parent.parent)
+    ),
+)
 
 try:
     import traigent
@@ -171,7 +176,7 @@ def _create_dummy_eval_dataset() -> str:
         "-unnecessary_retry_rate",  # Secondary: minimize unnecessary retries
         "-avg_latency_ms",  # Secondary: minimize latency
     ],  # We want to maximize our primary objectives
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_function_calling(
     description_format: str = "openai_functions",
@@ -216,7 +221,6 @@ def run_baseline_comparison(tasks: list[Any]) -> dict[str, dict[str, float]]:
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-
         for baseline_config in baseline_configs:
             name = baseline_config.pop("name")
             task = progress.add_task(f"Running {name}...", total=1)
@@ -442,7 +446,8 @@ async def main() -> None:
     # Run the optimization
     try:
         optimization_results = await optimize_function_calling.optimize(
-            max_trials=150, timeout=2700  # 45 minutes
+            max_trials=150,
+            timeout=2700,  # 45 minutes
         )
 
         # Display results

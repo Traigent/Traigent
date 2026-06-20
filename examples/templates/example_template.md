@@ -95,7 +95,7 @@ def _build_prompt(question: str, context: str | None) -> str:
         "use_rag": [True, False],
         "top_k": [1, 2, 3],
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_question(question: str, model: str = "claude-sonnet-4-6", temperature: float = 0.2, use_rag: bool = True, top_k: int = 2) -> str:
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"

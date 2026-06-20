@@ -44,7 +44,6 @@ except ImportError:  # pragma: no cover - optional convenience import
 
 
 import traigent
-from traigent import TraigentConfig
 from traigent.config.backend_config import BackendConfig
 from traigent.integrations.observability.workflow_traces import (
     WorkflowEdge,
@@ -56,9 +55,7 @@ from traigent.integrations.observability.workflow_traces import (
 
 load_dotenv()
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
-)
+traigent.initialize(offline=True, minimal_logging=True)
 
 SCRIPT_DIR = Path(__file__).parent
 DATASET_PATH = str(
@@ -395,7 +392,7 @@ def operational_efficiency_metric(output: str, expected: str) -> float:
     if "identity_signal_missing" in output_lower:
         score -= 0.1
 
-    seed_input = f"{output}|{expected}".encode("utf-8")
+    seed_input = f"{output}|{expected}".encode()
     seed = int.from_bytes(hashlib.sha256(seed_input).digest()[:4], "little")
     random.seed(seed)
     score += random.uniform(0.0, 0.05)
@@ -418,7 +415,7 @@ def operational_efficiency_metric(output: str, expected: str) -> float:
         "review.strictness": ["balanced", "strict"],
         "generate.style": ["executive", "ops"],
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def run_campaign_copilot(campaign_brief: str) -> str:
     """Run the optimized LangGraph workflow for a campaign brief."""
@@ -449,8 +446,7 @@ async def main() -> None:
 
     api_key = os.environ.get("TRAIGENT_API_KEY")
     backend_url = (
-        os.environ.get("TRAIGENT_BACKEND_URL")
-        or BackendConfig.get_cloud_backend_url()
+        os.environ.get("TRAIGENT_BACKEND_URL") or BackendConfig.get_cloud_backend_url()
     )
     offline_mode = os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true"
 
@@ -519,4 +515,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

@@ -1,6 +1,11 @@
 # Optuna Integration in Traigent
 
-> **Cloud-only feature.** Optuna-based optimisers (TPE, CMA-ES, NSGA-II, and others) are **not available in the local SDK**. Calling `get_optimizer("optuna_tpe")` or passing `algorithm="optuna"` / `"tpe"` / `"nsga2"` / `"cmaes"` in a local run raises an `OptimizationError`. To use these algorithms, connect to [Traigent Portal](https://portal.traigent.ai).
+> **Cloud-only feature.** Smart algorithms such as TPE, CMA-ES, and NSGA-II are
+> **not available in the local SDK**. Passing `algorithm="tpe"`,
+> `"optuna_tpe"`, `"optuna_random"`, `"optuna_grid"`, `"optuna_cmaes"`,
+> `"optuna_nsga2"`, `"bayesian"`, `"nsga2"`, `"nsgaii"`, `"nsga_ii"`,
+> `"cmaes"`, or `"cma_es"` without a reachable Traigent backend raises an
+> `OptimizationError`.
 >
 > For local runs, use `algorithm="grid"` (exhaustive, small spaces) or `algorithm="random"` (large spaces, quick exploration).
 
@@ -33,7 +38,7 @@ coordination:
 
 ```python
 # Requires a Traigent backend connection
-result = optimized_fn.optimize(algorithm="tpe", n_trials=100)
+result = optimized_fn.optimize(algorithm="tpe", max_trials=100)
 ```
 
 Local calls with smart algorithm names raise a clear error:
@@ -48,6 +53,10 @@ except OptimizationError as e:
     # "Smart optimization ('tpe') runs in the Traigent cloud..."
     print(e)
 ```
+
+`algorithm="auto"` is different: it is cloud-first, but on connectivity
+failures it warns once and degrades to a local grid/random search unless
+`TRAIGENT_REQUIRE_CLOUD=1` is set.
 
 ## Conditional Parameters
 
@@ -78,6 +87,7 @@ same schema works for `float` and `categorical` definitions, including optional
 ## Availability
 
 Optuna optimisers require a Traigent cloud connection. They are not part of
-the local SDK's registered algorithm set. For local optimization, use `"grid"`
-or `"random"` via `func.optimize(algorithm="grid")` or
+the local SDK's registered algorithm set, and they do not silently downgrade to
+local search when the backend is unavailable. For local optimization, use
+`"grid"` or `"random"` via `func.optimize(algorithm="grid")` or
 `func.optimize(algorithm="random")`.

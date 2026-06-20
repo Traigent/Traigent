@@ -41,7 +41,7 @@ except ImportError:
     exit(1)
 
 # Initialize Traigent for real execution
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(offline=True)
 
 # Factory-created parameter ranges
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]
@@ -62,7 +62,7 @@ constraints = [
     constraints=constraints,
     objectives=["accuracy", "latency"],
     eval_dataset=DATASET_PATH,
-    execution_mode="edge_analytics",
+    offline=True,
 )
 async def qa_agent(question: str) -> str:
     """Real QA agent using LangChain."""

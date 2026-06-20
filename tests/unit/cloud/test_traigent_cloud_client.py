@@ -353,8 +353,9 @@ class TestTraigentCloudClient:
             ]
             mock_cloud_client._session = mock_session
 
-            with _patch_backend_validate(), patch(
-                "asyncio.sleep", new_callable=AsyncMock
+            with (
+                _patch_backend_validate(),
+                patch("asyncio.sleep", new_callable=AsyncMock),
             ):
                 result = await mock_cloud_client._submit_optimization({})
 
@@ -440,7 +441,8 @@ class TestTraigentCloudClient:
             mock_session.get.side_effect = Exception("Connection failed")
             mock_cloud_client._session = mock_session
 
-            status = await mock_cloud_client.check_service_status()
+            with _patch_backend_validate():
+                status = await mock_cloud_client.check_service_status()
             assert status["status"] == "unavailable"
             assert "error" in status
 

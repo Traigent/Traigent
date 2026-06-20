@@ -146,13 +146,30 @@ def my_agent(query: str) -> str:
 
 ## 🔒 Execution Model
 
-Traigent executes your code locally. **You do not need to set `execution_mode`** — the SDK auto-selects it based on your algorithm and configuration.
+Traigent executes your code locally. Configure routing with `algorithm` and
+`offline`; there is no user-facing execution-mode selector for new code.
 
-Portal tracking (results visible in the Traigent portal) is enabled automatically when `TRAIGENT_API_KEY` is set. For grid/random search, the auto-selected mode is `edge_analytics`; for smart algorithms (Bayesian, TPE), it is `hybrid`.
+The default `algorithm="auto"` path is cloud-first: the backend suggests trial
+configs and your process runs the trials. If cloud connectivity is unavailable,
+auto falls back locally unless `TRAIGENT_REQUIRE_CLOUD=1` is set.
 
-`execution_mode=”cloud”` is reserved for future remote execution and is not available yet.
+Explicit `algorithm="grid"` and `"random"` run locally with no cloud optimizer
+round trip. Explicit smart algorithms such as `bayesian`, `tpe`, `optuna_tpe`,
+`nsga2`, and `cmaes` require cloud and hard-error if offline or unavailable.
 
-To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
+To run fully local with no Traigent backend communication, set `offline=True`,
+`TRAIGENT_OFFLINE=1`, or the legacy `TRAIGENT_OFFLINE_MODE=1`.
+
+If you are migrating older code: `execution_mode="hybrid"` becomes the default
+`@traigent.optimize()` behavior, `execution_mode="edge_analytics"` becomes
+`offline=True`, and `privacy_enabled=True` should be removed.
+
+Optimization results also record how the run resolved:
+
+- `result.source == "cloud_brain"` for the cloud-first path
+- `result.source == "local_fallback"` when `algorithm="auto"` degrades locally
+- `result.source == "explicit_local"` for explicit `grid` / `random`
+- `result.source == "offline"` for `offline=True` or offline env vars
 
 ---
 

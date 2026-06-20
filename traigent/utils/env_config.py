@@ -450,8 +450,8 @@ def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
 def is_backend_offline() -> bool:
     """Check if Traigent backend calls should be skipped.
 
-    When TRAIGENT_OFFLINE_MODE=true, all communication with the Traigent backend
-    is skipped. This is useful for:
+    When TRAIGENT_OFFLINE_MODE=true or TRAIGENT_OFFLINE=true, all communication
+    with the Traigent backend is skipped. This is useful for:
     - Air-gapped environments without network access
     - Local development without backend setup
     - Testing scenarios where backend is not needed
@@ -467,7 +467,9 @@ def is_backend_offline() -> bool:
     See also:
         - is_mock_llm(): Check if LLM API calls should be mocked
     """
-    return _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false"))
+    return _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false")) or (
+        _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE", "false"))
+    )
 
 
 def is_untracked_fallback_allowed() -> bool:

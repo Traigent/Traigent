@@ -31,7 +31,7 @@ The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production
 | 5 | `python walkthrough/mock/05_rag_parallel.py` | RAG optimization with parallel evaluation |
 | 6 | `python walkthrough/mock/06_custom_evaluator.py` | Define your own success metrics |
 | 7 | `python walkthrough/mock/07_multi_provider.py` | Compare OpenAI, Anthropic, Google in one run |
-| 8 | `python walkthrough/mock/08_privacy_modes.py` | Local-only privacy-first execution |
+| 8 | `python walkthrough/mock/08_privacy_modes.py` | Cloud-first content-free routing vs `offline=True` zero-egress runs |
 
 ## What to expect
 

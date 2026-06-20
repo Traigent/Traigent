@@ -107,7 +107,7 @@ custom_objectives = ObjectiveSchema.from_objectives(
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],  # Categorical
     },
     evaluation=EvaluationOptions(eval_dataset=str(DATASET_PATH)),
-    execution=ExecutionOptions(execution_mode="edge_analytics"),
+    execution=ExecutionOptions(offline=True),
     max_trials=5,
 )
 def weighted_agent(question: str) -> str:

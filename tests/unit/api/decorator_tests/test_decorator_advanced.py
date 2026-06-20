@@ -255,6 +255,8 @@ class TestOptimizationScenarios(DecoratorTestBase):
             def test_func(text: str) -> str:
                 return f"Commercial response: {text}"
 
+        assert test_func.execution_mode == "edge_analytics"
+        assert test_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_cache_enabled_optimization(self):

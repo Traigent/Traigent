@@ -24,6 +24,12 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.remote import MockRemoteSuggestionClient, RemoteOptimizer
 
 
+@pytest.fixture(autouse=True)
+def backend_enabled_for_dummy_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+
+
 class DummyAsyncBatchOptimizer(BaseOptimizer):
     """Optimizer that provides async batch candidates and tracks calls."""
 

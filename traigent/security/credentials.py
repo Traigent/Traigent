@@ -237,9 +237,11 @@ class SecureString:
     def clear(self) -> None:
         """Securely overwrite the value in memory."""
         if not self._locked:
-            # Overwrite the buffer with zeros
+            # Overwrite the buffer with zeros (aikido-ignore: false-positive — memory wipe, not a credential)
             for i in range(len(self._value)):
-                self._value[i] = 0
+                self._value[i] = (
+                    0  # aikido-ignore: false-positive — zeroing secure buffer byte
+                )
 
             # Additional platform-specific clearing if possible
             if sys.platform != "win32":
@@ -249,7 +251,7 @@ class SecureString:
 
                     ctypes.memset(
                         ctypes.addressof(ctypes.c_char.from_buffer(self._value)),
-                        0,
+                        0,  # aikido-ignore: false-positive — memset wipe of secure buffer
                         len(self._value),
                     )
                 except (ImportError, AttributeError, Exception):
@@ -259,7 +261,9 @@ class SecureString:
 
     def lock(self) -> None:
         """Prevent further access to the underlying value."""
-        self._locked = True
+        self._locked = (
+            True  # aikido-ignore: false-positive — lock flag, not a secret value
+        )
 
     def unlock(self, value: str | None = None) -> None:
         """Unlock the string for controlled access, optionally updating the value."""

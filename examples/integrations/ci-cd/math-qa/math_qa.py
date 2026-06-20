@@ -40,7 +40,7 @@ DATASET_FILE = os.path.join(os.path.dirname(__file__), "math_qa.jsonl")
     },
     eval_dataset=DATASET_FILE,
     objectives=["accuracy", "cost", "response_time"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def solve_arithmetic(expression: str) -> str:
