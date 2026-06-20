@@ -41,6 +41,13 @@ def test_split_is_deterministic_by_seed_and_names() -> None:
     assert test is not None and test.name == "base__test"
 
 
+def test_split_changes_with_seed() -> None:
+    first = split_dataset(_dataset(50), 0.2, 0.1, 7)
+    second = split_dataset(_dataset(50), 0.2, 0.1, 8)
+
+    assert _ids(first[1]) != _ids(second[1])
+
+
 def test_split_has_no_example_overlap() -> None:
     train, selection, test = split_dataset(_dataset(50), 0.2, 0.1, 11)
 

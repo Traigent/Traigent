@@ -16,6 +16,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `auto`, explicit local `grid`/`random`, zero-egress offline mode, result
   provenance, and legacy selector deprecations.
 
+## [0.14.3] - 2026-06-20
+
+### Changed
+- **Removed the JS bridge from the `@optimize` decorator path** and added a guard for
+  `safety_constraints`. (#1371)
+
+### Security
+- Addressed scoped Aikido security findings. (#1374)
+
+### Fixed
+- Corrected the async context-manager mock in the hybrid degradation test and updated
+  `test_safety.py` integration tests for the `NotImplementedError` guard.
+
 ## [0.14.1] - 2026-06-19
 
 ### Fixed
