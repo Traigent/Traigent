@@ -3,10 +3,16 @@
 Traigent no longer exposes an execution-mode selector for normal optimization
 workflows. Configure optimization with these public knobs:
 
-- `algorithm` (default: `"auto"`): `"auto"`, `"grid"`, `"random"`, or a smart
-  optimizer name such as Bayesian/TPE/CMA-ES when enabled by your account.
+- `algorithm` (default: `"auto"`): `"auto"`, `"grid"`, `"random"`, or an
+  explicit smart optimizer name such as `"bayesian"`, `"tpe"`,
+  `"optuna_tpe"`, `"optuna_random"`, `"optuna_grid"`, `"optuna_cmaes"`,
+  `"optuna_nsga2"`, `"nsga2"`, `"nsgaii"`, `"nsga_ii"`, `"cmaes"`, or
+  `"cma_es"` when enabled by your account.
 - `offline` (default: `False`): force local-only operation with zero Traigent
   backend egress.
+
+Unknown algorithm names are rejected instead of silently mapping to another
+mode.
 
 Trials always run in your process. The cloud path supplies optimizer decisions;
 it does not execute your dataset examples remotely.
@@ -32,9 +38,9 @@ downgrade to a local optimizer.
 ## Cloud-First Auto
 
 The default `@optimize(...)` path uses `algorithm="auto"` and `offline=False`.
-When cloud access is configured, the SDK creates a cloud-brain session and asks
-the backend for each next configuration. Each suggested trial still executes
-locally in your Python process.
+When cloud access is configured, the SDK asks the backend for each next
+configuration. Each suggested trial still executes locally in your Python
+process.
 
 ```python
 import traigent
@@ -51,7 +57,7 @@ def answer(question: str) -> str:
     return run_agent(question)
 
 result = answer.optimize(max_trials=8)
-print(result.source)  # "cloud_brain" or "local_fallback"
+print(result.metadata["source"])  # "cloud_brain" or "local_fallback"
 ```
 
 Automatic fallback is limited to `algorithm="auto"`. It exists to keep the
@@ -66,7 +72,7 @@ round trip.
 
 ```python
 result = answer.optimize(algorithm="grid", max_trials=8)
-print(result.source)  # "explicit_local"
+print(result.metadata["source"])  # "explicit_local"
 ```
 
 ## Offline and No Egress
@@ -89,7 +95,7 @@ def answer(question: str) -> str:
     return run_agent(question)
 
 result = answer.optimize(max_trials=3)
-print(result.source)  # "offline"
+print(result.metadata["source"])  # "offline"
 ```
 
 `offline=True`, `TRAIGENT_OFFLINE=1`, and `TRAIGENT_OFFLINE_MODE=1` prevent
@@ -120,7 +126,7 @@ the cloud optimizer to choose configurations.
 
 ```python
 result = answer.optimize(algorithm="bayesian", max_trials=20)
-print(result.source)  # "cloud_brain"
+print(result.metadata["source"])  # "cloud_brain"
 ```
 
 If the cloud is unavailable, or if `offline=True` is set, this run raises an
@@ -129,7 +135,9 @@ fallback.
 
 ## External Service Evaluation
 
-The former `hybrid_api_*` flat options moved into the evaluator bundle.
+The former `hybrid_api_*` flat options moved into the evaluator bundle. The
+optimizer still runs locally; only each trial evaluation is dispatched to the
+external HTTP or MCP service.
 
 ```python
 import traigent
@@ -139,6 +147,7 @@ from traigent.api.decorators import ExternalServiceEvaluator, HybridAPIOptions
     evaluator=ExternalServiceEvaluator(
         hybrid_api=HybridAPIOptions(
             endpoint="http://your-service:8080",
+            transport_type="http",
             tunable_id="my_agent",
             auth_header="Bearer <token>",
             batch_size=10,
@@ -158,7 +167,9 @@ def my_agent(_query: str) -> str:
 
 ## Result Provenance
 
-Optimization results expose one of these `source` values:
+Optimization results expose one of these `source` values in
+`result.metadata["source"]`. The same value is also mirrored on
+`result.source`.
 
 - `cloud_brain`: backend optimizer selected configurations; trials ran locally.
 - `local_fallback`: `algorithm="auto"` fell back to local optimization because
@@ -179,5 +190,10 @@ warnings. They are targeted for removal in a future major release.
 | `execution_mode="privacy"` | cloud-first `algorithm="auto"`; use `offline=True` for no egress |
 | `execution_mode="cloud"` | cloud-first `algorithm="auto"` with a loud warning because historical semantics flipped |
 | `execution_mode="hybrid_api"` | `evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))` |
-| `privacy_enabled` | removed no-op with a deprecation warning |
-| `cloud_fallback_policy` | removed no-op with a deprecation warning |
+| `privacy_enabled` | drop it; it is a deprecated no-op. Cloud-first runs already avoid sending dataset example content. Use `offline=True` for zero egress. |
+| `cloud_fallback_policy` | drop it; it is a deprecated no-op. Use `TRAIGENT_REQUIRE_CLOUD=1` to turn auto-fallback into a hard error. |
+
+## Migration Reference
+
+See [Execution Mode Migration](execution-mode-migration.md) for concrete
+old-to-new replacements, deprecated field mapping, and copy-paste examples.

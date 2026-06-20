@@ -54,10 +54,8 @@ backend egress at all:
 
 ```python
 @traigent.optimize(
-    execution={
-        "algorithm": "grid",
-        "offline": True,
-    },
+    algorithm="grid",
+    offline=True,
     ...
 )
 ```
@@ -65,7 +63,14 @@ backend egress at all:
 Offline runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
-Privacy mode does not disable telemetry; use `TRAIGENT_DISABLE_TELEMETRY=true` for a full opt-out.
+`TRAIGENT_OFFLINE=1` and the legacy `TRAIGENT_OFFLINE_MODE=1` enable the same
+zero-egress routing without changing code. Set `TRAIGENT_REQUIRE_CLOUD=1` when
+`algorithm="auto"` must hard-error instead of falling back locally.
+
+`privacy_enabled` is deprecated and does not disable telemetry or network
+access. The default cloud-brain path is already content-free. Use
+`TRAIGENT_DISABLE_TELEMETRY=true` for telemetry opt-out and `offline=True` for
+zero Traigent backend egress.
 
 ### OpenTelemetry Tracing
 
@@ -252,9 +257,7 @@ You can customize the storage location:
 
 ```python
 @traigent.optimize(
-    execution={
-        "local_storage_path": "./my_optimizations",
-    },
+    local_storage_path="./my_optimizations",
     ...
 )
 ```
@@ -357,7 +360,8 @@ For HIPAA compliance or handling sensitive data:
 1. **Use Offline Mode for Zero Traigent Egress**:
    ```python
    @traigent.optimize(
-       execution={"algorithm": "grid", "offline": True},
+       algorithm="grid",
+       offline=True,
        ...
    )
    ```
@@ -370,11 +374,9 @@ For HIPAA compliance or handling sensitive data:
 3. **Use Local Storage Only**:
    ```python
    @traigent.optimize(
-       execution={
-           "algorithm": "grid",
-           "offline": True,
-           "local_storage_path": "/secure/location",
-       },
+       algorithm="grid",
+       offline=True,
+       local_storage_path="/secure/location",
        ...
    )
    ```
@@ -423,6 +425,6 @@ contain the same trial metadata and metrics emitted to telemetry listeners.
 ## Related Documentation
 
 - [Decorator Reference](./decorator-reference.md) - Configuration options
-- [Execution Model Guide](../guides/execution-modes.md) - cloud-first auto, explicit local, and offline mode
+- [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md) - cloud-first auto, explicit local, offline, env vars, and migration guidance
 - [Privacy & Security](../contributing/SECURITY.md) - Security practices
 - [API Reference](./complete-function-specification.md) - Full API documentation
