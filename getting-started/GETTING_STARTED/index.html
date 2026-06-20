@@ -4139,10 +4139,26 @@ traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w
     <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="execution-model">🔒 Execution Model<a class="headerlink" href="#execution-model" title="Permanent link">&para;</a></h2>
-<p>Traigent executes your code locally. <strong>You do not need to set <code>execution_mode</code></strong> — the SDK auto-selects it based on your algorithm and configuration.</p>
-<p>Portal tracking (results visible in the Traigent portal) is enabled automatically when <code>TRAIGENT_API_KEY</code> is set. For grid/random search, the auto-selected mode is <code>edge_analytics</code>; for smart algorithms (Bayesian, TPE), it is <code>hybrid</code>.</p>
-<p><code>execution_mode=”cloud”</code> is reserved for future remote execution and is not available yet.</p>
-<p>To run fully local (no Traigent backend communication), set <code>TRAIGENT_OFFLINE_MODE=true</code>.</p>
+<p>Traigent executes your code locally. Configure routing with <code>algorithm</code> and
+<code>offline</code>; there is no user-facing execution-mode selector for new code.</p>
+<p>The default <code>algorithm="auto"</code> path is cloud-first: the backend suggests trial
+configs and your process runs the trials. If cloud connectivity is unavailable,
+auto falls back locally unless <code>TRAIGENT_REQUIRE_CLOUD=1</code> is set.</p>
+<p>Explicit <code>algorithm="grid"</code> and <code>"random"</code> run locally with no cloud optimizer
+round trip. Explicit smart algorithms such as <code>bayesian</code>, <code>tpe</code>, <code>optuna_tpe</code>,
+<code>nsga2</code>, and <code>cmaes</code> require cloud and hard-error if offline or unavailable.</p>
+<p>To run fully local with no Traigent backend communication, set <code>offline=True</code>,
+<code>TRAIGENT_OFFLINE=1</code>, or the legacy <code>TRAIGENT_OFFLINE_MODE=1</code>.</p>
+<p>If you are migrating older code: <code>execution_mode="hybrid"</code> becomes the default
+<code>@traigent.optimize()</code> behavior, <code>execution_mode="edge_analytics"</code> becomes
+<code>offline=True</code>, and <code>privacy_enabled=True</code> should be removed.</p>
+<p>Optimization results also record how the run resolved:</p>
+<ul>
+<li><code>result.source == "cloud_brain"</code> for the cloud-first path</li>
+<li><code>result.source == "local_fallback"</code> when <code>algorithm="auto"</code> degrades locally</li>
+<li><code>result.source == "explicit_local"</code> for explicit <code>grid</code> / <code>random</code></li>
+<li><code>result.source == "offline"</code> for <code>offline=True</code> or offline env vars</li>
+</ul>
 <hr />
 <p>Ready for more? Dive into the <a href="../examples/">examples</a> and the <a href="../../api-reference/complete-function-specification/">API reference</a>.</p>
 

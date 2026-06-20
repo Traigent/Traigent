@@ -4931,9 +4931,9 @@ openapi-generator<span class="w"> </span>generate<span class="w"> </span>-i<span
 <h2 id="authentication-optional">Authentication (Optional)<a class="headerlink" href="#authentication-optional" title="Permanent link">&para;</a></h2>
 <p>If your service requires authentication, accept the configured token in both
 <code>Authorization</code> and <code>x-api-key</code> headers. The SDK sets both headers from
-<code>hybrid_api_auth_header</code> for compatibility.</p>
+<code>HybridAPIOptions.auth_header</code> for compatibility.</p>
 <p>Configure the Traigent SDK client with:
-- <code>hybrid_api_auth_header="Bearer &lt;token&gt;"</code></p>
+- <code>ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(auth_header="Bearer &lt;token&gt;"))</code></p>
 <p>For current contract compatibility, keep auth policy consistent across all endpoints. RBAC and stronger policy models can be layered later without changing endpoint shapes.</p>
 <hr />
 <h2 id="privacy-preserving-mode-default">Privacy-Preserving Mode (Default)<a class="headerlink" href="#privacy-preserving-mode-default" title="Permanent link">&para;</a></h2>

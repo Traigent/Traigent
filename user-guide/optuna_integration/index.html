@@ -3955,7 +3955,12 @@
 
 <h1 id="optuna-integration-in-traigent">Optuna Integration in Traigent<a class="headerlink" href="#optuna-integration-in-traigent" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p><strong>Cloud-only feature.</strong> Optuna-based optimisers (TPE, CMA-ES, NSGA-II, and others) are <strong>not available in the local SDK</strong>. Calling <code>get_optimizer("optuna_tpe")</code> or passing <code>algorithm="optuna"</code> / <code>"tpe"</code> / <code>"nsga2"</code> / <code>"cmaes"</code> in a local run raises an <code>OptimizationError</code>. To use these algorithms, connect to <a href="https://portal.traigent.ai">Traigent Portal</a>.</p>
+<p><strong>Cloud-only feature.</strong> Smart algorithms such as TPE, CMA-ES, and NSGA-II are
+<strong>not available in the local SDK</strong>. Passing <code>algorithm="tpe"</code>,
+<code>"optuna_tpe"</code>, <code>"optuna_random"</code>, <code>"optuna_grid"</code>, <code>"optuna_cmaes"</code>,
+<code>"optuna_nsga2"</code>, <code>"bayesian"</code>, <code>"nsga2"</code>, <code>"nsgaii"</code>, <code>"nsga_ii"</code>,
+<code>"cmaes"</code>, or <code>"cma_es"</code> without a reachable Traigent backend raises an
+<code>OptimizationError</code>.</p>
 <p>For local runs, use <code>algorithm="grid"</code> (exhaustive, small spaces) or <code>algorithm="random"</code> (large spaces, quick exploration).</p>
 </blockquote>
 <h2 id="when-to-use-optuna-via-the-traigent-cloud">When to use Optuna (via the Traigent cloud)<a class="headerlink" href="#when-to-use-optuna-via-the-traigent-cloud" title="Permanent link">&para;</a></h2>
@@ -4010,7 +4015,7 @@
 standard optimize flow. The cloud service handles sampling, pruning, and
 coordination:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Requires a Traigent backend connection</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">optimized_fn</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;tpe&quot;</span><span class="p">,</span> <span class="n">n_trials</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">optimized_fn</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;tpe&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
 </code></pre></div>
 <p>Local calls with smart algorithm names raise a clear error:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.optimizers.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_optimizer</span>
@@ -4022,6 +4027,9 @@ coordination:</p>
     <span class="c1"># &quot;Smart optimization (&#39;tpe&#39;) runs in the Traigent cloud...&quot;</span>
     <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
 </code></pre></div>
+<p><code>algorithm="auto"</code> is different: it is cloud-first, but on connectivity
+failures it warns once and degrades to a local grid/random search unless
+<code>TRAIGENT_REQUIRE_CLOUD=1</code> is set.</p>
 <h2 id="conditional-parameters">Conditional Parameters<a class="headerlink" href="#conditional-parameters" title="Permanent link">&para;</a></h2>
 <p>Configuration dictionaries support conditional logic without leaving the
 standard Traigent format:</p>
@@ -4046,8 +4054,9 @@ objective function or wrap the optimiser with custom pre-processing.</p>
 </blockquote>
 <h2 id="availability">Availability<a class="headerlink" href="#availability" title="Permanent link">&para;</a></h2>
 <p>Optuna optimisers require a Traigent cloud connection. They are not part of
-the local SDK's registered algorithm set. For local optimization, use <code>"grid"</code>
-or <code>"random"</code> via <code>func.optimize(algorithm="grid")</code> or
+the local SDK's registered algorithm set, and they do not silently downgrade to
+local search when the backend is unavailable. For local optimization, use
+<code>"grid"</code> or <code>"random"</code> via <code>func.optimize(algorithm="grid")</code> or
 <code>func.optimize(algorithm="random")</code>.</p>
 
 

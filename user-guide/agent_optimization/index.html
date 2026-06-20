@@ -4790,7 +4790,7 @@
 <h1 id="agent-optimization-guide">Agent Optimization Guide<a class="headerlink" href="#agent-optimization-guide" title="Permanent link">&para;</a></h1>
 <p>This guide describes the planned Model 2 agent-specification API.</p>
 <blockquote>
-<p><strong>Current status:</strong> Remote agent optimization in Traigent Cloud is not implemented yet. The <code>execution_mode="cloud"</code> path fails closed with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.” Mode is auto-selected; set <code>TRAIGENT_API_KEY</code> for portal-visible runs.</p>
+<p><strong>Current status:</strong> Remote agent execution in Traigent Cloud is not implemented yet. Current optimization runs execute trials locally; <code>algorithm="auto"</code> is cloud-first for optimizer decisions, and <code>offline=True</code> forces zero Traigent backend egress.</p>
 </blockquote>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>Agent optimization is reserved for a future remote execution path where complete agent specifications can be optimized by Traigent Cloud. When available, this approach will be ideal when:</p>
@@ -5313,7 +5313,7 @@
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Start with <code>traigent quickstart</code>, then use <code>traigent recommend rag</code> for configuration-space suggestions.</li>
-<li>Review <a href="../../guides/execution-modes/">Execution Modes</a> for local/cloud/hybrid context</li>
+<li>Review <a href="../choosing_optimization_model/">Choosing the Right Optimization Model</a> for the current <code>algorithm</code> / <code>offline</code> routing model</li>
 <li>Read <a href="../../architecture/ARCHITECTURE/">Architecture Overview</a> for system design details</li>
 </ul>
 

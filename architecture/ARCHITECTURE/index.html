@@ -4089,10 +4089,9 @@
 <li><strong>Parameter Optimization</strong>: Automatically tune model selection, temperature, prompts, and other parameters</li>
 <li><strong>Multi-Objective Optimization</strong>: Balance accuracy, cost, latency, and other metrics simultaneously</li>
 <li><strong>Framework Integration</strong>: Native support for LangChain, DSPy, OpenAI, Anthropic, and more</li>
-<li><strong>Flexible Execution</strong>: Run locally (<code>edge_analytics</code>), with backend tracking
-  (<code>hybrid</code>), or through an external Hybrid API service (<code>hybrid_api</code>).
-  <code>privacy</code> is a legacy alias for <code>hybrid</code> with privacy enabled; <code>cloud</code> is
-  reserved and fails closed.</li>
+<li><strong>Flexible Execution</strong>: Use cloud-first <code>algorithm="auto"</code>, explicit local
+  <code>algorithm="grid"</code> / <code>"random"</code>, <code>offline=True</code> for zero Traigent backend
+  egress, or <code>ExternalServiceEvaluator</code> for external Hybrid API services.</li>
 <li><strong>TVL Specifications</strong>: Define optimization specs in YAML for version control and collaboration</li>
 </ul>
 <hr />
@@ -4262,7 +4261,7 @@
 <hr />
 <h2 id="execution-modes">Execution Modes<a class="headerlink" href="#execution-modes" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart TB
-    subgraph EdgeAnalytics[&quot;Edge Analytics Mode&quot;]
+    subgraph EdgeAnalytics[&quot;Offline Local Mode&quot;]
         direction TB
         ea_desc[&quot;Local optimization&lt;br/&gt;Data stays on-premise&lt;br/&gt;Optional telemetry&quot;]
         ea_local[&quot;Local Storage&quot;]

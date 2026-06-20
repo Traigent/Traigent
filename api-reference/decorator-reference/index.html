@@ -2897,10 +2897,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#edge-analytics-with-privacy" class="md-nav__link">
+  <a href="#offline-local-storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Edge Analytics with Privacy
+        Offline Local Storage
       
     </span>
   </a>
@@ -4436,10 +4436,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#edge-analytics-with-privacy" class="md-nav__link">
+  <a href="#offline-local-storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Edge Analytics with Privacy
+        Offline Local Storage
       
     </span>
   </a>
@@ -4943,11 +4943,11 @@ LLM-as-Judge implementation.</p>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">execution</span><span class="o">=</span><span class="n">ExecutionOptions</span><span class="p">(</span>
-        <span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;edge_analytics&quot;</span><span class="p">,</span>
+        <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+        <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="n">local_storage_path</span><span class="o">=</span><span class="s2">&quot;./my_results&quot;</span><span class="p">,</span>
         <span class="n">minimal_logging</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="n">parallel_config</span><span class="o">=</span><span class="n">ParallelConfig</span><span class="p">(</span><span class="n">thread_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">trial_concurrency</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
-        <span class="n">privacy_enabled</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="n">max_total_examples</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
         <span class="n">samples_include_pruned</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="n">reps_per_trial</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
@@ -4958,17 +4958,16 @@ LLM-as-Judge implementation.</p>
 </code></pre></div>
 <p><strong>ExecutionOptions Fields</strong>:</p>
 <ul>
-<li><code>execution_mode</code>: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "hybrid_api" for external API-backed trial execution; "privacy" as a legacy alias for "hybrid" with privacy enabled; "cloud" is reserved for future remote execution and fails closed.</li>
+<li><code>algorithm</code>: optimizer selector. <code>"auto"</code> is cloud-first and falls back to local grid/random on connectivity failures; <code>"grid"</code> and <code>"random"</code> are explicit local optimizers; smart algorithms require cloud and hard-error when unavailable or offline.</li>
+<li><code>offline</code>: force local-only operation with zero Traigent backend egress. <code>TRAIGENT_OFFLINE=1</code> and legacy <code>TRAIGENT_OFFLINE_MODE=1</code> provide the same behavior via environment variables.</li>
 <li><code>local_storage_path</code>: Custom storage directory</li>
 <li><code>minimal_logging</code>: Reduce log verbosity</li>
 <li><code>parallel_config</code>: Concurrency configuration</li>
-<li><code>privacy_enabled</code>: Redact sensitive data</li>
 <li><code>max_total_examples</code>: Global sample budget</li>
 <li><code>samples_include_pruned</code>: Count pruned trials in budget</li>
 <li><code>reps_per_trial</code>: Repetitions per configuration. OSS SDK accepts only <code>1</code>; non-default values raise <code>pydantic.ValidationError</code> and require Traigent Enterprise.</li>
 <li><code>reps_aggregation</code>: Repetition aggregation method. OSS SDK accepts only <code>"mean"</code>; non-default values raise <code>pydantic.ValidationError</code> and require Traigent Enterprise.</li>
-<li><code>hybrid_api_endpoint</code>, <code>tunable_id</code>, <code>hybrid_api_transport</code>, <code>hybrid_api_transport_type</code>, <code>hybrid_api_batch_size</code>, <code>hybrid_api_batch_parallelism</code>, <code>hybrid_api_keep_alive</code>, <code>hybrid_api_heartbeat_interval</code>, <code>hybrid_api_timeout</code>, <code>hybrid_api_auth_header</code>, <code>hybrid_api_auto_discover_tvars</code>: Hybrid API execution controls.</li>
-<li><code>cloud_fallback_policy</code>: Legacy/future cloud fallback behavior. It does not enable <code>execution_mode="cloud"</code> in 0.12.0.</li>
+<li><code>evaluator</code>: external evaluator bundle, including <code>ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))</code>. This does not change optimizer routing; it only changes how each trial is evaluated.</li>
 </ul>
 <h4 id="mock"><code>mock</code><a class="headerlink" href="#mock" title="Permanent link">&para;</a></h4>
 <ul>
@@ -5010,6 +5009,12 @@ or custom) is unchanged — there is no fabricated random-score path.</p>
     <span class="o">...</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>Deprecated execution inputs:</p>
+<ul>
+<li><code>execution_mode=</code> is deprecated compatibility input only; migrate to <code>algorithm=</code> / <code>offline=</code>.</li>
+<li><code>privacy_enabled</code> is a deprecated no-op. Cloud-brain optimization already avoids dataset-content egress; use <code>offline=True</code> for zero Traigent backend egress.</li>
+<li><code>cloud_fallback_policy</code> is a deprecated no-op. Use <code>TRAIGENT_REQUIRE_CLOUD=1</code> to disable <code>algorithm="auto"</code> fallback.</li>
+</ul>
 <p>Run controls such as <code>max_trials</code> and <code>timeout</code> are passed to <code>.optimize()</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>
 </code></pre></div>
@@ -5067,15 +5072,14 @@ for compatibility. Use <code>cost_limit</code> for hard USD spend control.</p>
         <span class="k">lambda</span> <span class="n">cfg</span><span class="p">,</span> <span class="n">metrics</span><span class="p">:</span> <span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">0.10</span> <span class="k">if</span> <span class="n">metrics</span> <span class="k">else</span> <span class="kc">True</span><span class="p">,</span>
     <span class="p">],</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;support_tickets.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">execution</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;execution_mode&quot;</span><span class="p">:</span> <span class="s2">&quot;edge_analytics&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;parallel_config&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;thread_workers&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">},</span>
-    <span class="p">},</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">parallel_config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;thread_workers&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">process_ticket</span><span class="p">(</span><span class="n">ticket</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">support_chain</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">ticket</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="edge-analytics-with-privacy">Edge Analytics with Privacy<a class="headerlink" href="#edge-analytics-with-privacy" title="Permanent link">&para;</a></h3>
+<h3 id="offline-local-storage">Offline Local Storage<a class="headerlink" href="#offline-local-storage" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;safety&quot;</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
@@ -5083,12 +5087,10 @@ for compatibility. Use <code>cost_limit</code> for hard USD spend control.</p>
         <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">],</span>
     <span class="p">},</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;medical_qa.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">execution</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;execution_mode&quot;</span><span class="p">:</span> <span class="s2">&quot;edge_analytics&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;local_storage_path&quot;</span><span class="p">:</span> <span class="s2">&quot;./medical_optimizations&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;privacy_enabled&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="s2">&quot;minimal_logging&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-    <span class="p">},</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">local_storage_path</span><span class="o">=</span><span class="s2">&quot;./medical_optimizations&quot;</span><span class="p">,</span>
+    <span class="n">minimal_logging</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">medical_assistant</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">process_medical_query</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
@@ -5118,7 +5120,7 @@ for compatibility. Use <code>cost_limit</code> for hard USD spend control.</p>
 <li><a href="../complete-function-specification/">Complete Function Specification</a> - Full API reference</li>
 <li><a href="../../user-guide/evaluation_guide/">Evaluation Guide</a> - Understanding accuracy metrics, evaluation methods, and troubleshooting</li>
 <li><a href="../../user-guide/injection_modes/">Injection Modes Guide</a> - Configuration injection patterns</li>
-<li><a href="../../guides/execution-modes/">Execution Modes Guide</a> - Execution mode details</li>
+<li><a href="../../user-guide/choosing_optimization_model/">Choosing the Right Optimization Model</a> - Cloud-first auto, explicit local, offline, and migration guidance</li>
 <li><a href="../thread-pool-examples/">Thread Pool Examples</a> - Context propagation with threads</li>
 <li><a href="../telemetry/">Telemetry Documentation</a> - Data collection and privacy</li>
 <li>Custom evaluator walkthrough in the repository examples - LLM-as-Judge implementation</li>

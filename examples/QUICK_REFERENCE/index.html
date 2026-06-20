@@ -2935,10 +2935,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-mode" class="md-nav__link">
+  <a href="#execution-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Execution mode
+        Execution model
       
     </span>
   </a>
@@ -3899,10 +3899,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-mode" class="md-nav__link">
+  <a href="#execution-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Execution mode
+        Execution model
       
     </span>
   </a>
@@ -3988,11 +3988,14 @@ python<span class="w"> </span>examples/core/multi-objective-tradeoff/run_openai_
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
     <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Summary | model=</span><span class="si">{</span><span class="n">cfg</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>  <span class="c1"># call your LLM here</span>
 </code></pre></div>
-<h2 id="execution-mode">Execution mode<a class="headerlink" href="#execution-mode" title="Permanent link">&para;</a></h2>
+<h2 id="execution-model">Execution model<a class="headerlink" href="#execution-model" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>edge_analytics</code> (default and supported) - local execution with analytics.</li>
-<li><code>hybrid</code> (supported) - local trial execution with backend/portal session and metric tracking.</li>
-<li><code>cloud</code> (reserved) - future remote execution; currently fails closed with guidance to use <code>hybrid</code>.</li>
+<li><code>algorithm="auto"</code> (default) - cloud-first optimizer decisions, local trials, local fallback on connectivity failures.</li>
+<li><code>algorithm="grid"</code> / <code>"random"</code> - explicit local optimizers with no cloud optimizer round trip.</li>
+<li>Smart algorithms such as <code>bayesian</code>, <code>tpe</code>, <code>optuna_tpe</code>, <code>nsga2</code>, and <code>cmaes</code> are cloud-only and hard-error if unavailable.</li>
+<li><code>offline=True</code>, <code>TRAIGENT_OFFLINE=1</code>, or legacy <code>TRAIGENT_OFFLINE_MODE=1</code> - zero Traigent backend egress.</li>
+<li><code>TRAIGENT_REQUIRE_CLOUD=1</code> - disables the automatic local fallback for <code>algorithm="auto"</code>.</li>
+<li>Result provenance: <code>result.source</code> is <code>cloud_brain</code>, <code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>.</li>
 <li>Mock: call <code>traigent.testing.enable_mock_mode_for_quickstart()</code> in local tutorial code.</li>
 </ul>
 <h2 id="quick-knobs">Quick knobs<a class="headerlink" href="#quick-knobs" title="Permanent link">&para;</a></h2>

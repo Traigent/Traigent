@@ -4047,7 +4047,7 @@ channel as ordinary numeric metrics:</p>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;cheap&quot;</span><span class="p">,</span> <span class="s2">&quot;strong&quot;</span><span class="p">]},</span>
     <span class="n">default_config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="s2">&quot;cheap&quot;</span><span class="p">},</span>
-    <span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;hybrid&quot;</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>

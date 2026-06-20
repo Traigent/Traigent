@@ -5337,7 +5337,7 @@ object with structured constraints.</p>
 <tr>
 <td><code>execution</code></td>
 <td><code>ExecutionOptions \| dict \| None</code></td>
-<td>Bundle for execution settings including <code>execution_mode</code>, <code>local_storage_path</code>, <code>parallel_config</code>, <code>privacy_enabled</code>, and <code>max_total_examples</code>.</td>
+<td>Bundle for execution settings including <code>algorithm</code>, <code>offline</code>, <code>local_storage_path</code>, <code>parallel_config</code>, and <code>max_total_examples</code>.</td>
 </tr>
 <tr>
 <td><code>mock</code></td>
@@ -5358,10 +5358,16 @@ object with structured constraints.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>execution_mode</code></td>
+<td><code>algorithm</code></td>
 <td><code>str</code></td>
-<td><code>"edge_analytics"</code></td>
-<td><code>"edge_analytics"</code> runs locally. <code>"hybrid"</code> runs trials locally and submits sessions/trial metrics to the backend for portal tracking. <code>"hybrid_api"</code> delegates trial execution to an external service implementing the Traigent Hybrid API contract. <code>"privacy"</code> is accepted as a legacy alias for <code>"hybrid"</code> and sets <code>privacy_enabled=True</code>. <code>"cloud"</code> is reserved for future remote execution and fails closed with guidance to use <code>"hybrid"</code>.</td>
+<td><code>"auto"</code></td>
+<td>Optimizer selector. <code>"auto"</code> is cloud-first with local fallback on connectivity failures; <code>"grid"</code> and <code>"random"</code> run locally; smart algorithms require cloud.</td>
+</tr>
+<tr>
+<td><code>offline</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Force local-only operation with zero Traigent backend egress.</td>
 </tr>
 <tr>
 <td><code>local_storage_path</code></td>
@@ -5380,12 +5386,6 @@ object with structured constraints.</p>
 <td><code>ParallelConfig \| dict \| None</code></td>
 <td><code>None</code></td>
 <td>Unified concurrency configuration.</td>
-</tr>
-<tr>
-<td><code>privacy_enabled</code></td>
-<td><code>bool \| None</code></td>
-<td><code>None</code></td>
-<td>Redacts prompts/responses from telemetry and logs.</td>
 </tr>
 <tr>
 <td><code>max_total_examples</code></td>
@@ -5412,76 +5412,10 @@ object with structured constraints.</p>
 <td>Repetition aggregation method. OSS SDK accepts only <code>"mean"</code>; other values raise <code>pydantic.ValidationError</code> and require Traigent Enterprise.</td>
 </tr>
 <tr>
-<td><code>hybrid_api_endpoint</code></td>
-<td><code>str \| None</code></td>
+<td><code>evaluator</code></td>
+<td><code>ExternalServiceEvaluator \| HybridAPIOptions \| dict \| None</code></td>
 <td><code>None</code></td>
-<td>External-agent Hybrid API base endpoint.</td>
-</tr>
-<tr>
-<td><code>tunable_id</code></td>
-<td><code>str \| None</code></td>
-<td><code>None</code></td>
-<td>Optional Hybrid API tunable identifier.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_transport</code></td>
-<td><code>Any \| None</code></td>
-<td><code>None</code></td>
-<td>Custom Hybrid API transport object.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_transport_type</code></td>
-<td><code>str</code></td>
-<td><code>"auto"</code></td>
-<td>Hybrid API transport type selector.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_batch_size</code></td>
-<td><code>int</code></td>
-<td><code>1</code></td>
-<td>Number of examples per Hybrid API execute request.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_batch_parallelism</code></td>
-<td><code>int</code></td>
-<td><code>1</code></td>
-<td>Concurrent Hybrid API batch execution limit.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_keep_alive</code></td>
-<td><code>bool</code></td>
-<td><code>True</code></td>
-<td>Reuse Hybrid API HTTP connections.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_heartbeat_interval</code></td>
-<td><code>float</code></td>
-<td><code>30.0</code></td>
-<td>Heartbeat interval for Hybrid API transports.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_timeout</code></td>
-<td><code>float \| None</code></td>
-<td><code>None</code></td>
-<td>Hybrid API request timeout override.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_auth_header</code></td>
-<td><code>str \| None</code></td>
-<td><code>None</code></td>
-<td>Auth token/header value sent as both <code>Authorization</code> and <code>x-api-key</code>.</td>
-</tr>
-<tr>
-<td><code>hybrid_api_auto_discover_tvars</code></td>
-<td><code>bool</code></td>
-<td><code>False</code></td>
-<td>Auto-discover Hybrid API tuned variables when supported.</td>
-</tr>
-<tr>
-<td><code>cloud_fallback_policy</code></td>
-<td><code>str \| None</code></td>
-<td><code>None</code></td>
-<td>Legacy/future cloud fallback policy. It does not enable <code>execution_mode="cloud"</code> in 0.12.0.</td>
+<td>External service evaluator bundle. Use <code>ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))</code> for Hybrid API services. The optimizer still runs locally; the evaluator dispatches each trial to the external HTTP or MCP service.</td>
 </tr>
 </tbody>
 </table>
@@ -5509,11 +5443,13 @@ object with structured constraints.</p>
 </table>
 <p><strong>Usage Notes</strong></p>
 <ul>
-<li>The default execution mode is <code>"edge_analytics"</code>. Use <code>"hybrid"</code> for portal-tracked optimization with local trial execution.</li>
+<li>The default path is <code>algorithm="auto"</code>: cloud-first optimizer decisions with local trial execution and local fallback on connectivity failures.</li>
+<li>Set <code>TRAIGENT_REQUIRE_CLOUD=1</code> to turn that connectivity fallback into a hard error.</li>
 <li>Prefer the grouped option classes (<code>EvaluationOptions</code>, <code>InjectionOptions</code>, <code>ExecutionOptions</code>) when you need to adjust several related knobs. Import them from <code>traigent.api.decorators</code> and pass either instances or plain dicts. <code>MockModeOptions</code> is <strong>deprecated</strong> (all fields inert; see the <code>mock</code> row above and issue #874) — do not use it for new code.</li>
 <li><code>parallel_config=ParallelConfig(...)</code> remains the primary way to control concurrency. Set global defaults via <code>traigent.configure(parallel_config=...)</code>, override them in the decorator, and fine-tune per <code>.optimize()</code> call. Later scopes override earlier ones field-by-field.</li>
 <li><code>ParallelConfig</code> lives in <code>traigent.config.parallel</code>. You can pass either an instance or a simple <code>dict</code> with the same keys.</li>
-<li><code>privacy_enabled=True</code> applies in local and hybrid contexts. <code>cloud</code> remote execution is not available yet.</li>
+<li>Use <code>offline=True</code> when policy requires zero Traigent backend egress. <code>TRAIGENT_OFFLINE=1</code> and the legacy <code>TRAIGENT_OFFLINE_MODE=1</code> provide the same routing at the environment level.</li>
+<li><code>privacy_enabled</code> and <code>cloud_fallback_policy</code> are deprecated no-ops. <code>execution_mode</code> is deprecated compatibility input only; migrate to <code>algorithm</code>, <code>offline</code>, and <code>evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))</code>.</li>
 <li><code>config_param</code> is required whenever you choose <code>injection_mode="parameter"</code>; forgetting it leaves your function without injected configs.</li>
 <li>Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an <code>ObjectiveSchema</code> when you need explicit control over orientations, weights, or metric metadata.</li>
 <li>Inline tuned-variable definitions accept <code>Range</code>, <code>IntRange</code>, <code>LogRange</code>, <code>Choices</code>, or numeric <code>(low, high)</code> tuples. Inline lists are not recognized; use <code>Choices([...])</code> instead.</li>
@@ -5554,7 +5490,8 @@ object with structured constraints.</p>
         <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
     <span class="p">},</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;evals.jsonl&quot;</span><span class="p">},</span>  <span class="c1"># Grouped option bundle</span>
-    <span class="n">execution</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;execution_mode&quot;</span><span class="p">:</span> <span class="s2">&quot;edge_analytics&quot;</span><span class="p">},</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">process_query</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
@@ -5597,7 +5534,7 @@ object with structured constraints.</p>
 <td><code>algorithm</code></td>
 <td><code>str \| None</code></td>
 <td>Decorator default</td>
-<td>Optimizer to use: <code>"grid"</code>, <code>"random"</code>, <code>"bayesian"</code>, <code>"optuna"</code>.</td>
+<td>Optimizer to use. <code>"auto"</code> is cloud-first with local fallback on connectivity failures; <code>"grid"</code> and <code>"random"</code> stay local; explicit smart algorithms such as <code>"bayesian"</code>, <code>"tpe"</code>, <code>"optuna_tpe"</code>, <code>"optuna_random"</code>, <code>"optuna_grid"</code>, <code>"optuna_cmaes"</code>, <code>"optuna_nsga2"</code>, <code>"nsga2"</code>, <code>"nsgaii"</code>, <code>"nsga_ii"</code>, <code>"cmaes"</code>, and <code>"cma_es"</code> require cloud and hard-error when unavailable or offline.</td>
 </tr>
 <tr>
 <td><code>max_trials</code></td>
@@ -5934,6 +5871,8 @@ task-local heuristics and do not provide a statistical certificate.</p>
 - <code>total_trials</code>: Total number of trials executed
 - <code>successful_trials</code>: List of trials that completed successfully
 - <code>success_rate</code>: Ratio of successful trials to total trials</p>
+<p><code>metadata["source"]</code> records result provenance as one of <code>cloud_brain</code>,
+<code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>.</p>
 <h3 id="trialresult">TrialResult<a class="headerlink" href="#trialresult" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TrialResult</span><span class="p">:</span>

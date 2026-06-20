@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#execution-mode-follow-up-plan" class="md-skip">
+        <a href="#execution-model-follow-up-plan" class="md-skip">
           Skip to content
         </a>
       
@@ -3961,36 +3961,52 @@
   
 
 
-<h1 id="execution-mode-follow-up-plan">Execution Mode Follow-Up Plan<a class="headerlink" href="#execution-mode-follow-up-plan" title="Permanent link">&para;</a></h1>
-<p>This note captures the remaining work streams for execution-mode standardization that require broader coordination or non-trivial refactors. It is intended as a living document for post-refactor tracking.</p>
+<h1 id="execution-model-follow-up-plan">Execution Model Follow-Up Plan<a class="headerlink" href="#execution-model-follow-up-plan" title="Permanent link">&para;</a></h1>
+<p>This note tracks the remaining follow-up work after the execution-mode
+consolidation shipped on <code>develop</code>. The public model is now <code>algorithm</code> plus
+<code>offline</code>; legacy <code>execution_mode</code>, <code>privacy_enabled</code>, and
+<code>cloud_fallback_policy</code> are deprecated compatibility inputs only.</p>
 <hr />
 <h2 id="1-backend-protocol-alignment-short-term">1. Backend Protocol Alignment (Short-Term)<a class="headerlink" href="#1-backend-protocol-alignment-short-term" title="Permanent link">&para;</a></h2>
-<p><strong>Goal:</strong> ensure Traigent clients and backend services share the same canonical execution-mode vocabulary.</p>
+<p><strong>Goal:</strong> ensure Traigent clients and backend services share the same canonical
+execution-policy vocabulary and provenance labels.</p>
 <ul>
 <li><strong>Owner:</strong> SDK &amp; Backend teams  </li>
-<li><strong>Success Criteria:</strong> backend accepts / returns enum-aligned values (<code>edge_analytics</code>, <code>hybrid</code>, <code>standard</code>, <code>cloud</code>) without special-casing raw legacy strings.</li>
+<li><strong>Success Criteria:</strong> backend contracts align on the current public model:
+  <code>algorithm</code>, <code>offline</code>, <code>TRAIGENT_REQUIRE_CLOUD</code> behavior, and result
+  <code>source</code> values (<code>cloud_brain</code>, <code>local_fallback</code>, <code>explicit_local</code>,
+  <code>offline</code>).</li>
 </ul>
 <h3 id="tasks">Tasks<a class="headerlink" href="#tasks" title="Permanent link">&para;</a></h3>
 <ol>
 <li><strong>Inventory current payloads</strong>  </li>
-<li>Document every endpoint (<code>trial_operations</code>, <code>session_operations</code>, etc.) returning mode strings.</li>
-<li>Capture existing variants (e.g. <code>"privacy"</code>, <code>"private"</code>).</li>
+<li>Document every endpoint (<code>trial_operations</code>, <code>session_operations</code>, etc.)
+     that still emits or consumes legacy mode strings.</li>
+<li>Capture where the backend should instead rely on <code>algorithm</code>/<code>offline</code>
+     semantics or provenance <code>source</code>.</li>
 <li><strong>Draft a migration plan</strong>  </li>
-<li>Introduce versioned API fields or graceful fallbacks.</li>
+<li>Introduce versioned API fields or graceful fallbacks where backend payloads
+     still expose the old taxonomy.</li>
 <li>Communicate expected rollout timeline to SDK consumers.</li>
 <li><strong>Implement dual-read / dual-write</strong>  </li>
-<li>During transition, accept both old and new values, emitting warnings when legacy strings arrive.</li>
+<li>During transition, accept deprecated legacy strings on compatibility paths
+     while writing canonical policy/provenance fields.</li>
 <li><strong>Update SDK</strong>  </li>
-<li>Replace the remaining string comparisons in <code>traigent/cloud/trial_operations.py</code> with enum-aware handling once backend changes are live.</li>
+<li>Replace remaining backend-facing legacy mode assumptions with
+     policy-aware handling once the backend contract is live.</li>
 <li><strong>Monitor &amp; clean up</strong>  </li>
 <li>Remove legacy fallbacks after sufficient bake time.</li>
 </ol>
 <hr />
 <h2 id="2-concept-documentation-consolidation-medium-term">2. Concept &amp; Documentation Consolidation (Medium-Term)<a class="headerlink" href="#2-concept-documentation-consolidation-medium-term" title="Permanent link">&para;</a></h2>
-<p><strong>Goal:</strong> clarify the relationship between execution modes, deployment modes, and SLA tiers to avoid future drift.</p>
+<p><strong>Goal:</strong> clarify the relationship between optimization policy, deployment
+concerns, and SLA tiers so the deprecated mode taxonomy does not drift back into
+docs or contracts.</p>
 <ul>
 <li><strong>Owner:</strong> SDK Architecture / Docs  </li>
-<li><strong>Success Criteria:</strong> single authoritative description of what each mode implies (feature matrix, privacy expectations, storage behaviour).</li>
+<li><strong>Success Criteria:</strong> single authoritative description of what
+  <code>algorithm</code>, <code>offline</code>, external evaluators, privacy guarantees, and backend
+  fallback imply.</li>
 </ul>
 <h3 id="tasks_1">Tasks<a class="headerlink" href="#tasks_1" title="Permanent link">&para;</a></h3>
 <ol>
@@ -3998,13 +4014,19 @@
 <li>Compare <code>ExecutionMode</code> with <code>DeploymentMode</code> and SLA constants under <code>traigent/security/</code>.</li>
 <li>Decide whether to consolidate or explicitly document their differing scopes.</li>
 <li><strong>Publish a mode capability matrix</strong>  </li>
-<li>Highlight supported features (local storage, backend sync, privacy guarantees, offline operation) per mode.</li>
-<li>Surface the current limitations of <code>HYBRID</code> and the sunset status of the <code>PRIVACY</code> alias.</li>
+<li>Highlight supported features for the current surface: cloud-first
+     <code>algorithm="auto"</code>, explicit local algorithms, <code>offline=True</code>, and
+     external evaluator dispatch.</li>
+<li>Keep the deprecated mapping table explicit so <code>execution_mode="privacy"</code>
+     is not misread as a no-egress guarantee.</li>
 <li><strong>Update API docs &amp; examples</strong>  </li>
-<li>Replace raw string defaults with enum references where applicable.</li>
-<li>Add guidance on selecting an execution mode based on deployment requirements.</li>
+<li>Replace stale <code>execution_mode</code>, <code>privacy_enabled</code>, <code>cloud_fallback_policy</code>,
+     and flat <code>hybrid_api_*</code> examples with the current public surface.</li>
+<li>Add guidance on selecting <code>algorithm</code>/<code>offline</code> based on deployment
+     requirements.</li>
 <li><strong>Document migration guidance</strong>  </li>
-<li>Provide a clear recipe for teams moving from legacy <code>privacy</code> usage to the <code>HYBRID + privacy_enabled</code> pattern.</li>
+<li>Provide a clear recipe for teams moving from legacy
+     <code>execution_mode</code>/<code>privacy_enabled</code> usage to <code>algorithm</code> plus <code>offline</code>.</li>
 </ol>
 <hr />
 <h2 id="3-tracking">3. Tracking<a class="headerlink" href="#3-tracking" title="Permanent link">&para;</a></h2>
@@ -4019,25 +4041,25 @@
 </thead>
 <tbody>
 <tr>
-<td>Backend accepts enum payloads</td>
+<td>Backend accepts canonical execution-policy payloads</td>
 <td>Short-term</td>
 <td>Backend Platform</td>
 <td>☐</td>
 </tr>
 <tr>
-<td>SDK switches trial operations to enums</td>
+<td>SDK removes backend-facing legacy mode assumptions</td>
 <td>Short-term</td>
 <td>SDK</td>
 <td>☐</td>
 </tr>
 <tr>
-<td>Publish execution-mode feature matrix</td>
+<td>Publish algorithm/offline capability matrix</td>
 <td>Medium-term</td>
 <td>Docs</td>
 <td>☐</td>
 </tr>
 <tr>
-<td>Align / document deployment vs execution enums</td>
+<td>Align or document deployment vs execution-policy concepts</td>
 <td>Medium-term</td>
 <td>SDK Architecture</td>
 <td>☐</td>
@@ -4045,7 +4067,9 @@
 </tbody>
 </table>
 <blockquote>
-<p><strong>Note:</strong> check this document into version control along with issue tracker links once tickets are created. Update the status table as work completes.</p>
+<p><strong>Note:</strong> the public documentation should treat the consolidated
+<code>algorithm</code>/<code>offline</code> model as canonical. This note exists only for remaining
+backend and architecture follow-up work, not as an alternate user model.</p>
 </blockquote>
 
 

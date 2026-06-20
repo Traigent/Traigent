@@ -3834,16 +3834,12 @@ the SDK, backend, and frontend fake-completion audit.</p>
 <ul>
 <li>SDK commit <code>c4e8ef97</code> on
   <code>security/preprod-schema-extra-20260425</code>:</li>
-<li>Clarified SDK modes:<ul>
-<li><code>edge_analytics</code>: local-only execution.</li>
-<li><code>hybrid</code>: local trial execution plus backend/portal session tracking.</li>
-<li><code>cloud</code>: reserved for future remote execution.</li>
-</ul>
-</li>
+<li>Clarified the legacy SDK mode behavior that preceded the current
+    <code>algorithm</code>/<code>offline</code> execution model.</li>
 <li>Preserved hybrid session creation and trial result submission through the
     backend session endpoints.</li>
 <li>Made unimplemented cloud remote execution fail closed with guidance to use
-    hybrid for portal-tracked optimization.</li>
+    the supported local-trial optimization path.</li>
 <li>Removed production mock cloud session/trial/agent responses from cloud API
     operation paths.</li>
 <li>Added regression coverage for hybrid session/result endpoints and cloud
@@ -3886,7 +3882,7 @@ the SDK, backend, and frontend fake-completion audit.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Leave explicit offline/local mock IDs intact where they are gated by
-  <code>TRAIGENT_OFFLINE_MODE=true</code> or test-only paths.</li>
+  <code>TRAIGENT_OFFLINE=1</code> or test-only paths.</li>
 <li>Do not treat <code>hybrid</code> portal tracking as fake cloud execution.</li>
 <li>The unused frontend <code>GenerateExamplesModalSimple</code> still has a normal
   synchronous success toast after an authoritative POST response. It is not

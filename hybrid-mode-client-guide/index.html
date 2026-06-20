@@ -4991,7 +4991,7 @@
 <li><code>POST /traigent/v1/execute</code> enforces capability matching and returns <code>operational_metrics.total_cost_usd</code>.</li>
 <li><code>POST /traigent/v1/evaluate</code> is implemented when <code>supports_evaluate=true</code>.</li>
 <li>Optional fields (<code>constraints</code>, <code>objectives</code>, <code>exploration</code>, <code>promotion_policy</code>, <code>defaults</code>, <code>measures</code>) are omitted unless intentionally used.</li>
-<li>Auth behavior is consistent across all endpoints if authentication is required; accept both <code>Authorization</code> and <code>x-api-key</code> because the SDK sends both from <code>hybrid_api_auth_header</code>.</li>
+<li>Auth behavior is consistent across all endpoints if authentication is required; accept both <code>Authorization</code> and <code>x-api-key</code> because the SDK sends both from <code>HybridAPIOptions.auth_header</code>.</li>
 <li>Timeout/error behavior is explicit for <code>400/401/404/408/429/500/503</code> and client retry logic is implemented.</li>
 </ol>
 <h2 id="privacy-preserving-mode-default">Privacy-Preserving Mode (Default)<a class="headerlink" href="#privacy-preserving-mode-default" title="Permanent link">&para;</a></h2>
@@ -5495,12 +5495,18 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <h2 id="integration-with-traigent-optimization">Integration with Traigent Optimization<a class="headerlink" href="#integration-with-traigent-optimization" title="Permanent link">&para;</a></h2>
 <p>Once your service implements the API, optimize it with Traigent:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.api.decorators</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExternalServiceEvaluator</span><span class="p">,</span> <span class="n">HybridAPIOptions</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;hybrid_api&quot;</span><span class="p">,</span>
-    <span class="n">hybrid_api_endpoint</span><span class="o">=</span><span class="s2">&quot;http://your-service:8080&quot;</span><span class="p">,</span>
-    <span class="n">tunable_id</span><span class="o">=</span><span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-    <span class="n">hybrid_api_auth_header</span><span class="o">=</span><span class="s2">&quot;Bearer &lt;token&gt;&quot;</span><span class="p">,</span>  <span class="c1"># Optional</span>
+    <span class="n">evaluator</span><span class="o">=</span><span class="n">ExternalServiceEvaluator</span><span class="p">(</span>
+        <span class="n">hybrid_api</span><span class="o">=</span><span class="n">HybridAPIOptions</span><span class="p">(</span>
+            <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://your-service:8080&quot;</span><span class="p">,</span>
+            <span class="n">tunable_id</span><span class="o">=</span><span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
+            <span class="n">auth_header</span><span class="o">=</span><span class="s2">&quot;Bearer &lt;token&gt;&quot;</span><span class="p">,</span>  <span class="c1"># Optional</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+            <span class="n">batch_parallelism</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">),</span>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="n">my_dataset</span><span class="p">,</span>
 
     <span class="c1"># Provide tunables/configuration space for optimizer search</span>
@@ -5512,8 +5518,6 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
     <span class="c1"># Optimization settings</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
     <span class="n">cost_limit</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
-    <span class="n">hybrid_api_batch_size</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-    <span class="n">hybrid_api_batch_parallelism</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
 
     <span class="c1"># Objectives (use your custom metric names)</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
@@ -5528,7 +5532,7 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <h3 id="online-mode-and-backend-visibility">Online Mode and Backend Visibility<a class="headerlink" href="#online-mode-and-backend-visibility" title="Permanent link">&para;</a></h3>
 <p>To ensure runs appear in Traigent backend UI:</p>
 <ol>
-<li>Set <code>TRAIGENT_OFFLINE_MODE=false</code>.</li>
+<li>Leave <code>offline=False</code> and do not set <code>TRAIGENT_OFFLINE=1</code>.</li>
 <li>Set a reachable backend (<code>TRAIGENT_BACKEND_URL</code> or <code>TRAIGENT_API_URL</code>).</li>
 <li>Set <code>TRAIGENT_API_KEY</code> (or <code>TRAIGENT_ACCESS_TOKEN</code>).</li>
 <li>Ensure network/DNS reachability to the backend from the runtime environment.</li>
@@ -5764,7 +5768,7 @@ code: insufficient_quota
 <div class="highlight"><pre><span></span><code>Backend tracking unavailable ... Results will be saved locally
 </code></pre></div>
 <p><strong>Solution</strong>:
-- Confirm <code>TRAIGENT_OFFLINE_MODE=false</code>
+- Confirm <code>TRAIGENT_OFFLINE</code> is unset or false
 - Confirm <code>TRAIGENT_BACKEND_URL</code> / <code>TRAIGENT_API_URL</code> points to reachable backend
 - Confirm <code>TRAIGENT_API_KEY</code> is present and valid
 - Check DNS/network reachability from the runtime host</p>

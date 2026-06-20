@@ -2731,10 +2731,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#privacy-mode" class="md-nav__link">
+  <a href="#privacy-and-offline-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Privacy Mode
+        Privacy and Offline Mode
       
     </span>
   </a>
@@ -4280,10 +4280,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#privacy-mode" class="md-nav__link">
+  <a href="#privacy-and-offline-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Privacy Mode
+        Privacy and Offline Mode
       
     </span>
   </a>
@@ -4699,8 +4699,7 @@
 - Algorithm used (grid, random, bayesian, optuna)
 - Number of trials executed
 - Total optimization duration
-- Execution mode (<code>edge_analytics</code>, <code>hybrid</code>, <code>hybrid_api</code>; <code>privacy</code> is a
-  legacy alias for <code>hybrid</code>, and <code>cloud</code> is reserved/fails closed)
+- Result source (<code>cloud_brain</code>, <code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>)
 - Stop conditions triggered
 - Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set <code>TRAIGENT_TVAR_OBSERVATION=off</code> to disable them, or use <code>TRAIGENT_TVAR_OBSERVATION=hashed</code> (default) to hash free-form string values. Only <code>off</code> and <code>hashed</code> are supported; unsupported values fall back to <code>hashed</code>.</p>
 <p><strong>Performance Metrics</strong>:
@@ -4718,20 +4717,26 @@
 <li><strong>API keys or credentials</strong></li>
 <li><strong>Source code or function implementations</strong></li>
 </ul>
-<h3 id="privacy-mode">Privacy Mode<a class="headerlink" href="#privacy-mode" title="Permanent link">&para;</a></h3>
-<p>When <code>privacy_enabled=True</code> is set in ExecutionOptions:</p>
+<h3 id="privacy-and-offline-mode">Privacy and Offline Mode<a class="headerlink" href="#privacy-and-offline-mode" title="Permanent link">&para;</a></h3>
+<p>The cloud-brain path sends configuration identifiers and numeric metrics. It
+does not send dataset example inputs, expected outputs, prompts, responses, or
+example metadata. Use <code>offline=True</code> when your policy requires no Traigent
+backend egress at all:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">execution</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;privacy_enabled&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-    <span class="p">},</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="o">...</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>Traigent will:
-- Redact prompts/responses from stored evaluation artifacts when possible
-- Minimize logged content while keeping metrics and configuration metadata
-- Keep results local in open-source builds</p>
-<p>Privacy mode does not disable telemetry; use <code>TRAIGENT_DISABLE_TELEMETRY=true</code> for a full opt-out.</p>
+<p>Offline runs keep Traigent optimization metadata local while still allowing your
+own function to call LLM providers or other services.</p>
+<p><code>TRAIGENT_OFFLINE=1</code> and the legacy <code>TRAIGENT_OFFLINE_MODE=1</code> enable the same
+zero-egress routing without changing code. Set <code>TRAIGENT_REQUIRE_CLOUD=1</code> when
+<code>algorithm="auto"</code> must hard-error instead of falling back locally.</p>
+<p><code>privacy_enabled</code> is deprecated and does not disable telemetry or network
+access. The default cloud-brain path is already content-free. Use
+<code>TRAIGENT_DISABLE_TELEMETRY=true</code> for telemetry opt-out and <code>offline=True</code> for
+zero Traigent backend egress.</p>
 <h3 id="opentelemetry-tracing">OpenTelemetry Tracing<a class="headerlink" href="#opentelemetry-tracing" title="Permanent link">&para;</a></h3>
 <p>OpenTelemetry tracing is opt-in and uses a separate flag from telemetry
 opt-out:</p>
@@ -4775,13 +4780,13 @@ are dropped, and model identifiers are validated before emission.</p>
 <li><strong>Usage Analytics</strong>: Understanding how features are used to prioritize development</li>
 </ol>
 <h2 id="data-retention">Data Retention<a class="headerlink" href="#data-retention" title="Permanent link">&para;</a></h2>
-<p><strong>Edge Analytics Mode</strong> (default):
+<p><strong>Offline mode</strong>:
 - All data is stored <strong>locally</strong> on your machine
 - Data is kept in <code>~/.traigent/</code> or your specified <code>local_storage_path</code>
 - You control retention - delete files as needed
-- No data is sent to external servers</p>
-<p><strong>Cloud/Hybrid Mode</strong> (managed service only):
-- Metadata can be sent to Traigent backend for optimization coordination
+- No data is sent to the Traigent backend</p>
+<p><strong>Cloud-brain mode</strong>:
+- Configuration IDs/schema and numeric metrics can be sent to Traigent backend for optimization coordination
 - Retention policies depend on your managed-service agreement
 - You can request data deletion at any time</p>
 <h2 id="opting-out-of-telemetry">Opting Out of Telemetry<a class="headerlink" href="#opting-out-of-telemetry" title="Permanent link">&para;</a></h2>
@@ -4862,7 +4867,7 @@ are dropped, and model identifiers are validated before emission.</p>
 - <code>timestamp</code>: ISO 8601 timestamp
 - <code>payload</code>: Additional event-specific data</p>
 <h2 id="local-storage-structure">Local Storage Structure<a class="headerlink" href="#local-storage-structure" title="Permanent link">&para;</a></h2>
-<p>When using edge_analytics mode, data is stored locally:</p>
+<p>When using offline mode, data is stored locally:</p>
 <div class="highlight"><pre><span></span><code>~/.traigent/
 ├── sessions/
 │   ├── 20260101_120000_my_function.json  # Optimization session record (trials + metadata)
@@ -4874,9 +4879,7 @@ are dropped, and model identifiers are validated before emission.</p>
 </code></pre></div>
 <p>You can customize the storage location:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">execution</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;local_storage_path&quot;</span><span class="p">:</span> <span class="s2">&quot;./my_optimizations&quot;</span><span class="p">,</span>
-    <span class="p">},</span>
+    <span class="n">local_storage_path</span><span class="o">=</span><span class="s2">&quot;./my_optimizations&quot;</span><span class="p">,</span>
     <span class="o">...</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -4954,9 +4957,10 @@ control and CI artifact collection in privacy-sensitive projects.</p>
 <p>For HIPAA compliance or handling sensitive data:</p>
 <ol>
 <li>
-<p><strong>Enable Privacy Mode</strong>:
+<p><strong>Use Offline Mode for Zero Traigent Egress</strong>:
    <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">execution</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;privacy_enabled&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="o">...</span>
 <span class="p">)</span>
 </code></pre></div></p>
@@ -4969,10 +4973,9 @@ control and CI artifact collection in privacy-sensitive projects.</p>
 <li>
 <p><strong>Use Local Storage Only</strong>:
    <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">execution</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;execution_mode&quot;</span><span class="p">:</span> <span class="s2">&quot;edge_analytics&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;local_storage_path&quot;</span><span class="p">:</span> <span class="s2">&quot;/secure/location&quot;</span><span class="p">,</span>
-    <span class="p">},</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">local_storage_path</span><span class="o">=</span><span class="s2">&quot;/secure/location&quot;</span><span class="p">,</span>
     <span class="o">...</span>
 <span class="p">)</span>
 </code></pre></div></p>
@@ -4983,7 +4986,9 @@ control and CI artifact collection in privacy-sensitive projects.</p>
 </ol>
 <h2 id="faq">FAQ<a class="headerlink" href="#faq" title="Permanent link">&para;</a></h2>
 <h3 id="q-is-telemetry-enabled-by-default">Q: Is telemetry enabled by default?<a class="headerlink" href="#q-is-telemetry-enabled-by-default" title="Permanent link">&para;</a></h3>
-<p><strong>A</strong>: Yes, but only for local optimization metadata. In the default <code>edge_analytics</code> mode, all data stays on your machine.</p>
+<p><strong>A</strong>: Yes, for local optimization metadata. The default cloud-brain path sends
+configuration IDs/schema and numeric metrics only; use <code>offline=True</code> for zero
+Traigent backend egress.</p>
 <h3 id="q-how-do-i-verify-telemetry-is-disabled">Q: How do I verify telemetry is disabled?<a class="headerlink" href="#q-how-do-i-verify-telemetry-is-disabled" title="Permanent link">&para;</a></h3>
 <p><strong>A</strong>: Check the environment variable:
 <div class="highlight"><pre><span></span><code><span class="nb">echo</span><span class="w"> </span><span class="nv">$TRAIGENT_DISABLE_TELEMETRY</span>
@@ -4995,15 +5000,17 @@ control and CI artifact collection in privacy-sensitive projects.</p>
 <h3 id="q-does-disabling-telemetry-affect-optimization-performance">Q: Does disabling telemetry affect optimization performance?<a class="headerlink" href="#q-does-disabling-telemetry-affect-optimization-performance" title="Permanent link">&para;</a></h3>
 <p><strong>A</strong>: No. Disabling telemetry has minimal performance impact. Optimization runs normally without telemetry.</p>
 <h3 id="q-can-i-enable-telemetry-for-some-optimizations-but-not-others">Q: Can I enable telemetry for some optimizations but not others?<a class="headerlink" href="#q-can-i-enable-telemetry-for-some-optimizations-but-not-others" title="Permanent link">&para;</a></h3>
-<p><strong>A</strong>: The <code>TRAIGENT_DISABLE_TELEMETRY</code> environment variable is process-wide. <code>privacy_enabled</code> reduces stored content but does not disable telemetry.</p>
+<p><strong>A</strong>: The <code>TRAIGENT_DISABLE_TELEMETRY</code> environment variable is process-wide.
+Use <code>offline=True</code> when you need to disable Traigent backend egress for a run.</p>
 <h3 id="q-where-can-i-see-what-telemetry-data-was-collected">Q: Where can I see what telemetry data was collected?<a class="headerlink" href="#q-where-can-i-see-what-telemetry-data-was-collected" title="Permanent link">&para;</a></h3>
-<p><strong>A</strong>: In edge_analytics mode, check the JSON files in <code>~/.traigent/sessions/</code>. They contain the same trial metadata and metrics emitted to telemetry listeners.</p>
+<p><strong>A</strong>: In offline mode, check the JSON files in <code>~/.traigent/sessions/</code>. They
+contain the same trial metadata and metrics emitted to telemetry listeners.</p>
 <h3 id="q-can-i-contribute-telemetry-data-to-improve-traigent">Q: Can I contribute telemetry data to improve Traigent?<a class="headerlink" href="#q-can-i-contribute-telemetry-data-to-improve-traigent" title="Permanent link">&para;</a></h3>
 <p><strong>A</strong>: Currently, telemetry is local-only in the open-source version. Future versions may offer optional anonymous telemetry reporting with explicit opt-in.</p>
 <h2 id="related-documentation">Related Documentation<a class="headerlink" href="#related-documentation" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../decorator-reference/">Decorator Reference</a> - Configuration options</li>
-<li><a href="../../guides/execution-modes/">Execution Modes Guide</a> - Edge Analytics vs Cloud</li>
+<li><a href="../../user-guide/choosing_optimization_model/">Choosing the Right Optimization Model</a> - cloud-first auto, explicit local, offline, env vars, and migration guidance</li>
 <li><a href="../../contributing/SECURITY/">Privacy &amp; Security</a> - Security practices</li>
 <li><a href="../complete-function-specification/">API Reference</a> - Full API documentation</li>
 </ul>
