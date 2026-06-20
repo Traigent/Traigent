@@ -14,7 +14,7 @@ def test_decorator_privacy_alias_maps_to_cloud_brain_policy():
 
     assert f.execution_policy.intent.value == "cloud_brain"
     assert f.execution_policy.offline is False
-    assert getattr(f, "execution_mode", None) == "edge_analytics"
+    assert getattr(f, "execution_mode", None) == "hybrid"
 
     # The optimized function exposes traigent_config on optimize() path; just ensure callable and configured
     async def run():

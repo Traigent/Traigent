@@ -241,8 +241,8 @@ class LocalEvaluator(BaseEvaluator):
     ) -> PromptInfo:
         """Extract prompt information for metrics calculation.
 
-        Handles both privacy mode (storing lengths only) and normal mode
-        (reconstructing full prompts).
+        Keeps prompt content out of metric extraction while retaining lengths
+        for downstream cost estimation.
 
         Args:
             example_input: Input data from dataset example
@@ -251,7 +251,7 @@ class LocalEvaluator(BaseEvaluator):
                 template-aware length calculation when available)
 
         Returns:
-            PromptInfo with prompt data or lengths based on privacy mode
+            PromptInfo with content-free prompt lengths.
         """
         prompt_length: int | None = None
         response_length: int | None = None
@@ -259,13 +259,6 @@ class LocalEvaluator(BaseEvaluator):
 
         prompt_length = self._calculate_input_length(example_input, config=config)
         response_length = self._extract_response_length(output)
-
-        if self.privacy_enabled:
-            # In privacy mode, keep only lengths for downstream cost estimation.
-            original_prompt = None
-        else:
-            # Non-privacy mode keeps the reconstructed prompt for real cost paths.
-            original_prompt = self._reconstruct_prompt(example_input)
 
         return PromptInfo(
             original_prompt=original_prompt,
@@ -818,13 +811,9 @@ class LocalEvaluator(BaseEvaluator):
             prompt_length = prompt_info.prompt_length
             response_length = prompt_info.response_length
 
-        # Determine response text for scoring logic
+        # Determine response length without passing content to metric extraction.
         response_text = self._extract_response_text(output)
-        if (
-            self.privacy_enabled
-            and response_text is not None
-            and response_length is None
-        ):
+        if response_text is not None and response_length is None:
             response_length = len(response_text)
 
         # Get best metrics source using helper
@@ -837,7 +826,7 @@ class LocalEvaluator(BaseEvaluator):
             response=metrics_source,
             model_name=model_name,
             original_prompt=original_prompt,
-            response_text=response_text,
+            response_text=None,
             prompt_length=prompt_length,
             response_length=response_length,
         )

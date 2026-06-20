@@ -526,6 +526,50 @@ class TestPromptTemplateFallbackLength:
         assert captured["record"]["actual_output"] is None
         assert captured["record"]["metrics"] == {"accuracy": 1.0}
 
+    def test_tracing_is_content_free_even_when_privacy_flag_false(self, monkeypatch):
+        """The legacy privacy flag no longer controls content redaction."""
+        captured: dict[str, dict] = {}
+
+        @contextmanager
+        def span_fn(**kwargs):
+            captured["span"] = kwargs
+            yield object()
+
+        def record_fn(_span, **kwargs):
+            captured["record"] = kwargs
+
+        monkeypatch.setattr(
+            "traigent.evaluators.base._get_tracing_functions",
+            lambda: (span_fn, record_fn, True),
+        )
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=False,
+            execution_mode="edge_analytics",
+        )
+        example = EvaluationExample(
+            input_data={"prompt": "customer secret"},
+            expected_output="private expected answer",
+        )
+        result = ExampleResult(
+            example_id="example-1",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output="private actual answer",
+            metrics={"accuracy": 1.0},
+            execution_time=0.01,
+            success=True,
+        )
+
+        with evaluator._example_trace_context("example-1", 0, example) as span:
+            evaluator._record_example_trace(span, result)
+
+        assert captured["span"]["input_data"] is None
+        assert captured["span"]["expected_output"] is None
+        assert captured["record"]["actual_output"] is None
+
     @pytest.mark.asyncio
     async def test_privacy_format_failure_falls_back_to_additive_length(
         self, monkeypatch

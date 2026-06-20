@@ -84,10 +84,10 @@ class TestDeprecatedCloudMode:
 
 
 class TestSupportedExecutionModes:
-    """Supported local execution modes still behave normally."""
+    """Supported decorated execution modes still behave normally."""
 
     def test_decorator_with_edge_execution(self):
-        """Default edge execution still creates an OptimizedFunction."""
+        """Default auto execution creates a cloud-brain OptimizedFunction."""
 
         @traigent.optimize(
             eval_dataset=None,
@@ -98,10 +98,11 @@ class TestSupportedExecutionModes:
             return f"processed: {input_text}"
 
         assert isinstance(test_function, OptimizedFunction)
-        assert test_function.execution_mode == "edge_analytics"
+        assert test_function.execution_policy.intent.value == "cloud_brain"
+        assert test_function.execution_mode == "hybrid"
 
     def test_decorator_with_hybrid_execution(self):
-        """Legacy hybrid resolves to cloud-brain policy with a local runtime shim."""
+        """Legacy hybrid resolves to cloud-brain policy with hybrid runtime."""
 
         @traigent.optimize(
             eval_dataset=None,
@@ -115,7 +116,7 @@ class TestSupportedExecutionModes:
 
         assert isinstance(test_function, OptimizedFunction)
         assert test_function.execution_policy.intent.value == "cloud_brain"
-        assert test_function.execution_mode == "edge_analytics"
+        assert test_function.execution_mode == "hybrid"
         assert test_function.injection_mode == "context"
         assert test_function.objectives == ["accuracy"]
 

@@ -67,8 +67,10 @@ def mock_optimizer():
 
 
 @pytest.fixture
-def traigent_config():
+def traigent_config(monkeypatch):
     """Create test config."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     config = TraigentConfig()
     config.execution_mode = "edge_analytics"
     return config
@@ -181,6 +183,30 @@ class TestBackendSessionManagerCreation:
         )
         assert call_kwargs["metadata"]["function_name"] == descriptor.identifier
         assert call_kwargs["metadata"]["function_slug"] == descriptor.slug
+        mock_backend_client.upload_example_features.assert_not_called()
+
+    def test_create_session_uploads_dataset_features_only_with_explicit_opt_in(
+        self, backend_session_manager, mock_dataset, mock_backend_client
+    ):
+        """Dataset-derived feature upload is non-default and requires opt-in."""
+
+        def func(x):
+            return x
+
+        func.__name__ = "test_func"
+        backend_session_manager._traigent_config.custom_params[
+            "enable_dataset_feature_upload"
+        ] = True
+
+        descriptor = resolve_function_descriptor(func)
+        backend_session_manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=10,
+            start_time=1234567890.0,
+        )
+
         mock_backend_client.upload_example_features.assert_called_once()
         upload_args = mock_backend_client.upload_example_features.call_args[0]
         assert upload_args[0] == "run_test_123"
@@ -1032,6 +1058,11 @@ class TestBackendSessionManagerMetadata:
 class TestStatisticalSignificanceWiring:
     """Verify significance data flows through submit_session_aggregation."""
 
+    @pytest.fixture(autouse=True)
+    def _backend_enabled_for_aggregation(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+
     def test_significance_included_in_aggregation_payload(
         self, mock_backend_client, mock_optimizer, objective_schema
     ):
@@ -1555,33 +1586,49 @@ class TestHandleSessionCreationResult:
 
 class TestRuntimeDegradationSourceMarker:
     """Issue #1265: a backend that becomes unreachable mid-run degrades to
-    local-only, warns once, and marks the result source='local'."""
+    local-only, warns once, and marks the result source='local_fallback'."""
 
-    def test_result_source_backend_when_healthy(self, backend_session_manager):
+    def test_result_source_backend_when_healthy(
+        self, backend_session_manager, monkeypatch
+    ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
         manager = backend_session_manager
+        manager._traigent_config.execution_mode = "hybrid"
         manager._backend_tracking_enabled = True
         manager._acknowledged_trials.add(("session", "trial"))
-        assert manager.result_source(trial_count=1) == "backend"
+        assert manager.result_source(trial_count=1) == "cloud_brain"
         assert manager.backend_degraded is False
 
     def test_result_source_local_when_no_trial_acknowledged(
-        self, backend_session_manager
+        self, backend_session_manager, monkeypatch
     ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
         # Tracking enabled but the backend never acknowledged a single trial
         # despite the run producing trials => the run was not cloud-tracked.
         manager = backend_session_manager
+        manager._traigent_config.execution_mode = "hybrid"
         manager._backend_tracking_enabled = True
-        assert manager.result_source(trial_count=3) == "local"
+        assert manager.result_source(trial_count=3) == "local_fallback"
 
-    def test_result_source_local_when_tracking_disabled(self, backend_session_manager):
+    def test_result_source_local_when_tracking_disabled(
+        self, backend_session_manager, monkeypatch
+    ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
         manager = backend_session_manager
+        manager._traigent_config.execution_mode = "hybrid"
         manager._backend_tracking_enabled = False
-        assert manager.result_source(trial_count=0) == "local"
+        assert manager.result_source(trial_count=0) == "local_fallback"
 
     def test_flag_degraded_marks_local_and_warns_once(
-        self, backend_session_manager, caplog
+        self, backend_session_manager, caplog, monkeypatch
     ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
         manager = backend_session_manager
+        manager._traigent_config.execution_mode = "hybrid"
         manager._backend_tracking_enabled = True
         manager._acknowledged_trials.add(("session", "trial"))
 
@@ -1596,7 +1643,7 @@ class TestRuntimeDegradationSourceMarker:
         assert manager.backend_degraded is True
         # Even with previously-acknowledged trials, a mid-run degradation pins
         # the result to local provenance.
-        assert manager.result_source(trial_count=5) == "local"
+        assert manager.result_source(trial_count=5) == "local_fallback"
 
         local_only_warnings = [
             record for record in caplog.records if "LOCAL-ONLY" in record.getMessage()

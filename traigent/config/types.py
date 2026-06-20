@@ -524,6 +524,15 @@ class TraigentConfig:
     analytics_endpoint: str | None = None  # Custom analytics endpoint
     anonymous_user_id: str | None = None  # Anonymous identifier (auto-generated)
 
+    # Execution-policy runtime state. These fields are intentionally omitted
+    # from to_dict()/from_dict() so persisted user config does not capture
+    # run-specific provenance or no-egress decisions.
+    execution_policy: ResolvedExecutionPolicy | None = None
+    no_egress: bool = False
+    result_source: str | None = None
+    fallback_reason: str | None = None
+    persistence_status: str | None = None
+
     def __post_init__(self) -> None:
         """Validate configuration parameters using unified validators."""
         # Validate temperature
@@ -825,6 +834,7 @@ class TraigentConfig:
             "auto_sync",
             "privacy_enabled",
             "strict_metrics_nulls",
+            "no_egress",
         }:
             if key == "privacy_enabled" and getattr(
                 self, "_privacy_enforced_by_execution_mode", False

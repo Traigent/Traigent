@@ -1321,6 +1321,41 @@ def _coerce_external_service_evaluator(
         return ExternalServiceEvaluator(
             hybrid_api=HybridAPIOptions.model_validate(value)
         )
+
+    # Some full-suite reload paths can hand us a pydantic model instance from a
+    # previous import of this module. Accept the current public shape rather
+    # than relying only on class identity.
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        payload = model_dump()
+        hybrid_payload = payload.get("hybrid_api") if isinstance(payload, dict) else None
+        hybrid_dump = getattr(hybrid_payload, "model_dump", None)
+        if callable(hybrid_dump):
+            payload["hybrid_api"] = hybrid_dump()
+        if isinstance(payload, dict) and ("hybrid_api" in payload or "kind" in payload):
+            return ExternalServiceEvaluator.model_validate(payload)
+
+    if hasattr(value, "hybrid_api"):
+        hybrid_value = getattr(value, "hybrid_api")
+        hybrid_dump = getattr(hybrid_value, "model_dump", None)
+        hybrid_payload = hybrid_dump() if callable(hybrid_dump) else hybrid_value
+        return ExternalServiceEvaluator.model_validate(
+            {
+                "kind": getattr(value, "kind", "hybrid_api"),
+                "hybrid_api": hybrid_payload,
+            }
+        )
+
+    if any(hasattr(value, field) for field in ("endpoint", "transport", "tunable_id")):
+        hybrid_payload = {
+            field: getattr(value, field)
+            for field in HybridAPIOptions.model_fields
+            if hasattr(value, field)
+        }
+        return ExternalServiceEvaluator(
+            hybrid_api=HybridAPIOptions.model_validate(hybrid_payload)
+        )
+
     raise TypeError(
         "evaluator must be an ExternalServiceEvaluator, HybridAPIOptions, dict, or None"
     )
@@ -1383,10 +1418,15 @@ def _resolve_external_service_evaluator(
     return ExternalServiceEvaluator(hybrid_api=hybrid_api_options)
 
 
-def _runtime_algorithm_for_policy(policy: ResolvedExecutionPolicy) -> str:
-    """Temporary local runtime fallback until execution consumes policy."""
+def _runtime_algorithm_for_policy(
+    policy: ResolvedExecutionPolicy,
+    external_evaluator: ExternalServiceEvaluator | None,
+) -> str:
+    """Map public algorithm policy to the runtime optimizer selector."""
 
-    if policy.algorithm == "auto":
+    if policy.algorithm == "auto" and (
+        policy.intent is ExecutionIntent.LOCAL_ONLY or external_evaluator is not None
+    ):
         return "random"
     return policy.algorithm
 
@@ -1401,9 +1441,7 @@ def _runtime_execution_mode_for_policy(
         return ExecutionMode.HYBRID_API
     if policy.intent is ExecutionIntent.LOCAL_ONLY:
         return ExecutionMode.EDGE_ANALYTICS
-    # Keep the existing runtime local-safe until the execution worker consumes
-    # ResolvedExecutionPolicy for real cloud-brain routing.
-    return ExecutionMode.EDGE_ANALYTICS
+    return ExecutionMode.HYBRID
 
 
 _OBJECTIVES_TYPE_ERROR = (
@@ -2499,7 +2537,10 @@ def optimize(  # NOSONAR(S107)
         execution_policy,
         external_service_evaluator,
     )
-    runtime_algorithm_value = _runtime_algorithm_for_policy(execution_policy)
+    runtime_algorithm_value = _runtime_algorithm_for_policy(
+        execution_policy,
+        external_service_evaluator,
+    )
 
     def decorator(func: Callable[..., Any]) -> OptimizedFunction:
         """Actual decorator function.

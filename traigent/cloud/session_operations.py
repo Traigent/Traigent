@@ -29,7 +29,7 @@ from traigent.cloud.session_types import (
     SessionCreationResult,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import resolve_environment_label
+from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
@@ -345,6 +345,20 @@ class SessionOperations:
 
         def _must_fail_loud(exc: Exception) -> bool:
             return governed or isinstance(exc, SessionContractError)
+
+        if is_backend_offline():
+            logger.debug(
+                "Offline mode enabled — skipping backend session creation for %s",
+                function_name,
+            )
+            fallback_id = self._create_local_fallback_session(
+                function_name, search_space, optimization_goal, metadata
+            )
+            return SessionCreationResult.fallback(
+                session_id=fallback_id,
+                reason=SessionCreationFailureReason.SESSION_FAILED,
+                detail="Offline mode enabled",
+            )
 
         async def _create_session_async() -> SessionCreationResult:
             # Preflight: check if API key exists before attempting any HTTP call

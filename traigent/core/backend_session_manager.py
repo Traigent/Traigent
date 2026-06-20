@@ -23,6 +23,21 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 from traigent.config.backend_config import get_no_credentials_hint
+from traigent.core.execution_policy_runtime import (
+    RESULT_SOURCES,
+    SOURCE_CLOUD_BRAIN,
+    SOURCE_EXPLICIT_LOCAL,
+    SOURCE_LOCAL_FALLBACK,
+    SOURCE_OFFLINE,
+    backend_egress_disabled,
+    fallback_reason_from_session_result,
+    mark_local_fallback,
+    policy_allows_cloud_fallback,
+    policy_from_config,
+    policy_is_cloud_brain,
+    policy_requires_cloud,
+    session_failure_is_connectivity,
+)
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
@@ -35,7 +50,7 @@ from traigent.core.session_types import (
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.env_config import is_backend_offline, is_untracked_fallback_allowed
+from traigent.utils.env_config import is_untracked_fallback_allowed
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
@@ -234,8 +249,10 @@ class BackendSessionManager:
         )
 
         # Run-scoped circuit breaker — once disabled, all backend writes skip
-        self._backend_tracking_enabled: bool = True
+        self._no_egress = backend_egress_disabled(traigent_config)
+        self._backend_tracking_enabled: bool = not self._no_egress
         self._backend_disabled_reason: SessionCreationFailureReason | None = None
+        self._fallback_reason: str | None = getattr(traigent_config, "fallback_reason", None)
 
         # Tracks (session_id, trial_id) pairs that have already been registered
         # with the backend, so retries of submit_trial don't re-register and
@@ -255,7 +272,7 @@ class BackendSessionManager:
         # TRAIGENT_OFFLINE_MODE air-gap. When it happens in a backend-tracking
         # mode we degrade to local-only: trials are still optimized and
         # persisted locally, but the run is no longer cloud-tracked. We record
-        # that here so the run's result can be marked source="local" and a
+        # that here so the run's result can be marked source="local_fallback" and a
         # single prominent warning is emitted (instead of one per trial).
         self._runtime_degraded: bool = False
         self._degraded_warning_emitted: bool = False
@@ -270,6 +287,20 @@ class BackendSessionManager:
         """Whether the backend became unreachable mid-run (issue #1265)."""
         return self._runtime_degraded
 
+    @property
+    def fallback_reason(self) -> str | None:
+        """Return the local-fallback reason when one was recorded."""
+
+        return self._fallback_reason or getattr(self._traigent_config, "fallback_reason", None)
+
+    def _egress_disabled(self) -> bool:
+        """Return true when this manager must not touch backend egress paths."""
+
+        if bool(getattr(self, "_no_egress", False)):
+            return True
+        config = getattr(self, "_traigent_config", None)
+        return bool(config is not None and backend_egress_disabled(config))
+
     def _flag_backend_degraded(self, context: str) -> None:
         """Mark the run as degraded to local-only and warn once (issue #1265).
 
@@ -278,6 +309,8 @@ class BackendSessionManager:
         long run doesn't spam one warning per trial.
         """
         self._runtime_degraded = True
+        self._fallback_reason = context
+        mark_local_fallback(self._traigent_config, context)
         if self._degraded_warning_emitted:
             return
         self._degraded_warning_emitted = True
@@ -285,25 +318,39 @@ class BackendSessionManager:
             "⚠️  Traigent backend tracking became unavailable during %s — "
             "continuing in LOCAL-ONLY mode. Trials are still optimized and "
             "saved to local storage, but this run is NOT tracked on the cloud "
-            "backend; its result is marked source='local'. Locally-stored "
+            "backend; its result is marked source='local_fallback'. Locally-stored "
             "results sync to the cloud on the next successful run.",
             context,
         )
 
     def result_source(self, trial_count: int) -> str:
-        """Return the provenance of this run's result: 'backend' or 'local'.
+        """Return the provenance of this run's result.
 
-        'backend' only when remote tracking stayed healthy *and* at least one
-        trial was acknowledged by the backend. A run that degraded mid-flight,
-        never had tracking, or produced trials that the backend never
-        acknowledged is reported as 'local' so callers (and the UI) can tell a
-        cloud-tracked run from a locally-computed one (issue #1265).
+        Values are one of cloud_brain, local_fallback, explicit_local, or
+        offline.
         """
+        configured_source = getattr(self._traigent_config, "result_source", None)
+        policy = policy_from_config(self._traigent_config)
+        if configured_source == SOURCE_OFFLINE or (
+            policy is not None and policy.offline
+        ):
+            return SOURCE_OFFLINE
+        if configured_source in RESULT_SOURCES:
+            if configured_source == SOURCE_CLOUD_BRAIN and (
+                self._runtime_degraded
+                or (trial_count > 0 and not self._acknowledged_trials)
+            ):
+                return SOURCE_LOCAL_FALLBACK
+            return str(configured_source)
+        if self._traigent_config.is_edge_analytics_mode():
+            return SOURCE_EXPLICIT_LOCAL
+        if self._egress_disabled():
+            return SOURCE_OFFLINE
         if not self._backend_tracking_enabled or self._runtime_degraded:
-            return "local"
+            return SOURCE_LOCAL_FALLBACK
         if trial_count > 0 and not self._acknowledged_trials:
-            return "local"
-        return "backend"
+            return SOURCE_LOCAL_FALLBACK
+        return SOURCE_CLOUD_BRAIN
 
     def disable_backend_tracking(self, reason: SessionCreationFailureReason) -> None:
         """Disable backend tracking for this run. Idempotent — keeps first reason."""
@@ -330,6 +377,31 @@ class BackendSessionManager:
 
             if not was_enabled:
                 return str(result.session_id)
+
+            policy = policy_from_config(self._traigent_config)
+            fallback_reason = fallback_reason_from_session_result(result)
+            if policy_requires_cloud(policy):
+                raise ConfigurationError(
+                    "Cloud execution is required, but backend session creation "
+                    f"failed: {fallback_reason}"
+                )
+            if policy_is_cloud_brain(policy):
+                if policy_allows_cloud_fallback(policy) and session_failure_is_connectivity(
+                    result
+                ):
+                    self._fallback_reason = fallback_reason
+                    mark_local_fallback(self._traigent_config, fallback_reason)
+                    logger.warning(
+                        "traigent.cloud_brain_fallback source=%s "
+                        "fallback_reason=%s stage=session-create",
+                        SOURCE_LOCAL_FALLBACK,
+                        fallback_reason,
+                    )
+                    return str(result.session_id)
+                raise ConfigurationError(
+                    "Cloud brain session creation failed without an allowed "
+                    f"connectivity fallback: {fallback_reason}"
+                )
 
             classification = _classify_session_creation_failure(
                 reason, result.failure_response
@@ -388,8 +460,8 @@ class BackendSessionManager:
         Returns:
             BackendIntegratedClient if available, None otherwise
         """
-        if is_backend_offline():
-            logger.debug("Offline mode - skipping backend client initialization")
+        if backend_egress_disabled(traigent_config):
+            logger.debug("Execution policy forbids backend client initialization")
             return None
 
         # Try to import backend integration module - may not be available in minimal installs.
@@ -477,7 +549,7 @@ class BackendSessionManager:
         if not self._backend_tracking_enabled:
             return True
 
-        if is_backend_offline():
+        if self._egress_disabled():
             return True
 
         if self._backend_client:
@@ -500,7 +572,10 @@ class BackendSessionManager:
         experiment_run_id: str | None,
     ) -> None:
         """Upload deterministic example features for backend-side content analytics."""
-        if not self._backend_client or not experiment_run_id:
+        if not bool(self._traigent_config.get("enable_dataset_feature_upload", False)):
+            return
+
+        if self._egress_disabled() or not self._backend_client or not experiment_run_id:
             return
 
         uploader = getattr(self._backend_client, "upload_example_features", None)
@@ -573,6 +648,17 @@ class BackendSessionManager:
             experiment_display_name or function_descriptor.display_name
         )
         function_slug = function_descriptor.slug
+
+        if self._egress_disabled():
+            return SessionContext(
+                session_id=None,
+                dataset_name=(
+                    dataset.name if hasattr(dataset, "name") else "default_evaluation"
+                ),
+                function_name=function_identifier,
+                optimization_id=self._optimization_id,
+                start_time=start_time,
+            )
 
         if self._backend_client:
             evaluation_set_name = (
@@ -690,7 +776,7 @@ class BackendSessionManager:
         Returns:
             True if submission succeeded
         """
-        if not self._backend_client or not session_id:
+        if self._egress_disabled() or not self._backend_client or not session_id:
             return False
 
         _ = content_scores
@@ -746,7 +832,7 @@ class BackendSessionManager:
     ) -> None:
         """Record local analytics before any remote backend breaker can short-circuit."""
 
-        if not self._backend_client or not session_id:
+        if self._egress_disabled() or not self._backend_client or not session_id:
             return
 
         sanitized_score = float(score) if score is not None else None
@@ -793,10 +879,13 @@ class BackendSessionManager:
         in which case the caller fails closed.
         """
         client = self._backend_client
-        if client is None:
+        if self._egress_disabled() or client is None:
             return None
 
         client_trial_id = str(trial_result.trial_id)
+        if (trial_result.metadata or {}).get("backend_trial_id_acquired"):
+            self._started_trials.add((session_id, client_trial_id))
+            return client_trial_id
         # If this trial already mapped to an acknowledged backend id, reuse it.
         for sid, bid in self._started_trials:
             if sid == session_id and bid == client_trial_id:
@@ -832,7 +921,7 @@ class BackendSessionManager:
     ) -> None:
         """Submit trial metrics to backend when possible."""
 
-        if not self._backend_client or not session_id:
+        if self._egress_disabled() or not self._backend_client or not session_id:
             return
 
         if not self._backend_tracking_enabled:
@@ -1030,7 +1119,12 @@ class BackendSessionManager:
         Returns:
             Number of trials successfully updated
         """
-        if not self._backend_client or session_id is None or len(self._objectives) <= 1:
+        if (
+            self._egress_disabled()
+            or not self._backend_client
+            or session_id is None
+            or len(self._objectives) <= 1
+        ):
             return 0
 
         if not self._backend_tracking_enabled:
@@ -1234,6 +1328,15 @@ class BackendSessionManager:
             session_id: Backend session identifier
         """
         if (
+            self._egress_disabled()
+            or not self._backend_client
+            or session_id is None
+            or self._traigent_config.is_edge_analytics_mode()
+            or not self._backend_tracking_enabled
+        ):
+            return
+
+        if (
             not self._backend_client
             or session_id is None
             or self._traigent_config.is_edge_analytics_mode()
@@ -1328,6 +1431,14 @@ class BackendSessionManager:
             Session summary metadata (or None if backend disabled)
         """
         if (
+            self._egress_disabled()
+            or not self._backend_client
+            or session_id is None
+            or not self._backend_tracking_enabled
+        ):
+            return None
+
+        if (
             not self._backend_client
             or session_id is None
             or not self._backend_tracking_enabled
@@ -1372,7 +1483,11 @@ class BackendSessionManager:
             session_id: Backend session identifier
             session_summary: Session summary from backend
         """
-        if session_id is None or not hasattr(result, "metadata"):
+        if (
+            session_id is None
+            or self._egress_disabled()
+            or not hasattr(result, "metadata")
+        ):
             return
 
         if not result.metadata:

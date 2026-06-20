@@ -50,7 +50,9 @@ def mock_backend_client() -> MagicMock:
 
 
 @pytest.fixture
-def traigent_config() -> TraigentConfig:
+def traigent_config(monkeypatch: pytest.MonkeyPatch) -> TraigentConfig:
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     config = TraigentConfig()
     config.execution_mode = "edge_analytics"
     return config
@@ -142,9 +144,10 @@ class TestStartedTrialsIdempotency:
             await manager.submit_trial(tr, session_id)
             await manager.submit_trial(tr, session_id)
 
-        assert mock_backend_client.request_trial_slot.await_count == 2
+        assert mock_backend_client.request_trial_slot.await_count == 1
         assert tr.trial_id == "trial-2"
         mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert manager.backend_degraded
         assert not manager.is_trial_backend_acknowledged(session_id, "trial-2")
 
 

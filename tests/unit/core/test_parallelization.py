@@ -152,5 +152,5 @@ async def test_privacy_alias_maps_to_cloud_brain_policy():
     assert cfg is not None
     assert fn_priv.execution_policy.intent.value == "cloud_brain"
     assert fn_priv.execution_policy.offline is False
-    assert cfg.execution_mode == "edge_analytics"
+    assert cfg.execution_mode == "hybrid"
     assert cfg.privacy_enabled is False
