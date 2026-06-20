@@ -33,7 +33,10 @@ def summarize(text: str) -> str:
 ## Execution model
 - `algorithm="auto"` (default) - cloud-first optimizer decisions, local trials, local fallback on connectivity failures.
 - `algorithm="grid"` / `"random"` - explicit local optimizers with no cloud optimizer round trip.
-- `offline=True` - zero Traigent backend egress.
+- Smart algorithms such as `bayesian`, `tpe`, `optuna_tpe`, `nsga2`, and `cmaes` are cloud-only and hard-error if unavailable.
+- `offline=True`, `TRAIGENT_OFFLINE=1`, or legacy `TRAIGENT_OFFLINE_MODE=1` - zero Traigent backend egress.
+- `TRAIGENT_REQUIRE_CLOUD=1` - disables the automatic local fallback for `algorithm="auto"`.
+- Result provenance: `result.source` is `cloud_brain`, `local_fallback`, `explicit_local`, or `offline`.
 - Mock: call `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial code.
 
 ## Quick knobs

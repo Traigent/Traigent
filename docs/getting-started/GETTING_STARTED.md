@@ -154,11 +154,22 @@ configs and your process runs the trials. If cloud connectivity is unavailable,
 auto falls back locally unless `TRAIGENT_REQUIRE_CLOUD=1` is set.
 
 Explicit `algorithm="grid"` and `"random"` run locally with no cloud optimizer
-round trip. Explicit smart algorithms require cloud and error if offline or
-unavailable.
+round trip. Explicit smart algorithms such as `bayesian`, `tpe`, `optuna_tpe`,
+`nsga2`, and `cmaes` require cloud and hard-error if offline or unavailable.
 
-To run fully local with no Traigent backend communication, set `offline=True` or
-`TRAIGENT_OFFLINE=1`.
+To run fully local with no Traigent backend communication, set `offline=True`,
+`TRAIGENT_OFFLINE=1`, or the legacy `TRAIGENT_OFFLINE_MODE=1`.
+
+If you are migrating older code: `execution_mode="hybrid"` becomes the default
+`@traigent.optimize()` behavior, `execution_mode="edge_analytics"` becomes
+`offline=True`, and `privacy_enabled=True` should be removed.
+
+Optimization results also record how the run resolved:
+
+- `result.source == "cloud_brain"` for the cloud-first path
+- `result.source == "local_fallback"` when `algorithm="auto"` degrades locally
+- `result.source == "explicit_local"` for explicit `grid` / `random`
+- `result.source == "offline"` for `offline=True` or offline env vars
 
 ---
 
