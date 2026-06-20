@@ -171,7 +171,7 @@ def _create_dummy_eval_dataset() -> str:
         "-unnecessary_retry_rate",  # Secondary: minimize unnecessary retries
         "-avg_latency_ms",  # Secondary: minimize latency
     ],  # We want to maximize our primary objectives
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_function_calling(
     description_format: str = "openai_functions",

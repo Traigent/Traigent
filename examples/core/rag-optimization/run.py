@@ -101,7 +101,7 @@ DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "rag-optimization
 if MOCK:
     # Redirect home to repo-local to avoid sandbox home write
     os.environ.setdefault("HOME", str(BASE))
-    traigent.initialize(execution_mode="edge_analytics")
+    traigent.initialize(offline=True)
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 CONTEXT_PATH = DATA_ROOT / "context_documents.jsonl"
@@ -307,7 +307,7 @@ def _invoke_llm(prompt: str, model: str, temperature: float) -> str:
         "use_rag": [True, False],
         "top_k": [1, 2, 3],
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_question(question: str) -> str:
     """Answer a question using either mock mode or real LLM API."""

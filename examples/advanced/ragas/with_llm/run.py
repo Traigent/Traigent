@@ -107,7 +107,7 @@ _HEDGED_RESPONSES = {
         "evidence_policy": ["cite_context", "omit_context"],
         "answer_style": ["succinct", "speculative"],
     },
-    execution_mode="edge_analytics",
+    offline=True,
     metric_functions=_METRIC_FUNCTIONS,
 )
 def answer_question(question: str) -> str:

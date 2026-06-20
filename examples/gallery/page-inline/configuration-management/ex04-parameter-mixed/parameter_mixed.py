@@ -90,7 +90,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     eval_dataset=EVAL_DATASET,
     metric_functions={"accuracy": _summary_f1},
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def content_generator(topic: str, context: str = "") -> str:

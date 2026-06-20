@@ -30,10 +30,10 @@ def summarize(text: str) -> str:
     return f"Summary | model={cfg['model']}"  # call your LLM here
 ```
 
-## Execution mode
-- `edge_analytics` (default and supported) - local execution with analytics.
-- `hybrid` (supported) - local trial execution with backend/portal session and metric tracking.
-- `cloud` (reserved) - future remote execution; currently fails closed with guidance to use `hybrid`.
+## Execution model
+- `algorithm="auto"` (default) - cloud-first optimizer decisions, local trials, local fallback on connectivity failures.
+- `algorithm="grid"` / `"random"` - explicit local optimizers with no cloud optimizer round trip.
+- `offline=True` - zero Traigent backend egress.
 - Mock: call `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial code.
 
 ## Quick knobs

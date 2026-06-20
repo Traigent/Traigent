@@ -53,7 +53,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "structured-output-json"
 if MOCK:
     # Initialize with local-only mode for mock runs
-    traigent.initialize(execution_mode="edge_analytics")
+    traigent.initialize(offline=True)
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 
@@ -193,7 +193,7 @@ def json_score_metric(output: str, expected: dict, **_: object) -> float:
         "schema_rigidity": ["strict", "lenient"],
     },
     metric_functions={"json_score": json_score_metric},
-    execution_mode="edge_analytics",
+    offline=True,
     injection_mode="seamless",
 )
 def extract_fields(

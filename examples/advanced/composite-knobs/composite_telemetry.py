@@ -21,7 +21,7 @@ Run it::
 
 Environment (all optional; offline by default):
 
-- ``TRAIGENT_OFFLINE_MODE=true`` — already the default for this example; no
+- ``TRAIGENT_OFFLINE=1`` — already the default for this example; no
   network is touched regardless.
 
 The "Hybrid / cloud wire" section near the bottom is COMMENTED and documented:
@@ -40,7 +40,7 @@ from __future__ import annotations
 import os
 
 # Offline by default: this example never needs a backend.
-os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+os.environ.setdefault("TRAIGENT_OFFLINE", "1")
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 from traigent.knobs.patterns import binary_cascade
@@ -179,7 +179,7 @@ def main() -> None:
 #         objectives=["accuracy"],
 #         configuration_space={"variant": ["cheap", "strong"]},
 #         default_config={"variant": "cheap"},
-#         execution_mode="hybrid",
+#         algorithm="auto",
 #     )
 #     def answer(text: str) -> tuple[str, dict[str, float]]:
 #         cfg = traigent.get_config()
@@ -196,7 +196,7 @@ def main() -> None:
 #         return str(run.output), metrics
 #
 # Requires a reachable backend and credentials (TRAIGENT_API_KEY,
-# TRAIGENT_BACKEND_URL) plus TRAIGENT_OFFLINE_MODE=false. See
+# TRAIGENT_BACKEND_URL) plus TRAIGENT_OFFLINE=0. See
 # docs/concepts/composite-knobs.md for the strict certified-selection recipe.
 
 

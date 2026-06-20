@@ -59,7 +59,7 @@ _GENERIC_RESPONSES = {
         "strategy": ["grounded_lookup", "vague_guess"],
         "tone": ["direct", "rambling"],
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_question(question: str) -> str:
     cfg = traigent.get_trial_config()

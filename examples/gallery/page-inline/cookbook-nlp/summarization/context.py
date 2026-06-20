@@ -58,7 +58,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "summarization_eval.jsonl")
     },
     eval_dataset=DATASET,
     objectives=["cost", "response_time"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def summarize(document: str) -> str:

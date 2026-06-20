@@ -111,7 +111,7 @@ def _calc_accuracy(
     eval_dataset=DATASET,
     objectives=["response_time"],
     metric_functions={"accuracy": _calc_accuracy},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def calculate(expression: str) -> str:

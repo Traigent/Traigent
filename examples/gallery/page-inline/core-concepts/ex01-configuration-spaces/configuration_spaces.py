@@ -118,7 +118,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     # Report summary_f1 as 'accuracy' for a meaningful single objective
     metric_functions={"accuracy": _summary_f1},
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def intelligent_assistant(query: str) -> str:

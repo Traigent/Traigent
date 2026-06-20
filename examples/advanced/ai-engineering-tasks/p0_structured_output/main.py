@@ -129,7 +129,7 @@ def _format_entities(entities: dict[str, str], output_format: str) -> str:
         "validation": ["strict", "lenient"],
         "extraction_style": ["verbose", "concise"],
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def extract_entities(
     text: str,

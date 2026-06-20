@@ -87,7 +87,7 @@ def _mock_answer_for_config(question: str, config) -> str:
     },
     objectives=["accuracy", "cost"],  # What to optimize for
     evaluation=EvaluationOptions(eval_dataset=str(DATASET_PATH)),
-    execution=ExecutionOptions(execution_mode="edge_analytics"),
+    execution=ExecutionOptions(offline=True),
     max_trials=5,  # Limit trials for quick demo
 )
 def simple_qa_agent(question: str) -> str:

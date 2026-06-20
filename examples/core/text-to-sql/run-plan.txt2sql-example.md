@@ -47,7 +47,7 @@ import traigent
     },
     metric_functions={"sql_accuracy": sql_accuracy},
     injection_mode="seamless",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def generate_sql(question: str) -> str:
     cfg = traigent.get_config()

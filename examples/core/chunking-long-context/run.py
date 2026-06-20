@@ -117,7 +117,7 @@ DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "chunking-long-co
 
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
@@ -319,7 +319,7 @@ def _mock_rag_answer(question: str) -> str:
         "overlap": OVERLAP_CHOICES,
         "top_k": TOP_K_CHOICES,
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def rag_qa(question: str) -> str:
     if MOCK:

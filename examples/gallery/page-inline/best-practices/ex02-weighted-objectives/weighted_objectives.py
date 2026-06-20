@@ -138,7 +138,7 @@ def _mcq_accuracy(output: int | None, expected: int | None, llm_metrics=None) ->
     eval_dataset=DATASET_FILE,
     objectives=MCQ_OBJECTIVE_SCHEMA,
     metric_functions={"accuracy": _mcq_accuracy},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def select_answer(question: str, choices: list[str]) -> int:

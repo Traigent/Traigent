@@ -176,7 +176,7 @@ For production validation, set `TRAIGENT_MOCK_LLM=false` in protected branch wor
     configuration_space={...},
     eval_dataset="your_dataset.jsonl",
     objectives=["accuracy", "cost", "response_time"],
-    execution_mode="edge_analytics"
+    offline=True
 )
 def your_function(...):
     ...

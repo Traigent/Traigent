@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+os.environ.setdefault("TRAIGENT_OFFLINE", "1")
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 from traigent.knobs.patterns import moe

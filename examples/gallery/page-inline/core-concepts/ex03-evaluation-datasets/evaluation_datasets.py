@@ -112,7 +112,7 @@ def _records_to_dataset(records: list[dict[str, Any]], name: str) -> Dataset:
     },
     eval_dataset=DATASET_FILE,  # JSONL file
     objectives=["accuracy", "cost"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def classifier_with_jsonl(text: str) -> str:
@@ -151,7 +151,7 @@ def create_python_dataset() -> Dataset:
     },
     eval_dataset=create_python_dataset(),  # Python list
     objectives=["accuracy", "consistency"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def classifier_with_python_list(text: str) -> str:
@@ -244,7 +244,7 @@ class DynamicDatasetGenerator:
     },
     eval_dataset=DynamicDatasetGenerator.generate_math_problems(10),  # Dynamic
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def math_solver(problem: str) -> str:

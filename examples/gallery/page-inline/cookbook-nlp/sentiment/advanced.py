@@ -64,7 +64,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
     },
     eval_dataset=DATASET,
     objectives=["accuracy", "cost", "response_time"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def sentiment_analysis(text: str) -> str:

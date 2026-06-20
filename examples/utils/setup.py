@@ -87,11 +87,11 @@ def setup_traigent_import(caller_file: str | Path | None = None) -> None:
         sys.path.insert(0, sdk_root)
 
 
-def initialize_traigent(execution_mode: str = "edge_analytics") -> None:
+def initialize_traigent(offline: bool = True) -> None:
     """Initialize traigent with appropriate settings.
 
     Args:
-        execution_mode: The execution mode to use (default: edge_analytics)
+        offline: Run examples without Traigent backend egress.
     """
     import logging
 
@@ -101,7 +101,7 @@ def initialize_traigent(execution_mode: str = "edge_analytics") -> None:
 
     if is_mock_mode():
         try:
-            traigent.initialize(execution_mode=execution_mode)
+            traigent.initialize(offline=offline)
         except Exception as e:
             # Log the error but continue - mock mode may work without full initialization
             logger.warning(
@@ -131,12 +131,12 @@ def get_example_dataset(
 
 
 # Quick setup function for examples
-def quick_setup(base_path: Path, execution_mode: str = "edge_analytics") -> bool:
+def quick_setup(base_path: Path, offline: bool = True) -> bool:
     """Perform all common setup steps for an example.
 
     Args:
         base_path: The base path of the example (usually Path(__file__).parent)
-        execution_mode: The execution mode to use
+        offline: Run examples without Traigent backend egress.
 
     Returns:
         True if running in mock mode, False otherwise
@@ -144,7 +144,7 @@ def quick_setup(base_path: Path, execution_mode: str = "edge_analytics") -> bool
     mock = is_mock_mode()
     setup_mock_environment(base_path)
     setup_traigent_import()
-    initialize_traigent(execution_mode)
+    initialize_traigent(offline)
     return mock
 
 

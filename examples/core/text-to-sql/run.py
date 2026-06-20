@@ -68,7 +68,7 @@ SCHEMA = _schema_path.read_text() if _schema_path.exists() else ""
 
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 
@@ -210,7 +210,7 @@ def _mock_generate_sql(question: str) -> str:
     },
     metric_functions={"sql_accuracy": sql_accuracy},
     injection_mode="seamless",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def generate_sql(question: str) -> str:
     """Convert a natural language question into a SQL query.

@@ -12,7 +12,7 @@ You are a senior AI engineer exploring Traigent's capabilities. The README quick
 # Ensure you're in the Traigent checkout with the SDK installed
 cd /path/to/Traigent
 export TRAIGENT_MOCK_LLM=true
-export TRAIGENT_OFFLINE_MODE=true
+export TRAIGENT_OFFLINE=1
 export TRAIGENT_LOG_LEVEL=INFO
 ```
 

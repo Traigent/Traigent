@@ -183,7 +183,7 @@ def _create_dummy_eval_dataset() -> str:
         "-selection_latency_ms",  # Secondary: minimize latency
         "diversity_score",  # Secondary: maximize diversity
     ],  # We want to maximize our primary objectives
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_few_shot_selection(
     selection_method: str = "random",
@@ -434,10 +434,10 @@ async def main() -> None:
     # Configure Traigent optimization
     # traigent.configure(
     #     evaluator=evaluation_function,
-    #     execution_mode="edge_analytics",  # Run in Edge Analytics mode for demo
+    #     offline=True,  # Run locally for demo
     #     verbose=True
     # )
-    # Note: evaluator, execution_mode, and verbose parameters don't exist in traigent.configure() API
+    # Note: evaluator and verbose parameters don't exist in traigent.configure() API
 
     console.print("\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print(

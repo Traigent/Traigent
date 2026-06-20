@@ -47,7 +47,7 @@ DATA_ROOT = (
 )
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
@@ -283,7 +283,7 @@ def _mock_summarize(text: str) -> str:
         "temperature": TEMPERATURE_CHOICES,
         "style": STYLE_CHOICES,
     },
-    execution_mode="edge_analytics",
+    offline=True,
     parallel_config=GLOBAL_PARALLEL_CONFIG,
 )
 def summarize_keyword(text: str) -> str:

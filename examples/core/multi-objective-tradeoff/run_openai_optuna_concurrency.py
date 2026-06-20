@@ -104,7 +104,7 @@ print(
 
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
@@ -587,10 +587,10 @@ _OPTIMIZE_KWARGS: dict[str, Any] = {
         "model": MODEL_CHOICES,
         "temperature": TEMPERATURE_CHOICES,
     },
-    "execution_mode": "edge_analytics",
+    "offline": True,
     "injection_mode": "seamless",
     "parallel_config": PARALLEL_CONFIG,
-    "algorithm": "bayesian",
+    "algorithm": "random",
     "max_trials": MAX_TRIALS,
 }
 

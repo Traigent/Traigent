@@ -111,7 +111,7 @@ print(f"Logging to {LOG_FILE} at level {LOG_LEVEL}")
 # Mock mode initialization
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 
@@ -608,7 +608,7 @@ _OPTIMIZE_KWARGS: dict[str, Any] = {
         "temperature": TEMPERATURE_CHOICES,
         "max_tokens": MAX_TOKENS_CHOICES,
     },
-    "execution_mode": "edge_analytics",
+    "offline": True,
     "injection_mode": "seamless",
     "parallel_config": PARALLEL_CONFIG,
     "algorithm": "grid",

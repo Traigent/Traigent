@@ -119,7 +119,7 @@ def _contains_accuracy(
     eval_dataset=DATASET_FILE,
     objectives=["accuracy", "cost", "response_time"],
     metric_functions={"accuracy": _contains_accuracy},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def faq_answer(question: str) -> str:

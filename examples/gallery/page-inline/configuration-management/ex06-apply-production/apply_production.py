@@ -137,7 +137,7 @@ class OptimizedChatService:
                 "response_style": ["friendly", "professional", "casual"],
             },
             objectives=["cost", "quality"],
-            execution_mode="edge_analytics",
+            offline=True,
             max_trials=10,
         )
         def generate_greeting(name: str) -> str:
@@ -172,7 +172,7 @@ class OptimizedChatService:
                 os.path.dirname(__file__), "production_queries.jsonl"
             ),
             objectives=["cost", "quality", "response_time"],
-            execution_mode="edge_analytics",
+            offline=True,
             max_trials=10,
         )
         def generate_response(query: str, context: str = "") -> str:

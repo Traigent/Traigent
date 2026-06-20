@@ -76,7 +76,7 @@ def _json_accuracy(
     eval_dataset=DATASET,
     objectives=["accuracy", "cost"],
     metric_functions={"accuracy": _json_accuracy},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def extract_fields(text: str) -> str:

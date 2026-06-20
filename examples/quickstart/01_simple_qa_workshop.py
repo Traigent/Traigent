@@ -142,7 +142,7 @@ def cost_metric(input_data: dict) -> float:
         scoring_function=exact_match,
         metric_functions={"cost": cost_metric},
     ),
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer_question(question: str) -> str:
     """Deterministic mock agent -- no LLM calls."""

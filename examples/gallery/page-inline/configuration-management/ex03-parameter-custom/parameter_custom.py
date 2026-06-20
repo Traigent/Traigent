@@ -88,7 +88,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     # Report a summary-friendly score as 'accuracy'
     metric_functions={"accuracy": _summary_f1},
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def adaptive_chat_bot(user_message: str) -> str:

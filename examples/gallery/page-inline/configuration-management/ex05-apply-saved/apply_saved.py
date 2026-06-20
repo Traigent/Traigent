@@ -60,7 +60,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     },
     eval_dataset=os.path.join(os.path.dirname(__file__), "customer_queries.jsonl"),
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def customer_support_agent(question: str, choices: list[str]) -> int:
@@ -153,7 +153,7 @@ def load_and_apply_saved_config():
             },
             # No eval_dataset needed since we're just applying config
             objectives=["accuracy"],
-            execution_mode="edge_analytics",
+            offline=True,
         )
         def production_support_agent(question: str, choices: list[str]) -> int:
             """Production MCQ selector using saved config."""

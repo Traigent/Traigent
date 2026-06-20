@@ -68,7 +68,7 @@ PROMPT_PATH = BASE / "prompt.txt"
 # Mock mode initialization
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 
@@ -477,7 +477,7 @@ def _dump_example_results(
         # "temperature": [0, 0.1, 0.3],  # Multiple values for Bayesian search
         # "max_tokens": [64, 128, 256],  # Multiple values for Bayesian search
     },
-    execution_mode="edge_analytics",
+    offline=True,
     injection_mode="seamless",
     parallel_config=GLOBAL_PARALLEL_CONFIG,
 )
@@ -539,7 +539,7 @@ async def main() -> None:
     print("Crunching math expressions while balancing accuracy and cost…")
 
     trials = args.max_trials if args.max_trials is not None else (10 if not MOCK else 4)
-    r = await answer.optimize(algorithm="bayesian", max_trials=trials)
+    r = await answer.optimize(algorithm="random", max_trials=trials)
 
     print({"best_config": r.best_config, "best_score": r.best_score})
     _print_results(r)

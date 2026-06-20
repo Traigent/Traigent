@@ -176,7 +176,7 @@ def _create_dummy_eval_dataset() -> str:
         "token_utilization",  # Secondary: efficient token usage
         "-avg_processing_time_ms",  # Secondary: minimize latency
     ],  # We want to maximize our primary objectives
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_token_budget(
     allocation_strategy: str = "importance_weighted",

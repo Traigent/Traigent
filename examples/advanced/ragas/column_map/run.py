@@ -39,7 +39,7 @@ _RESPONSES = {
         "strategy": ["lookup", "summary_report"],
         "tone": ["concise", "storytelling"],
     },
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def answer(prompt: str) -> str:
     cfg = traigent.get_trial_config()

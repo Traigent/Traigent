@@ -162,7 +162,7 @@ def _min_quality_score(
     },
     eval_dataset=DATASET_FILE,
     objectives=["cost"],  # Minimize cost only
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def cost_optimized_bot(query: str) -> str:
@@ -181,7 +181,7 @@ def cost_optimized_bot(query: str) -> str:
     },
     eval_dataset=DATASET_FILE,
     objectives=BALANCED_SUPPORT_OBJECTIVES,
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def balanced_support_bot(query: str) -> str:
@@ -214,7 +214,7 @@ def balanced_support_bot(query: str) -> str:
         _max_cost_per_call,
         _min_quality_score,
     ],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def quality_constrained_bot(query: str) -> str:

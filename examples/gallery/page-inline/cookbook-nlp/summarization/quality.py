@@ -74,7 +74,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     eval_dataset=DATASET,
     objectives=["quality", "cost"],
     metric_functions={"quality": _summary_f1},
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def summarize(document: str) -> str:

@@ -43,7 +43,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "few-shot-classification"
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
@@ -107,7 +107,7 @@ def _build_prompt(text: str, fewshots: list[dict]) -> str:
     },
     injection_mode="parameter",
     config_param="config",
-    execution_mode="edge_analytics",
+    offline=True,
 )
 def classify_sentiment(text: str, config: dict | None = None) -> str:
     # Mock mode: keyword-based classifier tuned for realistic accuracy (75%+)

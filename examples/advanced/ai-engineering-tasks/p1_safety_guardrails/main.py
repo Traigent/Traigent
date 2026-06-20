@@ -187,7 +187,7 @@ def _create_dummy_eval_dataset() -> str:
         "-avg_false_positive_rate",  # Secondary: minimize false positives (- prefix means minimize)
         "-avg_processing_time_ms",  # Secondary: maintain performance (- prefix means minimize)
     ],
-    execution_mode="edge_analytics",  # Backend only supports Edge Analytics mode currently
+    offline=True,  # Run locally with no Traigent backend egress
     # REMOVED: direction, max_trials, timeout_minutes (these don't exist in decorator API)
 )
 def optimize_safety_guardrails(
@@ -544,7 +544,7 @@ async def main() -> None:
             custom_evaluator=evaluation_function,
             max_trials=140,  # Moved here from decorator
             timeout=3000,  # 50 minutes in seconds (was timeout_minutes=50)
-            algorithm="bayesian",  # Or "grid", "random"
+            algorithm="random",  # Offline local example; smart algorithms require cloud
         )
 
         # Display results

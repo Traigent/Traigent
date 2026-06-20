@@ -489,11 +489,11 @@ from traigent.config.parallel import ParallelConfig
 
 @traigent.optimize(
     execution=ExecutionOptions(
-        execution_mode="edge_analytics",
+        algorithm="grid",
+        offline=True,
         local_storage_path="./my_results",
         minimal_logging=True,
         parallel_config=ParallelConfig(thread_workers=4, trial_concurrency=2),
-        privacy_enabled=False,
         max_total_examples=1000,
         samples_include_pruned=True,
         reps_per_trial=1,
@@ -505,17 +505,16 @@ from traigent.config.parallel import ParallelConfig
 
 **ExecutionOptions Fields**:
 
-- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "hybrid_api" for external API-backed trial execution; "privacy" as a legacy alias for "hybrid" with privacy enabled; "cloud" is reserved for future remote execution and fails closed.
+- `algorithm`: optimizer selector. `"auto"` is cloud-first; `"grid"` and `"random"` are explicit local optimizers.
+- `offline`: force local-only operation with zero Traigent backend egress.
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
 - `parallel_config`: Concurrency configuration
-- `privacy_enabled`: Redact sensitive data
 - `max_total_examples`: Global sample budget
 - `samples_include_pruned`: Count pruned trials in budget
 - `reps_per_trial`: Repetitions per configuration. OSS SDK accepts only `1`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
 - `reps_aggregation`: Repetition aggregation method. OSS SDK accepts only `"mean"`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
-- `hybrid_api_endpoint`, `tunable_id`, `hybrid_api_transport`, `hybrid_api_transport_type`, `hybrid_api_batch_size`, `hybrid_api_batch_parallelism`, `hybrid_api_keep_alive`, `hybrid_api_heartbeat_interval`, `hybrid_api_timeout`, `hybrid_api_auth_header`, `hybrid_api_auto_discover_tvars`: Hybrid API execution controls.
-- `cloud_fallback_policy`: Legacy/future cloud fallback behavior. It does not enable `execution_mode="cloud"` in 0.12.0.
+- `evaluator`: external evaluator bundle, including `ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))`.
 
 #### `mock`
 
@@ -643,7 +642,8 @@ def answer_question(question: str) -> str:
     ],
     evaluation={"eval_dataset": "support_tickets.jsonl"},
     execution={
-        "execution_mode": "edge_analytics",
+        "algorithm": "grid",
+        "offline": True,
         "parallel_config": {"thread_workers": 4},
     },
 )
@@ -651,7 +651,7 @@ def process_ticket(ticket: str) -> str:
     return support_chain.run(ticket)
 ```
 
-### Edge Analytics with Privacy
+### Offline Local Storage
 
 ```python
 @traigent.optimize(
@@ -662,9 +662,9 @@ def process_ticket(ticket: str) -> str:
     },
     evaluation={"eval_dataset": "medical_qa.jsonl"},
     execution={
-        "execution_mode": "edge_analytics",
+        "algorithm": "grid",
+        "offline": True,
         "local_storage_path": "./medical_optimizations",
-        "privacy_enabled": True,
         "minimal_logging": True,
     },
 )

@@ -145,7 +145,7 @@ class OptimizedChatBot:
                 "max_tokens": [config.get("max_tokens", 300)],
             },
             objectives=["quality"],
-            execution_mode="edge_analytics",
+            offline=True,
             max_trials=5,
         )
         def _generate_response(user_input: str, context: str = "") -> str:

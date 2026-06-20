@@ -124,7 +124,7 @@ DATA_ROOT = (
 )
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
@@ -774,10 +774,10 @@ def _invoke_model(
         "temperature": TEMPERATURE_CHOICES,
         "max_tokens": [64],
     },
-    execution_mode="edge_analytics",
+    offline=True,
     injection_mode="seamless",
     parallel_config=GLOBAL_PARALLEL_CONFIG,
-    algorithm="bayesian",
+    algorithm="random",
     max_trials=20,
 )
 def answer(

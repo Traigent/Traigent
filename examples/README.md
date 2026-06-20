@@ -109,7 +109,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 | Category | Examples | Focus Area |
 | -------- | -------- | ---------- |
-| **`execution-modes/`** | 2 examples | Local execution patterns with edge_analytics mode |
+| **`execution-modes/`** | 2 examples | Local execution patterns with `offline=True` |
 | **`results-analysis/`** | 2 examples | Analyzing and visualizing optimization results |
 | **`ai-engineering-tasks/`** | 5 examples | Common AI engineering challenges (context, few-shot, structured output, safety, token budgets) |
 | **`ragas/`** | 3 examples | Specialized RAG metrics and evaluation |
@@ -117,7 +117,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 ### Advanced Category Details
 
-- **execution-modes/**: Learn execution patterns. `edge_analytics` keeps runs local; `hybrid` adds backend/portal tracking while trials still execute locally. `cloud` remote execution is reserved for a future release.
+- **execution-modes/**: Learn execution patterns. `offline=True` keeps runs local with no Traigent backend egress; the default `algorithm="auto"` path is cloud-first and falls back locally only when allowed.
 
 - **results-analysis/**: Post-optimization analysis. Visualize trial results, compare configurations, and extract insights from completed optimization runs.
 

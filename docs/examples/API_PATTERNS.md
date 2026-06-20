@@ -171,17 +171,18 @@ refined = await answer.optimize(
 )
 ```
 
-## Hybrid API
+## External Service Evaluator
 
-Use `execution_mode="hybrid_api"` when trials are delegated to an external
-service that implements the Traigent Hybrid API contract.
+Use `ExternalServiceEvaluator` when trials are delegated to an external service
+that implements the Traigent Hybrid API contract.
 
 ```python
+from traigent.api.decorators import ExternalServiceEvaluator, HybridAPIOptions
+
 @traigent.optimize(
-    execution={
-        "execution_mode": "hybrid_api",
-        "hybrid_api_endpoint": "http://localhost:8080",
-    },
+    evaluator=ExternalServiceEvaluator(
+        hybrid_api=HybridAPIOptions(endpoint="http://localhost:8080")
+    ),
     configuration_space={"temperature": [0.0, 0.3]},
     eval_dataset="data/eval.jsonl",
     scoring_function=my_score,

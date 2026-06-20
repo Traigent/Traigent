@@ -55,7 +55,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "creative_eval.jsonl")
     configuration_space={"temperature": [0.6, 0.9]},
     eval_dataset=DATASET,
     objectives=["cost", "response_time"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def write_poem(prompt: str) -> str:

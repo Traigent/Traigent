@@ -99,7 +99,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     # Map 'accuracy' to a summary-friendly F1 metric for reporting
     metric_functions={"accuracy": _summary_f1},
     objectives=["accuracy"],
-    execution_mode="edge_analytics",
+    offline=True,
     max_trials=10,
 )
 def optimized_summary(text: str) -> str:

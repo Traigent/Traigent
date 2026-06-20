@@ -27,7 +27,7 @@ ls ~/.traigent 2>/dev/null   # Note if this exists (prior state)
 **Environment variables to set for ALL testing:**
 ```bash
 export TRAIGENT_MOCK_LLM=true
-export TRAIGENT_OFFLINE_MODE=true
+export TRAIGENT_OFFLINE=1
 export TRAIGENT_LOG_LEVEL=INFO  # See what's happening
 ```
 
@@ -104,7 +104,7 @@ Read ONLY the README and try to answer these questions. Document where answers a
 ### 2.1 Core Concepts
 - [ ] What is a "Tuned Variable"? (Section: _____)
 - [ ] What objectives are supported? (Section: _____)
-- [ ] What's the difference between `edge_analytics` and `cloud` mode? (Section: _____)
+- [ ] What's the difference between cloud-brain auto, explicit local, and offline mode? (Section: _____)
 - [ ] How do I create a dataset? (Section: _____)
 
 ### 2.2 API Questions

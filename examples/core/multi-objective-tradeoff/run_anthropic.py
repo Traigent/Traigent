@@ -90,7 +90,7 @@ PROMPT_PATH = BASE / "prompt.txt"
 # Mock mode initialization
 if MOCK:
     try:
-        traigent.initialize(execution_mode="edge_analytics")
+        traigent.initialize(offline=True)
     except Exception:
         pass
 
@@ -421,7 +421,7 @@ def _dump_example_results(
         "temperature": [0.1],
         "max_tokens": [128],
     },
-    execution_mode="edge_analytics",
+    offline=True,
     injection_mode="seamless",
     parallel_config=GLOBAL_PARALLEL_CONFIG,
     algorithm="grid",

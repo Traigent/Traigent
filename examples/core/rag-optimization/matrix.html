@@ -153,13 +153,13 @@
 
     const DISPLAY_NAMES = {
       id: 'ID', name: 'Name', description: 'Description', expected: 'Expected',
-      execution_mode: 'Mode', objectives: 'Objectives', algorithm: 'Algorithm',
+      offline: 'Offline', objectives: 'Objectives', algorithm: 'Algorithm',
       max_trials: 'Max Trials', configuration_space: 'Configuration Space',
       evaluator: 'Evaluator', metric_functions: 'Metric Functions',
       scoring_function: 'Scoring Function', injection_mode: 'Injection Mode',
       framework_targets: 'Framework Targets', dataset: 'Dataset',
       parallel_config: 'Parallel Config',
-      privacy_enabled: 'Privacy', mock_mode: 'Mock Mode', integration: 'Integration',
+      mock_mode: 'Mock Mode', integration: 'Integration',
       notes: 'Notes'
     };
 
@@ -258,7 +258,7 @@
       const em = document.getElementById('f_exec').value;
       const ev = document.getElementById('f_eval').value;
       const ig = document.getElementById('f_integ').value;
-      rows = rows.filter(r => (!em || r.execution_mode === em) && (!ev || r.evaluator === ev) && (!ig || r.integration === ig));
+      rows = rows.filter(r => (!em || r.offline === em) && (!ev || r.evaluator === ev) && (!ig || r.integration === ig));
       // Then apply text filter
       if (q) rows = rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)) );
       gData.rows = rows;
@@ -326,7 +326,7 @@
         sel.innerHTML = '<option value="">All</option>' + uniq.map(v => `<option>${v}</option>`).join('');
         sel.onchange = () => filterRows(document.getElementById('q').value);
       };
-      setOptions('f_exec', 'execution_mode');
+      setOptions('f_exec', 'offline');
       setOptions('f_eval', 'evaluator');
       setOptions('f_integ', 'integration');
     }
@@ -361,7 +361,7 @@
       }
       if (key==='metric_functions'){
         const obj = tryParse(raw); if (obj && typeof obj==='object'){const parts=Object.keys(obj).map(k=>`<span class="tag">${k}:${obj[k]}</span>`);return parts.join(' ');} }
-      if (key==='privacy_enabled'||key==='mock_mode'){
+      if (key==='offline'||key==='mock_mode'){
         const b=['true','1','yes','y'].includes(raw.toLowerCase());return `<span class="badge ${b?'ok':'no'}">${b?'Yes':'No'}</span>`;
       }
       const data = tryParse(raw);
