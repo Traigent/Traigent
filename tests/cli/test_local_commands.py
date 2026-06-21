@@ -1,5 +1,5 @@
 """
-Comprehensive test suite for Edge Analytics CLI commands.
+Comprehensive test suite for local CLI commands.
 Tests all CLI commands with error handling and edge cases.
 """
 
@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -19,8 +20,10 @@ from traigent.cli.local_commands import (
     edge_analytics_commands,
     export_session,
     list_sessions,
+    local_commands,
     manage_config,
     preview_cloud_benefits,
+    register_local_commands,
     show_session,
     storage_info,
     sync_to_cloud,
@@ -28,8 +31,8 @@ from traigent.cli.local_commands import (
 from traigent.storage.local_storage import LocalStorageManager
 
 
-class TestEdgeAnalyticsCommands:
-    """Test suite for Edge Analytics CLI commands with comprehensive error handling."""
+class TestLocalCommands:
+    """Test suite for local CLI commands with comprehensive error handling."""
 
     def setup_method(self):
         """Set up test environment with temporary storage."""
@@ -39,8 +42,10 @@ class TestEdgeAnalyticsCommands:
         # Set up environment for tests
         self.env_vars = {
             "TRAIGENT_RESULTS_FOLDER": str(self.storage_path),
-            "TRAIGENT_EDGE_ANALYTICS_MODE": "true",
             "TRAIGENT_MINIMAL_LOGGING": "true",
+            "TRAIGENT_OFFLINE": "false",
+            "TRAIGENT_OFFLINE_MODE": "false",
+            "TRAIGENT_EDGE_ANALYTICS_MODE": "false",
         }
 
         self.runner = CliRunner()
@@ -389,8 +394,12 @@ class TestEdgeAnalyticsCommands:
         assert "Total Sessions:" in output
         assert "Total Trials:" in output
         assert "Storage Size:" in output
+        assert "Algorithm: auto (cloud smart default)" in output
+        assert "Offline: disabled" in output
+        assert "Portal Sync: available with `traigent sync`" in output
         assert "Session Breakdown:" in output
         assert "Upgrade to Traigent Cloud:" in output
+        assert "Execution Mode:" not in output
 
     def test_storage_info_error_handling(self):
         """Test storage info with errors."""
@@ -414,10 +423,15 @@ class TestEdgeAnalyticsCommands:
         output = result.output
 
         assert "Traigent Local Mode Configuration" in output
-        assert "Execution Mode:" in output
+        assert "Algorithm: auto (cloud smart default)" in output
+        assert "Offline: disabled" in output
+        assert "Portal Sync: available with `traigent sync`" in output
         assert "Storage Path:" in output
         assert "Environment Variables:" in output
+        assert "TRAIGENT_OFFLINE" in output
         assert "TRAIGENT_RESULTS_FOLDER" in output
+        assert "Execution Mode:" not in output
+        assert "TRAIGENT_EDGE_ANALYTICS_MODE" not in output
 
     def test_manage_config_set_path(self):
         """Test setting custom storage path."""
@@ -439,7 +453,9 @@ class TestEdgeAnalyticsCommands:
         output = result.output
 
         assert "unset TRAIGENT_RESULTS_FOLDER" in output
-        assert "unset TRAIGENT_EDGE_ANALYTICS_MODE" in output
+        assert "unset TRAIGENT_OFFLINE" in output
+        assert "unset TRAIGENT_OFFLINE_MODE" in output
+        assert "TRAIGENT_EDGE_ANALYTICS_MODE" not in output
 
     def test_manage_config_no_options(self):
         """Test manage config with no options."""
@@ -461,7 +477,7 @@ class TestEdgeAnalyticsCommands:
         assert "Error managing configuration" in result.output
 
     def test_sync_to_cloud_no_api_key(self):
-        """Test sync to cloud without API key."""
+        """Test portal sync without API key."""
         # Ensure TRAIGENT_API_KEY is not set
         env_vars_no_api = self.env_vars.copy()
         env_vars_no_api["TRAIGENT_API_KEY"] = ""  # Explicitly clear API key
@@ -473,8 +489,18 @@ class TestEdgeAnalyticsCommands:
         assert "API key required" in result.output
         assert "Configure a key with `traigent auth login`" in result.output
 
+    def test_sync_to_cloud_refuses_offline(self):
+        """Test portal sync is disabled while offline."""
+        env_vars = {**self.env_vars, "TRAIGENT_OFFLINE": "true"}
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            result = self.runner.invoke(sync_to_cloud, ["--dry-run"])
+
+        assert result.exit_code == 1
+        assert "Offline is enabled; portal sync is disabled" in result.output
+
     def test_sync_to_cloud_dry_run(self):
-        """Test sync to cloud in dry run mode."""
+        """Test portal sync in dry run mode."""
         with patch.dict(os.environ, self.env_vars):
             with patch("traigent.cli.local_commands.SyncManager") as mock_sync_class:
                 mock_sync = MagicMock()
@@ -644,7 +670,7 @@ class TestEdgeAnalyticsCommands:
         assert "Cleaned up 2 sessions" in result.output
 
     def test_sync_to_cloud_error_handling(self):
-        """Test sync to cloud with errors."""
+        """Test portal sync with errors."""
         with patch.dict(os.environ, self.env_vars):
             with patch("traigent.cli.local_commands.SyncManager") as mock_sync_class:
                 mock_sync_class.side_effect = Exception("Sync manager error")
@@ -652,7 +678,7 @@ class TestEdgeAnalyticsCommands:
                 result = self.runner.invoke(sync_to_cloud, ["--api-key", "test_key"])
 
         assert result.exit_code == 1
-        assert "Error syncing to cloud" in result.output
+        assert "Error syncing to portal" in result.output
 
     def test_preview_cloud_benefits(self):
         """Test previewing cloud benefits."""
@@ -725,10 +751,35 @@ class TestEdgeAnalyticsCommands:
 
     def test_local_commands_group(self):
         """Test the local commands group."""
-        result = self.runner.invoke(edge_analytics_commands, ["--help"])
+        result = self.runner.invoke(local_commands, ["--help"])
 
         assert result.exit_code == 0
-        assert "Edge Analytics mode operations" in result.output
+        assert "Manage local optimization results and portal sync" in result.output
+        assert "edge-analytics" not in result.output
+
+    def test_local_group_is_advertised_and_legacy_alias_is_hidden(self):
+        """Test the main CLI registration advertises local and hides the old alias."""
+
+        @click.group()
+        def root() -> None:
+            pass
+
+        register_local_commands(root)
+
+        result = self.runner.invoke(root, ["--help"])
+
+        assert result.exit_code == 0
+        assert "local" in result.output
+        assert "edge-analytics" not in result.output
+
+    def test_edge_analytics_alias_still_works_with_warning(self):
+        """Test the hidden alias remains available for existing scripts."""
+        with patch.dict(os.environ, self.env_vars):
+            result = self.runner.invoke(edge_analytics_commands, ["list"])
+
+        assert result.exit_code == 0
+        assert "`traigent edge-analytics` is deprecated" in result.output
+        assert "completed_function" in result.output
 
     def test_command_help_texts(self):
         """Test that all commands have proper help text."""
@@ -745,7 +796,7 @@ class TestEdgeAnalyticsCommands:
         ]
 
         for command in commands:
-            result = self.runner.invoke(edge_analytics_commands, [command, "--help"])
+            result = self.runner.invoke(local_commands, [command, "--help"])
             assert result.exit_code == 0
             assert len(result.output) > 50  # Has substantial help text
 

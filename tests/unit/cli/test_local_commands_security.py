@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-from traigent.cli.local_commands import edge_analytics_commands
+from traigent.cli.local_commands import local_commands
 from traigent.storage.local_storage import LocalStorageManager
 
 
@@ -19,14 +19,13 @@ def test_export_session_default_path_within_storage(tmp_path, monkeypatch):
     storage_root = tmp_path / "storage"
     env = {
         "TRAIGENT_RESULTS_FOLDER": str(storage_root),
-        "TRAIGENT_EDGE_ANALYTICS_MODE": "true",
     }
 
     storage = LocalStorageManager(str(storage_root))
     session_id = _create_session(storage)
 
     runner = CliRunner()
-    result = runner.invoke(edge_analytics_commands, ["export", session_id], env=env)
+    result = runner.invoke(local_commands, ["export", session_id], env=env)
 
     assert result.exit_code == 0
     exported_file = storage_root / "exports" / f"{session_id}.json"
@@ -38,7 +37,6 @@ def test_export_session_rejects_path_outside_storage(tmp_path, monkeypatch):
     storage_root = tmp_path / "storage"
     env = {
         "TRAIGENT_RESULTS_FOLDER": str(storage_root),
-        "TRAIGENT_EDGE_ANALYTICS_MODE": "true",
     }
 
     storage = LocalStorageManager(str(storage_root))
@@ -50,7 +48,7 @@ def test_export_session_rejects_path_outside_storage(tmp_path, monkeypatch):
 
     runner = CliRunner()
     result = runner.invoke(
-        edge_analytics_commands,
+        local_commands,
         ["export", session_id, "--output", str(outside_path)],
         env=env,
     )

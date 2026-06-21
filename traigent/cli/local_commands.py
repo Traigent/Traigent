@@ -1,7 +1,4 @@
-"""
-CLI commands for Traigent Edge Analytics mode operations.
-Inspired by DeepEval's approach to local command interface.
-"""
+"""CLI commands for local Traigent result management and portal sync."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Usability CONC-Quality-Reliability FUNC-API-ENTRY FUNC-STORAGE REQ-API-001 REQ-STOR-007 SYNC-OptimizationFlow
 
@@ -22,15 +19,44 @@ from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
-@click.group(name="edge-analytics")
-def edge_analytics_commands() -> None:
-    """Edge Analytics mode operations for Traigent optimization sessions."""
+def _env_flag_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in _TRUTHY_ENV_VALUES
+
+
+def _offline_requested(config: TraigentConfig | None = None) -> bool:
+    return bool(
+        _env_flag_enabled("TRAIGENT_OFFLINE")
+        or _env_flag_enabled("TRAIGENT_OFFLINE_MODE")
+        or _env_flag_enabled("TRAIGENT_EDGE_ANALYTICS_MODE")
+        or getattr(config, "no_egress", False)
+    )
+
+
+def _portal_sync_status(config: TraigentConfig) -> str:
+    if _offline_requested(config):
+        return "disabled (offline)"
+    if config.auto_sync:
+        return "automatic for eligible results"
+    return "available with `traigent sync`"
+
+
+def _echo_runtime_status(config: TraigentConfig) -> None:
+    offline = _offline_requested(config)
+    click.echo("Algorithm: auto (cloud smart default)")
+    click.echo(f"Offline: {'enabled (zero-egress local)' if offline else 'disabled'}")
+    click.echo(f"Portal Sync: {_portal_sync_status(config)}")
+
+
+@click.group(name="local")
+def local_commands() -> None:
+    """Manage local optimization results and portal sync."""
     pass
 
 
-@edge_analytics_commands.command(name="list")
+@local_commands.command(name="list")
 @click.option(
     "--status",
     type=click.Choice(["pending", "running", "completed", "failed"]),
@@ -102,7 +128,7 @@ def list_sessions(status: str | None, limit: int, output_format: str) -> None:
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="show")
+@local_commands.command(name="show")
 @click.argument("session_id")
 @click.option(
     "--format",
@@ -193,7 +219,7 @@ def show_session(session_id: str, output_format: str) -> None:
             if session.best_config:
                 click.echo(f"Best Config: {session.best_config}")
 
-            # Show context-specific upgrade hints for Edge Analytics mode
+            # Show context-specific upgrade hints for completed local sessions.
             if config.is_edge_analytics_mode() and session.status == "completed":
                 try:
                     show_upgrade_hint(
@@ -209,7 +235,7 @@ def show_session(session_id: str, output_format: str) -> None:
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="export")
+@local_commands.command(name="export")
 @click.argument("session_id")
 @click.option("--output", "-o", help="Output file path")
 @click.option(
@@ -267,7 +293,7 @@ def export_session(session_id: str, output: str | None, export_format: str) -> N
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="delete")
+@local_commands.command(name="delete")
 @click.argument("session_id")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 def delete_session(session_id: str, force: bool) -> None:
@@ -300,7 +326,7 @@ def delete_session(session_id: str, force: bool) -> None:
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="cleanup")
+@local_commands.command(name="cleanup")
 @click.option("--days", default=30, help="Delete sessions older than N days")
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be deleted without deleting"
@@ -343,7 +369,7 @@ def cleanup_sessions(days: int, dry_run: bool) -> None:
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="info")
+@local_commands.command(name="info")
 def storage_info() -> None:
     """Show information about local storage."""
     try:
@@ -358,6 +384,7 @@ def storage_info() -> None:
         click.echo(f"Total Sessions: {info['total_sessions']}")
         click.echo(f"Total Trials: {info['total_trials']}")
         click.echo(f"Storage Size: {info['storage_size_mb']} MB")
+        _echo_runtime_status(config)
 
         # Show session breakdown by status
         sessions = storage.list_sessions()
@@ -384,28 +411,28 @@ def storage_info() -> None:
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="config")
+@local_commands.command(name="config")
 @click.option("--show", is_flag=True, help="Show current configuration")
 @click.option("--set-path", help="Set custom storage path")
 @click.option("--reset", is_flag=True, help="Reset to default configuration")
 def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
-    """Manage Edge Analytics mode configuration."""
+    """Manage local result storage configuration."""
     try:
         if show:
             config = TraigentConfig.from_environment()
             click.echo("\n⚙️  Traigent Local Mode Configuration")
             click.echo("=" * 45)
-            click.echo(f"Execution Mode: {config.execution_mode}")
+            _echo_runtime_status(config)
             click.echo(f"Storage Path: {config.get_local_storage_path()}")
             click.echo(f"Minimal Logging: {config.minimal_logging}")
-            click.echo(f"Auto Sync: {config.auto_sync}")
 
             # Show environment variables
             click.echo("\n🌍 Environment Variables:")
             env_vars = [
+                ("TRAIGENT_OFFLINE", os.getenv("TRAIGENT_OFFLINE", "not set")),
                 (
-                    "TRAIGENT_EDGE_ANALYTICS_MODE",
-                    os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "not set"),
+                    "TRAIGENT_OFFLINE_MODE",
+                    os.getenv("TRAIGENT_OFFLINE_MODE", "not set"),
                 ),
                 (
                     "TRAIGENT_RESULTS_FOLDER",
@@ -436,7 +463,8 @@ def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
                 "# To reset to default configuration, unset environment variables:"
             )
             click.echo("unset TRAIGENT_RESULTS_FOLDER")
-            click.echo("unset TRAIGENT_EDGE_ANALYTICS_MODE")
+            click.echo("unset TRAIGENT_OFFLINE")
+            click.echo("unset TRAIGENT_OFFLINE_MODE")
             click.echo("unset TRAIGENT_MINIMAL_LOGGING")
             click.echo("unset TRAIGENT_AUTO_SYNC")
 
@@ -450,8 +478,8 @@ def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="sync")
-@click.option("--api-key", help="API key for cloud service")
+@local_commands.command(name="sync")
+@click.option("--api-key", help="API key for portal sync")
 @click.option("--session-id", help="Sync specific session (if not provided, syncs all)")
 @click.option("--dry-run", is_flag=True, help="Preview sync without uploading")
 @click.option(
@@ -460,17 +488,12 @@ def manage_config(show: bool, set_path: str | None, reset: bool) -> None:
 def sync_to_cloud(
     api_key: str | None, session_id: str | None, dry_run: bool, cleanup: bool
 ) -> None:
-    """Sync local optimization sessions to Traigent Cloud.
-
-    Deprecated alias: prefer the top-level `traigent sync` command.
-    """
-    click.echo(
-        "ℹ️  `traigent edge-analytics sync` is deprecated; use `traigent sync` "
-        "(it is idempotent and reports status).",
-        err=True,
-    )
+    """Sync local optimization sessions to the Traigent portal."""
     try:
         config = TraigentConfig.from_environment()
+        if _offline_requested(config):
+            click.echo("Offline is enabled; portal sync is disabled.", err=True)
+            sys.exit(1)
 
         # Get API key from environment if not provided
         if not api_key:
@@ -481,7 +504,7 @@ def sync_to_cloud(
         # Check for API key before creating SyncManager
         if not api_key and not dry_run:
             click.echo(
-                "❌ API key required for cloud sync. Use --api-key or set TRAIGENT_API_KEY environment variable.",
+                "❌ API key required for portal sync. Use --api-key or set TRAIGENT_API_KEY environment variable.",
                 err=True,
             )
             click.echo(
@@ -518,7 +541,7 @@ def sync_to_cloud(
             if result["status"] == "success":
                 click.echo("✅ Session synced successfully!")
                 if not dry_run:
-                    click.echo(f"   Cloud URL: {result.get('cloud_url', 'N/A')}")
+                    click.echo(f"   Portal URL: {result.get('cloud_url', 'N/A')}")
             else:
                 click.echo("❌ Sync failed:")
                 for error in result["errors"]:
@@ -529,7 +552,7 @@ def sync_to_cloud(
                 f"\n🔄 Syncing all {status['sync_eligible']} eligible sessions..."
             )
 
-            if not dry_run and not click.confirm("Continue with sync to cloud?"):
+            if not dry_run and not click.confirm("Continue with portal sync?"):
                 click.echo("Sync cancelled.")
                 return
 
@@ -566,21 +589,21 @@ def sync_to_cloud(
                         f"✅ Cleaned up {cleanup_result['sessions_deleted']} sessions (backed up first)"
                     )
 
-        # Show cloud analytics preview
+        # Show portal analytics preview
         if not dry_run and status["sync_eligible"] > 0:
             sync_manager.get_cloud_analytics_preview()
-            click.echo("\n🎯 Available in Traigent Cloud:")
+            click.echo("\n🎯 Available in the Traigent portal:")
             click.echo("   • Cross-function optimization insights")
             click.echo("   • Performance trend analysis")
             click.echo("   • Team collaboration features")
             click.echo("   • Advanced visualization dashboard")
 
     except Exception as e:
-        click.echo(f"Error syncing to cloud: {e}", err=True)
+        click.echo(f"Error syncing to portal: {e}", err=True)
         sys.exit(1)
 
 
-@edge_analytics_commands.command(name="preview-cloud")
+@local_commands.command(name="preview-cloud")
 def preview_cloud_benefits() -> None:
     """Preview benefits of upgrading to Traigent Cloud."""
     try:
@@ -617,7 +640,7 @@ def preview_cloud_benefits() -> None:
             ),
             ("📈 Web Dashboard", "Beautiful visualizations and progress tracking"),
             ("👥 Team Collaboration", "Share optimizations across your organization"),
-            ("🔄 Unlimited Trials", "No 20-trial limit like Edge Analytics mode"),
+            ("🔄 Unlimited Trials", "No local trial cap"),
             ("⚡ Parallel Execution", "Run multiple trials simultaneously"),
             ("📊 Advanced Analytics", "Cross-function insights and trend analysis"),
             ("🔗 API Integration", "REST API for programmatic access"),
@@ -652,7 +675,26 @@ def preview_cloud_benefits() -> None:
         sys.exit(1)
 
 
-# Add to main CLI in traigent/cli/main.py
-def register_edge_analytics_commands(cli_group: click.Group) -> None:
-    """Register Edge Analytics commands with the main CLI."""
+@click.group(name="edge-analytics", hidden=True)
+@click.pass_context
+def edge_analytics_commands(ctx: click.Context) -> None:
+    """Deprecated hidden alias for `traigent local`."""
+    if ctx.invoked_subcommand:
+        click.echo(
+            "Warning: `traigent edge-analytics` is deprecated; use `traigent local`.",
+            err=True,
+        )
+
+
+edge_analytics_commands.commands = local_commands.commands
+
+
+def register_local_commands(cli_group: click.Group) -> None:
+    """Register local result-management commands with the main CLI."""
+    cli_group.add_command(local_commands)
     cli_group.add_command(edge_analytics_commands)
+
+
+def register_edge_analytics_commands(cli_group: click.Group) -> None:
+    """Compatibility wrapper for older internal imports."""
+    register_local_commands(cli_group)
