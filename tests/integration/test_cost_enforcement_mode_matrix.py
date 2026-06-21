@@ -239,7 +239,7 @@ EXECUTION_MODES = [
 UNSUPPORTED_EXECUTION_MODES = [
     (
         "totally_unknown_mode",
-        "execution_mode must be one of|No such mode",
+        "Unsupported execution selector",
     ),
 ]
 

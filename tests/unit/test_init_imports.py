@@ -137,10 +137,57 @@ class TestTraigentInit:
         assert hasattr(traigent, "__all__")
         assert isinstance(traigent.__all__, list)
         assert len(traigent.__all__) > 0
+        for deprecated_name in (
+            "ExecutionIntent",
+            "ExecutionMode",
+            "ResolvedExecutionPolicy",
+            "HybridAPIOptions",
+        ):
+            assert deprecated_name not in traigent.__all__
 
         # All items in __all__ should be accessible
         for name in traigent.__all__:
             assert hasattr(traigent, name), f"{name} in __all__ but not accessible"
+
+    def test_deprecated_execution_surface_imports_warn_but_work(self) -> None:
+        """Legacy root/package imports remain available as warning aliases."""
+        script = textwrap.dedent(
+            """
+            import warnings
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", DeprecationWarning)
+                from traigent import ExecutionMode, HybridAPIOptions, ResolvedExecutionPolicy
+                from traigent.api import HybridAPIOptions as ApiHybridAPIOptions
+                from traigent.config import ExecutionMode as ConfigExecutionMode
+                import traigent
+                import traigent.api as api
+                import traigent.config as config
+
+            messages = [str(w.message) for w in caught]
+            assert ExecutionMode is ConfigExecutionMode
+            assert HybridAPIOptions is ApiHybridAPIOptions
+            assert ResolvedExecutionPolicy.__name__ == "ResolvedExecutionPolicy"
+            assert "HybridAPIOptions" not in api.__all__
+            assert "ExecutionMode" not in config.__all__
+            assert "ResolvedExecutionPolicy" not in config.__all__
+            assert "ExecutionMode" not in traigent.__all__
+            assert "HybridAPIOptions" not in traigent.__all__
+            compatibility_messages = [
+                message for message in messages if "deprecated compatibility alias" in message
+            ]
+            assert len(compatibility_messages) >= 5, messages
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
 
     def test_main_module_imports_without_optional_cloud_modules(self) -> None:
         """Test that traigent still imports when cloud-only modules are absent."""

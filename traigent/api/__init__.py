@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from typing import Any
+import warnings
 
 __all__ = [
     "optimize",
@@ -55,7 +56,6 @@ __all__ = [
     "get_available_safety_presets",
     "TextDocument",
     "ExternalServiceEvaluator",
-    "HybridAPIOptions",
 ]
 
 _EXPORT_MAP = {
@@ -137,6 +137,8 @@ _EXPORT_MAP = {
     "HybridAPIOptions": ("traigent.api.decorators", "HybridAPIOptions"),
 }
 
+_DEPRECATED_EXPORTS = {"HybridAPIOptions"}
+
 
 def __getattr__(name: str) -> Any:
     if name not in _EXPORT_MAP:
@@ -145,6 +147,13 @@ def __getattr__(name: str) -> Any:
     module = import_module(module_name)
     value = getattr(module, attr_name)
     globals()[name] = value
+    if name in _DEPRECATED_EXPORTS:
+        warnings.warn(
+            f"traigent.api.{name} is a deprecated compatibility alias and is "
+            "no longer part of the public API export surface.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     return value
 
 
