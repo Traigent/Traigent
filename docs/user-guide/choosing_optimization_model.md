@@ -1,47 +1,40 @@
 # Choosing the Right Optimization Model
 
-Traigent optimization has two public routing knobs:
+Most users do not need to choose. With `TRAIGENT_API_KEY` set, omit routing
+options and Traigent uses smart optimization with portal result sync.
 
-- `algorithm`: `"auto"` by default, or explicit `"grid"` / `"random"` /
-  cloud-backed smart algorithms.
+Use the two public knobs only when you have a specific routing requirement:
+
+- `algorithm`: `"auto"` by default, `"grid"` / `"random"` for local search, or a
+  cloud-required smart algorithm name.
 - `offline`: `False` by default; set `True` for zero Traigent backend egress.
 
-Environment equivalents:
+Trials run in your process. The cloud optimizer suggests configurations; it does
+not execute your dataset examples remotely.
 
-- `TRAIGENT_OFFLINE=1` forces offline mode.
-- `TRAIGENT_OFFLINE_MODE=1` is a legacy alias for offline mode.
-- `TRAIGENT_REQUIRE_CLOUD=1` disables the `algorithm="auto"` local fallback.
-
-Trials run in your process. The cloud-brain path asks Traigent for optimizer
-decisions; it does not execute your dataset examples remotely.
-
-## Quick Decision Guide
+## Decision Guide
 
 ```mermaid
 graph TD
     A[Start] --> B{Need zero Traigent backend egress?}
-    B -->|Yes| C[Set offline=true]
-    B -->|No| D{Need a specific local search?}
-    D -->|Yes| E[Use algorithm grid or random]
-    D -->|No| F[Use algorithm auto]
-    F --> G{Backend reachable?}
-    G -->|Yes| H[source cloud_brain]
-    G -->|No| I[source local_fallback]
+    B -->|Yes| C[offline=true and grid/random]
+    B -->|No| D{Need a simple local sweep?}
+    D -->|Yes| E[algorithm grid or random]
+    D -->|No| F[omit routing options]
+    F --> G[smart optimization and portal sync]
+    E --> H[local search and portal sync]
 ```
-
-Set `TRAIGENT_REQUIRE_CLOUD=1` when fallback is not acceptable.
 
 ## Options
 
-| Request | What happens | Result `source` |
+| Request | What happens | Portal sync |
 | --- | --- | --- |
-| `algorithm="auto"` | Cloud optimizer chooses configs; trials run locally | `cloud_brain` |
-| `algorithm="auto"` and connectivity failure | Warns and falls back to local search | `local_fallback` |
-| `algorithm="grid"` or `"random"` | Runs locally with no cloud optimizer round trip | `explicit_local` |
-| `offline=True`, `TRAIGENT_OFFLINE=1`, or `TRAIGENT_OFFLINE_MODE=1` | Fully local, zero Traigent backend egress | `offline` |
-| Smart algorithm name | Requires cloud; errors if offline or unavailable | `cloud_brain` |
+| Omit routing settings | Default smart optimization | Yes |
+| `algorithm="grid"` or `"random"` | Local search in your Python process | Yes |
+| Smart algorithm name | Cloud-required optimizer | Yes |
+| `offline=True` | Local only, zero Traigent backend egress | No |
 
-## Default Cloud-First Auto
+## Default Smart Optimization
 
 ```python
 @traigent.optimize(
@@ -53,100 +46,50 @@ def agent(question: str) -> str:
     return answer_question(question)
 
 result = agent.optimize(max_trials=8)
-print(result.metadata["source"])
 ```
-
-Use this when cloud optimizer decisions are acceptable and local fallback is
-acceptable during connectivity failures.
 
 ## Explicit Local Search
 
+Use `grid` or `random` for reproducible sweeps, CI smoke tests, and simple
+baselines. These runs still sync results to the portal when authenticated.
+
 ```python
 result = agent.optimize(algorithm="grid", max_trials=8)
-print(result.metadata["source"])  # explicit_local
 ```
 
-Use this for reproducible local sweeps, CI smoke tests, and simple baselines.
+## No-Egress Local Runs
 
-## Offline / No Egress
+Use `offline=True` only when no Traigent backend traffic is allowed.
 
 ```python
 @traigent.optimize(
     evaluation={"eval_dataset": "evals.jsonl"},
     configuration_space={"temperature": [0.0, 0.3, 0.7]},
     objectives=["accuracy"],
-    algorithm="grid",
     offline=True,
 )
 def sensitive_agent(question: str) -> str:
     return answer_question(question)
+
+result = sensitive_agent.optimize(algorithm="grid", max_trials=8)
 ```
 
-`offline=True` prevents Traigent backend calls. It does not prevent calls your
-function makes to LLM providers, databases, or tools.
+`offline=True` does not block calls your function makes to LLM providers,
+databases, or tools.
 
 ## Smart Algorithms
 
-Smart algorithms are cloud optimizers:
+Explicit smart algorithms run in the cloud only:
 
 ```python
 result = agent.optimize(algorithm="bayesian", max_trials=20)
-print(result.metadata["source"])  # cloud_brain
 ```
 
-They hard-error when `offline=True` is set or when the backend is unavailable.
-Use `algorithm="auto"` if you want cloud-first behavior with local fallback.
+They hard-error when cloud optimization is unavailable or `offline=True` is set.
+Use the default path when you want Traigent to pick the best available option.
 
-## Privacy Boundary
+## Migration Note
 
-Cloud-brain optimization sends only configuration IDs/schema, trial IDs, numeric
-metrics, counts, and statuses. Dataset example content does not cross the
-Traigent backend boundary: no example inputs, expected outputs, prompts,
-responses, or example metadata.
-
-Privacy-on cloud-brain mode is not the same as no-network mode. Use
-`offline=True`, `TRAIGENT_OFFLINE=1`, or `TRAIGENT_OFFLINE_MODE=1` for zero
-Traigent backend egress.
-
-## External Service Evaluation
-
-External-service evaluation is independent of the optimizer routing knobs. The
-optimizer still runs locally; each trial's evaluation is dispatched to your
-HTTP or MCP service through an external evaluator:
-
-```python
-from traigent import optimize
-from traigent.api.decorators import (
-    ExternalServiceEvaluator,
-    HybridAPIOptions,
-)
-
-
-@optimize(
-    configuration_space={"temperature": [0.1, 0.5, 0.9]},
-    objectives=["accuracy"],
-    evaluator=ExternalServiceEvaluator(
-        hybrid_api=HybridAPIOptions(endpoint="https://svc.example.com/evaluate")
-    ),
-)
-def agent(question: str) -> str:
-    return answer_question(question)
-```
-
-Use this in place of the removed `execution_mode="hybrid_api"` plus flat
-`hybrid_api_*` keyword arguments.
-
-## Deprecations and Migration
-
-These legacy execution knobs are deprecated and should not be used in new code:
-
-| Old surface | New surface |
-| --- | --- |
-| `execution_mode="hybrid"` | `@optimize()` |
-| `execution_mode="edge_analytics"` or `"local"` | `@optimize(offline=True)` |
-| `execution_mode="hybrid_api", hybrid_api_endpoint="https://svc"` | `@optimize(evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(endpoint="https://svc")))` |
-| `privacy_enabled=True` | Drop it. Cloud-brain mode already avoids dataset content egress; use `offline=True` for zero network egress to Traigent. |
-| `cloud_fallback_policy=...` | Drop it. Use `TRAIGENT_REQUIRE_CLOUD=1` when auto-fallback must be disabled. |
-
-`execution_mode=` is accepted only as a deprecated compatibility keyword with a
-warning. `privacy_enabled` and `cloud_fallback_policy` are deprecated no-ops.
+Legacy `execution_mode=...` inputs are deprecated. Remove them for the default
+path. Use `offline=True` only for no-egress local runs, and use
+`algorithm="grid"` or `"random"` for local search that can still sync results.

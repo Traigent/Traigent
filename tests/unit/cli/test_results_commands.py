@@ -18,7 +18,13 @@ from unittest.mock import Mock, patch
 import pytest
 from click.testing import CliRunner
 
-from traigent.cli.main import _build_comparison_summary_table, _format_best_score, cli
+from traigent.cli.main import (
+    _build_comparison_summary_table,
+    _format_best_score,
+    _list_local_session_results,
+    cli,
+)
+from traigent.storage.local_storage import LocalStorageManager
 
 
 @pytest.fixture
@@ -93,6 +99,36 @@ class TestResultsList:
             result = runner.invoke(cli, ["results", "list", "-d", tmpdir])
             # Exit code 0 means success
             assert result.exit_code == 0
+
+    def test_results_list_includes_local_storage_sessions(self, runner, tmp_path):
+        """V2 LocalStorageManager sessions should appear in results list."""
+        local_store = tmp_path / "local-store"
+        storage = LocalStorageManager(str(local_store))
+        session_id = storage.create_session(
+            "local_func",
+            optimization_config={"algorithm": "random"},
+        )
+        storage.add_trial_result(session_id, {"temperature": 0.2}, 0.91)
+        storage.finalize_session(session_id)
+
+        local_results, _ = _list_local_session_results(str(local_store))
+        assert len(local_results) == 1
+        assert local_results[0]["name"] == f"local:{session_id}"
+        assert local_results[0]["function_name"] == "local_func"
+        assert local_results[0]["algorithm"] == "random"
+        assert local_results[0]["best_score"] == 0.91
+        assert local_results[0]["total_trials"] == 1
+        assert local_results[0]["success_rate"] == 1.0
+
+        result = runner.invoke(
+            cli,
+            ["results", "list", "-d", str(local_store)],
+        )
+
+        assert result.exit_code == 0
+        assert "local:" in result.output
+        assert "local_func" in result.output
+        assert "Local session rows are loaded from" in result.output
 
 
 class TestResultsShow:

@@ -14,7 +14,11 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 
-from traigent.cloud.sync_manager import DEFAULT_SYNC_AGENT_TYPE_ID, SyncManager
+from traigent.cloud.sync_manager import (
+    DEFAULT_SYNC_AGENT_TYPE_ID,
+    SyncManager,
+    build_experiment_url,
+)
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
@@ -26,6 +30,41 @@ def backend_response(status_code=201, payload=None, text="Created"):
         payload if payload is not None else {"id": "created-id"}
     )
     return response
+
+
+def test_build_experiment_url_uses_portal_view_route() -> None:
+    """Experiment browser links target the route mounted by the portal SPA."""
+    assert (
+        build_experiment_url("https://portal.traigent.ai/", "exp_123")
+        == "https://portal.traigent.ai/experiments/view/exp_123"
+    )
+
+
+def test_build_experiment_url_adds_encoded_context_query() -> None:
+    """Experiment links include owning context when provided."""
+    assert (
+        build_experiment_url(
+            "https://portal.traigent.ai/",
+            "exp/123",
+            project_id="project/alpha",
+            tenant_id="tenant acme",
+        )
+        == "https://portal.traigent.ai/experiments/view/exp%2F123"
+        "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+    )
+
+
+def test_build_experiment_url_omits_empty_context_query() -> None:
+    """Empty owning context keeps the backward-compatible bare URL."""
+    assert (
+        build_experiment_url(
+            "https://portal.traigent.ai/",
+            "exp_123",
+            project_id=" ",
+            tenant_id=None,
+        )
+        == "https://portal.traigent.ai/experiments/view/exp_123"
+    )
 
 
 class TestSyncManager:
@@ -632,21 +671,36 @@ class TestSyncManager:
         sync_manager._session.post.side_effect = [
             backend_response(payload={"id": "agent-id"}),
             backend_response(payload={"id": "benchmark-id"}),
-            backend_response(payload={"id": "experiment-id"}),
+            backend_response(
+                payload={
+                    "id": "experiment-id",
+                    "project_id": "project/alpha",
+                    "tenant_id": "tenant acme",
+                }
+            ),
             backend_response(payload={"id": "experiment-run-id"}),
             backend_response(payload={"id": "configuration-run-1"}),
             backend_response(payload={"id": "configuration-run-2"}),
             backend_response(payload={"id": "configuration-run-3"}),
         ]
 
-        result = sync_manager.sync_session_to_cloud("test_session_123")
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            result = sync_manager.sync_session_to_cloud("test_session_123")
 
         assert result["status"] == "success"
         assert result["cloud_experiment_id"] == "experiment-id"
+        assert (
+            result["cloud_url"]
+            == "https://portal.traigent.ai/experiments/view/experiment-id"
+            "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+        )
         post_calls = sync_manager._session.post.call_args_list
         assert [call.args[0] for call in post_calls] == [
             f"{sync_manager.base_url}/agents",
-            f"{sync_manager.base_url}/benchmarks",
+            f"{sync_manager.base_url}/datasets",
             f"{sync_manager.base_url}/experiments",
             f"{sync_manager.base_url}/experiment-runs/experiment-id/runs",
             f"{sync_manager.base_url}/configuration-runs/runs/"
@@ -671,6 +725,60 @@ class TestSyncManager:
             "measures": experiment_payload["measures"],
             "configurations": experiment_payload["configurations"],
         }
+
+    def test_sync_session_to_cloud_resume_partial_uses_persisted_context_url(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """A partial-sync retry preserves project/tenant context in success URL."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "partial",
+            "payload_hash": payload_hash,
+            "cloud_agent_id": "agent-id",
+            "cloud_benchmark_id": "benchmark-id",
+            "cloud_experiment_id": "experiment-id",
+            "cloud_experiment_run_id": "experiment-run-id",
+            "project_id": "project/alpha",
+            "tenant_id": "tenant acme",
+            "attempts": 1,
+        }
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "configuration-run-1"}),
+            backend_response(payload={"id": "configuration-run-2"}),
+            backend_response(payload={"id": "configuration-run-3"}),
+        ]
+
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert result["status"] == "success"
+        assert result["project_id"] == "project/alpha"
+        assert result["tenant_id"] == "tenant acme"
+        assert (
+            result["cloud_url"]
+            == "https://portal.traigent.ai/experiments/view/experiment-id"
+            "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+        )
+        assert [call.args[0] for call in sync_manager._session.post.call_args_list] == [
+            f"{sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
+            f"{sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
+            f"{sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
+        ]
+
+        sync_state_patch = sync_manager.storage.update_sync_state.call_args.args[1]
+        assert sync_state_patch["project_id"] == "project/alpha"
+        assert sync_state_patch["tenant_id"] == "tenant acme"
+        assert sync_state_patch["cloud_url"] == result["cloud_url"]
+        assert sync_state_patch["attempts"] == 2
 
     def test_sync_session_to_cloud_reuses_agent_and_benchmark_for_idempotency(
         self, sync_manager: SyncManager
@@ -710,7 +818,7 @@ class TestSyncManager:
             backend_response(
                 200,
                 payload={
-                    "benchmarks": [
+                    "datasets": [
                         {
                             "id": "existing-benchmark-id",
                             "name": "Local Dataset idem_fn",
@@ -732,7 +840,7 @@ class TestSyncManager:
         assert result["status"] == "success"
         post_calls = sync_manager._session.post.call_args_list
         assert post_calls[0].args[0] == f"{sync_manager.base_url}/agents"
-        assert post_calls[1].args[0] == f"{sync_manager.base_url}/benchmarks"
+        assert post_calls[1].args[0] == f"{sync_manager.base_url}/datasets"
         experiment_payload = post_calls[2].kwargs["json"]
         assert experiment_payload["agent_id"] == "existing-agent-id"
         assert experiment_payload["dataset_id"] == "existing-benchmark-id"
@@ -767,7 +875,7 @@ class TestSyncManager:
 
         # Mock mixed responses (some succeed, some fail)
         def mock_post(url: str, *args, **kwargs):
-            if "agents" in url or "benchmarks" in url:
+            if "agents" in url or "datasets" in url:
                 return backend_response()
             return backend_response(status_code=500, text="Internal Server Error")
 
@@ -971,6 +1079,16 @@ class TestSyncManager:
 
         assert result["success"] is True
         assert result["benchmark_id"] == "bench_123"
+        sync_manager._session.get.assert_called_once_with(
+            f"{sync_manager.base_url}/datasets",
+            params={"name": "Test Benchmark"},
+            timeout=sync_manager._request_timeout,
+        )
+        sync_manager._session.post.assert_called_once_with(
+            f"{sync_manager.base_url}/datasets",
+            json=benchmark_data,
+            timeout=sync_manager._request_timeout,
+        )
 
     def test_sync_benchmark_failure(self, sync_manager: SyncManager) -> None:
         """Test benchmark sync failure."""
@@ -1001,7 +1119,8 @@ class TestSyncManager:
         }
 
         sync_manager._session.get.return_value = backend_response(
-            200, payload={"benchmarks": [{"id": "bench_123", "name": "Test Benchmark"}]}
+            200,
+            payload={"datasets": [{"id": "bench_123", "name": "Test Benchmark"}]},
         )
 
         result = sync_manager._sync_benchmark(benchmark_data)
@@ -1009,6 +1128,11 @@ class TestSyncManager:
         assert result["success"] is True
         assert result["benchmark_id"] == "bench_123"
         assert result["reused"] is True
+        sync_manager._session.get.assert_called_once_with(
+            f"{sync_manager.base_url}/datasets",
+            params={"name": "Test Benchmark"},
+            timeout=sync_manager._request_timeout,
+        )
         sync_manager._session.post.assert_not_called()
 
     def test_sync_experiment_success(self, sync_manager: SyncManager) -> None:

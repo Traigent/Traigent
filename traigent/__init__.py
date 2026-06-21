@@ -446,6 +446,13 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "validate_and_suggest": ("traigent.utils.validation", "validate_and_suggest"),
 }
 
+_DEPRECATED_LAZY_EXPORTS = {
+    "ExecutionIntent",
+    "ExecutionMode",
+    "ResolvedExecutionPolicy",
+    "HybridAPIOptions",
+}
+
 
 def _load_lazy_export(name: str):
     module_name, attr_name = _LAZY_EXPORTS[name]
@@ -460,6 +467,14 @@ def _load_lazy_export(name: str):
         raise
 
     globals()[name] = value
+    if name in _DEPRECATED_LAZY_EXPORTS:
+        warnings.warn(
+            f"traigent.{name} is a deprecated compatibility alias and is no "
+            "longer part of the public root export surface. Import the internal "
+            "compatibility symbol from its defining submodule only when needed.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
     return value
 
 
@@ -511,12 +526,8 @@ __all__ = [
     "set_strategy",
     "with_usage",  # New: wrap multi-agent workflow responses with usage metadata
     # Configuration types
-    "ExecutionIntent",
-    "ExecutionMode",
-    "ResolvedExecutionPolicy",
     "TraigentConfig",
     "ExternalServiceEvaluator",
-    "HybridAPIOptions",
     # Lifecycle and state
     "OptimizationState",
     # Thread context helpers

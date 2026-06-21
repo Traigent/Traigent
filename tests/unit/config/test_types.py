@@ -1,5 +1,7 @@
 """Tests for TraigentConfig type and execution mode helpers."""
 
+import inspect
+
 import pytest
 
 from traigent.config.types import (
@@ -116,6 +118,42 @@ class TestTraigentConfig:
         assert TraigentConfig().to_dict() == {}
         assert TraigentConfig(model="GPT-4o").to_dict() == {"model": "GPT-4o"}
 
+    def test_to_dict_omits_legacy_execution_surface(self):
+        """Public serialization should expose algorithm/offline, not legacy knobs."""
+        with pytest.warns(DeprecationWarning):
+            config = TraigentConfig(
+                algorithm="grid",
+                offline=True,
+                execution_mode="hybrid",
+                privacy_enabled=True,
+                custom_params={
+                    "custom_key": "custom_value",
+                    "execution_mode": "custom",
+                    "privacy_enabled": "custom",
+                },
+            )
+
+        assert config.to_dict() == {
+            "algorithm": "grid",
+            "offline": True,
+            "custom_key": "custom_value",
+        }
+
+    def test_public_signature_uses_algorithm_offline_surface(self):
+        """TraigentConfig help/inspect output should not advertise legacy knobs."""
+        public_signature = str(inspect.signature(TraigentConfig))
+
+        assert "algorithm" in public_signature
+        assert "offline" in public_signature
+        for legacy_name in (
+            "execution_mode",
+            "privacy_enabled",
+            "edge_analytics",
+            "hybrid_api",
+            "cloud_fallback_policy",
+        ):
+            assert legacy_name not in public_signature
+
     def test_from_dict(self):
         """Test creating config from dictionary."""
         config_dict = {
@@ -180,6 +218,25 @@ class TestTraigentConfig:
         assert "TraigentConfig" in repr_str
         assert "model='GPT-4o'" in repr_str
         assert "temperature=0.7" in repr_str
+        assert "execution_mode" not in repr_str
+        assert "privacy_enabled" not in repr_str
+
+    def test_repr_omits_legacy_execution_surface(self):
+        """Public repr should expose algorithm/offline, not legacy knobs."""
+        with pytest.warns(DeprecationWarning):
+            config = TraigentConfig(
+                algorithm="grid",
+                offline=True,
+                execution_mode="hybrid",
+                privacy_enabled=True,
+            )
+
+        repr_str = repr(config)
+
+        assert "algorithm='grid'" in repr_str
+        assert "offline=True" in repr_str
+        assert "execution_mode" not in repr_str
+        assert "privacy_enabled" not in repr_str
 
     def test_custom_params(self):
         """Test handling of custom parameters."""
@@ -205,10 +262,69 @@ class TestValidateExecutionMode:
         """Validation should accept the omitted-mode public default."""
         assert validate_execution_mode(None) is ExecutionMode.EDGE_ANALYTICS
 
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [
+            ("edge_analytics", "edge_analytics"),
+            ("hybrid", "hybrid"),
+            ("hybrid_api", "hybrid_api"),
+        ],
+    )
+    def test_config_direct_legacy_execution_mode_warns_but_works(
+        self, mode: str, expected: str
+    ) -> None:
+        with pytest.warns(DeprecationWarning) as caught:
+            config = TraigentConfig(execution_mode=mode)
+
+        messages = [str(w.message) for w in caught]
+        assert config.execution_mode == expected
+        assert any("algorithm" in message for message in messages)
+        assert any("offline=True" in message for message in messages)
+
+    def test_config_direct_privacy_enabled_warns_but_works(self) -> None:
+        with pytest.warns(DeprecationWarning) as caught:
+            config = TraigentConfig(privacy_enabled=True)
+
+        messages = [str(w.message) for w in caught]
+        assert config.privacy_enabled is True
+        assert any("privacy_enabled is deprecated" in message for message in messages)
+        assert any("offline=True" in message for message in messages)
+
+    def test_legacy_config_attribute_assignments_warn_but_work(self) -> None:
+        config = TraigentConfig()
+
+        with pytest.warns(DeprecationWarning) as mode_warnings:
+            config.execution_mode = "hybrid"
+        with pytest.warns(DeprecationWarning) as privacy_warnings:
+            config.privacy_enabled = True
+
+        assert config.execution_mode == "hybrid"
+        assert config.privacy_enabled is True
+        assert any("algorithm" in str(w.message) for w in mode_warnings)
+        assert any("offline=True" in str(w.message) for w in privacy_warnings)
+
     def test_invalid_mode_string_raises_configuration_error(self) -> None:
-        """Invalid mode string should raise ConfigurationError, not ValueError."""
-        with pytest.raises(ConfigurationError, match="No such mode 'nonexistent_mode'"):
+        """Invalid compatibility selectors should guide to algorithm/offline."""
+        with pytest.raises(ConfigurationError) as exc_info:
             validate_execution_mode("nonexistent_mode")
+
+        message = str(exc_info.value)
+        assert "algorithm='auto', 'grid', or 'random'" in message
+        assert "offline=True" in message
+        assert "execution_mode" not in message
+        assert "edge_analytics" not in message
+        assert "hybrid" not in message
+
+    def test_resolve_execution_mode_invalid_message_uses_public_knobs(self) -> None:
+        with pytest.raises(ValueError) as exc_info:
+            resolve_execution_mode("nonexistent_mode")
+
+        message = str(exc_info.value)
+        assert "algorithm='auto', 'grid', or 'random'" in message
+        assert "offline=True" in message
+        assert "execution_mode" not in message
+        assert "edge_analytics" not in message
+        assert "hybrid" not in message
 
     def test_privacy_alias_validates_as_hybrid(self) -> None:
         """Privacy remains a legacy alias for hybrid."""

@@ -155,7 +155,7 @@ df = results.to_dataframe()
 `successful_trials` is a list of successful `TrialResult` objects. Use
 `len(results.successful_trials)` when you need a count.
 
-`results.source` tells you which execution path ran:
+`results.source` tells you which routing path ran:
 `cloud_brain`, `local_fallback`, `explicit_local`, or `offline`.
 
 ## Progressive Runs
@@ -177,35 +177,10 @@ refined = await answer.optimize(
 
 ## External Service Evaluator
 
-Use `ExternalServiceEvaluator` when trials are delegated to an external service
-that implements the Traigent Hybrid API contract. This replaces the removed
-`execution_mode="hybrid_api"` plus flat `hybrid_api_*` arguments; the optimizer
-still runs locally and each trial evaluation is dispatched through the external
-service.
-
-```python
-from traigent.api.decorators import ExternalServiceEvaluator, HybridAPIOptions
-
-@traigent.optimize(
-    evaluator=ExternalServiceEvaluator(
-        hybrid_api=HybridAPIOptions(
-            endpoint="http://localhost:8080",
-            transport_type="http",
-        )
-    ),
-    configuration_space={"temperature": [0.0, 0.3]},
-    eval_dataset="data/eval.jsonl",
-    scoring_function=my_score,
-)
-def external_agent(_query: str) -> str:
-    return ""
-
-
-results = await external_agent.optimize(max_trials=10)
-```
-
-Because the optimizer is local in this setup, successful runs report
-`results.source == "explicit_local"`.
+External-service API contract integrations are documented separately. They do
+not change optimization routing: use the default smart optimizer for most runs,
+`algorithm="grid"` / `"random"` for local search, and `offline=True` only for
+zero Traigent backend egress.
 
 ## Multi-Field Evaluation Inputs
 

@@ -168,6 +168,31 @@ def regular_function():
         )
         assert len(functions) == 0
 
+    def test_discover_allows_module_inside_current_workspace(
+        self, tmp_path, monkeypatch
+    ):
+        """Discovery should validate user modules against the caller's CWD."""
+        module_path = tmp_path / "local_script.py"
+        module_path.write_text(
+            """
+class OptimizedFunction:
+    def __init__(self, func):
+        self.func = func
+        self.optimize = lambda: None
+
+def local_func(text: str, model: str = "default"):
+    return text
+
+local_func = OptimizedFunction(local_func)
+"""
+        )
+        monkeypatch.chdir(tmp_path)
+
+        functions = discover_optimized_functions("local_script.py")
+
+        assert len(functions) == 1
+        assert functions[0].name == "local_func"
+
     def test_discover_invalid_module(self):
         """Test function discovery with invalid module path."""
         with pytest.raises(
@@ -249,7 +274,6 @@ class TestOptimizationValidator:
             patch.object(validator, "_run_optimization") as mock_opt,
             patch.object(validator, "_compare_results") as mock_compare,
         ):
-
             # Setup mocks
             mock_baseline.return_value = ({"accuracy": 0.8}, {"model": "default"})
             mock_opt.return_value = ({"accuracy": 0.9}, {"model": "optimized"})
@@ -272,7 +296,6 @@ class TestOptimizationValidator:
             patch.object(validator, "_run_optimization") as mock_opt,
             patch.object(validator, "_compare_results") as mock_compare,
         ):
-
             # Setup mocks for inferior performance
             mock_baseline.return_value = ({"accuracy": 0.9}, {"model": "default"})
             mock_opt.return_value = ({"accuracy": 0.8}, {"model": "optimized"})
@@ -388,6 +411,38 @@ def test_func():
             ]  # Allow either success or expected failure
         finally:
             os.unlink(temp_file)
+
+    def test_check_command_dry_run_allows_script_under_cwd(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        """Dry-run should accept a normal user script under the caller's CWD."""
+        module_path = tmp_path / "local_script.py"
+        module_path.write_text(
+            """
+class OptimizedFunction:
+    def __init__(self, func):
+        self.func = func
+        self.eval_dataset = "test.jsonl"
+        self.objectives = ["accuracy"]
+        self.configuration_space = {"model": ["default", "optimized"]}
+        self.optimize = lambda: None
+
+def local_func(text: str, model: str = "default"):
+    return text
+
+local_func = OptimizedFunction(local_func)
+"""
+        )
+        (tmp_path / "test.jsonl").write_text(
+            '{"input": {"text": "hello"}, "output": "hello"}\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        result = cli_runner.invoke(cli, ["check", "local_script.py", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "Dry run completed" in result.output
+        assert "local_func" in result.output
 
     def test_check_command_with_filters(self, cli_runner):
         """Test check command with function filters."""

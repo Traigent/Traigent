@@ -446,11 +446,20 @@ class SessionOperations:
             try:
                 logger.info("Creating session via Traigent session endpoints")
                 self._raise_if_backend_egress_disabled("create session")
-                (
-                    session_id,
-                    experiment_id,
-                    experiment_run_id,
-                ) = await self.client._create_traigent_session_via_api(session_request)
+                session_api_result = await self.client._create_traigent_session_via_api(
+                    session_request
+                )
+                session_id, experiment_id, experiment_run_id = session_api_result
+                project_id = getattr(session_api_result, "project_id", None)
+                tenant_id = getattr(session_api_result, "tenant_id", None)
+                owning_context = {
+                    key: normalized
+                    for key, value in (
+                        ("project_id", project_id),
+                        ("tenant_id", tenant_id),
+                    )
+                    if value is not None and (normalized := str(value).strip())
+                }
 
                 self.client.session_bridge.create_session_mapping(
                     session_id=session_id,
@@ -469,6 +478,7 @@ class SessionOperations:
                         "objectives": [optimization_goal],
                         "experiment_id": experiment_id,
                         "experiment_run_id": experiment_run_id,
+                        **owning_context,
                     },
                 )
 
@@ -520,6 +530,7 @@ class SessionOperations:
                             "mode": "session_api",
                             "experiment_id": experiment_id,
                             "experiment_run_id": experiment_run_id,
+                            **owning_context,
                             **(metadata or {}),
                         },
                     )
@@ -543,7 +554,11 @@ class SessionOperations:
                     optimization_goal=optimization_goal,
                     metadata=metadata,
                 )
-                return SessionCreationResult.connected(session_id=session_id)
+                return SessionCreationResult.connected(
+                    session_id=session_id,
+                    project_id=owning_context.get("project_id"),
+                    tenant_id=owning_context.get("tenant_id"),
+                )
 
             except ValidationException:
                 raise  # User input errors must propagate

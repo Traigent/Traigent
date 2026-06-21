@@ -9,7 +9,7 @@ Learn Traigent by doing. Simple, clean examples showing how to use Traigent for 
 - **Multi-objective optimization** - Balance accuracy, cost, and latency
 - **RAG tuning** - Optimize retrieval + generation together
 - **Custom evaluators** - LLM-as-Judge for subjective tasks
-- **Privacy modes** - Local-only execution for sensitive data
+- **No-egress runs** - Local-only routing for sensitive data
 
 ## Requirements
 
@@ -84,7 +84,7 @@ Eight hands-on examples that build on each other:
 | 05 | RAG              | Optimize retrieval + parallel eval         | Context        | rag_questions       | Semantic Similarity        |
 | 06 | Custom Evaluator | LLM-as-Judge for code generation           | Context        | code_gen            | LLM-as-Judge (GPT-4o-mini) |
 | 07 | Multi-Provider   | Use any LLM vendor (OpenAI, Claude, Gemini)| Context        | simple_questions_10 | Exact Match                |
-| 08 | Privacy Modes    | Local-only privacy-first execution         | Context        | simple_questions    | Exact Match                |
+| 08 | No-Egress Runs   | Local-only execution for sensitive data    | Context        | simple_questions    | Exact Match                |
 
 Injection modes are explained in depth here: [Injection Modes Guide](../docs/user-guide/injection_modes.md).
 
@@ -114,7 +114,7 @@ they are useful companion material:
 - **05 RAG**: Retrieval + generation tuning. `k` is the number of documents to retrieve; `retrieval_method` is `similarity` (vector embeddings) or `keyword` (text matching). You implement the retrieval logic in your function; Traigent finds the optimal parameter combination. This example enables parallel eval by default; disable with `TRAIGENT_PARALLEL=0`.
 - **06 Custom Evaluator**: LLM-as-judge scoring for code generation.
 - **07 Multi-Provider**: Use any LLM vendor (OpenAI, Anthropic Claude, Google Gemini) in the same optimization. Set the relevant API keys and Traigent finds the best model across providers. Uses a 10-example dataset (~100 API calls); switch to `simple_questions.jsonl` for more thorough evaluation (~200 calls).
-- **08 Privacy Modes**: Local-only privacy-first run for now (no cloud/hybrid required).
+- **08 No-Egress Runs**: Local-only run for sensitive data.
 
 ## Datasets
 
@@ -215,13 +215,18 @@ In mock mode, Example 06 uses a lightweight heuristic scorer (function signature
 | Great for learning    | Production-ready                   |
 | ~50 lines each        | ~60-150 lines each                 |
 
-## Execution Modes & Privacy
+## Optimization Routing and No-Egress Runs
 
-These walkthrough examples use **local execution mode** (`edge_analytics`), which keeps LLM calls and optimization on your machine. This is the recommended starting point for learning Traigent.
+The normal SDK path syncs results to the portal when authenticated. Use
+`offline=True` only when a run must avoid Traigent backend traffic.
 
-- **Local / Edge Analytics**: LLM calls and optimization run locally. Results stay on your machine. Optionally send anonymized analytics without sharing prompts/responses.
+- **Local search**: `grid` and `random` run in your process and can still sync
+  results to the portal.
+- **No-egress local**: `offline=True` keeps Traigent optimization traffic local
+  and disables portal sync.
 
-Example 08 demonstrates a fully local, privacy-first path with `TRAIGENT_OFFLINE_MODE=true`, local result storage, and no backend communication.
+Example 08 demonstrates a no-egress local path with local result storage and no
+Traigent backend communication.
 
 ### Local Results Folder (Example 08)
 

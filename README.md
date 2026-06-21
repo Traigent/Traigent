@@ -128,7 +128,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
 | **Understand the architecture** | [Architecture Overview](docs/architecture/ARCHITECTURE.md) | 5 min |
-| **Track local runs in the portal** | [Hybrid portal tracking](#portal-hybrid-tracking) | 5 min |
+| **Track runs in the portal** | [Portal tracking](#portal-tracking) | 5 min |
 | **Try examples locally, then make runs portal-visible** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
 | **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
 
@@ -193,7 +193,7 @@ The walkthrough examples use local mock mode through the quickstart/testing help
 | 5 | `python walkthrough/mock/05_rag_parallel.py` | RAG optimization with parallel evaluation |
 | 6 | `python walkthrough/mock/06_custom_evaluator.py` | Define your own success metrics |
 | 7 | `python walkthrough/mock/07_multi_provider.py` | Compare OpenAI, Anthropic, Google in one run |
-| 8 | `python walkthrough/mock/08_privacy_modes.py` | Local-only privacy-first execution |
+| 8 | `python walkthrough/mock/08_privacy_modes.py` | No-egress local execution |
 
 </details>
 
@@ -201,20 +201,18 @@ The walkthrough examples use local mock mode through the quickstart/testing help
 
 ---
 
-<a id="portal-hybrid-tracking"></a>
+<a id="portal-tracking"></a>
 
-### ☁️ Traigent Portal & Hybrid Tracking
+### ☁️ Traigent Portal Tracking
 
-Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate. Portal tracking is enabled automatically when `TRAIGENT_API_KEY` is set — you do not need to set `execution_mode`. The SDK auto-selects the mode based on algorithm and transport.
+Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate. Portal tracking is enabled automatically when `TRAIGENT_API_KEY` is set; most users do not need any routing settings.
 
-For local-only runs with no Traigent backend egress, pass `offline=True`. For
-portal-tracked optimization, set `TRAIGENT_API_KEY` and omit the legacy
-execution-mode field.
+The default run uses Traigent's smart optimizer when portal credentials are available. Local `grid` and `random` searches still sync results to the portal when authenticated. Use `offline=True` only when a run must avoid Traigent backend egress; offline runs do not sync.
 
 1. **Sign up** at [portal.traigent.ai](https://portal.traigent.ai) — verify your email to activate
 2. **Create an API key** — click your name (top-right) → **API Keys** → **+ Create API Key**
 3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY=”sk_...”`  <!-- pragma: allowlist secret -->
-4. **Run** — portal tracking is automatic; no `execution_mode` needed
+4. **Run** — portal tracking is automatic
 
 <details>
 <summary>Credential priority and multi-provider setup</summary>
@@ -263,14 +261,14 @@ def multi_provider_agent(question: str) -> str:
 | **Parallel execution** | Concurrent trials and example-level parallelism |
 | **Error resilience** | Interactive pause on rate limits and budget caps — resume or stop gracefully |
 | **Live progress** | Auto-enabled progress bar in interactive terminals (`progress_bar=False` to disable) |
-| **Privacy-first** | Local execution mode keeps all data on your machine |
+| **No-egress option** | `offline=True` keeps Traigent optimization traffic local when policy requires it |
 
 **TraigentDemo** — Streamlit playground, use cases, and research benchmarks
 
 ---
 
 <details>
-<summary>📦 Installation details, execution modes, CLI, and more</summary>
+<summary>📦 Installation details, optimization routing, CLI, and more</summary>
 
 ### Installation
 
@@ -327,15 +325,18 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 **[Evaluation guide →](docs/guides/evaluation.md)** — custom evaluators, dataset formats, troubleshooting
 
-### Execution Modes
+### Optimization Routing
 
-| Mode | Status | Privacy | Algorithm | Best For |
-|------|--------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | Random, Grid | Local/private runs |
-| **Hybrid** (`hybrid`) | ✅ Available | ✅ Trial execution local | Random, Grid + cloud smart algorithms | Portal-tracked runs |
-| **Cloud** (`cloud`) | 🚧 Reserved | Not available | Future remote execution | Do not use yet |
+| Request | Where optimization decisions come from | Portal sync |
+|------|--------|---------|
+| Omit routing settings | Traigent smart optimizer when authenticated | Yes |
+| `algorithm="grid"` or `"random"` | Local search in your Python process | Yes, unless `offline=True` |
+| Smart algorithm name, such as `"bayesian"` or `"optuna_tpe"` | Traigent cloud optimizer | Yes |
+| `offline=True` | Local only, zero Traigent backend egress | No |
 
-**[Execution modes guide →](docs/guides/execution-modes.md)** — mode comparisons, privacy details, migration path
+Most users should omit these settings. Use `grid` or `random` for explicit local search; use `offline=True` only for no-egress runs.
+
+**[Optimization routing guide →](docs/guides/execution-modes.md)** — defaults, local search, portal sync, and migration notes
 
 ### Quick Reference
 

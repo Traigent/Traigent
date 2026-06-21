@@ -14,20 +14,23 @@ from rich.console import Console
 
 from traigent.cli.validation_types import OptimizedFunction
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import PathTraversalError, validate_path
 
 logger = get_logger(__name__)
 console = Console()
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def discover_optimized_functions(
-    module_path: str, function_filter: list[str] | None = None
+    module_path: str,
+    function_filter: list[str] | None = None,
+    workspace_root: str | Path | None = None,
 ) -> list[OptimizedFunction]:
     """Discover all functions decorated with @traigent.optimize in a module.
 
     Args:
         module_path: Path to Python file containing optimizable functions
         function_filter: Optional list of function names to include (None = all functions)
+        workspace_root: Optional user workspace root. Defaults to the caller's CWD.
 
     Returns:
         List of OptimizedFunction objects containing function metadata
@@ -38,21 +41,25 @@ def discover_optimized_functions(
     """
     logger.info(f"Discovering optimized functions in {module_path}")
 
-    # Validate and resolve module path
-    module_path_obj = Path(module_path).expanduser().resolve()
-
-    # Security check for path traversal
-    if ".." in str(module_path_obj) or str(module_path_obj).startswith("/etc"):
-        raise ValueError(f"Invalid module path: {module_path_obj}")
+    workspace_base = (
+        Path(workspace_root).expanduser().resolve()
+        if workspace_root is not None
+        else Path.cwd().resolve()
+    )
     try:
-        module_path_obj.relative_to(PROJECT_ROOT)
-    except ValueError as exc:
+        module_path_obj = validate_path(
+            Path(module_path).expanduser(),
+            workspace_base,
+            must_exist=True,
+        )
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Module file not found: {Path(module_path).expanduser()}"
+        ) from None
+    except (PathTraversalError, ValueError) as exc:
         raise ValueError(
-            f"Module path must reside inside the Traigent workspace ({PROJECT_ROOT}): {module_path_obj}"
+            f"Module path must reside inside the current workspace ({workspace_base}): {module_path}"
         ) from exc
-
-    if not module_path_obj.exists():
-        raise FileNotFoundError(f"Module file not found: {module_path_obj}")
 
     if not module_path_obj.suffix == ".py":
         raise ValueError(f"Module must be a Python file (.py): {module_path_obj}")

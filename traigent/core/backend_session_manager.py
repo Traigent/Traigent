@@ -257,6 +257,7 @@ class BackendSessionManager:
         self._fallback_reason: str | None = getattr(
             traigent_config, "fallback_reason", None
         )
+        self._session_owning_context: dict[str, dict[str, str]] = {}
 
         # Tracks (session_id, trial_id) pairs that have already been registered
         # with the backend, so retries of submit_trial don't re-register and
@@ -723,6 +724,17 @@ class BackendSessionManager:
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(result)
+            if result.backend_connected:
+                owning_context = {
+                    key: normalized
+                    for key, value in (
+                        ("project_id", result.project_id),
+                        ("tenant_id", result.tenant_id),
+                    )
+                    if value is not None and (normalized := str(value).strip())
+                }
+                if owning_context:
+                    self._session_owning_context[session_id] = owning_context
 
             # On success, upload dataset features via the session mapping
             if result.backend_connected:
@@ -1504,6 +1516,8 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+        if owning_context := self._session_owning_context.get(session_id):
+            update_payload.update(owning_context)
 
         # Add experiment_id from session mapping if available
         if self._backend_client is not None:

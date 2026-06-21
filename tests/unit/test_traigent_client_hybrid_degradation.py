@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import traigent.traigent_client as traigent_client_module
 from traigent.cloud.client import CloudServiceError
 from traigent.traigent_client import TraigentClient
 
@@ -34,36 +33,19 @@ def _build_hybrid_client() -> TraigentClient:
 def _patch_optimizer_loop(mp, *, has_next: bool = False) -> None:
     """Patch the direct optimizer client + adapter so the trial loop exits
     immediately (no real trials) and control reaches finalize."""
-    fake_optimizer = Mock()
+    fake_optimizer = AsyncMock()
+    fake_optimizer.__aenter__.return_value = fake_optimizer
+    fake_optimizer.__aexit__.return_value = None
     fake_optimizer.get_next_configuration = AsyncMock(
         return_value={"has_next": has_next}
     )
     fake_optimizer.submit_metrics = AsyncMock()
-    direct_client = Mock()
-    direct_client.__aenter__ = AsyncMock(return_value=fake_optimizer)
-    direct_client.__aexit__ = AsyncMock(return_value=None)
-    # raising=False: the optional cloud-optimizer extra may be absent in the
-    # unit-test environment (then `_CLOUD_AVAILABLE` is False and these names
-    # aren't bound on the module); we still inject the mocks the patched
-    # `_optimize_hybrid` resolves from module globals.
-    mp.setattr(
-        traigent_client_module,
-        "OptimizerDirectClient",
-        lambda *a, **k: direct_client,
-        raising=False,
-    )
-    mp.setattr(
-        traigent_client_module,
-        "LocalExecutionAdapter",
-        lambda *a, **k: Mock(),
-        raising=False,
-    )
-    mp.setattr(
-        traigent_client_module,
-        "is_backend_offline",
-        lambda: False,
-        raising=False,
-    )
+
+    direct_client_factory = Mock(return_value=fake_optimizer)
+    method_globals = TraigentClient._optimize_hybrid.__globals__
+    mp.setitem(method_globals, "OptimizerDirectClient", direct_client_factory)
+    mp.setitem(method_globals, "LocalExecutionAdapter", lambda *a, **k: Mock())
+    mp.setitem(method_globals, "is_backend_offline", lambda: False)
 
 
 @pytest.mark.asyncio

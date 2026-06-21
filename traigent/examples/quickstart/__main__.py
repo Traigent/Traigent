@@ -3,8 +3,8 @@
 No API keys, no LLM provider calls, no spend. The bundled quickstart
 is the load-bearing demo on the website funnel; everything below is
 structured to make that promise true. LiteLLM may still attempt an
-import-time model-cost-map fetch from raw.githubusercontent.com (it
-falls back to bundled pricing data when offline); the guarantee is no
+import-time model-cost-map fetch from raw.githubusercontent.com and fall back
+to bundled pricing data when the network is unavailable; the guarantee is no
 provider spend, not zero outbound packets.
 
 The hermetic env-var setup that makes "no provider calls" work has to
@@ -122,7 +122,6 @@ def _demo_scorer(
     evaluation=EvaluationOptions(
         eval_dataset=DATASET, metric_functions={"accuracy": _demo_scorer}
     ),
-    offline=True,
 )
 def answer(question: str) -> str:
     """Call an LLM with the current trial's config (intercepted in mock mode)."""
@@ -138,7 +137,7 @@ def answer(question: str) -> str:
 
 def main() -> None:
     """Synchronous entry point used by the CLI subcommand and ``python -m``."""
-    asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
+    asyncio.run(answer.optimize(max_trials=6))
 
 
 if __name__ == "__main__":

@@ -1757,8 +1757,8 @@ def configure() -> None:
 
 
 @auth.command()
-@click.argument("key")
-def whoami(key: str) -> None:
+@click.argument("key", required=False)
+def whoami(key: str | None) -> None:
     """Show information about an API key.
 
     This command will validate an API key and show associated user information.
@@ -1770,6 +1770,14 @@ def whoami(key: str) -> None:
         traigent auth whoami tg_1234567890abcdef
     """
     console.print("\n[bold blue]🔍 API Key Information[/bold blue]\n")
+
+    key = key or os.environ.get("TRAIGENT_API_KEY")
+    if not key:
+        console.print("[red]❌ Missing API key[/red]")
+        console.print(
+            "Provide an API key as an argument or set TRAIGENT_API_KEY in your environment.\n"
+        )
+        sys.exit(1)
 
     # Validate format
     valid_prefixes = ("tg_", "uk_", "sk_", "ak_", "tk_")

@@ -97,14 +97,17 @@ def _install_fake_aiohttp(
     return fake_module
 
 
-def _run_whoami(monkeypatch: pytest.MonkeyPatch, api_key: str = "tg_test_key") -> Any:
+def _run_whoami(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | None = "tg_test_key"
+) -> Any:
     monkeypatch.setattr(
         auth_commands.BackendConfig,
         "get_backend_api_url",
         staticmethod(lambda: "http://localhost:5000/api/v1"),
     )
     runner = CliRunner()
-    return runner.invoke(auth_commands.auth, ["whoami", api_key])
+    args = ["whoami"] if api_key is None else ["whoami", api_key]
+    return runner.invoke(auth_commands.auth, args)
 
 
 def test_whoami_valid_key_200(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,9 +148,35 @@ def test_whoami_posts_json_payload_to_validate_endpoint(
     assert _FakeSession.last_post_kwargs is not None
     assert _FakeSession.last_post_kwargs["json"] == {"api_key": api_key}
     assert (
-        _FakeSession.last_post_kwargs["headers"]["Content-Type"]
-        == "application/json"
+        _FakeSession.last_post_kwargs["headers"]["Content-Type"] == "application/json"
     )
+
+
+def test_whoami_uses_env_api_key_when_argument_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_key = "tg_" + "a" * 43
+    monkeypatch.setenv("TRAIGENT_API_KEY", api_key)
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(status=200, json_payload={"valid": True, "data": {}}),
+    )
+
+    result = _run_whoami(monkeypatch, api_key=None)
+
+    assert result.exit_code == 0
+    assert _FakeSession.last_post_kwargs is not None
+    assert _FakeSession.last_post_kwargs["json"] == {"api_key": api_key}
+
+
+def test_whoami_requires_argument_or_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+
+    result = _run_whoami(monkeypatch, api_key=None)
+
+    assert result.exit_code == 1
+    assert "Missing API key" in result.output
+    assert "TRAIGENT_API_KEY" in result.output
 
 
 @pytest.mark.parametrize("prefix", ["tg_", "uk_", "sk_", "ak_", "tk_"])

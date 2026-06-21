@@ -25,7 +25,7 @@ Outcome: you can run examples, read metrics, and tweak configuration spaces.
 Outcome: you can constrain costs, add guardrails, and tune prompts.
 
 ## Week 3: Advanced exploration (researcher)
-1. Execution modes and rollouts: `examples/advanced/execution-modes/` (local patterns + roadmap stubs)
+1. Optimization routing: `examples/advanced/optimization-routing/` (local search and no-egress examples)
 2. Context engineering & RAG eval: `examples/advanced/ai-engineering-tasks/p0_context_engineering/` and `examples/advanced/ragas/`
 3. Metrics and analysis: `examples/advanced/results-analysis/` and `examples/advanced/metric-registry/`
 4. CI/CD integration: `examples/integrations/ci-cd/`

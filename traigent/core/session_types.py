@@ -112,6 +112,8 @@ class SessionCreationResult:
     failure_reason: SessionCreationFailureReason | None = None
     failure_detail: str | None = None
     failure_response: SessionCreationFailureDetail | None = None
+    project_id: str | None = None
+    tenant_id: str | None = None
 
     def __str__(self) -> str:
         """Return the session ID string for backwards compatibility.
@@ -129,9 +131,20 @@ class SessionCreationResult:
             raise ValueError("failure_reason must be None when backend_connected=True")
 
     @classmethod
-    def connected(cls, session_id: str) -> SessionCreationResult:
+    def connected(
+        cls,
+        session_id: str,
+        *,
+        project_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> SessionCreationResult:
         """Factory for a successful backend session."""
-        return cls(session_id=session_id, backend_connected=True)
+        return cls(
+            session_id=session_id,
+            backend_connected=True,
+            project_id=project_id,
+            tenant_id=tenant_id,
+        )
 
     @classmethod
     def fallback(

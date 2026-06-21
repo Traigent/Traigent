@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import warnings
 
 import pytest
@@ -68,7 +69,9 @@ def test_legacy_cloud_maps_to_cloud_first_with_edge_analytics_compat_mode() -> N
 
 
 def test_legacy_auto_execution_mode_is_rejected() -> None:
-    with pytest.raises(ConfigurationError, match="No such mode 'auto'"):
+    with pytest.raises(
+        ConfigurationError, match="Unsupported execution selector 'auto'"
+    ):
 
         @optimize(configuration_space={"x": [1, 2]}, execution_mode="auto")
         def sample(x: int) -> int:
@@ -122,6 +125,27 @@ def test_legacy_flat_hybrid_api_kwargs_translate_to_options() -> None:
     )
 
 
+def test_legacy_hybrid_api_options_evaluator_warns_but_works() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            evaluator=HybridAPIOptions(endpoint="https://evaluator.example.test"),
+        )
+        def sample(x: int) -> int:
+            return x
+
+    assert isinstance(sample.hybrid_api_options, HybridAPIOptions)
+    assert sample.hybrid_api_options.endpoint == "https://evaluator.example.test"
+    assert sample.execution_mode == "hybrid_api"
+    assert any(
+        issubclass(w.category, DeprecationWarning)
+        and "HybridAPIOptions as an evaluator is deprecated" in str(w.message)
+        for w in caught
+    )
+
+
 def test_execution_options_public_fields_exclude_removed_surface() -> None:
     assert "algorithm" in ExecutionOptions.model_fields
     assert "offline" in ExecutionOptions.model_fields
@@ -131,8 +155,23 @@ def test_execution_options_public_fields_exclude_removed_surface() -> None:
     assert "hybrid_api_endpoint" not in ExecutionOptions.model_fields
 
 
+def test_optimize_public_signature_exposes_algorithm_offline_only() -> None:
+    public_signature = str(inspect.signature(optimize))
+
+    assert "algorithm" in public_signature
+    assert "offline" in public_signature
+    for legacy_name in (
+        "execution_mode",
+        "privacy_enabled",
+        "cloud_fallback_policy",
+        "HybridAPIOptions",
+        "hybrid_api_endpoint",
+    ):
+        assert legacy_name not in public_signature
+
+
 def test_offline_smart_algorithm_hard_errors() -> None:
-    with pytest.raises(ConfigurationError, match="requires cloud execution"):
+    with pytest.raises(ConfigurationError, match="requires managed optimization"):
 
         @optimize(
             configuration_space={"x": [1, 2]},

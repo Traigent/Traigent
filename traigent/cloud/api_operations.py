@@ -80,6 +80,28 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+
+class TraigentSessionApiResult(tuple):
+    """Three-ID session creation result with optional owning context attrs."""
+
+    project_id: str | None
+    tenant_id: str | None
+
+    def __new__(
+        cls,
+        session_id: str,
+        experiment_id: str,
+        experiment_run_id: str,
+        *,
+        project_id: str | None = None,
+        tenant_id: str | None = None,
+    ):
+        obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
+        obj.project_id = project_id
+        obj.tenant_id = tenant_id
+        return obj
+
+
 # ---------------------------------------------------------------------------
 # Canonical run / configuration-run wire status vocabulary (single source of
 # truth — issue #1302).
@@ -635,21 +657,41 @@ class ApiOperations:
 
         raise CloudServiceError("Unexpected session creation failure")
 
-    async def _parse_session_response(self, response: Any) -> tuple[str, str, str]:
+    async def _parse_session_response(self, response: Any) -> TraigentSessionApiResult:
         """Parse the JSON success payload returned by the session endpoint."""
 
         result = await response.json()
+        metadata = result.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
         session_id = result.get("session_id")
-        experiment_id = result.get("metadata", {}).get("experiment_id", session_id)
-        experiment_run_id = result.get("metadata", {}).get(
-            "experiment_run_id", session_id
+        experiment_id = metadata.get("experiment_id", session_id)
+        experiment_run_id = metadata.get("experiment_run_id", session_id)
+        project_id = self._optional_context_id(
+            result.get("project_id") or metadata.get("project_id")
+        )
+        tenant_id = self._optional_context_id(
+            result.get("tenant_id") or metadata.get("tenant_id")
         )
 
         logger.info(
             f"✅ Created Traigent session: {session_id} "
             f"(exp: {experiment_id}, run: {experiment_run_id})"
         )
-        return session_id, experiment_id, experiment_run_id
+        return TraigentSessionApiResult(
+            session_id,
+            experiment_id,
+            experiment_run_id,
+            project_id=project_id,
+            tenant_id=tenant_id,
+        )
+
+    @staticmethod
+    def _optional_context_id(value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
     def _handle_session_error(self, status_code: int, error_msg: str) -> None:
         """Raise structured exceptions for non-success HTTP responses.

@@ -1,10 +1,10 @@
 """Top-level ``traigent sync`` command.
 
 First-class, idempotent sync of locally-logged optimization runs to the
-Traigent cloud, following the ``wandb sync`` convention: running it with no
+Traigent portal, following the ``wandb sync`` convention: running it with no
 arguments prints a status summary (what is synced vs. still pending) and uploads
 nothing; an already-synced, unchanged run is skipped so re-running never creates
-duplicate cloud experiments.
+duplicate portal experiments.
 
     traigent sync                 # status only — no upload
     traigent sync <session_id>    # sync one run (idempotent)
@@ -67,7 +67,7 @@ def _emit_session_result(result: dict[str, Any], *, dry_run: bool) -> None:
         else:
             click.echo(f"✅ Synced {sid}")
             if result.get("cloud_url"):
-                click.echo(f"   Cloud URL: {result['cloud_url']}")
+                click.echo(f"   Portal URL: {result['cloud_url']}")
     elif status == "already_synced":
         click.echo(f"⏭️  Skipped {sid} (already synced — use --force to re-upload)")
     else:
@@ -99,7 +99,7 @@ def sync_command(
     as_json: bool,
     api_key: str | None,
 ) -> None:
-    """Sync locally-logged optimization runs to the Traigent cloud."""
+    """Sync locally-logged optimization runs to the Traigent portal."""
     try:
         config = TraigentConfig.from_environment()
         api_key = _resolve_api_key(api_key)
@@ -113,7 +113,7 @@ def sync_command(
         # Only real uploads require a key; status and --dry-run do not.
         if not api_key and not dry_run:
             click.echo(
-                "❌ API key required for cloud sync. Use --api-key or set "
+                "❌ API key required for portal sync. Use --api-key or set "
                 "TRAIGENT_API_KEY.",
                 err=True,
             )
@@ -161,7 +161,7 @@ def sync_command(
                 )
 
     except Exception as e:  # noqa: BLE001 - CLI boundary surfaces a clean message
-        click.echo(f"Error syncing to cloud: {e}", err=True)
+        click.echo(f"Error syncing to portal: {e}", err=True)
         sys.exit(1)
 
 

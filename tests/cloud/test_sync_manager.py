@@ -230,7 +230,7 @@ class TestSyncManager:
         "method_name,resource_path,payload_key",
         [
             ("_sync_agent", "agents", "agent_id"),
-            ("_sync_benchmark", "benchmarks", "benchmark_id"),
+            ("_sync_benchmark", "datasets", "benchmark_id"),
             ("_sync_experiment", "experiments", "experiment_id"),
             ("_sync_experiment_run", "experiment-runs", "run_id"),
         ],
@@ -295,7 +295,7 @@ class TestSyncManager:
             assert result["dataset_id"] == "benchmark-123"
             assert result["benchmark_id"] == "benchmark-123"
             sync_manager._session.post.assert_called_once_with(
-                f"{sync_manager.base_url}/benchmarks",
+                f"{sync_manager.base_url}/datasets",
                 json=payload,
                 timeout=sync_manager._request_timeout,
             )
@@ -499,7 +499,7 @@ class TestSyncManager:
         calls = post_mock.call_args_list
         assert [call.args[0] for call in calls] == [
             f"{self.sync_manager.base_url}/agents",
-            f"{self.sync_manager.base_url}/benchmarks",
+            f"{self.sync_manager.base_url}/datasets",
             f"{self.sync_manager.base_url}/experiments",
             f"{self.sync_manager.base_url}/experiment-runs/experiment-id/runs",
             f"{self.sync_manager.base_url}/configuration-runs/runs/"
