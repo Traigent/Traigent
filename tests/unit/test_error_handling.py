@@ -239,9 +239,12 @@ class TestContextualErrorInfo:
         error_msg = str(exc_info.value)
         assert "invalid_mode" in error_msg
         assert "execution_mode" in error_msg
-        assert (
-            "edge_analytics" in error_msg or "cloud" in error_msg
-        )  # Valid options mentioned
+        # New error contract: the message points users at the supported
+        # algorithm selectors and the offline flag, not legacy mode names.
+        assert "algorithm=" in error_msg
+        assert "grid" in error_msg
+        assert "random" in error_msg
+        assert "offline" in error_msg
 
     def test_configuration_error_context(self):
         """Test that configuration errors include parameter context."""
@@ -270,10 +273,16 @@ class TestErrorHandlingIntegration:
         with pytest.raises(ValidationError) as exc_info:
             validate_optimize_parameters(execution_mode="definitely_invalid_mode")
 
-        # Error should have proper context
+        # Error should have proper context. The purged execution-mode
+        # vocabulary is replaced by guidance toward the execution selector
+        # (algorithm) and the offline flag.
         error_msg = str(exc_info.value)
-        assert "execution_mode" in error_msg
+        assert "execution selector" in error_msg
         assert "definitely_invalid_mode" in error_msg
+        assert "algorithm=" in error_msg
+        assert "grid" in error_msg
+        assert "random" in error_msg
+        assert "offline" in error_msg
 
     def test_removed_parameters_raise_validation_error(self):
         """Removed decorator parameters should raise a validation error."""
