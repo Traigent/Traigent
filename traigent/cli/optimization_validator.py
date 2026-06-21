@@ -11,6 +11,7 @@ from rich.console import Console
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.cli.validation_types import OptimizedFunction, ValidationResult
+from traigent.config.types import resolve_execution_policy
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
@@ -191,17 +192,51 @@ class OptimizationValidator:
         self, func_info: OptimizedFunction, is_mock_mode: bool
     ) -> LocalEvaluator:
         """Create a LocalEvaluator with appropriate settings for mock or real mode."""
+        execution_mode = self._local_evaluator_mode(func_info, is_mock_mode)
         if is_mock_mode:
             return LocalEvaluator(
                 metrics=func_info.objectives or ["accuracy"],
-                execution_mode="edge_analytics",
+                execution_mode=execution_mode,
                 mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
             )
         return LocalEvaluator(
             metrics=func_info.objectives,
-            execution_mode=getattr(func_info.func, "execution_mode", "cloud"),
+            execution_mode=execution_mode,
             mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
         )
+
+    def _local_evaluator_mode(
+        self, func_info: OptimizedFunction, is_mock_mode: bool
+    ) -> str:
+        """Resolve the evaluator's internal compatibility mode from public knobs."""
+        policy = getattr(func_info.func, "execution_policy", None)
+        legacy_mode = getattr(policy, "legacy_execution_mode_value", None)
+        if isinstance(legacy_mode, str):
+            return legacy_mode
+
+        if is_mock_mode:
+            policy = resolve_execution_policy(
+                algorithm="random",
+                offline=True,
+                source_hint="cli_check_mock",
+            )
+            return policy.legacy_execution_mode_value
+
+        algorithm = getattr(func_info.func, "algorithm", None) or "auto"
+        offline = bool(getattr(func_info.func, "offline", False))
+        try:
+            policy = resolve_execution_policy(
+                algorithm=algorithm,
+                offline=offline,
+                source_hint="cli_check",
+            )
+        except (TypeError, ValueError):
+            policy = resolve_execution_policy(
+                algorithm="auto",
+                offline=offline,
+                source_hint="cli_check",
+            )
+        return policy.legacy_execution_mode_value
 
     def _filter_metrics_to_objectives(
         self,

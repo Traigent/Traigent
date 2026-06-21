@@ -6,6 +6,8 @@ Tests challenging scenarios, edge cases, and error conditions.
 
 import os
 import tempfile
+import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -210,18 +212,29 @@ class TestErrorScenarios:
         ):  # Should raise FileNotFoundError or ImportError
             discover_optimized_functions("completely_nonexistent_file.py")
 
-    def test_discover_functions_outside_workspace(self):
+    def test_discover_functions_outside_workspace(self, monkeypatch):
         """Path traversal outside the workspace should be rejected."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("# temporary external module")
-            external_file = f.name
+        with tempfile.TemporaryDirectory() as workspace:
+            workspace_path = Path(workspace)
+            external_path = workspace_path.parent / f"external_{uuid.uuid4().hex}.py"
+            external_path.write_text("# temporary external module")
+            monkeypatch.chdir(workspace_path)
+            try:
+                with pytest.raises(ValueError):
+                    discover_optimized_functions(external_path)
+            finally:
+                external_path.unlink(missing_ok=True)
 
-        try:
-            with pytest.raises(ValueError):
-                discover_optimized_functions(external_file)
-        finally:
-            os.chmod(external_file, 0o600)
-            os.unlink(external_file)
+    def test_discover_functions_rejects_parent_traversal(self, monkeypatch, tmp_path):
+        """Relative traversal outside the caller workspace should be rejected."""
+        workspace_path = tmp_path / "workspace"
+        workspace_path.mkdir()
+        external_path = tmp_path / "external.py"
+        external_path.write_text("# temporary external module")
+        monkeypatch.chdir(workspace_path)
+
+        with pytest.raises(ValueError):
+            discover_optimized_functions("../external.py")
 
     def test_discover_functions_permission_denied(self):
         """Test function discovery with permission-denied file.
@@ -323,7 +336,6 @@ class TestErrorScenarios:
                 side_effect=Exception("Optimization failed"),
             ),
         ):
-
             result = await validator.validate_optimization(func_info)
 
             assert result.is_superior is False
@@ -523,7 +535,6 @@ class TestConcurrencyAndPerformance:
             patch.object(validator, "_run_baseline", side_effect=mock_baseline),
             patch.object(validator, "_run_optimization", side_effect=mock_optimization),
         ):
-
             # Run validations concurrently
             import asyncio
 
