@@ -4,7 +4,7 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 
 ## 🚀 Quick Start
 
-1) Install and run - no API keys needed:
+1) Install and run:
 
 ```bash
 pip install "traigent[recommended]"
@@ -38,7 +38,7 @@ uv pip install "traigent[recommended]"
 python hello_world.py
 ```
 
-The quickstart runs in mock mode by default and pre-approves the local cost gate for the demo - it simulates LiteLLM/LangChain calls so you can see the full optimization flow instantly. For your own dry runs, use mock mode plus `cost_approved=True` or `TRAIGENT_COST_APPROVED=true`; raw `openai.chat.completions.create(...)` and `anthropic.messages.create(...)` calls are not mocked.
+The packaged quickstart uses mocked LLM calls for the demo, so it does not spend provider tokens. Set `TRAIGENT_API_KEY` before running it when you want results to appear in the portal.
 
 2) Here's what it does - one decorator, automatic optimization:
 
@@ -61,7 +61,7 @@ def answer(question: str) -> str:
     return llm.invoke(question).content
 
 # Run optimization
-result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
+result = asyncio.run(answer.optimize(max_trials=6))
 print(f"Best config: {result.best_config}")
 print(f"Best score:  {result.best_score:.2%}")
 ```
@@ -99,23 +99,21 @@ def classify(text: str) -> str:
     ...
 ```
 
-## 🧪 Mock Mode & Examples
+## 🧪 Examples
 
-- `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py` (no API keys)
 - Examples Navigator: `python -m http.server 8000` → http://localhost:8000/examples/
 
 ## 🛠️ CLI Snippets
 
 ```bash
 traigent info                                   # Version/features
-traigent algorithms                             # Available strategies
 traigent quickstart                             # Packaged mock-mode demo
 traigent onboard                                # Guided project setup
 traigent auth device-login                      # Browser device login
 traigent first-prompt --agent codex             # Coding-agent prompt
 traigent recommend rag                          # Configuration recommendations
 traigent mcp serve                              # Local stdio MCP server
-traigent optimize examples/core/rag-optimization/run.py -a grid -n 5
+traigent optimize examples/core/rag-optimization/run.py -n 5
 traigent validate examples/datasets/rag-optimization/evaluation_set.jsonl
 traigent plot my_run -p progress
 ```
@@ -144,32 +142,16 @@ def my_agent(query: str) -> str:
     return str(response.choices[0].message.content)
 ```
 
-## 🔒 Execution Model
+## 📊 Portal Results
 
-Traigent executes your code locally. Configure routing with `algorithm` and
-`offline`; there is no user-facing execution-mode selector for new code.
+You do not need routing settings for the normal path. Authenticate once with
+`traigent auth device-login` or set `TRAIGENT_API_KEY`, then run your optimization
+and Traigent syncs results to the portal automatically.
 
-The default `algorithm="auto"` path is cloud-first: the backend suggests trial
-configs and your process runs the trials. If cloud connectivity is unavailable,
-auto falls back locally unless `TRAIGENT_REQUIRE_CLOUD=1` is set.
-
-Explicit `algorithm="grid"` and `"random"` run locally with no cloud optimizer
-round trip. Explicit smart algorithms such as `bayesian`, `tpe`, `optuna_tpe`,
-`nsga2`, and `cmaes` require cloud and hard-error if offline or unavailable.
-
-To run fully local with no Traigent backend communication, set `offline=True`,
-`TRAIGENT_OFFLINE=1`, or the legacy `TRAIGENT_OFFLINE_MODE=1`.
-
-If you are migrating older code: `execution_mode="hybrid"` becomes the default
-`@traigent.optimize()` behavior, `execution_mode="edge_analytics"` becomes
-`offline=True`, and `privacy_enabled=True` should be removed.
-
-Optimization results also record how the run resolved:
-
-- `result.source == "cloud_brain"` for the cloud-first path
-- `result.source == "local_fallback"` when `algorithm="auto"` degrades locally
-- `result.source == "explicit_local"` for explicit `grid` / `random`
-- `result.source == "offline"` for `offline=True` or offline env vars
+When you are not authenticated, the examples still print their local result
+tables so you can verify the workflow before connecting an account. For
+specialized routing controls, see
+[Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md).
 
 ---
 

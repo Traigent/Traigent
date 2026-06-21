@@ -139,25 +139,23 @@ def setup_environment():
     if env_file.exists():
         print_info(".env file already exists")
     else:
-        print_info("Creating .env file with mock credentials...")
+        print_info("Creating .env template for real credentials...")
         env_content = """# Traigent Environment Variables
-# For mock mode testing (no real API calls)
-TRAIGENT_MOCK_LLM=true
-TRAIGENT_OFFLINE_MODE=true
+# Set this to sync optimization results to the Traigent portal.
+# TRAIGENT_API_KEY=your-traigent-key
 
-# Add your real API keys here when ready:
-# OPENAI_API_KEY=your-key-here
-# ANTHROPIC_API_KEY=your-key-here
-# TRAIGENT_API_KEY=your-key-here
+# Add provider keys for real LLM calls from your own application code.
+# OPENAI_API_KEY=your-openai-key
+# ANTHROPIC_API_KEY=your-anthropic-key
 # TRAIGENT_BACKEND_URL=http://localhost:5000
 """
         env_file.write_text(env_content)
-        print_success(".env file created with mock mode enabled")
+        print_success(".env file created")
 
-    # Set mock mode for this session
-    os.environ["TRAIGENT_MOCK_LLM"] = "true"
-    os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
-    print_success("Mock mode enabled for this session")
+    if os.environ.get("TRAIGENT_API_KEY"):
+        print_success("TRAIGENT_API_KEY detected; portal sync is available")
+    else:
+        print_info("Set TRAIGENT_API_KEY in .env or your shell to sync results")
     return True
 
 
@@ -165,55 +163,13 @@ def run_demo():
     """Run a simple demo to verify everything works."""
     print_header("Running Demo")
 
-    demo_code = '''
-import os
-os.environ["TRAIGENT_MOCK_LLM"] = "true"
-
-import traigent
-from pathlib import Path
-
-print("🚀 Traigent Quick Demo")
-print("-" * 40)
-
-# Create a simple optimization function
-@traigent.optimize(
-    configuration_space={
-        "temperature": [0.1, 0.5, 0.9],
-        "model": ["gpt-3.5-turbo", "gpt-4"]
-    },
-    objectives=["accuracy"],
-    max_trials=3
-)
-def analyze_sentiment(text: str) -> str:
-    """Mock sentiment analysis function."""
-    # In real usage, this would call an LLM
-    return "positive" if "good" in text.lower() else "negative"
-
-print("✨ Created optimizable function: analyze_sentiment")
-print("📊 Configuration space:")
-print("   - temperature: [0.1, 0.5, 0.9]")
-print("   - model: ['gpt-3.5-turbo', 'gpt-4']")
-
-# Test the function
-result = analyze_sentiment("This is a good product")
-print(f"\\n🎯 Test result: {result}")
-
-print("\\n✅ Traigent is working correctly!")
-print("\\n📚 Next steps:")
-print("1. Check out examples in the examples/ directory")
-print("2. Read the documentation at README.md")
-print("3. Try creating your own optimizable functions")
-print("4. When ready, add real API keys to .env and disable mock mode")
-'''
-
-    # Write demo to temporary file
-    demo_file = Path("_quickstart_demo.py")
-    demo_file.write_text(demo_code)
-
     try:
-        # Run the demo
+        print_info("Running packaged quickstart with default optimization settings...")
         result = subprocess.run(
-            [sys.executable, str(demo_file)], capture_output=True, text=True, timeout=30
+            [sys.executable, "-m", "traigent.examples.quickstart"],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
 
         if result.returncode == 0:
@@ -227,10 +183,6 @@ print("4. When ready, add real API keys to .env and disable mock mode")
     except subprocess.TimeoutExpired:
         print_error("Demo timed out")
         return False
-    finally:
-        # Clean up
-        if demo_file.exists():
-            demo_file.unlink()
 
 
 def print_next_steps():
@@ -252,7 +204,6 @@ def print_next_steps():
 
     print("\n4. When ready for real usage:")
     print("   - Add your API keys to .env")
-    print("   - Set TRAIGENT_MOCK_LLM=false")
     print("   - Run with real LLM providers")
 
     print(f"\n{Colors.BOLD}{Colors.GREEN}Happy optimizing! 🚀{Colors.ENDC}")

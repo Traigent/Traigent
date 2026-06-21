@@ -123,16 +123,16 @@ def my_agent(question: str) -> str:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `algorithm` | `str` | `"auto"` | Optimizer selector. `"auto"` is cloud-first with local fallback on connectivity failures; `"grid"` and `"random"` run locally; smart algorithms require cloud. |
-| `offline` | `bool` | `False` | Force local-only operation with zero Traigent backend egress. |
+| `algorithm` | `str` | `"auto"` | Optimizer selector. `"auto"` uses Traigent's smart optimizer when authenticated; `"grid"` and `"random"` run local search; smart algorithms require cloud. |
+| `offline` | `bool` | `False` | Force local-only operation with zero Traigent backend egress and no portal sync. |
 | `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
-| `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
+| `minimal_logging` | `bool` | `True` | Suppresses verbose logs. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
 | `reps_per_trial` | `int` | `1` | Number of repetitions per configuration. OSS SDK accepts only `1`; other values raise `pydantic.ValidationError` and require Traigent Enterprise. |
 | `reps_aggregation` | `str` | `"mean"` | Repetition aggregation method. OSS SDK accepts only `"mean"`; other values raise `pydantic.ValidationError` and require Traigent Enterprise. |
-| `evaluator` | `ExternalServiceEvaluator \| HybridAPIOptions \| dict \| None` | `None` | External service evaluator bundle. Use `ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))` for Hybrid API services. The optimizer still runs locally; the evaluator dispatches each trial to the external HTTP or MCP service. |
+| `evaluator` | `ExternalServiceEvaluator \| dict \| None` | `None` | External service evaluator bundle for API-contract integrations. This does not change optimizer routing. |
 
 **Legacy Compatibility**
 
@@ -143,13 +143,13 @@ def my_agent(question: str) -> str:
 
 **Usage Notes**
 
-- The default path is `algorithm="auto"`: cloud-first optimizer decisions with local trial execution and local fallback on connectivity failures.
+- The default path is `algorithm="auto"`: Traigent smart optimization when portal credentials are available, with trials executing in your process.
 - Set `TRAIGENT_REQUIRE_CLOUD=1` to turn that connectivity fallback into a hard error.
 - Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts. `MockModeOptions` is **deprecated** (all fields inert; see the `mock` row above and issue #874) — do not use it for new code.
 - `parallel_config=ParallelConfig(...)` remains the primary way to control concurrency. Set global defaults via `traigent.configure(parallel_config=...)`, override them in the decorator, and fine-tune per `.optimize()` call. Later scopes override earlier ones field-by-field.
 - `ParallelConfig` lives in `traigent.config.parallel`. You can pass either an instance or a simple `dict` with the same keys.
-- Use `offline=True` when policy requires zero Traigent backend egress. `TRAIGENT_OFFLINE=1` and the legacy `TRAIGENT_OFFLINE_MODE=1` provide the same routing at the environment level.
-- `privacy_enabled` and `cloud_fallback_policy` are deprecated no-ops. `execution_mode` is deprecated compatibility input only; migrate to `algorithm`, `offline`, and `evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))`.
+- Use `offline=True` when policy requires zero Traigent backend egress. Local `grid` and `random` runs still sync results to the portal unless `offline=True`.
+- Legacy `execution_mode` inputs are deprecated compatibility shims. Use `algorithm` and `offline` for new code.
 - `config_param` is required whenever you choose `injection_mode="parameter"`; forgetting it leaves your function without injected configs.
 - Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
 - Inline tuned-variable definitions accept `Range`, `IntRange`, `LogRange`, `Choices`, or numeric `(low, high)` tuples. Inline lists are not recognized; use `Choices([...])` instead.
@@ -180,8 +180,6 @@ Later scopes override earlier ones field-by-field. The runtime resolution logs t
         "temperature": (0.0, 1.0)
     },
     evaluation={"eval_dataset": "evals.jsonl"},  # Grouped option bundle
-    algorithm="grid",
-    offline=True,
 )
 def my_agent(query: str) -> str:
     return process_query(query)
@@ -220,7 +218,7 @@ async def optimize(
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `algorithm` | `str \| None` | Decorator default | Optimizer to use. `"auto"` is cloud-first with local fallback on connectivity failures; `"grid"` and `"random"` stay local; explicit smart algorithms such as `"bayesian"`, `"tpe"`, `"optuna_tpe"`, `"optuna_random"`, `"optuna_grid"`, `"optuna_cmaes"`, `"optuna_nsga2"`, `"nsga2"`, `"nsgaii"`, `"nsga_ii"`, `"cmaes"`, and `"cma_es"` require cloud and hard-error when unavailable or offline. |
+| `algorithm` | `str \| None` | Decorator default | Optimizer to use. Omit it for the default smart optimizer. `"grid"` and `"random"` run local search and still sync results when authenticated. Explicit smart algorithms such as `"bayesian"`, `"tpe"`, `"optuna_tpe"`, `"optuna_random"`, `"optuna_grid"`, `"optuna_cmaes"`, `"optuna_nsga2"`, `"nsga2"`, `"nsgaii"`, `"nsga_ii"`, `"cmaes"`, and `"cma_es"` require cloud and hard-error when unavailable or offline. |
 | `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. `None` means unlimited. |
 | `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. |
 | `save_to` | `str \| None` | `None` | Optional path to persist results after completion. |
@@ -256,8 +254,8 @@ Unknown keys are forwarded to the optimizer and may raise errors when unsupporte
 
 **Example:**
 ```python
-# Run optimization
-result = await my_agent.optimize(algorithm="grid", max_trials=50)
+# Run optimization with the default smart optimizer
+result = await my_agent.optimize(max_trials=50)
 
 # Save results
 await my_agent.save_optimization_results("results.json")

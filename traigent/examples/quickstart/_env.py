@@ -19,8 +19,7 @@ _PORTAL_SIGNUP_URL = "https://app.traigent.ai"
 
 
 def configure_quickstart_env(env: MutableMapping[str, str]) -> None:
-    """Seed env vars LangChain expects and force offline-mode without an
-    API key.
+    """Seed env vars LangChain expects and explain portal sync state.
 
     - Seeds a placeholder ``OPENAI_API_KEY`` (via ``setdefault``) so
       :class:`ChatOpenAI` can instantiate. In the canonical invocation
@@ -33,21 +32,17 @@ def configure_quickstart_env(env: MutableMapping[str, str]) -> None:
       intercepted by the mock-mode flag set via
       :func:`traigent.testing.enable_mock_mode_for_quickstart`.
     - If no ``TRAIGENT_API_KEY`` is set, prints a clear stderr notice
-      and **forces** ``TRAIGENT_OFFLINE_MODE=true`` (override, not
-      ``setdefault``). Without a portal key the SDK can't sync results
-      anyway — leaving offline-mode unset would just produce noisy
-      auth errors instead of useful output.
-    - If ``TRAIGENT_API_KEY`` IS set, this function does NOT touch
-      ``TRAIGENT_OFFLINE_MODE`` — the user wants results synced and
-      should control offline-mode themselves.
+      that the demo will still run but results will not sync to the
+      portal.
+    - If ``TRAIGENT_API_KEY`` IS set, results can sync to the portal
+      while LLM calls stay mocked for the packaged demo.
     """
     env.setdefault("OPENAI_API_KEY", "mock-key-for-demos")  # pragma: allowlist secret
 
     if not env.get("TRAIGENT_API_KEY"):
         print(
-            "[traigent] No TRAIGENT_API_KEY set — running fully offline. "
+            "[traigent] No TRAIGENT_API_KEY set - results will print locally. "
             f"Set TRAIGENT_API_KEY (get one at {_PORTAL_SIGNUP_URL}) to sync "
             "results to the portal while keeping LLM calls mocked.",
             file=sys.stderr,
         )
-        env["TRAIGENT_OFFLINE_MODE"] = "true"

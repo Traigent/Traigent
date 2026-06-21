@@ -28,7 +28,7 @@
 #   tvl                 - TVL tutorial examples (5 examples)
 #   walkthrough         - Walkthrough tutorial examples (8 examples)
 #   advanced-walkthrough - Advanced walkthrough examples (5 examples)
-#   advanced            - Execution modes and specialized features
+#   advanced            - Optimization routing and specialized features
 #   integrations        - Third-party evaluation framework integrations (1 example)
 #   ragas               - RAGAS evaluation integration examples (3 examples)
 #   docs                - Documentation inline examples (2 examples)
@@ -90,7 +90,7 @@ while [[ $# -gt 0 ]]; do
             echo "  tvl                 - TVL tutorials (5 examples)"
             echo "  walkthrough         - Walkthrough tutorials (8 examples)"
             echo "  advanced-walkthrough - Advanced walkthrough (5 examples)"
-            echo "  advanced            - Execution modes and specialized features"
+            echo "  advanced            - Optimization routing and specialized features"
             echo "  integrations        - Third-party evaluation integrations (1 example)"
             echo "  ragas               - RAGAS evaluation integration (3 examples)"
             echo "  docs                - Documentation inline examples (2 examples)"
@@ -150,12 +150,12 @@ declare -a INTEGRATION_EXAMPLES=(
     "integrations/deepeval/run.py"
 )
 
-# Advanced examples - execution modes (require API keys for most)
+# Advanced examples - optimization routing (require API keys for most)
 declare -a ADVANCED_EXAMPLES=(
-    # Note: execution-modes require API keys (mock fallbacks are import-time only)
+    # Note: optimization-routing examples require API keys for portal sync
     # Uncomment if you have OPENAI_API_KEY set
-    # "advanced/execution-modes/ex01-local-basic/run.py"
-    # "advanced/execution-modes/ex02-local-privacy/run.py"
+    # "advanced/optimization-routing/ex01-local-search/run.py"
+    # "advanced/optimization-routing/ex02-offline-no-egress/run.py"
     # ...
 )
 

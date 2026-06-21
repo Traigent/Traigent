@@ -45,9 +45,9 @@ Traigent does **not** collect:
 - **API keys or credentials**
 - **Source code or function implementations**
 
-### Privacy and Offline Mode
+### Data Boundary and No-Egress Runs
 
-The cloud-brain path sends configuration identifiers and numeric metrics. It
+The default portal-backed path sends configuration identifiers and numeric metrics. It
 does not send dataset example inputs, expected outputs, prompts, responses, or
 example metadata. Use `offline=True` when your policy requires no Traigent
 backend egress at all:
@@ -60,17 +60,11 @@ backend egress at all:
 )
 ```
 
-Offline runs keep Traigent optimization metadata local while still allowing your
+No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
-`TRAIGENT_OFFLINE=1` and the legacy `TRAIGENT_OFFLINE_MODE=1` enable the same
-zero-egress routing without changing code. Set `TRAIGENT_REQUIRE_CLOUD=1` when
-`algorithm="auto"` must hard-error instead of falling back locally.
-
-`privacy_enabled` is deprecated and does not disable telemetry or network
-access. The default cloud-brain path is already content-free. Use
-`TRAIGENT_DISABLE_TELEMETRY=true` for telemetry opt-out and `offline=True` for
-zero Traigent backend egress.
+Use `TRAIGENT_DISABLE_TELEMETRY=true` for telemetry opt-out and `offline=True`
+for zero Traigent backend egress.
 
 ### OpenTelemetry Tracing
 
@@ -127,13 +121,13 @@ Telemetry data is used for:
 
 ## Data Retention
 
-**Offline mode**:
+**No-egress runs**:
 - All data is stored **locally** on your machine
 - Data is kept in `~/.traigent/` or your specified `local_storage_path`
 - You control retention - delete files as needed
 - No data is sent to the Traigent backend
 
-**Cloud-brain mode**:
+**Portal-backed runs**:
 - Configuration IDs/schema and numeric metrics can be sent to Traigent backend for optimization coordination
 - Retention policies depend on your managed-service agreement
 - You can request data deletion at any time
@@ -240,7 +234,7 @@ Each event includes:
 
 ## Local Storage Structure
 
-When using offline mode, data is stored locally:
+When using `offline=True`, data is stored locally:
 
 ```
 ~/.traigent/
@@ -274,8 +268,7 @@ example record includes the input **query**, the model **response**, and the
 > cards, API keys / bearer tokens, etc.). Free-text content in prompts and
 > responses (names, addresses, proprietary data) is stored **verbatim**.
 
-To keep ids and metrics while omitting that content — without enabling full
-privacy mode — disable content logging:
+To keep ids and metrics while omitting that content, disable content logging:
 
 ```bash
 export TRAIGENT_LOG_EXAMPLE_CONTENT=false   # also accepts 0 / no / off
@@ -287,7 +280,7 @@ and `error`, but `query` / `response` / `expected` are `null`.
 
 Traigent writes a `.gitignore` (`*`) into the log root so this content is not
 accidentally committed, but you should still keep `.traigent/` out of version
-control and CI artifact collection in privacy-sensitive projects.
+control and CI artifact collection in sensitive projects.
 
 ## Telemetry Listeners
 
@@ -308,7 +301,7 @@ emitter.subscribe(my_listener)
 # (unless TRAIGENT_DISABLE_TELEMETRY is set)
 ```
 
-## Security and Privacy
+## Security and Sensitive Data
 
 ### Data Sanitization
 
@@ -357,7 +350,7 @@ Traigent SDK is designed to be GDPR-compliant:
 
 For HIPAA compliance or handling sensitive data:
 
-1. **Use Offline Mode for Zero Traigent Egress**:
+1. **Use `offline=True` for Zero Traigent Egress**:
    ```python
    @traigent.optimize(
        algorithm="grid",
@@ -387,7 +380,7 @@ For HIPAA compliance or handling sensitive data:
 
 ### Q: Is telemetry enabled by default?
 
-**A**: Yes, for local optimization metadata. The default cloud-brain path sends
+**A**: Yes, for local optimization metadata. The default portal-backed path sends
 configuration IDs/schema and numeric metrics only; use `offline=True` for zero
 Traigent backend egress.
 
@@ -415,7 +408,7 @@ Use `offline=True` when you need to disable Traigent backend egress for a run.
 
 ### Q: Where can I see what telemetry data was collected?
 
-**A**: In offline mode, check the JSON files in `~/.traigent/sessions/`. They
+**A**: With `offline=True`, check the JSON files in `~/.traigent/sessions/`. They
 contain the same trial metadata and metrics emitted to telemetry listeners.
 
 ### Q: Can I contribute telemetry data to improve Traigent?
@@ -425,6 +418,6 @@ contain the same trial metadata and metrics emitted to telemetry listeners.
 ## Related Documentation
 
 - [Decorator Reference](./decorator-reference.md) - Configuration options
-- [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md) - cloud-first auto, explicit local, offline, env vars, and migration guidance
-- [Privacy & Security](../contributing/SECURITY.md) - Security practices
+- [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md) - defaults, local search, no-egress runs, and migration guidance
+- [Security](../contributing/SECURITY.md) - Security practices
 - [API Reference](./complete-function-specification.md) - Full API documentation

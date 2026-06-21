@@ -488,7 +488,7 @@ Best accuracy: 0.00
 ## Related Documentation
 
 - [Quick Start Guide](../getting-started/GETTING_STARTED.md)
-- [Execution Modes](execution-modes.md)
+- [Optimization Routing](execution-modes.md)
 - [Parallel Configuration](parallel-configuration.md)
 - [API Reference](../api-reference/)
 - [Examples](../examples/)
