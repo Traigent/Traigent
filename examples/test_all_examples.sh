@@ -197,8 +197,8 @@ declare -a TVL_EXAMPLES=(
 declare -a MULTI_OBJECTIVE_EXAMPLES=(
     "core/multi-objective-tradeoff/run_anthropic.py"
     "core/multi-objective-tradeoff/run_openai.py"
-    "core/multi-objective-tradeoff/run_openai_optuna.py"
-    "core/multi-objective-tradeoff/run_openai_optuna_concurrency.py"
+    "core/multi-objective-tradeoff/run_openai_backend_smart.py"
+    "core/multi-objective-tradeoff/run_openai_backend_smart_concurrency.py"
     "core/multi-objective-tradeoff/run_many_providers.py"
 )
 

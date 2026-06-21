@@ -15,9 +15,6 @@ rapidfuzz>=3.14.0
 # Analytics dependencies needed for insights tests
 -r requirements-analytics.txt
 
-# Bayesian dependencies needed for optimization tests
--r requirements-bayesian.txt
-
 # Security dependencies needed for enterprise tests
 -r requirements-security.txt
 

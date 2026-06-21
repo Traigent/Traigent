@@ -1,4 +1,4 @@
-"""Seamless configuration injection helpers for Optuna-backed flows."""
+"""Seamless configuration injection helpers for optimizer-backed flows."""
 
 # Traceability: CONC-ConfigInjection CONC-Invocation FUNC-API-ENTRY FUNC-INVOKERS REQ-INJ-002 SYNC-OptimizationFlow CONC-Layer-Core
 
@@ -47,7 +47,7 @@ class RuntimeShim:
         self.config: dict[str, Any] = dict(config)
         self._access_log: list[tuple[str, Any]] = []
 
-        trial_id = self.config.get("_optuna_trial_id")
+        trial_id = self.config.get("_optimizer_trial_id")
         if trial_id is not None:
             with self.__class__._cache_lock:
                 cache = self.__class__._state_cache
@@ -99,10 +99,10 @@ class SeamlessInjectionConfigurator:
         *,
         metadata: Mapping[str, Any] | None = None,
     ) -> Callable[..., Any]:
-        if "_optuna_trial_id" not in trial_config:
-            raise ValueError("trial_config must include '_optuna_trial_id'")
+        if "_optimizer_trial_id" not in trial_config:
+            raise ValueError("trial_config must include '_optimizer_trial_id'")
 
-        trial_id = trial_config["_optuna_trial_id"]
+        trial_id = trial_config["_optimizer_trial_id"]
         shim = self._shim_factory(trial_config)
         sanitized_config = {
             key: value for key, value in trial_config.items() if not key.startswith("_")

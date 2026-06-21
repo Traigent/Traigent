@@ -18,7 +18,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.context import TrialContext, WorkflowTraceContext
 from traigent.core.orchestrator_helpers import (
@@ -27,7 +27,6 @@ from traigent.core.orchestrator_helpers import (
     extract_optuna_trial_id,
     prepare_evaluation_config,
 )
-from traigent.core.pruning_progress_tracker import PruningProgressTracker
 from traigent.core.sample_budget import LeaseClosure, SampleBudgetLease
 from traigent.core.trial_result_factory import (
     build_failed_result,
@@ -135,6 +134,10 @@ class TrialLifecycle:
                 logger.exception("Optimizer failed to suggest the next trial: %s", e)
                 return trial_count, "break"
 
+        if config is None:
+            logger.info("Optimizer did not suggest a trial configuration")
+            return trial_count, "break"
+
         optuna_trial_id = (
             config.get("_optuna_trial_id") if isinstance(config, dict) else None
         )
@@ -150,14 +153,6 @@ class TrialLifecycle:
             )
             if not filtered_configs:
                 logger.info("Configuration already evaluated, skipping")
-                if hasattr(orchestrator, "_abandon_optuna_trial"):
-                    orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
-                        optuna_trial_id,
-                        reason=f"trial_filtered_by_cache_policy:{cache_policy}",
-                        config=config,
-                        status=TrialStatus.PRUNED,
-                        pruned_step=0,
-                    )
                 return trial_count, "continue"
             config = filtered_configs[0]
             optuna_trial_id = (
@@ -165,6 +160,7 @@ class TrialLifecycle:
             )
 
         config_for_run = prepare_evaluation_config(config)  # type: ignore[arg-type]
+        config_for_trial = cast(dict[str, Any], config)
 
         # Phase 2: Enforce pre-evaluation constraints
         try:
@@ -187,14 +183,6 @@ class TrialLifecycle:
                 orchestrator.optimizer._trial_count = max(
                     0, orchestrator.optimizer._trial_count - 1
                 )
-            if hasattr(orchestrator, "_abandon_optuna_trial"):
-                orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
-                    optuna_trial_id,
-                    reason=f"trial_rejected_by_constraint:{e}",
-                    config=config_for_run,
-                    status=TrialStatus.PRUNED,
-                    pruned_step=0,
-                )
             return trial_count, "continue"
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
@@ -208,14 +196,6 @@ class TrialLifecycle:
                     config_for_run,
                 )
                 orchestrator._stop_reason = "cost_limit"
-                if hasattr(orchestrator, "_abandon_optuna_trial"):
-                    orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
-                        optuna_trial_id,
-                        reason="trial_cancelled_by_cost_limit",
-                        config=config_for_run,
-                        status=TrialStatus.CANCELLED,
-                        pruned_step=0,
-                    )
                 return trial_count, "break"
 
         orchestrator.callback_manager.on_trial_start(trial_count, config_for_run)
@@ -223,7 +203,7 @@ class TrialLifecycle:
         try:
             trial_result = await self.run_trial(
                 func,
-                config,
+                config_for_trial,
                 dataset,
                 trial_count,
                 session_id,
@@ -232,7 +212,7 @@ class TrialLifecycle:
 
             trial_count = await orchestrator._handle_trial_result(
                 trial_result=trial_result,
-                optimizer_config=config,
+                optimizer_config=config_for_trial,
                 current_trial_index=trial_count,
                 session_id=session_id,
                 optuna_trial_id=optuna_trial_id,
@@ -610,45 +590,13 @@ class TrialLifecycle:
         dataset: Dataset,
         trial_id: str,
     ) -> tuple[Callable[[int, dict[str, Any]], None] | None, dict[str, Any] | None]:
-        """Create progress callback and state for pruning if applicable.
+        """Return progress callback state.
 
-        Returns (None, None) early if no Optuna trial ID is available, so evaluators
-        don't receive a callback that would fail.
-
-        Args:
-            optuna_trial_id: Optuna trial ID for pruning integration
-            dataset: Evaluation dataset
-            trial_id: Trial identifier for logging
-
-        Returns:
-            Tuple of (progress_callback, progress_state) or (None, None) if no pruning
+        Local Optuna-backed intermediate reporting has been evicted. Generic
+        pruned-trial result handling remains in the lifecycle for future callers
+        that raise :class:`TrialPrunedError` directly.
         """
-        orchestrator = self._orchestrator
-
-        # Early return if no Optuna trial ID or optimizer lacks reporting capability
-        if optuna_trial_id is None or not hasattr(
-            orchestrator.optimizer, "report_intermediate_value"
-        ):
-            return None, None
-
-        # Extract band target for banded objective pruning
-        band_target = None
-        if (
-            orchestrator.objective_schema is not None
-            and orchestrator.objective_schema.objectives
-        ):
-            primary_obj = orchestrator.objective_schema.objectives[0]
-            if hasattr(primary_obj, "band") and primary_obj.band is not None:
-                band_target = primary_obj.band
-
-        tracker = PruningProgressTracker(
-            optimizer=orchestrator.optimizer,
-            dataset=dataset,
-            trial_id=trial_id,
-            optuna_trial_id=optuna_trial_id,
-            band_target=band_target,
-        )
-        return tracker.callback, tracker.state
+        return None, None
 
     # =========================================================================
     # Budget Management
