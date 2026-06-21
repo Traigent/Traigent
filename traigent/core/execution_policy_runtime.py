@@ -171,8 +171,6 @@ def backend_egress_disabled(config: TraigentConfig | None) -> bool:
         return True
     if bool(getattr(config, "no_egress", False)):
         return True
-    if policy is not None and policy.intent is ExecutionIntent.LOCAL_ONLY:
-        return True
     return False
 
 
