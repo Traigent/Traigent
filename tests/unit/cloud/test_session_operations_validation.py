@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from traigent.cloud.api_operations import TraigentSessionApiResult
 from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 from traigent.cloud.session_operations import SessionOperations
 from traigent.utils.exceptions import ValidationError as ValidationException
@@ -136,7 +137,13 @@ def test_create_session_tracks_connected_session_locally(monkeypatch):
     ops = SessionOperations(client)
 
     async def create_via_api(_request):
-        return ("session-123", "experiment-123", "run-123")
+        return TraigentSessionApiResult(
+            "session-123",
+            "experiment-123",
+            "run-123",
+            project_id="project-123",
+            tenant_id="tenant-123",
+        )
 
     monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
 
@@ -153,6 +160,10 @@ def test_create_session_tracks_connected_session_locally(monkeypatch):
     assert tracked.max_trials == 3
     assert tracked.metadata["experiment_id"] == "experiment-123"
     assert tracked.metadata["experiment_run_id"] == "run-123"
+    assert tracked.metadata["project_id"] == "project-123"
+    assert tracked.metadata["tenant_id"] == "tenant-123"
+    assert result.project_id == "project-123"
+    assert result.tenant_id == "tenant-123"
 
 
 def test_connected_session_is_mirrored_to_local_storage(monkeypatch, tmp_path):

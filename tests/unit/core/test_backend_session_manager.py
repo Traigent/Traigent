@@ -1040,6 +1040,41 @@ class TestBackendSessionManagerMetadata:
             "trials": 10,
         }
 
+    def test_attach_session_metadata_includes_create_response_context(
+        self, backend_session_manager, mock_backend_client, mock_dataset
+    ):
+        """Project/tenant context from session creation reaches result metadata."""
+
+        def func(x):
+            return x
+
+        mock_backend_client.create_session.return_value = (
+            SessionCreationResult.connected(
+                session_id="test-session-id",
+                project_id="project/alpha",
+                tenant_id="tenant acme",
+            )
+        )
+        descriptor = resolve_function_descriptor(func)
+        backend_session_manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=10,
+            start_time=1234567890.0,
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.metadata = {}
+        backend_session_manager.attach_session_metadata(
+            result=result,
+            session_id="test-session-id",
+            session_summary={"status": "completed"},
+        )
+
+        assert result.metadata["project_id"] == "project/alpha"
+        assert result.metadata["tenant_id"] == "tenant acme"
+
     def test_attach_metadata_without_session_id(self, backend_session_manager):
         """Test metadata attachment when session_id is None."""
         result = Mock(spec=OptimizationResult)

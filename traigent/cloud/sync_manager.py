@@ -12,6 +12,7 @@ import re
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
 
@@ -45,13 +46,29 @@ _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
 
 
-def build_experiment_url(base_url: str, experiment_id: str) -> str:
+def build_experiment_url(
+    base_url: str,
+    experiment_id: str,
+    *,
+    project_id: str | None = None,
+    tenant_id: str | None = None,
+) -> str:
     """Build the portal URL for an experiment.
 
     Single source of truth for experiment URL construction —
     used by both SyncManager and the orchestrator.
     """
-    return f"{base_url.rstrip('/')}/experiments/{experiment_id}"
+    url = (
+        f"{base_url.rstrip('/')}/experiments/view/{quote(str(experiment_id), safe='')}"
+    )
+    query_params = {
+        key: normalized
+        for key, value in (("project_id", project_id), ("tenant_id", tenant_id))
+        if value is not None and (normalized := str(value).strip())
+    }
+    if not query_params:
+        return url
+    return f"{url}?{urlencode(query_params, quote_via=quote)}"
 
 
 def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
@@ -576,6 +593,10 @@ class SyncManager:
         configuration_runs = traigent_data["configuration_runs"]
         total_steps = 4 + len(configuration_runs)
         successful_steps = 0
+        project_id = prior_state.get("project_id") if reuse else None
+        tenant_id = prior_state.get("tenant_id") if reuse else None
+        sync_result["project_id"] = project_id
+        sync_result["tenant_id"] = tenant_id
 
         # Agent + benchmark dedup by name; reuse a saved id when present.
         agent_id = prior_state.get("cloud_agent_id") if reuse else None
@@ -619,7 +640,11 @@ class SyncManager:
                 )
                 return
             experiment_id = experiment_result["experiment_id"]
+            project_id = experiment_result.get("project_id")
+            tenant_id = experiment_result.get("tenant_id")
         sync_result["cloud_experiment_id"] = experiment_id
+        sync_result["project_id"] = project_id
+        sync_result["tenant_id"] = tenant_id
         successful_steps += 1
 
         experiment_run_id = (
@@ -655,7 +680,10 @@ class SyncManager:
         elif successful_steps == total_steps:
             sync_result["status"] = "success"
             sync_result["cloud_url"] = build_experiment_url(
-                self.base_url, experiment_id
+                BackendConfig.get_cloud_backend_url(),
+                experiment_id,
+                project_id=project_id,
+                tenant_id=tenant_id,
             )
         else:
             sync_result["status"] = "partial"  # Some steps succeeded
@@ -687,6 +715,8 @@ class SyncManager:
             "cloud_benchmark_id": sync_result.get("cloud_benchmark_id"),
             "cloud_experiment_id": sync_result.get("cloud_experiment_id"),
             "cloud_experiment_run_id": sync_result.get("cloud_experiment_run_id"),
+            "project_id": sync_result.get("project_id"),
+            "tenant_id": sync_result.get("tenant_id"),
             "cloud_url": sync_result.get("cloud_url"),
             "synced_at": datetime.now(UTC).isoformat(),
             "last_error": "; ".join(sync_result.get("errors", [])) or None,
@@ -824,7 +854,7 @@ class SyncManager:
         self._raise_if_backend_egress_disabled("sync benchmark")
         try:
             existing_benchmark = self._find_existing_by_name(
-                "benchmarks", benchmark_data["name"], "benchmarks"
+                "datasets", benchmark_data["name"], "datasets"
             )
             if existing_benchmark:
                 benchmark_id = self._extract_resource_id(existing_benchmark)
@@ -837,14 +867,14 @@ class SyncManager:
                     }
 
             response = self._session.post(
-                f"{self.base_url}/benchmarks",
+                f"{self.base_url}/datasets",
                 json=benchmark_data,
                 timeout=self._request_timeout,
             )
 
             if response.status_code in [409, 500]:
                 existing_benchmark = self._find_existing_by_name(
-                    "benchmarks", benchmark_data["name"], "benchmarks"
+                    "datasets", benchmark_data["name"], "datasets"
                 )
                 if existing_benchmark:
                     benchmark_id = self._extract_resource_id(existing_benchmark)
@@ -887,13 +917,23 @@ class SyncManager:
                 timeout=self._request_timeout,
             )
             if response.status_code in [200, 201]:
-                experiment_id = self._extract_response_id(response)
+                payload = self._response_json(response)
+                experiment_id = (
+                    self._extract_resource_id(payload)
+                    if isinstance(payload, Mapping)
+                    else None
+                )
                 if not experiment_id:
                     return {
                         "success": False,
                         "error": "Experiment create response did not include id",
                     }
-                return {"success": True, "experiment_id": experiment_id}
+                context = (
+                    self._extract_experiment_context(payload)
+                    if isinstance(payload, Mapping)
+                    else {}
+                )
+                return {"success": True, "experiment_id": experiment_id, **context}
             return {
                 "success": False,
                 "error": f"HTTP {response.status_code}: {response.text}",
@@ -1079,6 +1119,34 @@ class SyncManager:
         if isinstance(payload, Mapping):
             return self._extract_resource_id(payload)
         return None
+
+    @staticmethod
+    def _extract_context_value(payload: Mapping[str, Any], key: str) -> str | None:
+        value = payload.get(key)
+        if value is not None:
+            normalized = str(value).strip()
+            return normalized or None
+
+        metadata = payload.get("metadata")
+        if isinstance(metadata, Mapping):
+            value = metadata.get(key)
+            if value is not None:
+                normalized = str(value).strip()
+                return normalized or None
+
+        data = payload.get("data")
+        if isinstance(data, Mapping):
+            return SyncManager._extract_context_value(data, key)
+        return None
+
+    @staticmethod
+    def _extract_experiment_context(payload: Mapping[str, Any]) -> dict[str, str]:
+        context: dict[str, str] = {}
+        for key in ("project_id", "tenant_id"):
+            value = SyncManager._extract_context_value(payload, key)
+            if value:
+                context[key] = value
+        return context
 
     def get_cloud_analytics_preview(self) -> dict[str, Any]:
         """Get preview of analytics available in cloud after sync."""
