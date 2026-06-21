@@ -21,7 +21,7 @@
     
     
       
-        <title>Execution Mode Migration - Traigent</title>
+        <title>Algorithm and Offline Migration - Traigent</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#execution-mode-migration" class="md-skip">
+        <a href="#algorithm-and-offline-migration" class="md-skip">
           Skip to content
         </a>
       
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Execution Mode Migration
+              Algorithm and Offline Migration
             
           </span>
         </div>
@@ -3750,10 +3750,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#canonical-model" class="md-nav__link">
+  <a href="#replacements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Canonical Model
+        Replacements
       
     </span>
   </a>
@@ -3761,43 +3761,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#deprecated-mapping-table" class="md-nav__link">
+  <a href="#external-api-contracts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Deprecated Mapping Table
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#copy-paste-replacements" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Copy-Paste Replacements
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#privacy-and-no-egress" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Privacy and No-Egress
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#result-provenance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Result Provenance
+        External API Contracts
       
     </span>
   </a>
@@ -3824,160 +3791,50 @@
   
 
 
-<h1 id="execution-mode-migration">Execution Mode Migration<a class="headerlink" href="#execution-mode-migration" title="Permanent link">&para;</a></h1>
-<p>Traigent's execution model is now defined by <code>algorithm</code> plus <code>offline</code>. The
-legacy <code>execution_mode</code>, <code>privacy_enabled</code>, and <code>cloud_fallback_policy</code> inputs
-are deprecated compatibility shims, not the current public model.</p>
-<h2 id="canonical-model">Canonical Model<a class="headerlink" href="#canonical-model" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>algorithm="auto"</code>: cloud-first optimizer selection with local trial
-  execution. If the backend is unavailable because of missing credentials,
-  offline connectivity, or backend failure, Traigent warns once and degrades to
-  local grid/random.</li>
-<li><code>algorithm="grid"</code> or <code>"random"</code>: explicit local optimization with no
-  backend round trip.</li>
-<li>Explicit smart algorithms such as <code>"bayesian"</code>, <code>"tpe"</code>, <code>"optuna_tpe"</code>,
-  <code>"nsga2"</code>, or <code>"cmaes"</code>: cloud-only. If the cloud is unavailable, the run
-  errors. It does not silently downgrade.</li>
-<li><code>offline=True</code>: force zero Traigent backend egress. Environment equivalents:
-  <code>TRAIGENT_OFFLINE=1</code> and the legacy <code>TRAIGENT_OFFLINE_MODE=1</code>.</li>
-<li><code>TRAIGENT_REQUIRE_CLOUD=1</code>: disable the automatic local fallback for
-  <code>algorithm="auto"</code> and hard-error instead.</li>
-</ul>
-<h2 id="deprecated-mapping-table">Deprecated Mapping Table<a class="headerlink" href="#deprecated-mapping-table" title="Permanent link">&para;</a></h2>
+<h1 id="algorithm-and-offline-migration">Algorithm and Offline Migration<a class="headerlink" href="#algorithm-and-offline-migration" title="Permanent link">&para;</a></h1>
+<p>The public routing model is now <code>algorithm</code> plus <code>offline</code>.</p>
+<p>Most code should remove old routing settings entirely:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
+</code></pre></div>
+<p>With <code>TRAIGENT_API_KEY</code> set, the default uses Traigent's smart optimizer and
+syncs results to the portal. <code>grid</code> and <code>random</code> run local search, but they also
+sync results when authenticated. <code>offline=True</code> is the only no-egress local path.</p>
+<h2 id="replacements">Replacements<a class="headerlink" href="#replacements" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Deprecated input</th>
-<th>Current meaning</th>
-<th>What to write now</th>
+<th>Old intent</th>
+<th>Write now</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>execution_mode="edge_analytics"</code></td>
-<td>local-only / no Traigent backend egress</td>
-<td><code>offline=True</code></td>
+<td>Default portal-tracked optimization</td>
+<td>Omit routing settings</td>
 </tr>
 <tr>
-<td><code>execution_mode="local"</code></td>
-<td>local-only / no Traigent backend egress</td>
-<td><code>offline=True</code></td>
+<td>Explicit local search with portal results</td>
+<td><code>answer.optimize(algorithm="grid")</code> or <code>answer.optimize(algorithm="random")</code></td>
 </tr>
 <tr>
-<td><code>execution_mode="hybrid"</code></td>
-<td>cloud-first automatic optimization</td>
-<td>omit it, or set <code>algorithm="auto"</code></td>
+<td>Zero Traigent backend egress</td>
+<td><code>@traigent.optimize(offline=True)</code> and use <code>grid</code> or <code>random</code></td>
 </tr>
 <tr>
-<td><code>execution_mode="standard"</code></td>
-<td>cloud-first automatic optimization</td>
-<td>omit it, or set <code>algorithm="auto"</code></td>
-</tr>
-<tr>
-<td><code>execution_mode="privacy"</code></td>
-<td>cloud-first automatic optimization; not no-egress</td>
-<td>omit it, or set <code>algorithm="auto"</code>; use <code>offline=True</code> for no egress</td>
-</tr>
-<tr>
-<td><code>execution_mode="cloud"</code></td>
-<td>cloud-first automatic optimization, despite the historical local meaning</td>
-<td>omit it, or set <code>algorithm="auto"</code></td>
-</tr>
-<tr>
-<td><code>execution_mode="hybrid_api"</code></td>
-<td>external-service evaluation moved off the mode axis</td>
-<td><code>evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))</code></td>
-</tr>
-<tr>
-<td><code>privacy_enabled</code></td>
-<td>deprecated no-op</td>
-<td>remove it; use <code>offline=True</code> only when no egress is required</td>
-</tr>
-<tr>
-<td><code>cloud_fallback_policy</code></td>
-<td>deprecated no-op</td>
-<td>remove it; use <code>TRAIGENT_REQUIRE_CLOUD=1</code> when fallback must be disabled</td>
+<td>Explicit smart optimizer</td>
+<td><code>answer.optimize(algorithm="bayesian")</code> or another cloud-required smart algorithm</td>
 </tr>
 </tbody>
 </table>
-<h2 id="copy-paste-replacements">Copy-Paste Replacements<a class="headerlink" href="#copy-paste-replacements" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
-
-<span class="c1"># Before</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;hybrid&quot;</span><span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
-
-<span class="c1"># After</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
-
-<span class="c1"># Before</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;edge_analytics&quot;</span><span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
-
-<span class="c1"># After</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
-
-<span class="c1"># Before</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;hybrid_api&quot;</span><span class="p">,</span>
-    <span class="n">hybrid_api_endpoint</span><span class="o">=</span><span class="s2">&quot;https://svc&quot;</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-
-<span class="c1"># After</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.api.decorators</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExternalServiceEvaluator</span><span class="p">,</span> <span class="n">HybridAPIOptions</span>
-
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluator</span><span class="o">=</span><span class="n">ExternalServiceEvaluator</span><span class="p">(</span>
-        <span class="n">hybrid_api</span><span class="o">=</span><span class="n">HybridAPIOptions</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;https://svc&quot;</span><span class="p">)</span>
-    <span class="p">)</span>
-<span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
-
-<span class="c1"># Before</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">privacy_enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
-
-<span class="c1"># After</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
-</code></pre></div>
-<p>If the old intent behind <code>privacy_enabled=True</code> was "no Traigent network
-egress", the correct replacement is <code>offline=True</code>.</p>
-<h2 id="privacy-and-no-egress">Privacy and No-Egress<a class="headerlink" href="#privacy-and-no-egress" title="Permanent link">&para;</a></h2>
-<p>The cloud-first path is content-free by design: it sends configuration IDs and
-numeric metrics, not dataset example content. That default privacy boundary is
-not the same as offline operation.</p>
-<ul>
-<li>Use the default cloud-first path when backend egress is allowed.</li>
-<li>Use <code>offline=True</code> when policy requires zero Traigent backend egress.</li>
-</ul>
-<h2 id="result-provenance">Result Provenance<a class="headerlink" href="#result-provenance" title="Permanent link">&para;</a></h2>
-<p>Inspect <code>result.metadata["source"]</code> to see how a run actually executed:</p>
-<ul>
-<li><code>cloud_brain</code>: the cloud optimizer selected configurations.</li>
-<li><code>local_fallback</code>: <code>algorithm="auto"</code> degraded to local optimization after a
-  connectivity failure.</li>
-<li><code>explicit_local</code>: you requested <code>algorithm="grid"</code> or <code>"random"</code>.</li>
-<li><code>offline</code>: you forced offline mode.</li>
-</ul>
+<p>Legacy <code>execution_mode=...</code> inputs are deprecated compatibility shims. Remove
+them in new code. If you are unsure what an old value meant, start by omitting
+it; add <code>offline=True</code> only when the requirement is no Traigent backend egress.</p>
+<h2 id="external-api-contracts">External API Contracts<a class="headerlink" href="#external-api-contracts" title="Permanent link">&para;</a></h2>
+<p>External-service API contract docs may still use <code>/hybrid</code> endpoint names
+because those are backend route names. Do not use those names as optimization
+routing selectors in new SDK code.</p>
 
 
 

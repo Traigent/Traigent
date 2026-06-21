@@ -4273,7 +4273,7 @@ tuned values, running optimization, and inspecting results.</p>
 </code></pre></div>
 <p><code>successful_trials</code> is a list of successful <code>TrialResult</code> objects. Use
 <code>len(results.successful_trials)</code> when you need a count.</p>
-<p><code>results.source</code> tells you which execution path ran:
+<p><code>results.source</code> tells you which routing path ran:
 <code>cloud_brain</code>, <code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>.</p>
 <h2 id="progressive-runs">Progressive Runs<a class="headerlink" href="#progressive-runs" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="n">quick</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;random&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
@@ -4290,32 +4290,10 @@ tuned values, running optimization, and inspecting results.</p>
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="external-service-evaluator">External Service Evaluator<a class="headerlink" href="#external-service-evaluator" title="Permanent link">&para;</a></h2>
-<p>Use <code>ExternalServiceEvaluator</code> when trials are delegated to an external service
-that implements the Traigent Hybrid API contract. This replaces the removed
-<code>execution_mode="hybrid_api"</code> plus flat <code>hybrid_api_*</code> arguments; the optimizer
-still runs locally and each trial evaluation is dispatched through the external
-service.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.api.decorators</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExternalServiceEvaluator</span><span class="p">,</span> <span class="n">HybridAPIOptions</span>
-
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluator</span><span class="o">=</span><span class="n">ExternalServiceEvaluator</span><span class="p">(</span>
-        <span class="n">hybrid_api</span><span class="o">=</span><span class="n">HybridAPIOptions</span><span class="p">(</span>
-            <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://localhost:8080&quot;</span><span class="p">,</span>
-            <span class="n">transport_type</span><span class="o">=</span><span class="s2">&quot;http&quot;</span><span class="p">,</span>
-        <span class="p">)</span>
-    <span class="p">),</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">]},</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/eval.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">scoring_function</span><span class="o">=</span><span class="n">my_score</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">external_agent</span><span class="p">(</span><span class="n">_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-
-
-<span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">external_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-</code></pre></div>
-<p>Because the optimizer is local in this setup, successful runs report
-<code>results.source == "explicit_local"</code>.</p>
+<p>External-service API contract integrations are documented separately. They do
+not change optimization routing: use the default smart optimizer for most runs,
+<code>algorithm="grid"</code> / <code>"random"</code> for local search, and <code>offline=True</code> only for
+zero Traigent backend egress.</p>
 <h2 id="multi-field-evaluation-inputs">Multi-Field Evaluation Inputs<a class="headerlink" href="#multi-field-evaluation-inputs" title="Permanent link">&para;</a></h2>
 <p>Many tasks need more than a single input string. A text2SQL task, for example,
 requires both the natural-language question (<code>input</code>) and the database name

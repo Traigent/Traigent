@@ -742,10 +742,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#mock-mode-examples" class="md-nav__link">
+  <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🧪 Mock Mode &amp; Examples
+        🧪 Examples
       
     </span>
   </a>
@@ -775,10 +775,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-model" class="md-nav__link">
+  <a href="#portal-results" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🔒 Execution Model
+        📊 Portal Results
       
     </span>
   </a>
@@ -3940,10 +3940,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#mock-mode-examples" class="md-nav__link">
+  <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🧪 Mock Mode &amp; Examples
+        🧪 Examples
       
     </span>
   </a>
@@ -3973,10 +3973,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-model" class="md-nav__link">
+  <a href="#portal-results" class="md-nav__link">
     <span class="md-ellipsis">
       
-        🔒 Execution Model
+        📊 Portal Results
       
     </span>
   </a>
@@ -4006,7 +4006,7 @@
 <h1 id="getting-started-with-traigent-sdk">Getting Started with Traigent SDK<a class="headerlink" href="#getting-started-with-traigent-sdk" title="Permanent link">&para;</a></h1>
 <p>The fastest path to optimize an LLM workflow with <strong>zero code changes</strong>.</p>
 <h2 id="quick-start">🚀 Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<p>1) Install and run - no API keys needed:</p>
+<p>1) Install and run:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
 traigent<span class="w"> </span>quickstart
 </code></pre></div>
@@ -4027,7 +4027,7 @@ python<span class="w"> </span>hello_world.py
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
 python<span class="w"> </span>hello_world.py
 </code></pre></div>
-<p>The quickstart runs in mock mode by default and pre-approves the local cost gate for the demo - it simulates LiteLLM/LangChain calls so you can see the full optimization flow instantly. For your own dry runs, use mock mode plus <code>cost_approved=True</code> or <code>TRAIGENT_COST_APPROVED=true</code>; raw <code>openai.chat.completions.create(...)</code> and <code>anthropic.messages.create(...)</code> calls are not mocked.</p>
+<p>The packaged quickstart uses mocked LLM calls for the demo, so it does not spend provider tokens. Set <code>TRAIGENT_API_KEY</code> before running it when you want results to appear in the portal.</p>
 <p>2) Here's what it does - one decorator, automatic optimization:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">langchain_openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatOpenAI</span>
@@ -4047,7 +4047,7 @@ python<span class="w"> </span>hello_world.py
     <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">question</span><span class="p">)</span><span class="o">.</span><span class="n">content</span>
 
 <span class="c1"># Run optimization</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">))</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">6</span><span class="p">))</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best score:  </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_score</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
@@ -4102,21 +4102,19 @@ python<span class="w"> </span>hello_world.py
 <span class="k">def</span><span class="w"> </span><span class="nf">classify</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
-<h2 id="mock-mode-examples">🧪 Mock Mode &amp; Examples<a class="headerlink" href="#mock-mode-examples" title="Permanent link">&para;</a></h2>
+<h2 id="examples">🧪 Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py</code> (no API keys)</li>
 <li>Examples Navigator: <code>python -m http.server 8000</code> → http://localhost:8000/examples/</li>
 </ul>
 <h2 id="cli-snippets">🛠️ CLI Snippets<a class="headerlink" href="#cli-snippets" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>info<span class="w">                                   </span><span class="c1"># Version/features</span>
-traigent<span class="w"> </span>algorithms<span class="w">                             </span><span class="c1"># Available strategies</span>
 traigent<span class="w"> </span>quickstart<span class="w">                             </span><span class="c1"># Packaged mock-mode demo</span>
 traigent<span class="w"> </span>onboard<span class="w">                                </span><span class="c1"># Guided project setup</span>
 traigent<span class="w"> </span>auth<span class="w"> </span>device-login<span class="w">                      </span><span class="c1"># Browser device login</span>
 traigent<span class="w"> </span>first-prompt<span class="w"> </span>--agent<span class="w"> </span>codex<span class="w">             </span><span class="c1"># Coding-agent prompt</span>
 traigent<span class="w"> </span>recommend<span class="w"> </span>rag<span class="w">                          </span><span class="c1"># Configuration recommendations</span>
 traigent<span class="w"> </span>mcp<span class="w"> </span>serve<span class="w">                              </span><span class="c1"># Local stdio MCP server</span>
-traigent<span class="w"> </span>optimize<span class="w"> </span>examples/core/rag-optimization/run.py<span class="w"> </span>-a<span class="w"> </span>grid<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span>
+traigent<span class="w"> </span>optimize<span class="w"> </span>examples/core/rag-optimization/run.py<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span>
 traigent<span class="w"> </span>validate<span class="w"> </span>examples/datasets/rag-optimization/evaluation_set.jsonl
 traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w"> </span>-p<span class="w"> </span>progress
 </code></pre></div>
@@ -4138,27 +4136,14 @@ traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w
     <span class="n">response</span> <span class="o">=</span> <span class="n">completion</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">),</span> <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">query</span><span class="p">}])</span>
     <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="execution-model">🔒 Execution Model<a class="headerlink" href="#execution-model" title="Permanent link">&para;</a></h2>
-<p>Traigent executes your code locally. Configure routing with <code>algorithm</code> and
-<code>offline</code>; there is no user-facing execution-mode selector for new code.</p>
-<p>The default <code>algorithm="auto"</code> path is cloud-first: the backend suggests trial
-configs and your process runs the trials. If cloud connectivity is unavailable,
-auto falls back locally unless <code>TRAIGENT_REQUIRE_CLOUD=1</code> is set.</p>
-<p>Explicit <code>algorithm="grid"</code> and <code>"random"</code> run locally with no cloud optimizer
-round trip. Explicit smart algorithms such as <code>bayesian</code>, <code>tpe</code>, <code>optuna_tpe</code>,
-<code>nsga2</code>, and <code>cmaes</code> require cloud and hard-error if offline or unavailable.</p>
-<p>To run fully local with no Traigent backend communication, set <code>offline=True</code>,
-<code>TRAIGENT_OFFLINE=1</code>, or the legacy <code>TRAIGENT_OFFLINE_MODE=1</code>.</p>
-<p>If you are migrating older code: <code>execution_mode="hybrid"</code> becomes the default
-<code>@traigent.optimize()</code> behavior, <code>execution_mode="edge_analytics"</code> becomes
-<code>offline=True</code>, and <code>privacy_enabled=True</code> should be removed.</p>
-<p>Optimization results also record how the run resolved:</p>
-<ul>
-<li><code>result.source == "cloud_brain"</code> for the cloud-first path</li>
-<li><code>result.source == "local_fallback"</code> when <code>algorithm="auto"</code> degrades locally</li>
-<li><code>result.source == "explicit_local"</code> for explicit <code>grid</code> / <code>random</code></li>
-<li><code>result.source == "offline"</code> for <code>offline=True</code> or offline env vars</li>
-</ul>
+<h2 id="portal-results">📊 Portal Results<a class="headerlink" href="#portal-results" title="Permanent link">&para;</a></h2>
+<p>You do not need routing settings for the normal path. Authenticate once with
+<code>traigent auth device-login</code> or set <code>TRAIGENT_API_KEY</code>, then run your optimization
+and Traigent syncs results to the portal automatically.</p>
+<p>When you are not authenticated, the examples still print their local result
+tables so you can verify the workflow before connecting an account. For
+specialized routing controls, see
+<a href="../../user-guide/choosing_optimization_model/">Choosing the Right Optimization Model</a>.</p>
 <hr />
 <p>Ready for more? Dive into the <a href="../examples/">examples</a> and the <a href="../../api-reference/complete-function-specification/">API reference</a>.</p>
 

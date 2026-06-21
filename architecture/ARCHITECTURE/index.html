@@ -3404,10 +3404,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-modes" class="md-nav__link">
+  <a href="#optimization-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Execution Modes
+        Optimization Routing
       
     </span>
   </a>
@@ -3996,10 +3996,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-modes" class="md-nav__link">
+  <a href="#optimization-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Execution Modes
+        Optimization Routing
       
     </span>
   </a>
@@ -4089,9 +4089,9 @@
 <li><strong>Parameter Optimization</strong>: Automatically tune model selection, temperature, prompts, and other parameters</li>
 <li><strong>Multi-Objective Optimization</strong>: Balance accuracy, cost, latency, and other metrics simultaneously</li>
 <li><strong>Framework Integration</strong>: Native support for LangChain, DSPy, OpenAI, Anthropic, and more</li>
-<li><strong>Flexible Execution</strong>: Use cloud-first <code>algorithm="auto"</code>, explicit local
-  <code>algorithm="grid"</code> / <code>"random"</code>, <code>offline=True</code> for zero Traigent backend
-  egress, or <code>ExternalServiceEvaluator</code> for external Hybrid API services.</li>
+<li><strong>Flexible Routing</strong>: Most users omit routing settings. Use
+  <code>algorithm="grid"</code> / <code>"random"</code> for explicit local search, or <code>offline=True</code>
+  for zero Traigent backend egress.</li>
 <li><strong>TVL Specifications</strong>: Define optimization specs in YAML for version control and collaboration</li>
 </ul>
 <hr />
@@ -4259,36 +4259,33 @@
 <p>A fourth function-attribute-based mode existed in v1.x but was removed in v2.x because it could not be made thread-safe under parallel trials. The wrapper still exposes the read-only <code>OptimizedFunction.current_config</code> property to inspect the active configuration after <code>apply_best_config()</code> — that is a separate surface, not an injection mode. See <a href="../../user-guide/injection_modes/#4-attribute-mode-removed-in-v2x">User Guide / Section 4</a> for migration guidance.</p>
 </blockquote>
 <hr />
-<h2 id="execution-modes">Execution Modes<a class="headerlink" href="#execution-modes" title="Permanent link">&para;</a></h2>
+<h2 id="optimization-routing">Optimization Routing<a class="headerlink" href="#optimization-routing" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart TB
-    subgraph EdgeAnalytics[&quot;Offline Local Mode&quot;]
+    subgraph DefaultPath[&quot;Default&quot;]
         direction TB
-        ea_desc[&quot;Local optimization&lt;br/&gt;Data stays on-premise&lt;br/&gt;Optional telemetry&quot;]
-        ea_local[&quot;Local Storage&quot;]
-        ea_opt[&quot;Local Optimizer&quot;]
+        default_desc[&quot;Smart optimizer&lt;br/&gt;No routing settings&lt;br/&gt;Portal sync when authenticated&quot;]
+        default_portal[&quot;Traigent Portal&quot;]
     end
 
-    subgraph CloudMode[&quot;Cloud Mode&quot;]
+    subgraph LocalSearch[&quot;Local Search&quot;]
         direction TB
-        cloud_desc[&quot;Reserved future remote execution&lt;br/&gt;Not available today&lt;br/&gt;Fails closed&quot;]
-        cloud_backend[&quot;Future Traigent Cloud&quot;]
-        cloud_storage[&quot;Future Cloud Storage&quot;]
+        local_desc[&quot;Grid or random&lt;br/&gt;Trials run in your process&lt;br/&gt;Portal sync when authenticated&quot;]
+        local_opt[&quot;Local Optimizer&quot;]
     end
 
-    subgraph HybridMode[&quot;Hybrid Mode&quot;]
+    subgraph NoEgress[&quot;No-Egress Run&quot;]
         direction TB
-        hybrid_desc[&quot;Local trial execution&lt;br/&gt;Backend session/result tracking&lt;br/&gt;Portal-visible results&quot;]
-        hybrid_local[&quot;Local Execution&quot;]
-        hybrid_sync[&quot;Backend Sync&quot;]
+        noegress_desc[&quot;offline=True&lt;br/&gt;Local optimizer&lt;br/&gt;No portal sync&quot;]
+        local_store[&quot;Local Results&quot;]
     end
 
-    User[&quot;Your Application&quot;] --&gt; EdgeAnalytics
-    User --&gt; CloudMode
-    User --&gt; HybridMode
+    User[&quot;Your Application&quot;] --&gt; DefaultPath
+    User --&gt; LocalSearch
+    User --&gt; NoEgress
 
-    style EdgeAnalytics fill:#e8f5e9,stroke:#2e7d32
-    style CloudMode fill:#e3f2fd,stroke:#1565c0
-    style HybridMode fill:#fff3e0,stroke:#ef6c00
+    style DefaultPath fill:#e3f2fd,stroke:#1565c0
+    style LocalSearch fill:#e8f5e9,stroke:#2e7d32
+    style NoEgress fill:#fff3e0,stroke:#ef6c00
 </code></pre></div>
 <hr />
 <h2 id="multi-objective-optimization">Multi-Objective Optimization<a class="headerlink" href="#multi-objective-optimization" title="Permanent link">&para;</a></h2>

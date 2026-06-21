@@ -2089,10 +2089,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#quick-decision-guide" class="md-nav__link">
+  <a href="#decision-guide" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Quick Decision Guide
+        Decision Guide
       
     </span>
   </a>
@@ -2111,10 +2111,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#default-cloud-first-auto" class="md-nav__link">
+  <a href="#default-smart-optimization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Default Cloud-First Auto
+        Default Smart Optimization
       
     </span>
   </a>
@@ -2133,10 +2133,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#offline-no-egress" class="md-nav__link">
+  <a href="#no-egress-local-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Offline / No Egress
+        No-Egress Local Runs
       
     </span>
   </a>
@@ -2155,32 +2155,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#privacy-boundary" class="md-nav__link">
+  <a href="#migration-note" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Privacy Boundary
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#external-service-evaluation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        External Service Evaluation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deprecations-and-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deprecations and Migration
+        Migration Note
       
     </span>
   </a>
@@ -3923,10 +3901,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#quick-decision-guide" class="md-nav__link">
+  <a href="#decision-guide" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Quick Decision Guide
+        Decision Guide
       
     </span>
   </a>
@@ -3945,10 +3923,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#default-cloud-first-auto" class="md-nav__link">
+  <a href="#default-smart-optimization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Default Cloud-First Auto
+        Default Smart Optimization
       
     </span>
   </a>
@@ -3967,10 +3945,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#offline-no-egress" class="md-nav__link">
+  <a href="#no-egress-local-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Offline / No Egress
+        No-Egress Local Runs
       
     </span>
   </a>
@@ -3989,32 +3967,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#privacy-boundary" class="md-nav__link">
+  <a href="#migration-note" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Privacy Boundary
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#external-service-evaluation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        External Service Evaluation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deprecations-and-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deprecations and Migration
+        Migration Note
       
     </span>
   </a>
@@ -4042,70 +3998,59 @@
 
 
 <h1 id="choosing-the-right-optimization-model">Choosing the Right Optimization Model<a class="headerlink" href="#choosing-the-right-optimization-model" title="Permanent link">&para;</a></h1>
-<p>Traigent optimization has two public routing knobs:</p>
+<p>Most users do not need to choose. With <code>TRAIGENT_API_KEY</code> set, omit routing
+options and Traigent uses smart optimization with portal result sync.</p>
+<p>Use the two public knobs only when you have a specific routing requirement:</p>
 <ul>
-<li><code>algorithm</code>: <code>"auto"</code> by default, or explicit <code>"grid"</code> / <code>"random"</code> /
-  cloud-backed smart algorithms.</li>
+<li><code>algorithm</code>: <code>"auto"</code> by default, <code>"grid"</code> / <code>"random"</code> for local search, or a
+  cloud-required smart algorithm name.</li>
 <li><code>offline</code>: <code>False</code> by default; set <code>True</code> for zero Traigent backend egress.</li>
 </ul>
-<p>Environment equivalents:</p>
-<ul>
-<li><code>TRAIGENT_OFFLINE=1</code> forces offline mode.</li>
-<li><code>TRAIGENT_OFFLINE_MODE=1</code> is a legacy alias for offline mode.</li>
-<li><code>TRAIGENT_REQUIRE_CLOUD=1</code> disables the <code>algorithm="auto"</code> local fallback.</li>
-</ul>
-<p>Trials run in your process. The cloud-brain path asks Traigent for optimizer
-decisions; it does not execute your dataset examples remotely.</p>
-<h2 id="quick-decision-guide">Quick Decision Guide<a class="headerlink" href="#quick-decision-guide" title="Permanent link">&para;</a></h2>
+<p>Trials run in your process. The cloud optimizer suggests configurations; it does
+not execute your dataset examples remotely.</p>
+<h2 id="decision-guide">Decision Guide<a class="headerlink" href="#decision-guide" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>graph TD
     A[Start] --&gt; B{Need zero Traigent backend egress?}
-    B --&gt;|Yes| C[Set offline=true]
-    B --&gt;|No| D{Need a specific local search?}
-    D --&gt;|Yes| E[Use algorithm grid or random]
-    D --&gt;|No| F[Use algorithm auto]
-    F --&gt; G{Backend reachable?}
-    G --&gt;|Yes| H[source cloud_brain]
-    G --&gt;|No| I[source local_fallback]
+    B --&gt;|Yes| C[offline=true and grid/random]
+    B --&gt;|No| D{Need a simple local sweep?}
+    D --&gt;|Yes| E[algorithm grid or random]
+    D --&gt;|No| F[omit routing options]
+    F --&gt; G[smart optimization and portal sync]
+    E --&gt; H[local search and portal sync]
 </code></pre></div>
-<p>Set <code>TRAIGENT_REQUIRE_CLOUD=1</code> when fallback is not acceptable.</p>
 <h2 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>Request</th>
 <th>What happens</th>
-<th>Result <code>source</code></th>
+<th>Portal sync</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>algorithm="auto"</code></td>
-<td>Cloud optimizer chooses configs; trials run locally</td>
-<td><code>cloud_brain</code></td>
-</tr>
-<tr>
-<td><code>algorithm="auto"</code> and connectivity failure</td>
-<td>Warns and falls back to local search</td>
-<td><code>local_fallback</code></td>
+<td>Omit routing settings</td>
+<td>Default smart optimization</td>
+<td>Yes</td>
 </tr>
 <tr>
 <td><code>algorithm="grid"</code> or <code>"random"</code></td>
-<td>Runs locally with no cloud optimizer round trip</td>
-<td><code>explicit_local</code></td>
-</tr>
-<tr>
-<td><code>offline=True</code>, <code>TRAIGENT_OFFLINE=1</code>, or <code>TRAIGENT_OFFLINE_MODE=1</code></td>
-<td>Fully local, zero Traigent backend egress</td>
-<td><code>offline</code></td>
+<td>Local search in your Python process</td>
+<td>Yes</td>
 </tr>
 <tr>
 <td>Smart algorithm name</td>
-<td>Requires cloud; errors if offline or unavailable</td>
-<td><code>cloud_brain</code></td>
+<td>Cloud-required optimizer</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>offline=True</code></td>
+<td>Local only, zero Traigent backend egress</td>
+<td>No</td>
 </tr>
 </tbody>
 </table>
-<h2 id="default-cloud-first-auto">Default Cloud-First Auto<a class="headerlink" href="#default-cloud-first-auto" title="Permanent link">&para;</a></h2>
+<h2 id="default-smart-optimization">Default Smart Optimization<a class="headerlink" href="#default-smart-optimization" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;evals.jsonl&quot;</span><span class="p">},</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">]},</span>
@@ -4115,100 +4060,37 @@ decisions; it does not execute your dataset examples remotely.</p>
     <span class="k">return</span> <span class="n">answer_question</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">])</span>
 </code></pre></div>
-<p>Use this when cloud optimizer decisions are acceptable and local fallback is
-acceptable during connectivity failures.</p>
 <h2 id="explicit-local-search">Explicit Local Search<a class="headerlink" href="#explicit-local-search" title="Permanent link">&para;</a></h2>
+<p>Use <code>grid</code> or <code>random</code> for reproducible sweeps, CI smoke tests, and simple
+baselines. These runs still sync results to the portal when authenticated.</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">])</span>  <span class="c1"># explicit_local</span>
 </code></pre></div>
-<p>Use this for reproducible local sweeps, CI smoke tests, and simple baselines.</p>
-<h2 id="offline-no-egress">Offline / No Egress<a class="headerlink" href="#offline-no-egress" title="Permanent link">&para;</a></h2>
+<h2 id="no-egress-local-runs">No-Egress Local Runs<a class="headerlink" href="#no-egress-local-runs" title="Permanent link">&para;</a></h2>
+<p>Use <code>offline=True</code> only when no Traigent backend traffic is allowed.</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;evals.jsonl&quot;</span><span class="p">},</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
     <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">sensitive_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">answer_question</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">sensitive_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
 </code></pre></div>
-<p><code>offline=True</code> prevents Traigent backend calls. It does not prevent calls your
-function makes to LLM providers, databases, or tools.</p>
+<p><code>offline=True</code> does not block calls your function makes to LLM providers,
+databases, or tools.</p>
 <h2 id="smart-algorithms">Smart Algorithms<a class="headerlink" href="#smart-algorithms" title="Permanent link">&para;</a></h2>
-<p>Smart algorithms are cloud optimizers:</p>
+<p>Explicit smart algorithms run in the cloud only:</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;bayesian&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">])</span>  <span class="c1"># cloud_brain</span>
 </code></pre></div>
-<p>They hard-error when <code>offline=True</code> is set or when the backend is unavailable.
-Use <code>algorithm="auto"</code> if you want cloud-first behavior with local fallback.</p>
-<h2 id="privacy-boundary">Privacy Boundary<a class="headerlink" href="#privacy-boundary" title="Permanent link">&para;</a></h2>
-<p>Cloud-brain optimization sends only configuration IDs/schema, trial IDs, numeric
-metrics, counts, and statuses. Dataset example content does not cross the
-Traigent backend boundary: no example inputs, expected outputs, prompts,
-responses, or example metadata.</p>
-<p>Privacy-on cloud-brain mode is not the same as no-network mode. Use
-<code>offline=True</code>, <code>TRAIGENT_OFFLINE=1</code>, or <code>TRAIGENT_OFFLINE_MODE=1</code> for zero
-Traigent backend egress.</p>
-<h2 id="external-service-evaluation">External Service Evaluation<a class="headerlink" href="#external-service-evaluation" title="Permanent link">&para;</a></h2>
-<p>External-service evaluation is independent of the optimizer routing knobs. The
-optimizer still runs locally; each trial's evaluation is dispatched to your
-HTTP or MCP service through an external evaluator:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">optimize</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.api.decorators</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">ExternalServiceEvaluator</span><span class="p">,</span>
-    <span class="n">HybridAPIOptions</span><span class="p">,</span>
-<span class="p">)</span>
-
-
-<span class="nd">@optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">evaluator</span><span class="o">=</span><span class="n">ExternalServiceEvaluator</span><span class="p">(</span>
-        <span class="n">hybrid_api</span><span class="o">=</span><span class="n">HybridAPIOptions</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;https://svc.example.com/evaluate&quot;</span><span class="p">)</span>
-    <span class="p">),</span>
-<span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">answer_question</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
-</code></pre></div>
-<p>Use this in place of the removed <code>execution_mode="hybrid_api"</code> plus flat
-<code>hybrid_api_*</code> keyword arguments.</p>
-<h2 id="deprecations-and-migration">Deprecations and Migration<a class="headerlink" href="#deprecations-and-migration" title="Permanent link">&para;</a></h2>
-<p>These legacy execution knobs are deprecated and should not be used in new code:</p>
-<table>
-<thead>
-<tr>
-<th>Old surface</th>
-<th>New surface</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>execution_mode="hybrid"</code></td>
-<td><code>@optimize()</code></td>
-</tr>
-<tr>
-<td><code>execution_mode="edge_analytics"</code> or <code>"local"</code></td>
-<td><code>@optimize(offline=True)</code></td>
-</tr>
-<tr>
-<td><code>execution_mode="hybrid_api", hybrid_api_endpoint="https://svc"</code></td>
-<td><code>@optimize(evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(endpoint="https://svc")))</code></td>
-</tr>
-<tr>
-<td><code>privacy_enabled=True</code></td>
-<td>Drop it. Cloud-brain mode already avoids dataset content egress; use <code>offline=True</code> for zero network egress to Traigent.</td>
-</tr>
-<tr>
-<td><code>cloud_fallback_policy=...</code></td>
-<td>Drop it. Use <code>TRAIGENT_REQUIRE_CLOUD=1</code> when auto-fallback must be disabled.</td>
-</tr>
-</tbody>
-</table>
-<p><code>execution_mode=</code> is accepted only as a deprecated compatibility keyword with a
-warning. <code>privacy_enabled</code> and <code>cloud_fallback_policy</code> are deprecated no-ops.</p>
+<p>They hard-error when cloud optimization is unavailable or <code>offline=True</code> is set.
+Use the default path when you want Traigent to pick the best available option.</p>
+<h2 id="migration-note">Migration Note<a class="headerlink" href="#migration-note" title="Permanent link">&para;</a></h2>
+<p>Legacy <code>execution_mode=...</code> inputs are deprecated. Remove them for the default
+path. Use <code>offline=True</code> only for no-egress local runs, and use
+<code>algorithm="grid"</code> or <code>"random"</code> for local search that can still sync results.</p>
 
 
 

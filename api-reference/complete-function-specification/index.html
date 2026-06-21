@@ -5361,13 +5361,13 @@ object with structured constraints.</p>
 <td><code>algorithm</code></td>
 <td><code>str</code></td>
 <td><code>"auto"</code></td>
-<td>Optimizer selector. <code>"auto"</code> is cloud-first with local fallback on connectivity failures; <code>"grid"</code> and <code>"random"</code> run locally; smart algorithms require cloud.</td>
+<td>Optimizer selector. <code>"auto"</code> uses Traigent's smart optimizer when authenticated; <code>"grid"</code> and <code>"random"</code> run local search; smart algorithms require cloud.</td>
 </tr>
 <tr>
 <td><code>offline</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>Force local-only operation with zero Traigent backend egress.</td>
+<td>Force local-only operation with zero Traigent backend egress and no portal sync.</td>
 </tr>
 <tr>
 <td><code>local_storage_path</code></td>
@@ -5379,7 +5379,7 @@ object with structured constraints.</p>
 <td><code>minimal_logging</code></td>
 <td><code>bool</code></td>
 <td><code>True</code></td>
-<td>Suppresses verbose logs in privacy-sensitive modes.</td>
+<td>Suppresses verbose logs.</td>
 </tr>
 <tr>
 <td><code>parallel_config</code></td>
@@ -5413,9 +5413,9 @@ object with structured constraints.</p>
 </tr>
 <tr>
 <td><code>evaluator</code></td>
-<td><code>ExternalServiceEvaluator \| HybridAPIOptions \| dict \| None</code></td>
+<td><code>ExternalServiceEvaluator \| dict \| None</code></td>
 <td><code>None</code></td>
-<td>External service evaluator bundle. Use <code>ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))</code> for Hybrid API services. The optimizer still runs locally; the evaluator dispatches each trial to the external HTTP or MCP service.</td>
+<td>External service evaluator bundle for API-contract integrations. This does not change optimizer routing.</td>
 </tr>
 </tbody>
 </table>
@@ -5443,13 +5443,13 @@ object with structured constraints.</p>
 </table>
 <p><strong>Usage Notes</strong></p>
 <ul>
-<li>The default path is <code>algorithm="auto"</code>: cloud-first optimizer decisions with local trial execution and local fallback on connectivity failures.</li>
+<li>The default path is <code>algorithm="auto"</code>: Traigent smart optimization when portal credentials are available, with trials executing in your process.</li>
 <li>Set <code>TRAIGENT_REQUIRE_CLOUD=1</code> to turn that connectivity fallback into a hard error.</li>
 <li>Prefer the grouped option classes (<code>EvaluationOptions</code>, <code>InjectionOptions</code>, <code>ExecutionOptions</code>) when you need to adjust several related knobs. Import them from <code>traigent.api.decorators</code> and pass either instances or plain dicts. <code>MockModeOptions</code> is <strong>deprecated</strong> (all fields inert; see the <code>mock</code> row above and issue #874) — do not use it for new code.</li>
 <li><code>parallel_config=ParallelConfig(...)</code> remains the primary way to control concurrency. Set global defaults via <code>traigent.configure(parallel_config=...)</code>, override them in the decorator, and fine-tune per <code>.optimize()</code> call. Later scopes override earlier ones field-by-field.</li>
 <li><code>ParallelConfig</code> lives in <code>traigent.config.parallel</code>. You can pass either an instance or a simple <code>dict</code> with the same keys.</li>
-<li>Use <code>offline=True</code> when policy requires zero Traigent backend egress. <code>TRAIGENT_OFFLINE=1</code> and the legacy <code>TRAIGENT_OFFLINE_MODE=1</code> provide the same routing at the environment level.</li>
-<li><code>privacy_enabled</code> and <code>cloud_fallback_policy</code> are deprecated no-ops. <code>execution_mode</code> is deprecated compatibility input only; migrate to <code>algorithm</code>, <code>offline</code>, and <code>evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))</code>.</li>
+<li>Use <code>offline=True</code> when policy requires zero Traigent backend egress. Local <code>grid</code> and <code>random</code> runs still sync results to the portal unless <code>offline=True</code>.</li>
+<li>Legacy <code>execution_mode</code> inputs are deprecated compatibility shims. Use <code>algorithm</code> and <code>offline</code> for new code.</li>
 <li><code>config_param</code> is required whenever you choose <code>injection_mode="parameter"</code>; forgetting it leaves your function without injected configs.</li>
 <li>Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an <code>ObjectiveSchema</code> when you need explicit control over orientations, weights, or metric metadata.</li>
 <li>Inline tuned-variable definitions accept <code>Range</code>, <code>IntRange</code>, <code>LogRange</code>, <code>Choices</code>, or numeric <code>(low, high)</code> tuples. Inline lists are not recognized; use <code>Choices([...])</code> instead.</li>
@@ -5490,8 +5490,6 @@ object with structured constraints.</p>
         <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
     <span class="p">},</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;evals.jsonl&quot;</span><span class="p">},</span>  <span class="c1"># Grouped option bundle</span>
-    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
-    <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">process_query</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
@@ -5534,7 +5532,7 @@ object with structured constraints.</p>
 <td><code>algorithm</code></td>
 <td><code>str \| None</code></td>
 <td>Decorator default</td>
-<td>Optimizer to use. <code>"auto"</code> is cloud-first with local fallback on connectivity failures; <code>"grid"</code> and <code>"random"</code> stay local; explicit smart algorithms such as <code>"bayesian"</code>, <code>"tpe"</code>, <code>"optuna_tpe"</code>, <code>"optuna_random"</code>, <code>"optuna_grid"</code>, <code>"optuna_cmaes"</code>, <code>"optuna_nsga2"</code>, <code>"nsga2"</code>, <code>"nsgaii"</code>, <code>"nsga_ii"</code>, <code>"cmaes"</code>, and <code>"cma_es"</code> require cloud and hard-error when unavailable or offline.</td>
+<td>Optimizer to use. Omit it for the default smart optimizer. <code>"grid"</code> and <code>"random"</code> run local search and still sync results when authenticated. Explicit smart algorithms such as <code>"bayesian"</code>, <code>"tpe"</code>, <code>"optuna_tpe"</code>, <code>"optuna_random"</code>, <code>"optuna_grid"</code>, <code>"optuna_cmaes"</code>, <code>"optuna_nsga2"</code>, <code>"nsga2"</code>, <code>"nsgaii"</code>, <code>"nsga_ii"</code>, <code>"cmaes"</code>, and <code>"cma_es"</code> require cloud and hard-error when unavailable or offline.</td>
 </tr>
 <tr>
 <td><code>max_trials</code></td>
@@ -5679,8 +5677,8 @@ object with structured constraints.</p>
 </table>
 <p>Unknown keys are forwarded to the optimizer and may raise errors when unsupported.</p>
 <p><strong>Example:</strong>
-<div class="highlight"><pre><span></span><code><span class="c1"># Run optimization</span>
-<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Run optimization with the default smart optimizer</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
 
 <span class="c1"># Save results</span>
 <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">save_optimization_results</span><span class="p">(</span><span class="s2">&quot;results.json&quot;</span><span class="p">)</span>
