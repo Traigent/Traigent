@@ -178,6 +178,15 @@ class TrialLifecycle:
                 config_for_run,
                 e,
             )
+            self._record_pre_constraint_pruned_result(
+                config=config_for_trial,
+                evaluation_config=config_for_run,
+                dataset=dataset,
+                trial_number=trial_count,
+                session_id=session_id,
+                optuna_trial_id=optuna_trial_id,
+                error=e,
+            )
             # Give back the trial slot the optimizer consumed in suggest_next_trial
             if hasattr(orchestrator.optimizer, "_trial_count"):
                 orchestrator.optimizer._trial_count = max(
@@ -597,6 +606,57 @@ class TrialLifecycle:
         that raise :class:`TrialPrunedError` directly.
         """
         return None, None
+
+    def _record_pre_constraint_pruned_result(
+        self,
+        *,
+        config: dict[str, Any],
+        evaluation_config: dict[str, Any],
+        dataset: Dataset,
+        trial_number: int,
+        session_id: str | None,
+        optuna_trial_id: int | None,
+        error: TVLConstraintError,
+    ) -> None:
+        """Record a constraint-rejected config without consuming a trial slot."""
+        orchestrator = self._orchestrator
+        trial_id = self._generate_trial_id(
+            config,
+            trial_number,
+            session_id,
+            dataset,
+            optuna_trial_id,
+        )
+        try:
+            total_examples = len(dataset)
+        except TypeError:
+            total_examples = 0
+
+        result = build_pruned_result(
+            trial_id=trial_id,
+            evaluation_config=evaluation_config,
+            duration=0.0,
+            prune_error=TrialPrunedError(
+                f"trial_rejected_by_constraint: {error}",
+                step=0,
+            ),
+            progress_state={"evaluated": 0, "total_examples": total_examples},
+            optuna_trial_id=optuna_trial_id,
+        )
+        result.error_message = str(error)
+        metadata = dict(result.metadata or {})
+        metadata.update(
+            {
+                "constraint_rejected": True,
+                "stop_reason": "trial_rejected_by_constraint",
+            }
+        )
+        result.metadata = metadata
+
+        orchestrator._trials.append(result)
+        log_trial = getattr(orchestrator, "_log_trial", None)
+        if callable(log_trial):
+            log_trial(result)
 
     # =========================================================================
     # Budget Management

@@ -6,8 +6,8 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Tuple
 from urllib.parse import urlparse
 
 from traigent.utils.logging import get_logger
@@ -54,7 +54,7 @@ def _adapt_sql_for_sqlite(sql: str) -> str:
     return sql
 
 
-def _connect(database_url: str) -> Tuple[str, object]:
+def _connect(database_url: str) -> tuple[str, object]:
     parsed = urlparse(database_url)
     scheme = parsed.scheme
 
@@ -90,7 +90,6 @@ def _execute_sql(engine_type: str, handle: object, sql: str) -> None:
         conn.commit()
         return
 
-    from sqlalchemy import text
 
     engine = handle
     statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]

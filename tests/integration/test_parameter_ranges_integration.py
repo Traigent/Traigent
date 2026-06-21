@@ -11,14 +11,12 @@ Tests cover:
 """
 
 import os
-from typing import Any
 
 import pytest
 
 # Set mock mode before importing traigent
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
-import traigent
 from traigent import Choices, IntRange, LogRange, Range, optimize
 from traigent.core.optimized_function import OptimizedFunction
 

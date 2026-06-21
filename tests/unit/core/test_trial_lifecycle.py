@@ -248,7 +248,6 @@ class TestCreateProgressTracking:
     def test_returns_none_without_report_capability(self):
         """Test that (None, None) is returned if optimizer lacks reporting."""
         orchestrator = MockOrchestrator()
-        # Optimizer doesn't have report_intermediate_value by default
 
         lifecycle = TrialLifecycle(orchestrator)
         dataset = create_mock_dataset()
@@ -261,32 +260,6 @@ class TestCreateProgressTracking:
 
         assert callback is None
         assert state is None
-
-    def test_creates_tracker_with_optuna_support(self):
-        """Test that tracker is created when optimizer supports reporting."""
-        orchestrator = MockOrchestrator()
-        orchestrator.optimizer.report_intermediate_value = MagicMock()
-
-        lifecycle = TrialLifecycle(orchestrator)
-        dataset = create_mock_dataset()
-
-        with patch(
-            "traigent.core.trial_lifecycle.PruningProgressTracker"
-        ) as mock_tracker_cls:
-            mock_tracker = MagicMock()
-            mock_tracker.callback = MagicMock()
-            mock_tracker.state = {"evaluated": 0}
-            mock_tracker_cls.return_value = mock_tracker
-
-            callback, state = lifecycle._create_progress_tracking(
-                optuna_trial_id=42,
-                dataset=dataset,
-                trial_id="test-trial",
-            )
-
-            assert callback is mock_tracker.callback
-            assert state is mock_tracker.state
-            mock_tracker_cls.assert_called_once()
 
 
 # =============================================================================
@@ -924,7 +897,6 @@ class TestRunSequentialTrial:
             "message": "Always fails",
         }
         orchestrator._constraints_pre_eval = [failing_constraint]
-        orchestrator._abandon_optuna_trial = MagicMock()  # Mock the abandon method
 
         lifecycle = TrialLifecycle(orchestrator)
         dataset = create_mock_dataset()
@@ -944,11 +916,11 @@ class TestRunSequentialTrial:
         assert action == "continue"
         assert trial_count == 5  # NOT incremented - this is the bug fix for issue #27
 
-        # Verify Optuna trial was abandoned with appropriate reason
-        orchestrator._abandon_optuna_trial.assert_called_once()
-        call_kwargs = orchestrator._abandon_optuna_trial.call_args[1]
-        assert "trial_rejected_by_constraint" in call_kwargs.get("reason", "")
-        assert call_kwargs.get("status") == TrialStatus.PRUNED
+        assert len(orchestrator._trials) == 1
+        rejected_trial = orchestrator._trials[0]
+        assert rejected_trial.status == TrialStatus.PRUNED
+        assert rejected_trial.metadata["constraint_rejected"] is True
+        assert rejected_trial.metadata["stop_reason"] == "trial_rejected_by_constraint"
 
     @pytest.mark.asyncio
     async def test_constraint_rejection_decrements_optimizer_trial_count(self):
@@ -980,7 +952,6 @@ class TestRunSequentialTrial:
             "message": "Always fails",
         }
         orchestrator._constraints_pre_eval = [failing_constraint]
-        orchestrator._abandon_optuna_trial = MagicMock()
 
         lifecycle = TrialLifecycle(orchestrator)
         dataset = create_mock_dataset()
@@ -1001,6 +972,7 @@ class TestRunSequentialTrial:
         # Key regression assertion: optimizer's _trial_count must be decremented
         # back to its pre-call value so rejected configs don't consume trial budget
         assert orchestrator.optimizer._trial_count == 3
+        assert orchestrator._trials[-1].status == TrialStatus.PRUNED
 
 
 # =============================================================================
