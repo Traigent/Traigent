@@ -8,11 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 import traigent
-from traigent.api.decorators import (
-    ExternalServiceEvaluator,
-    HybridAPIOptions,
-    optimize,
-)
+from traigent.api.decorators import ExternalServiceEvaluator, HybridAPIOptions, optimize
 from traigent.cloud.models import (
     DatasetSubsetIndices,
     NextTrialResponse,
@@ -127,6 +123,66 @@ async def test_offline_env_makes_zero_backend_calls_even_with_key(
         result = await agent.optimize(max_trials=1)
 
     create_backend_client.assert_not_called()
+    next_trial.assert_not_called()
+    assert result.source == "offline"
+    assert result.metadata["source"] == "offline"
+
+
+@pytest.mark.asyncio
+async def test_offline_mode_env_makes_zero_backend_calls_even_with_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "1")
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    agent = _make_agent(algorithm="grid")
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ) as create_backend_client,
+        patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
+    ):
+        result = await agent.optimize(max_trials=1)
+
+    create_backend_client.assert_not_called()
+    backend.create_session.assert_not_called()
+    backend.submit_result.assert_not_called()
+    backend.request_trial_slot.assert_not_called()
+    backend._submit_trial_result_via_session.assert_not_called()
+    backend.finalize_session_sync.assert_not_called()
+    next_trial.assert_not_called()
+    assert result.source == "offline"
+    assert result.metadata["source"] == "offline"
+
+
+@pytest.mark.asyncio
+async def test_offline_option_makes_zero_backend_calls_even_with_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    agent = _make_agent(algorithm="grid", offline=True)
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ) as create_backend_client,
+        patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
+    ):
+        result = await agent.optimize(max_trials=1)
+
+    create_backend_client.assert_not_called()
+    backend.create_session.assert_not_called()
+    backend.submit_result.assert_not_called()
+    backend.request_trial_slot.assert_not_called()
+    backend._submit_trial_result_via_session.assert_not_called()
+    backend.finalize_session_sync.assert_not_called()
     next_trial.assert_not_called()
     assert result.source == "offline"
     assert result.metadata["source"] == "offline"
@@ -305,23 +361,32 @@ async def test_explicit_smart_backend_down_hard_errors(
 
 
 @pytest.mark.asyncio
-async def test_explicit_grid_runs_local_without_next_trial_or_backend(
+@pytest.mark.parametrize("algorithm", ["grid", "random"])
+async def test_explicit_local_algorithms_run_locally_and_sync_results(
     monkeypatch: pytest.MonkeyPatch,
+    algorithm: str,
 ) -> None:
     monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
     monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
     monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
-    agent = _make_agent(algorithm="grid")
+    backend = FakeBackendClient()
+    agent = _make_agent(algorithm=algorithm)
 
     with (
         patch(
-            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client"
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
         ) as create_backend_client,
         patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
     ):
         result = await agent.optimize(max_trials=1)
 
-    create_backend_client.assert_not_called()
+    create_backend_client.assert_called_once()
+    backend.create_session.assert_called_once()
+    backend.submit_result.assert_called_once()
+    backend.request_trial_slot.assert_awaited_once()
+    backend._submit_trial_result_via_session.assert_awaited_once()
+    backend.finalize_session_sync.assert_called_once()
     next_trial.assert_not_called()
     assert result.source == "explicit_local"
 
@@ -374,6 +439,7 @@ async def test_hybrid_api_options_dispatch_through_external_transport(
     monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
     monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
     monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
     transport = FakeHybridTransport()
 
     @optimize(
@@ -389,13 +455,19 @@ async def test_hybrid_api_options_dispatch_through_external_transport(
 
     with (
         patch(
-            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client"
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
         ) as create_backend_client,
         patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
     ):
         result = await external_agent.optimize(max_trials=1)
 
-    create_backend_client.assert_not_called()
+    create_backend_client.assert_called_once()
+    backend.create_session.assert_called_once()
+    assert backend.submit_result.call_count >= 1
+    backend.request_trial_slot.assert_awaited_once()
+    backend._submit_trial_result_via_session.assert_awaited_once()
+    backend.finalize_session_sync.assert_called_once()
     next_trial.assert_not_called()
     transport.execute.assert_awaited_once()
     transport.evaluate.assert_awaited_once()

@@ -2222,10 +2222,7 @@ Remediation:
             execution_policy,
             external_evaluator=external_evaluator,
         )
-        no_egress = result_source in {
-            SOURCE_OFFLINE,
-            SOURCE_EXPLICIT_LOCAL,
-        }
+        no_egress = result_source == SOURCE_OFFLINE
 
         # Phase 2: Create TraigentConfig and check CI approval
         traigent_config = create_traigent_config(
