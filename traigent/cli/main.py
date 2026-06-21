@@ -37,8 +37,9 @@ from traigent.evaluators import (
     recommend_evaluator,
     recommend_metrics,
 )
-from traigent.utils.logging import setup_logging
+from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.console import configure_stdout_encoding
+from traigent.utils.logging import setup_logging
 from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import (
     PathTraversalError,
@@ -1634,6 +1635,67 @@ def _build_preset_rerank_table(
     return table
 
 
+def _local_session_algorithm(session: OptimizationSession) -> str:
+    """Extract the closest algorithm label from a v2 local session."""
+    optimization_config = session.optimization_config or {}
+    if not isinstance(optimization_config, dict):
+        return "local"
+    algorithm = (
+        optimization_config.get("algorithm")
+        or optimization_config.get("optimizer")
+        or optimization_config.get("strategy")
+    )
+    return str(algorithm) if algorithm else "local"
+
+
+def _local_session_success_rate(session: OptimizationSession) -> float:
+    completed_trials = session.completed_trials or len(session.trials or [])
+    if completed_trials <= 0:
+        return 0.0
+    successful_trials = len(
+        [trial for trial in (session.trials or []) if trial.error is None]
+    )
+    return successful_trials / completed_trials
+
+
+def _local_session_to_result_info(session: OptimizationSession) -> dict[str, Any]:
+    completed_trials = session.completed_trials or len(session.trials or [])
+    total_trials = session.total_trials or completed_trials
+    return {
+        "name": f"local:{session.session_id}",
+        "function_name": session.function_name,
+        "algorithm": _local_session_algorithm(session),
+        "best_score": session.best_score,
+        "total_trials": total_trials,
+        "success_rate": _local_session_success_rate(session),
+        "created_at": session.created_at,
+        "_source": "local_session",
+    }
+
+
+def _list_local_session_results(
+    storage_dir: str | None,
+) -> tuple[list[dict[str, Any]], Path]:
+    local_storage = LocalStorageManager(storage_dir)
+    results = [
+        _local_session_to_result_info(session)
+        for session in local_storage.list_sessions()
+    ]
+    return results, local_storage.storage_path
+
+
+def _merge_result_infos(
+    legacy_results: list[dict[str, Any]],
+    local_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged_by_name: dict[str, dict[str, Any]] = {}
+    for result_info in [*legacy_results, *local_results]:
+        merged_by_name[result_info["name"]] = result_info
+    merged = list(merged_by_name.values())
+    merged.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return merged
+
+
 @cli.group()
 def results() -> None:
     """Browse, compare, and manage optimization results.
@@ -1648,19 +1710,21 @@ def results() -> None:
 
 
 @results.command("list")
-@click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
-)
-def results_list(storage_dir: str) -> None:
+@click.option("--storage-dir", "-d", default=None, help="Traigent storage directory")
+def results_list(storage_dir: str | None) -> None:
     """List all optimization results with summary."""
     console.print("\n[bold blue]Traigent Optimization Results[/bold blue]\n")
 
-    persistence = PersistenceManager(storage_dir)
-    all_results = persistence.list_results()
+    legacy_storage_dir = storage_dir or ".traigent"
+    persistence = PersistenceManager(legacy_storage_dir)
+    legacy_results = persistence.list_results()
+    local_results, local_storage_path = _list_local_session_results(storage_dir)
+    all_results = _merge_result_infos(legacy_results, local_results)
 
     if not all_results:
         console.print("[yellow]No optimization results found[/yellow]")
         console.print(f"Results are stored in: {persistence.base_dir}")
+        console.print(f"Local sessions are stored in: {local_storage_path}")
         return
 
     # Create results table with no_wrap to prevent truncation
@@ -1686,6 +1750,10 @@ def results_list(storage_dir: str) -> None:
         )
 
     console.print(table)
+    if local_results:
+        console.print(
+            f"\n[dim]Local session rows are loaded from: {local_storage_path}[/dim]"
+        )
 
 
 @results.command("show")
