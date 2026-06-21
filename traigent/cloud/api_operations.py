@@ -657,9 +657,7 @@ class ApiOperations:
 
         raise CloudServiceError("Unexpected session creation failure")
 
-    async def _parse_session_response(
-        self, response: Any
-    ) -> TraigentSessionApiResult:
+    async def _parse_session_response(self, response: Any) -> TraigentSessionApiResult:
         """Parse the JSON success payload returned by the session endpoint."""
 
         result = await response.json()

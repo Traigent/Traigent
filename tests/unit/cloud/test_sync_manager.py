@@ -765,9 +765,7 @@ class TestSyncManager:
             == "https://portal.traigent.ai/experiments/view/experiment-id"
             "?project_id=project%2Falpha&tenant_id=tenant%20acme"
         )
-        assert [
-            call.args[0] for call in sync_manager._session.post.call_args_list
-        ] == [
+        assert [call.args[0] for call in sync_manager._session.post.call_args_list] == [
             f"{sync_manager.base_url}/configuration-runs/runs/"
             "experiment-run-id/configurations",
             f"{sync_manager.base_url}/configuration-runs/runs/"

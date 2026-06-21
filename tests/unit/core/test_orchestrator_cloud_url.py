@@ -25,7 +25,6 @@ def test_orchestrator_cloud_url_includes_session_context(monkeypatch) -> None:
 
     assert result.experiment_id == "exp/123"
     assert (
-        result.cloud_url
-        == "https://portal.traigent.ai/experiments/view/exp%2F123"
+        result.cloud_url == "https://portal.traigent.ai/experiments/view/exp%2F123"
         "?project_id=project%2Falpha&tenant_id=tenant%20acme"
     )

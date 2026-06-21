@@ -58,7 +58,9 @@ def build_experiment_url(
     Single source of truth for experiment URL construction —
     used by both SyncManager and the orchestrator.
     """
-    url = f"{base_url.rstrip('/')}/experiments/view/{quote(str(experiment_id), safe='')}"
+    url = (
+        f"{base_url.rstrip('/')}/experiments/view/{quote(str(experiment_id), safe='')}"
+    )
     query_params = {
         key: normalized
         for key, value in (("project_id", project_id), ("tenant_id", tenant_id))
