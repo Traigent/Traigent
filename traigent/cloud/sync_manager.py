@@ -51,7 +51,7 @@ def build_experiment_url(base_url: str, experiment_id: str) -> str:
     Single source of truth for experiment URL construction —
     used by both SyncManager and the orchestrator.
     """
-    return f"{base_url.rstrip('/')}/experiments/{experiment_id}"
+    return f"{base_url.rstrip('/')}/experiments/view/{experiment_id}"
 
 
 def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
@@ -655,7 +655,7 @@ class SyncManager:
         elif successful_steps == total_steps:
             sync_result["status"] = "success"
             sync_result["cloud_url"] = build_experiment_url(
-                self.base_url, experiment_id
+                BackendConfig.get_cloud_backend_url(), experiment_id
             )
         else:
             sync_result["status"] = "partial"  # Some steps succeeded
@@ -824,7 +824,7 @@ class SyncManager:
         self._raise_if_backend_egress_disabled("sync benchmark")
         try:
             existing_benchmark = self._find_existing_by_name(
-                "benchmarks", benchmark_data["name"], "benchmarks"
+                "datasets", benchmark_data["name"], "datasets"
             )
             if existing_benchmark:
                 benchmark_id = self._extract_resource_id(existing_benchmark)
@@ -837,14 +837,14 @@ class SyncManager:
                     }
 
             response = self._session.post(
-                f"{self.base_url}/benchmarks",
+                f"{self.base_url}/datasets",
                 json=benchmark_data,
                 timeout=self._request_timeout,
             )
 
             if response.status_code in [409, 500]:
                 existing_benchmark = self._find_existing_by_name(
-                    "benchmarks", benchmark_data["name"], "benchmarks"
+                    "datasets", benchmark_data["name"], "datasets"
                 )
                 if existing_benchmark:
                     benchmark_id = self._extract_resource_id(existing_benchmark)
