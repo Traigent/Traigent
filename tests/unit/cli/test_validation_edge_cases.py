@@ -322,7 +322,6 @@ class TestErrorScenarios:
                 side_effect=Exception("Optimization failed"),
             ),
         ):
-
             result = await validator.validate_optimization(func_info)
 
             assert result.is_superior is False
@@ -522,7 +521,6 @@ class TestConcurrencyAndPerformance:
             patch.object(validator, "_run_baseline", side_effect=mock_baseline),
             patch.object(validator, "_run_optimization", side_effect=mock_optimization),
         ):
-
             # Run validations concurrently
             import asyncio
 

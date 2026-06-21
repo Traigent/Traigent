@@ -148,8 +148,7 @@ def test_whoami_posts_json_payload_to_validate_endpoint(
     assert _FakeSession.last_post_kwargs is not None
     assert _FakeSession.last_post_kwargs["json"] == {"api_key": api_key}
     assert (
-        _FakeSession.last_post_kwargs["headers"]["Content-Type"]
-        == "application/json"
+        _FakeSession.last_post_kwargs["headers"]["Content-Type"] == "application/json"
     )
 
 

@@ -168,9 +168,7 @@ def _successful_local_trial_count(trials: Any) -> int:
     return successful
 
 
-def _first_string_value(
-    *sources: Any, keys: tuple[str, ...]
-) -> str | None:
+def _first_string_value(*sources: Any, keys: tuple[str, ...]) -> str | None:
     for source in sources:
         if not isinstance(source, dict):
             continue
@@ -190,8 +188,7 @@ def _extract_local_objectives(config: Any) -> list[str]:
         objectives = objective_schema.get("objectives")
         if isinstance(objectives, list):
             names = [
-                obj.get("name") if isinstance(obj, dict) else obj
-                for obj in objectives
+                obj.get("name") if isinstance(obj, dict) else obj for obj in objectives
             ]
             return [str(name) for name in names if name]
 
@@ -224,8 +221,7 @@ def _extract_log_objectives(objectives: Any) -> list[str]:
     raw_objectives = objectives.get("objectives")
     if isinstance(raw_objectives, list):
         names = [
-            obj.get("name") if isinstance(obj, dict) else obj
-            for obj in raw_objectives
+            obj.get("name") if isinstance(obj, dict) else obj for obj in raw_objectives
         ]
         return [str(name) for name in names if name]
     return ["score"]
@@ -687,7 +683,9 @@ class PersistenceManager:
     ) -> dict[str, Any] | None:
         validated_run_dir = validate_path(run_dir, logs_root, must_exist=True)
         session = _read_latest_json(validated_run_dir / "meta", "session*.json")
-        metrics = _read_latest_json(validated_run_dir / "metrics", "metrics_summary*.json")
+        metrics = _read_latest_json(
+            validated_run_dir / "metrics", "metrics_summary*.json"
+        )
         best_config = _read_latest_json(
             validated_run_dir / "artifacts", "best_config*.json"
         )
@@ -703,7 +701,9 @@ class PersistenceManager:
             else validated_run_dir.parents[1].name
         )
         run_id = (
-            session.get("run_id") if isinstance(session, dict) else validated_run_dir.name
+            session.get("run_id")
+            if isinstance(session, dict)
+            else validated_run_dir.name
         )
         function_name = str(experiment_name or validated_run_dir.parents[1].name)
         algorithm = _first_string_value(

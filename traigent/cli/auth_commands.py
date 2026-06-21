@@ -1775,9 +1775,7 @@ def whoami(key: str | None) -> None:
     resolved_key = key or BackendConfig.get_api_key()
     if not resolved_key:
         console.print("[red]❌ No API key provided[/red]")
-        console.print(
-            "Pass a key or set TRAIGENT_API_KEY / stored CLI credentials.\n"
-        )
+        console.print("Pass a key or set TRAIGENT_API_KEY / stored CLI credentials.\n")
         sys.exit(1)
 
     # Validate format
