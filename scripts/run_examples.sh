@@ -2,7 +2,7 @@
 #
 # Interactive Example Runner for Traigent
 # ========================================
-# Runs example scripts with configurable mock/real and offline/online modes.
+# Runs example scripts with configurable mock/real and portal-sync/no-egress choices.
 #
 
 set -e
@@ -42,9 +42,8 @@ CORE_EXAMPLES=(
 
 ADVANCED_EXAMPLES=(
     "examples/advanced/metric-registry/run.py"
-    "examples/advanced/execution-modes/ex01-local-basic/run.py"
-    "examples/advanced/execution-modes/ex02-local-privacy/run.py"
-    "examples/advanced/execution-modes/ex03-hybrid-basic/run.py"
+    "examples/advanced/optimization-routing/ex01-local-search/run.py"
+    "examples/advanced/optimization-routing/ex02-offline-no-egress/run.py"
     "examples/advanced/ragas/basics/run.py"
     "examples/advanced/ragas/with_llm/run.py"
     "examples/advanced/ragas/column_map/run.py"
@@ -72,7 +71,7 @@ ALL_EXAMPLES=(
 
 # Global settings
 LLM_MODE=""
-BACKEND_MODE=""
+SYNC_CHOICE=""
 MAX_EXAMPLES=50
 
 print_header() {
@@ -113,25 +112,25 @@ select_llm_mode() {
 }
 
 select_backend_mode() {
-    echo -e "${BOLD}Step 2: Select Backend Mode${NC}"
+    echo -e "${BOLD}Step 2: Select Result Sync${NC}"
     echo ""
-    echo -e "  ${GREEN}1)${NC} Online Mode - Send results to Traigent backend"
-    echo -e "  ${CYAN}2)${NC} Offline Mode - Run locally only (no backend connection)"
+    echo -e "  ${GREEN}1)${NC} Portal Sync - Send results to Traigent backend when authenticated"
+    echo -e "  ${CYAN}2)${NC} No-Egress Local - Run without Traigent backend traffic"
     echo ""
     read -p "Enter choice [1-2]: " choice
 
     case $choice in
         1)
-            BACKEND_MODE="online"
-            echo -e "${GREEN}✓ Online Mode selected - Results will be sent to Traigent backend${NC}"
+            SYNC_CHOICE="portal"
+            echo -e "${GREEN}✓ Portal sync selected${NC}"
             ;;
         2)
-            BACKEND_MODE="offline"
-            echo -e "${CYAN}✓ Offline Mode selected - Running locally only${NC}"
+            SYNC_CHOICE="no_egress"
+            echo -e "${CYAN}✓ No-egress local selected${NC}"
             ;;
         *)
-            echo -e "${RED}Invalid choice. Defaulting to Offline Mode.${NC}"
-            BACKEND_MODE="offline"
+            echo -e "${RED}Invalid choice. Defaulting to no-egress local.${NC}"
+            SYNC_CHOICE="no_egress"
             ;;
     esac
     echo ""
@@ -228,9 +227,9 @@ run_example() {
         env_vars="TRAIGENT_MOCK_LLM=false"
     fi
 
-    # Backend Mode
-    if [[ "$BACKEND_MODE" == "offline" ]]; then
-        env_vars="$env_vars TRAIGENT_OFFLINE_MODE=true"
+    # Result sync
+    if [[ "$SYNC_CHOICE" == "no_egress" ]]; then
+        env_vars="$env_vars TRAIGENT_OFFLINE=1"
     fi
 
     echo ""

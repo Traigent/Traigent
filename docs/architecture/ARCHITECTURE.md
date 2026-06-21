@@ -9,9 +9,9 @@ Traigent is a zero-code LLM optimization SDK that automatically finds the best c
 - **Parameter Optimization**: Automatically tune model selection, temperature, prompts, and other parameters
 - **Multi-Objective Optimization**: Balance accuracy, cost, latency, and other metrics simultaneously
 - **Framework Integration**: Native support for LangChain, DSPy, OpenAI, Anthropic, and more
-- **Flexible Execution**: Use cloud-first `algorithm="auto"`, explicit local
-  `algorithm="grid"` / `"random"`, `offline=True` for zero Traigent backend
-  egress, or `ExternalServiceEvaluator` for external Hybrid API services.
+- **Flexible Routing**: Most users omit routing settings. Use
+  `algorithm="grid"` / `"random"` for explicit local search, or `offline=True`
+  for zero Traigent backend egress.
 - **TVL Specifications**: Define optimization specs in YAML for version control and collaboration
 
 ---
@@ -192,38 +192,35 @@ flowchart LR
 
 ---
 
-## Execution Modes
+## Optimization Routing
 
 ```mermaid
 flowchart TB
-    subgraph EdgeAnalytics["Offline Local Mode"]
+    subgraph DefaultPath["Default"]
         direction TB
-        ea_desc["Local optimization<br/>Data stays on-premise<br/>Optional telemetry"]
-        ea_local["Local Storage"]
-        ea_opt["Local Optimizer"]
+        default_desc["Smart optimizer<br/>No routing settings<br/>Portal sync when authenticated"]
+        default_portal["Traigent Portal"]
     end
 
-    subgraph CloudMode["Cloud Mode"]
+    subgraph LocalSearch["Local Search"]
         direction TB
-        cloud_desc["Reserved future remote execution<br/>Not available today<br/>Fails closed"]
-        cloud_backend["Future Traigent Cloud"]
-        cloud_storage["Future Cloud Storage"]
+        local_desc["Grid or random<br/>Trials run in your process<br/>Portal sync when authenticated"]
+        local_opt["Local Optimizer"]
     end
 
-    subgraph HybridMode["Hybrid Mode"]
+    subgraph NoEgress["No-Egress Run"]
         direction TB
-        hybrid_desc["Local trial execution<br/>Backend session/result tracking<br/>Portal-visible results"]
-        hybrid_local["Local Execution"]
-        hybrid_sync["Backend Sync"]
+        noegress_desc["offline=True<br/>Local optimizer<br/>No portal sync"]
+        local_store["Local Results"]
     end
 
-    User["Your Application"] --> EdgeAnalytics
-    User --> CloudMode
-    User --> HybridMode
+    User["Your Application"] --> DefaultPath
+    User --> LocalSearch
+    User --> NoEgress
 
-    style EdgeAnalytics fill:#e8f5e9,stroke:#2e7d32
-    style CloudMode fill:#e3f2fd,stroke:#1565c0
-    style HybridMode fill:#fff3e0,stroke:#ef6c00
+    style DefaultPath fill:#e3f2fd,stroke:#1565c0
+    style LocalSearch fill:#e8f5e9,stroke:#2e7d32
+    style NoEgress fill:#fff3e0,stroke:#ef6c00
 ```
 
 ---

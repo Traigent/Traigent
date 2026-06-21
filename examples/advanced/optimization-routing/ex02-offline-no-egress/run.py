@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runner for Execution Modes - Local Mode (Basic)."""
+"""Runner for Optimization Routing - No-Egress Local Run."""
 
 from __future__ import annotations
 
@@ -12,15 +12,14 @@ from typing import Any
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-# Ensure safe local + mock mode + local results folder
+# Keep the example deterministic and local.
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-os.environ.setdefault("TRAIGENT_EDGE_ANALYTICS_MODE", "true")
 os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", os.path.join(HERE, ".traigent"))
 
-from local_basic import my_llm_function  # noqa: E402
+from offline_no_egress import sensitive_function  # noqa: E402
 
 RESULTS_FILE = "results.json"
-DATASET_FILE = "my_dataset.jsonl"
+DATASET_FILE = "sensitive_data.jsonl"
 
 
 def _serialize_trials(opt_result: Any, limit: int = 10) -> list[dict[str, Any]]:
@@ -39,18 +38,21 @@ def _serialize_trials(opt_result: Any, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    print("Running Execution Modes - Local (Basic)")
+    print("Running Optimization Routing - No-Egress Local Run")
     print("=" * 60)
 
-    opt_result = asyncio.run(my_llm_function.optimize(max_trials=10))
+    opt_result = asyncio.run(
+        sensitive_function.optimize(max_trials=10, algorithm="grid")
+    )
 
     out: dict[str, Any] = {
-        "example": "execution-modes__local-basic",
+        "example": "optimization-routing__offline-no-egress",
         "dataset": os.path.basename(DATASET_FILE),
         "best_config": getattr(opt_result, "best_config", {}),
         "best_score": getattr(opt_result, "best_score", None),
         "objectives": getattr(opt_result, "objectives", []),
         "algorithm": getattr(opt_result, "algorithm", ""),
+        "source": getattr(opt_result, "source", None),
         "total_cost": getattr(opt_result, "total_cost", None),
         "total_tokens": getattr(opt_result, "total_tokens", None),
         "trials": _serialize_trials(opt_result, limit=10),

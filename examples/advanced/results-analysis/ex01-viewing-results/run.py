@@ -10,9 +10,9 @@ from typing import Any
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-# Safe local mock-mode
+# Safe local mock run
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-os.environ.setdefault("TRAIGENT_EDGE_ANALYTICS_MODE", "true")
+os.environ.setdefault("TRAIGENT_OFFLINE", "1")
 os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", os.path.join(HERE, ".traigent"))
 
 from viewing_results import sentiment_classifier  # noqa: E402

@@ -505,8 +505,8 @@ from traigent.config.parallel import ParallelConfig
 
 **ExecutionOptions Fields**:
 
-- `algorithm`: optimizer selector. `"auto"` is cloud-first and falls back to local grid/random on connectivity failures; `"grid"` and `"random"` are explicit local optimizers; smart algorithms require cloud and hard-error when unavailable or offline.
-- `offline`: force local-only operation with zero Traigent backend egress. `TRAIGENT_OFFLINE=1` and legacy `TRAIGENT_OFFLINE_MODE=1` provide the same behavior via environment variables.
+- `algorithm`: optimizer selector. `"auto"` is the default smart optimizer; `"grid"` and `"random"` run local search and still sync results when authenticated; smart algorithms require cloud and hard-error when unavailable or offline.
+- `offline`: force local-only operation with zero Traigent backend egress and no portal sync.
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
 - `parallel_config`: Concurrency configuration
@@ -514,7 +514,7 @@ from traigent.config.parallel import ParallelConfig
 - `samples_include_pruned`: Count pruned trials in budget
 - `reps_per_trial`: Repetitions per configuration. OSS SDK accepts only `1`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
 - `reps_aggregation`: Repetition aggregation method. OSS SDK accepts only `"mean"`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
-- `evaluator`: external evaluator bundle, including `ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...))`. This does not change optimizer routing; it only changes how each trial is evaluated.
+- `evaluator`: external evaluator bundle for API-contract integrations. This does not change optimizer routing; it only changes how each trial is evaluated.
 
 #### `mock`
 
@@ -564,11 +564,8 @@ The `**runtime_overrides` parameter accepts additional settings:
 )
 ```
 
-Deprecated execution inputs:
-
-- `execution_mode=` is deprecated compatibility input only; migrate to `algorithm=` / `offline=`.
-- `privacy_enabled` is a deprecated no-op. Cloud-brain optimization already avoids dataset-content egress; use `offline=True` for zero Traigent backend egress.
-- `cloud_fallback_policy` is a deprecated no-op. Use `TRAIGENT_REQUIRE_CLOUD=1` to disable `algorithm="auto"` fallback.
+Legacy `execution_mode=` inputs are deprecated compatibility shims. Use
+`algorithm=` and `offline=` for new code.
 
 Run controls such as `max_trials` and `timeout` are passed to `.optimize()`:
 
@@ -647,15 +644,13 @@ def answer_question(question: str) -> str:
         lambda cfg, metrics: metrics.get("cost", 0) <= 0.10 if metrics else True,
     ],
     evaluation={"eval_dataset": "support_tickets.jsonl"},
-    algorithm="grid",
-    offline=True,
     parallel_config={"thread_workers": 4},
 )
 def process_ticket(ticket: str) -> str:
     return support_chain.run(ticket)
 ```
 
-### Offline Local Storage
+### No-Egress Local Storage
 
 ```python
 @traigent.optimize(
@@ -702,7 +697,7 @@ def my_agent(query: str) -> str:
 - [Complete Function Specification](./complete-function-specification.md) - Full API reference
 - [Evaluation Guide](../user-guide/evaluation_guide.md) - Understanding accuracy metrics, evaluation methods, and troubleshooting
 - [Injection Modes Guide](../user-guide/injection_modes.md) - Configuration injection patterns
-- [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md) - Cloud-first auto, explicit local, offline, and migration guidance
+- [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md) - Default smart optimization, local search, no-egress runs, and migration guidance
 - [Thread Pool Examples](./thread-pool-examples.md) - Context propagation with threads
-- [Telemetry Documentation](./telemetry.md) - Data collection and privacy
+- [Telemetry Documentation](./telemetry.md) - Data collection and no-egress controls
 - Custom evaluator walkthrough in the repository examples - LLM-as-Judge implementation

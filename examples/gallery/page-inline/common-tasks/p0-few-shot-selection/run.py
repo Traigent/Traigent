@@ -11,7 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-os.environ.setdefault("TRAIGENT_EDGE_ANALYTICS_MODE", "true")
+os.environ.setdefault("TRAIGENT_OFFLINE", "1")
 os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", os.path.join(HERE, ".traigent"))
 
 from few_shot_selection import classify_sentiment  # noqa: E402
