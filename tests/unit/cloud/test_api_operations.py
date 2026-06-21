@@ -963,15 +963,18 @@ class TestParseSessionResponse:
                 "metadata": {
                     "experiment_id": "exp_123",
                     "experiment_run_id": "run_123",
+                    "project_id": "project_alpha",
                 },
+                "tenant_id": "tenant_acme",
             }
         )
-        session_id, exp_id, run_id = await self.ops._parse_session_response(
-            mock_response
-        )
+        result = await self.ops._parse_session_response(mock_response)
+        session_id, exp_id, run_id = result
         assert session_id == "session_123"
         assert exp_id == "exp_123"
         assert run_id == "run_123"
+        assert result.project_id == "project_alpha"
+        assert result.tenant_id == "tenant_acme"
 
     @pytest.mark.asyncio
     async def test_parse_response_with_fallback_ids(self):

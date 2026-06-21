@@ -40,6 +40,33 @@ def test_build_experiment_url_uses_portal_view_route() -> None:
     )
 
 
+def test_build_experiment_url_adds_encoded_context_query() -> None:
+    """Experiment links include owning context when provided."""
+    assert (
+        build_experiment_url(
+            "https://portal.traigent.ai/",
+            "exp/123",
+            project_id="project/alpha",
+            tenant_id="tenant acme",
+        )
+        == "https://portal.traigent.ai/experiments/view/exp%2F123"
+        "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+    )
+
+
+def test_build_experiment_url_omits_empty_context_query() -> None:
+    """Empty owning context keeps the backward-compatible bare URL."""
+    assert (
+        build_experiment_url(
+            "https://portal.traigent.ai/",
+            "exp_123",
+            project_id=" ",
+            tenant_id=None,
+        )
+        == "https://portal.traigent.ai/experiments/view/exp_123"
+    )
+
+
 class TestSyncManager:
     """Tests for SyncManager class."""
 
@@ -644,7 +671,13 @@ class TestSyncManager:
         sync_manager._session.post.side_effect = [
             backend_response(payload={"id": "agent-id"}),
             backend_response(payload={"id": "benchmark-id"}),
-            backend_response(payload={"id": "experiment-id"}),
+            backend_response(
+                payload={
+                    "id": "experiment-id",
+                    "project_id": "project/alpha",
+                    "tenant_id": "tenant acme",
+                }
+            ),
             backend_response(payload={"id": "experiment-run-id"}),
             backend_response(payload={"id": "configuration-run-1"}),
             backend_response(payload={"id": "configuration-run-2"}),
@@ -662,6 +695,7 @@ class TestSyncManager:
         assert (
             result["cloud_url"]
             == "https://portal.traigent.ai/experiments/view/experiment-id"
+            "?project_id=project%2Falpha&tenant_id=tenant%20acme"
         )
         post_calls = sync_manager._session.post.call_args_list
         assert [call.args[0] for call in post_calls] == [
@@ -691,6 +725,62 @@ class TestSyncManager:
             "measures": experiment_payload["measures"],
             "configurations": experiment_payload["configurations"],
         }
+
+    def test_sync_session_to_cloud_resume_partial_uses_persisted_context_url(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """A partial-sync retry preserves project/tenant context in success URL."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "partial",
+            "payload_hash": payload_hash,
+            "cloud_agent_id": "agent-id",
+            "cloud_benchmark_id": "benchmark-id",
+            "cloud_experiment_id": "experiment-id",
+            "cloud_experiment_run_id": "experiment-run-id",
+            "project_id": "project/alpha",
+            "tenant_id": "tenant acme",
+            "attempts": 1,
+        }
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "configuration-run-1"}),
+            backend_response(payload={"id": "configuration-run-2"}),
+            backend_response(payload={"id": "configuration-run-3"}),
+        ]
+
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert result["status"] == "success"
+        assert result["project_id"] == "project/alpha"
+        assert result["tenant_id"] == "tenant acme"
+        assert (
+            result["cloud_url"]
+            == "https://portal.traigent.ai/experiments/view/experiment-id"
+            "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+        )
+        assert [
+            call.args[0] for call in sync_manager._session.post.call_args_list
+        ] == [
+            f"{sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
+            f"{sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
+            f"{sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
+        ]
+
+        sync_state_patch = sync_manager.storage.update_sync_state.call_args.args[1]
+        assert sync_state_patch["project_id"] == "project/alpha"
+        assert sync_state_patch["tenant_id"] == "tenant acme"
+        assert sync_state_patch["cloud_url"] == result["cloud_url"]
+        assert sync_state_patch["attempts"] == 2
 
     def test_sync_session_to_cloud_reuses_agent_and_benchmark_for_idempotency(
         self, sync_manager: SyncManager

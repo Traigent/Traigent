@@ -2082,6 +2082,27 @@ class OptimizationOrchestrator:
             return
         await self._workflow_trace_manager.submit_traces(session_id)
 
+    @staticmethod
+    def _populate_experiment_cloud_url(result: OptimizationResult) -> None:
+        """Populate result experiment_id/cloud_url from backend session metadata."""
+        metadata = result.metadata or {}
+        exp_id = metadata.get("experiment_id")
+        if not exp_id:
+            return
+        result.experiment_id = exp_id
+        try:
+            from traigent.cloud.sync_manager import build_experiment_url
+            from traigent.config.backend_config import BackendConfig
+
+            result.cloud_url = build_experiment_url(
+                BackendConfig.get_cloud_backend_url(),
+                exp_id,
+                project_id=metadata.get("project_id"),
+                tenant_id=metadata.get("tenant_id"),
+            )
+        except Exception as exc:
+            logger.debug("Cloud URL construction failed: %s", exc)
+
     def _initialize_optimization_run(
         self,
         func: Callable[..., Any],
@@ -2710,18 +2731,7 @@ class OptimizationOrchestrator:
                 )
 
             # Populate experiment_id and cloud_url from session metadata
-            exp_id = (result.metadata or {}).get("experiment_id")
-            if exp_id:
-                result.experiment_id = exp_id
-                try:
-                    from traigent.cloud.sync_manager import build_experiment_url
-                    from traigent.config.backend_config import BackendConfig
-
-                    result.cloud_url = build_experiment_url(
-                        BackendConfig.get_cloud_backend_url(), exp_id
-                    )
-                except Exception as exc:
-                    logger.debug("Cloud URL construction failed: %s", exc)
+            self._populate_experiment_cloud_url(result)
         result.metadata["persistence_status"] = persistence_status
         self.traigent_config.persistence_status = persistence_status
 
