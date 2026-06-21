@@ -168,7 +168,9 @@ def regular_function():
         )
         assert len(functions) == 0
 
-    def test_discover_allows_module_inside_current_workspace(self, tmp_path, monkeypatch):
+    def test_discover_allows_module_inside_current_workspace(
+        self, tmp_path, monkeypatch
+    ):
         """Discovery should validate user modules against the caller's CWD."""
         module_path = tmp_path / "local_script.py"
         module_path.write_text(
@@ -272,7 +274,6 @@ class TestOptimizationValidator:
             patch.object(validator, "_run_optimization") as mock_opt,
             patch.object(validator, "_compare_results") as mock_compare,
         ):
-
             # Setup mocks
             mock_baseline.return_value = ({"accuracy": 0.8}, {"model": "default"})
             mock_opt.return_value = ({"accuracy": 0.9}, {"model": "optimized"})
@@ -295,7 +296,6 @@ class TestOptimizationValidator:
             patch.object(validator, "_run_optimization") as mock_opt,
             patch.object(validator, "_compare_results") as mock_compare,
         ):
-
             # Setup mocks for inferior performance
             mock_baseline.return_value = ({"accuracy": 0.9}, {"model": "default"})
             mock_opt.return_value = ({"accuracy": 0.8}, {"model": "optimized"})
