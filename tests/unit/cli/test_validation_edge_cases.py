@@ -211,14 +211,13 @@ class TestErrorScenarios:
             discover_optimized_functions("completely_nonexistent_file.py")
 
     def test_discover_functions_outside_workspace(self):
-        """Path traversal outside the workspace should be rejected."""
+        """User modules outside the installed SDK tree should be importable."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("# temporary external module")
             external_file = f.name
 
         try:
-            with pytest.raises(ValueError):
-                discover_optimized_functions(external_file)
+            assert discover_optimized_functions(external_file) == []
         finally:
             os.chmod(external_file, 0o600)
             os.unlink(external_file)

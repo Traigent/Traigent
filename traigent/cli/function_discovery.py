@@ -17,7 +17,6 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 console = Console()
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def discover_optimized_functions(
@@ -41,15 +40,10 @@ def discover_optimized_functions(
     # Validate and resolve module path
     module_path_obj = Path(module_path).expanduser().resolve()
 
-    # Security check for path traversal
-    if ".." in str(module_path_obj) or str(module_path_obj).startswith("/etc"):
+    # Avoid importing system configuration files; user project modules may live
+    # outside the installed SDK tree.
+    if str(module_path_obj).startswith("/etc"):
         raise ValueError(f"Invalid module path: {module_path_obj}")
-    try:
-        module_path_obj.relative_to(PROJECT_ROOT)
-    except ValueError as exc:
-        raise ValueError(
-            f"Module path must reside inside the Traigent workspace ({PROJECT_ROOT}): {module_path_obj}"
-        ) from exc
 
     if not module_path_obj.exists():
         raise FileNotFoundError(f"Module file not found: {module_path_obj}")

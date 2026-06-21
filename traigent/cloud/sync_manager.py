@@ -12,6 +12,7 @@ import re
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote, urlparse, urlunparse
 
 import requests  # Always needed for synchronous operations
 
@@ -25,6 +26,7 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
 
 from ..config.backend_config import BackendConfig, get_no_credentials_hint
+from ..config.project import read_optional_project_env
 from ..config.types import TraigentConfig
 from ..storage.local_storage import (
     TRIAL_COST_FIELDS,
@@ -51,7 +53,24 @@ def build_experiment_url(base_url: str, experiment_id: str) -> str:
     Single source of truth for experiment URL construction —
     used by both SyncManager and the orchestrator.
     """
-    return f"{base_url.rstrip('/')}/experiments/{experiment_id}"
+    return f"{base_url.rstrip('/')}/experiments/view/{experiment_id}"
+
+
+def _replace_api_path(base_url: str, api_path: str) -> str:
+    """Return ``base_url`` origin with an explicit API path."""
+    parsed = urlparse(base_url)
+    if parsed.scheme and parsed.netloc:
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                api_path,
+                "",
+                "",
+                "",
+            )
+        )
+    return f"{base_url.rstrip('/')}/{api_path.strip('/')}"
 
 
 def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
@@ -824,7 +843,7 @@ class SyncManager:
         self._raise_if_backend_egress_disabled("sync benchmark")
         try:
             existing_benchmark = self._find_existing_by_name(
-                "benchmarks", benchmark_data["name"], "benchmarks"
+                "datasets", benchmark_data["name"], "datasets"
             )
             if existing_benchmark:
                 benchmark_id = self._extract_resource_id(existing_benchmark)
@@ -837,14 +856,14 @@ class SyncManager:
                     }
 
             response = self._session.post(
-                f"{self.base_url}/benchmarks",
+                f"{self.base_url}/datasets",
                 json=benchmark_data,
                 timeout=self._request_timeout,
             )
 
             if response.status_code in [409, 500]:
                 existing_benchmark = self._find_existing_by_name(
-                    "benchmarks", benchmark_data["name"], "benchmarks"
+                    "datasets", benchmark_data["name"], "datasets"
                 )
                 if existing_benchmark:
                     benchmark_id = self._extract_resource_id(existing_benchmark)
@@ -901,6 +920,20 @@ class SyncManager:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _experiment_run_create_target(self, experiment_id: str) -> tuple[str, bool]:
+        """Return experiment-run create endpoint and whether it is collection-scoped."""
+        project_id = read_optional_project_env()
+        if project_id:
+            project_segment = quote(project_id, safe="")
+            return (
+                _replace_api_path(
+                    self.base_url,
+                    f"/api/v1beta/projects/{project_segment}/experiment_runs",
+                ),
+                True,
+            )
+        return f"{self.base_url}/experiment-runs/{experiment_id}/runs", False
+
     def _sync_experiment_run(
         self, experiment_id: str, run_data: dict[str, Any]
     ) -> dict[str, Any]:
@@ -913,9 +946,15 @@ class SyncManager:
                     "error": "Experiment run sync requires experiment_id",
                 }
 
+            url, collection_scoped = self._experiment_run_create_target(experiment_id)
+            payload = (
+                {**run_data, "experiment_id": experiment_id}
+                if collection_scoped
+                else run_data
+            )
             response = self._session.post(
-                f"{self.base_url}/experiment-runs/{experiment_id}/runs",
-                json=run_data,
+                url,
+                json=payload,
                 timeout=self._request_timeout,
             )
             if response.status_code in [200, 201]:

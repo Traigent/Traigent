@@ -1757,8 +1757,8 @@ def configure() -> None:
 
 
 @auth.command()
-@click.argument("key")
-def whoami(key: str) -> None:
+@click.argument("key", required=False)
+def whoami(key: str | None) -> None:
     """Show information about an API key.
 
     This command will validate an API key and show associated user information.
@@ -1768,12 +1768,21 @@ def whoami(key: str) -> None:
 
     Examples:
         traigent auth whoami tg_1234567890abcdef
+        TRAIGENT_API_KEY=tg_1234567890abcdef traigent auth whoami
     """
     console.print("\n[bold blue]🔍 API Key Information[/bold blue]\n")
 
+    resolved_key = key or BackendConfig.get_api_key()
+    if not resolved_key:
+        console.print("[red]❌ No API key provided[/red]")
+        console.print(
+            "Pass a key or set TRAIGENT_API_KEY / stored CLI credentials.\n"
+        )
+        sys.exit(1)
+
     # Validate format
     valid_prefixes = ("tg_", "uk_", "sk_", "ak_", "tk_")
-    if not any(key.startswith(prefix) for prefix in valid_prefixes):
+    if not any(resolved_key.startswith(prefix) for prefix in valid_prefixes):
         console.print("[red]❌ Invalid API key format[/red]")
         console.print(
             "API keys should start with 'tg_', 'uk_', 'sk_', 'ak_', or 'tk_'\n"
@@ -1784,7 +1793,7 @@ def whoami(key: str) -> None:
     backend_api_url = BackendConfig.get_cloud_api_url()
     console.print(f"[dim]Backend: {backend_api_url}[/dim]")
 
-    success = asyncio.run(_check_api_key(backend_api_url, key))
+    success = asyncio.run(_check_api_key(backend_api_url, resolved_key))
     sys.exit(0 if success else 1)
 
 

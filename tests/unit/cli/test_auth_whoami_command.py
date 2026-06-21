@@ -97,14 +97,17 @@ def _install_fake_aiohttp(
     return fake_module
 
 
-def _run_whoami(monkeypatch: pytest.MonkeyPatch, api_key: str = "tg_test_key") -> Any:
+def _run_whoami(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | None = "tg_test_key"
+) -> Any:
     monkeypatch.setattr(
         auth_commands.BackendConfig,
-        "get_backend_api_url",
+        "get_cloud_api_url",
         staticmethod(lambda: "http://localhost:5000/api/v1"),
     )
     runner = CliRunner()
-    return runner.invoke(auth_commands.auth, ["whoami", api_key])
+    args = ["whoami"] if api_key is None else ["whoami", api_key]
+    return runner.invoke(auth_commands.auth, args)
 
 
 def test_whoami_valid_key_200(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,6 +151,23 @@ def test_whoami_posts_json_payload_to_validate_endpoint(
         _FakeSession.last_post_kwargs["headers"]["Content-Type"]
         == "application/json"
     )
+
+
+def test_whoami_uses_traigent_api_key_env_when_no_positional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_key = "tg_" + "b" * 43  # pragma: allowlist secret
+    monkeypatch.setenv("TRAIGENT_API_KEY", api_key)
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(status=200, json_payload={"valid": True, "data": {}}),
+    )
+
+    result = _run_whoami(monkeypatch, api_key=None)
+
+    assert result.exit_code == 0
+    assert _FakeSession.last_post_kwargs is not None
+    assert _FakeSession.last_post_kwargs["json"] == {"api_key": api_key}
 
 
 @pytest.mark.parametrize("prefix", ["tg_", "uk_", "sk_", "ak_", "tk_"])

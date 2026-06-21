@@ -149,6 +149,103 @@ def _rehydrate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: _rehydrate_value(key, value) for key, value in metadata.items()}
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _successful_local_trial_count(trials: Any) -> int:
+    if not isinstance(trials, list):
+        return 0
+    successful = 0
+    for trial in trials:
+        if isinstance(trial, dict) and not trial.get("error"):
+            successful += 1
+    return successful
+
+
+def _first_string_value(
+    *sources: Any, keys: tuple[str, ...]
+) -> str | None:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _extract_local_objectives(config: Any) -> list[str]:
+    if not isinstance(config, dict):
+        return ["score"]
+
+    objective_schema = config.get("objective_schema")
+    if isinstance(objective_schema, dict):
+        objectives = objective_schema.get("objectives")
+        if isinstance(objectives, list):
+            names = [
+                obj.get("name") if isinstance(obj, dict) else obj
+                for obj in objectives
+            ]
+            return [str(name) for name in names if name]
+
+    objectives = config.get("objectives")
+    if isinstance(objectives, list):
+        names = [
+            obj.get("name") if isinstance(obj, dict) else obj for obj in objectives
+        ]
+        return [str(name) for name in names if name]
+
+    return ["score"]
+
+
+def _extract_local_configuration_space(config: Any) -> dict[str, Any]:
+    if not isinstance(config, dict):
+        return {}
+    for key in ("configuration_space", "search_space", "config_space"):
+        value = config.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _extract_log_objectives(objectives: Any) -> list[str]:
+    if not isinstance(objectives, dict):
+        return ["score"]
+    summary = objectives.get("summary")
+    if isinstance(summary, dict) and isinstance(summary.get("names"), list):
+        return [str(name) for name in summary["names"] if name]
+    raw_objectives = objectives.get("objectives")
+    if isinstance(raw_objectives, list):
+        names = [
+            obj.get("name") if isinstance(obj, dict) else obj
+            for obj in raw_objectives
+        ]
+        return [str(name) for name in names if name]
+    return ["score"]
+
+
+def _read_latest_json(directory: Path, pattern: str) -> dict[str, Any]:
+    if not directory.exists():
+        return {}
+    files = sorted(directory.glob(pattern), key=lambda path: path.name, reverse=True)
+    for file_path in files:
+        try:
+            with file_path.open(encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
 class PersistenceManager:
     """Manages saving and loading optimization results to/from disk."""
 
@@ -453,6 +550,9 @@ class PersistenceManager:
         """
         results = []
 
+        results.extend(self._list_current_local_storage_results())
+        results.extend(self._list_optimization_log_results())
+
         for result_dir in self.base_dir.iterdir():
             if result_dir.is_dir():
                 metadata_file = self._resolve_path(result_dir / METADATA_FILE)
@@ -468,6 +568,199 @@ class PersistenceManager:
         # Sort by creation time, newest first
         results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return results
+
+    def _iter_existing_child_roots(self, child_name: str) -> list[Path]:
+        """Return base_dir and base_dir/child_name when they contain child data."""
+        candidates = [self.base_dir]
+        nested = self.base_dir / child_name
+        if nested != self.base_dir:
+            candidates.append(nested)
+
+        roots: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if resolved.exists():
+                roots.append(resolved)
+        return roots
+
+    def _list_current_local_storage_results(self) -> list[dict[str, Any]]:
+        """Read LocalStorageManager session files from current storage roots."""
+        results: list[dict[str, Any]] = []
+        for storage_root in self._iter_existing_child_roots("local_storage"):
+            sessions_dir = storage_root / "sessions"
+            if not sessions_dir.exists():
+                continue
+
+            for session_file in sessions_dir.glob("*.json"):
+                try:
+                    metadata = self._metadata_from_local_storage_session(
+                        session_file, storage_root
+                    )
+                except (OSError, json.JSONDecodeError, ValueError):
+                    continue
+                if metadata:
+                    results.append(metadata)
+        return results
+
+    def _metadata_from_local_storage_session(
+        self, session_file: Path, storage_root: Path
+    ) -> dict[str, Any] | None:
+        validated_file = validate_path(session_file, storage_root, must_exist=True)
+        with safe_open(validated_file, storage_root, mode="r") as f:
+            session = json.load(f)
+        if not isinstance(session, dict):
+            return None
+
+        trials = session.get("trials")
+        trial_count = len(trials) if isinstance(trials, list) else 0
+        completed_trials = _safe_int(session.get("completed_trials"), trial_count)
+        if completed_trials <= 0:
+            completed_trials = trial_count
+        total_trials = _safe_int(session.get("total_trials"), completed_trials)
+        if total_trials <= 0:
+            total_trials = completed_trials or trial_count
+        successful_trials = _successful_local_trial_count(trials)
+        denominator = completed_trials or trial_count or total_trials
+        success_rate = successful_trials / denominator if denominator else 0.0
+
+        optimization_config = session.get("optimization_config")
+        metadata = session.get("metadata")
+        algorithm = _first_string_value(
+            optimization_config,
+            metadata,
+            keys=("algorithm", "search_algorithm", "optimizer", "strategy"),
+        )
+
+        session_id = str(session.get("session_id") or session_file.stem)
+        function_name = str(session.get("function_name") or "unknown")
+        return {
+            "name": session_id,
+            "function_identifier": function_name,
+            "function_name": function_name,
+            "algorithm": algorithm or "local_storage",
+            "objectives": _extract_local_objectives(optimization_config),
+            "configuration_space": _extract_local_configuration_space(
+                optimization_config
+            ),
+            "best_score": session.get("best_score"),
+            "best_config": session.get("best_config"),
+            "success_rate": success_rate,
+            "duration": None,
+            "convergence_info": {},
+            "created_at": session.get("created_at", ""),
+            "total_trials": total_trials,
+            "successful_trials": successful_trials,
+            "status": session.get("status"),
+            "source": "local_storage",
+            "path": str(session_file),
+        }
+
+    def _list_optimization_log_results(self) -> list[dict[str, Any]]:
+        """Read OptimizationLogger v2 run directories."""
+        results: list[dict[str, Any]] = []
+        for logs_root in self._iter_existing_child_roots("optimization_logs"):
+            experiments_dir = logs_root / "experiments"
+            if not experiments_dir.exists():
+                continue
+            for run_dir in experiments_dir.glob("*/runs/*"):
+                if not run_dir.is_dir():
+                    continue
+                try:
+                    metadata = self._metadata_from_optimization_log_run(
+                        run_dir, logs_root
+                    )
+                except (OSError, json.JSONDecodeError, ValueError):
+                    continue
+                if metadata:
+                    results.append(metadata)
+        return results
+
+    def _metadata_from_optimization_log_run(
+        self, run_dir: Path, logs_root: Path
+    ) -> dict[str, Any] | None:
+        validated_run_dir = validate_path(run_dir, logs_root, must_exist=True)
+        session = _read_latest_json(validated_run_dir / "meta", "session*.json")
+        metrics = _read_latest_json(validated_run_dir / "metrics", "metrics_summary*.json")
+        best_config = _read_latest_json(
+            validated_run_dir / "artifacts", "best_config*.json"
+        )
+        config = _read_latest_json(validated_run_dir / "meta", "config*.json")
+        objectives = _read_latest_json(validated_run_dir / "meta", "objectives*.json")
+
+        if not any((session, metrics, best_config, config, objectives)):
+            return None
+
+        experiment_name = (
+            session.get("experiment_name")
+            if isinstance(session, dict)
+            else validated_run_dir.parents[1].name
+        )
+        run_id = (
+            session.get("run_id") if isinstance(session, dict) else validated_run_dir.name
+        )
+        function_name = str(experiment_name or validated_run_dir.parents[1].name)
+        algorithm = _first_string_value(
+            metrics,
+            objectives.get("metadata") if isinstance(objectives, dict) else None,
+            objectives,
+            config,
+            keys=("algorithm", "search_algorithm", "optimizer", "strategy"),
+        )
+
+        total_trials = _safe_int(
+            metrics.get("total_trials") if isinstance(metrics, dict) else None,
+            0,
+        )
+        successful_trials = _safe_int(
+            metrics.get("successful_trials") if isinstance(metrics, dict) else None,
+            0,
+        )
+        success_rate = (
+            metrics.get("success_rate")
+            if isinstance(metrics, dict)
+            and isinstance(metrics.get("success_rate"), (int, float))
+            else (successful_trials / total_trials if total_trials else 0.0)
+        )
+        created_at = (
+            session.get("start_time")
+            if isinstance(session, dict) and session.get("start_time")
+            else (
+                metrics.get("timestamp")
+                if isinstance(metrics, dict) and metrics.get("timestamp")
+                else ""
+            )
+        )
+
+        return {
+            "name": str(run_id or validated_run_dir.name),
+            "function_identifier": function_name,
+            "function_name": function_name,
+            "algorithm": algorithm or "optimization_log",
+            "objectives": _extract_log_objectives(objectives),
+            "configuration_space": _extract_local_configuration_space(config),
+            "best_score": (
+                best_config.get("score") if isinstance(best_config, dict) else None
+            ),
+            "best_config": (
+                best_config.get("config") if isinstance(best_config, dict) else None
+            ),
+            "success_rate": float(success_rate),
+            "duration": metrics.get("duration") if isinstance(metrics, dict) else None,
+            "convergence_info": {},
+            "created_at": str(created_at),
+            "total_trials": total_trials,
+            "successful_trials": successful_trials,
+            "status": session.get("status") if isinstance(session, dict) else None,
+            "source": "optimization_log",
+            "path": str(validated_run_dir),
+        }
 
     def delete_result(self, name: str) -> bool:
         """Delete a saved optimization result.

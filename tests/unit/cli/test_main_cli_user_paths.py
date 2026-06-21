@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -68,3 +69,32 @@ def test_validate_strict_exits_zero_for_valid_dataset(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Dataset content validation passed" in result.output
+
+
+def test_check_dry_run_accepts_user_module_outside_package_dir(tmp_path: Path) -> None:
+    module_path = tmp_path / "user_module.py"
+    module_path.write_text(
+        """
+def tuned_function(value: str = "default"):
+    return value
+
+
+async def _optimize_stub(**kwargs):
+    return None
+
+
+tuned_function.optimize = _optimize_stub
+tuned_function.eval_dataset = "dataset.jsonl"
+tuned_function.objectives = ["accuracy"]
+tuned_function.configuration_space = {"value": ["default", "optimized"]}
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        result = CliRunner().invoke(cli, ["check", str(module_path), "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "Dry run completed" in result.output
+        assert "workspace" not in result.output.lower()
+    finally:
+        sys.modules.pop("user_module", None)

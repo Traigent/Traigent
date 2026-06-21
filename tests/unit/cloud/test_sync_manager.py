@@ -14,7 +14,11 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 
-from traigent.cloud.sync_manager import DEFAULT_SYNC_AGENT_TYPE_ID, SyncManager
+from traigent.cloud.sync_manager import (
+    DEFAULT_SYNC_AGENT_TYPE_ID,
+    SyncManager,
+    build_experiment_url,
+)
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
@@ -30,6 +34,12 @@ def backend_response(status_code=201, payload=None, text="Created"):
 
 class TestSyncManager:
     """Tests for SyncManager class."""
+
+    def test_build_experiment_url_uses_portal_view_route(self) -> None:
+        assert (
+            build_experiment_url("https://portal.example/", "exp_123")
+            == "https://portal.example/experiments/view/exp_123"
+        )
 
     @pytest.fixture
     def mock_config(self, tmp_path: Path) -> TraigentConfig:
@@ -646,7 +656,7 @@ class TestSyncManager:
         post_calls = sync_manager._session.post.call_args_list
         assert [call.args[0] for call in post_calls] == [
             f"{sync_manager.base_url}/agents",
-            f"{sync_manager.base_url}/benchmarks",
+            f"{sync_manager.base_url}/datasets",
             f"{sync_manager.base_url}/experiments",
             f"{sync_manager.base_url}/experiment-runs/experiment-id/runs",
             f"{sync_manager.base_url}/configuration-runs/runs/"
@@ -710,7 +720,7 @@ class TestSyncManager:
             backend_response(
                 200,
                 payload={
-                    "benchmarks": [
+                    "datasets": [
                         {
                             "id": "existing-benchmark-id",
                             "name": "Local Dataset idem_fn",
@@ -732,10 +742,40 @@ class TestSyncManager:
         assert result["status"] == "success"
         post_calls = sync_manager._session.post.call_args_list
         assert post_calls[0].args[0] == f"{sync_manager.base_url}/agents"
-        assert post_calls[1].args[0] == f"{sync_manager.base_url}/benchmarks"
+        assert post_calls[1].args[0] == f"{sync_manager.base_url}/datasets"
         experiment_payload = post_calls[2].kwargs["json"]
         assert experiment_payload["agent_id"] == "existing-agent-id"
         assert experiment_payload["dataset_id"] == "existing-benchmark-id"
+
+    def test_sync_experiment_run_uses_project_scoped_current_endpoint(
+        self, monkeypatch: pytest.MonkeyPatch, sync_manager: SyncManager
+    ) -> None:
+        """Project-scoped sync uses the current v1beta experiment_runs route."""
+        monkeypatch.setenv("TRAIGENT_PROJECT_ID", "project 123")
+        run_data = {
+            "experiment_data": {
+                "agent_id": "agent-id",
+                "benchmark_id": "dataset-id",
+                "measures": ["score"],
+                "configurations": {},
+            }
+        }
+        sync_manager._session.post.return_value = backend_response(
+            payload={"id": "run-id"}
+        )
+
+        result = sync_manager._sync_experiment_run("experiment-id", run_data)
+
+        assert result["success"] is True
+        expected_url = (
+            sync_manager.base_url.removesuffix("/api/v1")
+            + "/api/v1beta/projects/project%20123/experiment_runs"
+        )
+        sync_manager._session.post.assert_called_once_with(
+            expected_url,
+            json={**run_data, "experiment_id": "experiment-id"},
+            timeout=sync_manager._request_timeout,
+        )
 
     def test_sync_session_to_cloud_configuration_failure_is_partial(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
@@ -767,7 +807,7 @@ class TestSyncManager:
 
         # Mock mixed responses (some succeed, some fail)
         def mock_post(url: str, *args, **kwargs):
-            if "agents" in url or "benchmarks" in url:
+            if "agents" in url or "datasets" in url:
                 return backend_response()
             return backend_response(status_code=500, text="Internal Server Error")
 
@@ -1001,7 +1041,7 @@ class TestSyncManager:
         }
 
         sync_manager._session.get.return_value = backend_response(
-            200, payload={"benchmarks": [{"id": "bench_123", "name": "Test Benchmark"}]}
+            200, payload={"datasets": [{"id": "bench_123", "name": "Test Benchmark"}]}
         )
 
         result = sync_manager._sync_benchmark(benchmark_data)
