@@ -588,6 +588,8 @@ class ApiOperations:
         wire_governance = tvl_governance_to_wire(session_request.tvl_governance)
         if wire_governance:
             payload["tvl_governance"] = wire_governance
+        if session_request.smart_pruning is not None:
+            payload["smart_pruning"] = dict(session_request.smart_pruning)
         return payload
 
     def _build_legacy_session_payload(

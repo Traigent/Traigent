@@ -35,6 +35,7 @@ from .models import (
     AgentOptimizationResponse,
     AgentOptimizationStatus,
     AgentSpecification,
+    IntermediateReportResponse,
     NextTrialRequest,
     NextTrialResponse,
     OptimizationFinalizationRequest,
@@ -1221,6 +1222,7 @@ class TraigentCloudClient(BaseTraigentClient):
         default_config: dict[str, Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         optimization_strategy: dict[str, Any] | None = None,
+        smart_pruning: dict[str, Any] | None = None,
         user_id: str | None = None,
         billing_tier: str = "standard",
     ) -> SessionCreationResponse:
@@ -1262,6 +1264,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 default_config=default_config,
                 promotion_policy=promotion_policy,
                 optimization_strategy=optimization_strategy,
+                smart_pruning=smart_pruning,
                 user_id=user_id,
                 billing_tier=billing_tier,
             )
@@ -1477,6 +1480,64 @@ class TraigentCloudClient(BaseTraigentClient):
             await self._reset_http_session("finalize_session network error")
             raise CloudServiceError(f"Network error finalizing session: {e}") from None
 
+    async def report_intermediate_trial(
+        self,
+        *,
+        session_id: str,
+        trial_id: str,
+        running_score: float,
+        examples_attempted: int,
+        partial_cost_usd: float | None = None,
+        objective_name: str | None = None,
+    ) -> IntermediateReportResponse:
+        """Send per-trial progress to the backend smart-pruning endpoint."""
+        self._raise_if_backend_egress_disabled("intermediate trial report")
+        await self._ensure_session()
+
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
+
+        payload: dict[str, Any] = {
+            "session_id": session_id,
+            "trial_id": trial_id,
+            "running_score": float(running_score),
+            "examples_attempted": int(examples_attempted),
+        }
+        if partial_cost_usd is not None:
+            payload["partial_cost_usd"] = float(partial_cost_usd)
+        if objective_name:
+            payload["objective_name"] = str(objective_name)
+
+        try:
+            url = f"{self.api_base_url}/sessions/{session_id}/intermediate-report"
+            async with self._aio_session.post(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
+                if response.status == 403:
+                    error_text = await response.text()
+                    self._raise_ownership_error(
+                        session_id,
+                        "Sending intermediate trial report",
+                        response.status,
+                        error_text,
+                    )
+                if response.status not in [200, 201]:
+                    error_text = await response.text()
+                    raise CloudServiceError(
+                        "Failed to submit intermediate report: "
+                        f"HTTP {response.status}: {error_text}"
+                    )
+                data = await response.json()
+                return IntermediateReportResponse(
+                    prune=bool(data.get("prune", False)),
+                    prune_reason=data.get("prune_reason"),
+                )
+        except aiohttp.ClientError as e:
+            await self._reset_http_session("intermediate_report network error")
+            raise CloudServiceError(
+                f"Network error submitting intermediate report: {e}"
+            ) from None
+
     # Serialization/deserialization helpers
 
     def _serialize_session_request(
@@ -1499,6 +1560,8 @@ class TraigentCloudClient(BaseTraigentClient):
             "billing_tier": request.billing_tier,
             "metadata": metadata,
         }
+        if request.smart_pruning is not None:
+            payload["smart_pruning"] = dict(request.smart_pruning)
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from traigent._version import get_version
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.dtos import MeasuresDict
+from traigent.cloud.models import IntermediateReportResponse
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
@@ -481,6 +482,103 @@ class TrialOperations:
                 self._describe_backend(),
             )
             return None
+
+    async def report_intermediate_trial(
+        self,
+        *,
+        session_id: str,
+        trial_id: str,
+        running_score: float,
+        examples_attempted: int,
+        partial_cost_usd: float | None = None,
+        objective_name: str | None = None,
+    ) -> IntermediateReportResponse:
+        """Submit per-trial progress to the smart-pruning endpoint."""
+        no_prune = IntermediateReportResponse(prune=False, prune_reason=None)
+        if is_backend_offline():
+            logger.debug(
+                "Offline mode: skipping intermediate report for session %s trial %s",
+                session_id,
+                trial_id,
+            )
+            return no_prune
+        self._raise_if_backend_egress_disabled("intermediate trial report")
+
+        if not AIOHTTP_AVAILABLE:
+            logger.warning("aiohttp not available, skipping intermediate report")
+            return no_prune
+
+        payload: dict[str, Any] = {
+            "session_id": session_id,
+            "trial_id": trial_id,
+            "running_score": float(running_score),
+            "examples_attempted": int(examples_attempted),
+        }
+        if partial_cost_usd is not None:
+            payload["partial_cost_usd"] = float(partial_cost_usd)
+        if objective_name:
+            payload["objective_name"] = str(objective_name)
+
+        try:
+            headers = await self.client.auth_manager.augment_headers(
+                _JSON_CONTENT_TYPE_HEADER
+            )
+            connector = self._create_localhost_connector()
+            async with aiohttp.ClientSession(connector=connector) as session:
+                api_base = (
+                    self.client.backend_config.api_base_url
+                    or BackendConfig.get_backend_api_url()
+                )
+                url = f"{api_base}/sessions/{session_id}/intermediate-report"
+                async with session.post(
+                    url,
+                    json=self._sanitize_for_json(payload),
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    if response.status in [200, 201]:
+                        data = await response.json()
+                        if not isinstance(data, dict):
+                            return no_prune
+                        return IntermediateReportResponse(
+                            prune=bool(data.get("prune", False)),
+                            prune_reason=data.get("prune_reason"),
+                        )
+                    if response.status == 403:
+                        error_msg = await response.text()
+                        self._log_ownership_forbidden(
+                            session_id,
+                            "Submitting intermediate report",
+                            response.status,
+                            error_msg,
+                        )
+                        return no_prune
+                    error_text = self._first_error_line(await response.text())
+                    logger.warning(
+                        "Intermediate report rejected for session %s trial %s: "
+                        "HTTP %s %s",
+                        session_id,
+                        trial_id,
+                        response.status,
+                        error_text,
+                    )
+                    return no_prune
+
+        except Exception as exc:
+            if is_backend_offline():
+                logger.debug(
+                    "Offline mode: intermediate report encountered %s; skipping",
+                    exc,
+                )
+                return no_prune
+            logger.warning(
+                "Intermediate report failed for session %s trial %s (%s): %s",
+                session_id,
+                trial_id,
+                self._describe_backend(),
+                exc,
+            )
+            return no_prune
 
     def _extract_measures_from_metrics(
         self, metrics: dict[str, Any]

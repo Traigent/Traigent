@@ -7,7 +7,7 @@ from __future__ import annotations
 import copy
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from traigent.api.types import (
     ComparabilityInfo,
@@ -553,6 +553,26 @@ def build_pruned_result(
             metadata["examples_attempted"] = evaluated
             # Also add to metrics for backend submission
             metrics["examples_attempted"] = float(evaluated)
+
+        running_score_value = progress_state.get("running_score")
+        objective_name = progress_state.get("objective_name")
+        if isinstance(objective_name, str) and objective_name:
+            try:
+                running_score = float(cast(Any, running_score_value))
+                metrics[objective_name] = running_score
+                metadata["running_score"] = running_score
+                metadata["objective_name"] = objective_name
+            except (TypeError, ValueError):
+                logger.debug(
+                    "Unable to preserve running_score for pruned trial %s: %s",
+                    trial_id,
+                    running_score_value,
+                )
+
+        for key in ("stop_reason", "prune_reason", "smart_pruning_label"):
+            value = progress_state.get(key)
+            if value is not None:
+                metadata[key] = value
 
         total_cost_value = progress_state.get("total_cost")
         if total_cost_value is not None:

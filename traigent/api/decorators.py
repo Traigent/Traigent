@@ -183,6 +183,45 @@ class ExternalServiceEvaluator(BaseModel):
     hybrid_api: HybridAPIOptions = Field(default_factory=HybridAPIOptions)
 
 
+SmartPruningLabel = Literal["aggressive", "balanced", "conservative"]
+
+
+class SmartPruningConfig(BaseModel):
+    """Cloud-side per-trial pruning policy for managed optimization runs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: SmartPruningLabel
+    min_completed_trials: int | None = Field(default=None, ge=1)
+    warmup_steps: int | None = Field(default=None, ge=0)
+    epsilon: float | None = Field(default=None, ge=0)
+    cost_threshold: float | None = Field(default=None, ge=0)
+    confidence: float | None = Field(default=None, gt=0, lt=1)
+    min_samples_per_config: int | None = Field(default=None, ge=1)
+    warmup_trials: int | None = Field(default=None, ge=0)
+
+
+def _normalize_smart_pruning(
+    value: SmartPruningConfig | Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Validate and return the smart-pruning payload in schema wire shape."""
+    if value is None:
+        return None
+    if isinstance(value, SmartPruningConfig):
+        return cast(dict[str, Any], value.model_dump(exclude_none=True))
+    if isinstance(value, Mapping):
+        try:
+            config = SmartPruningConfig.model_validate(dict(value))
+        except Exception as exc:
+            raise ValueError(
+                "smart_pruning must include label in "
+                "{'aggressive', 'balanced', 'conservative'} and only supported "
+                "optional parameter overrides"
+            ) from exc
+        return cast(dict[str, Any], config.model_dump(exclude_none=True))
+    raise TypeError("smart_pruning must be a SmartPruningConfig, dict, or None")
+
+
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
@@ -201,6 +240,7 @@ class ExecutionOptions(BaseModel):
         parallel_config: Configuration for parallel execution.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
+        smart_pruning: Optional cloud-side per-trial pruning policy.
         reps_per_trial: Number of repetitions per configuration for statistical
             stability. Only the default ``1`` (no repetition) is available in the
             OSS SDK; passing any other value raises ``pydantic.ValidationError`` at
@@ -234,6 +274,7 @@ class ExecutionOptions(BaseModel):
     parallel_config: ParallelConfig | dict[str, Any] | None = None
     max_total_examples: int | None = None
     samples_include_pruned: bool = True
+    smart_pruning: SmartPruningConfig | dict[str, Any] | None = None
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
 
@@ -464,6 +505,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "parallel_config": None,
     "max_total_examples": None,
     "samples_include_pruned": True,
+    "smart_pruning": None,
     "mock_mode_config": None,
     "custom_evaluator": None,
     "scoring_function": None,
@@ -1168,6 +1210,7 @@ class ResolvedExecutionOptions:
     parallel_config: Any
     max_total_examples: Any
     samples_include_pruned: Any
+    smart_pruning: Any
     legacy_options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1260,6 +1303,12 @@ def _resolve_execution_bundle_options(
             "samples_include_pruned",
             base_options.samples_include_pruned,
             execution_bundle.samples_include_pruned,
+            defaults,
+        ),
+        smart_pruning=_resolve_option(
+            "smart_pruning",
+            base_options.smart_pruning,
+            execution_bundle.smart_pruning,
             defaults,
         ),
         legacy_options=legacy_options,
@@ -1938,6 +1987,7 @@ def optimize(  # NOSONAR(S107)
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
+    smart_pruning: SmartPruningConfig | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
     algorithm: str = "auto",
     offline: bool = False,
@@ -2260,6 +2310,7 @@ def optimize(  # NOSONAR(S107)
         "effectuation": effectuation,
         "execution": execution,
         "evaluator": evaluator,
+        "smart_pruning": smart_pruning,
         "mock": mock,
         "algorithm": algorithm,
         "offline": offline,
@@ -2354,6 +2405,7 @@ def optimize(  # NOSONAR(S107)
     parallel_config = combined_settings["parallel_config"]
     max_total_examples = combined_settings["max_total_examples"]
     samples_include_pruned = combined_settings["samples_include_pruned"]
+    smart_pruning_value = combined_settings["smart_pruning"]
     mock_mode_config = combined_settings["mock_mode_config"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
@@ -2462,6 +2514,7 @@ def optimize(  # NOSONAR(S107)
         parallel_config=parallel_config,
         max_total_examples=max_total_examples,
         samples_include_pruned=samples_include_pruned,
+        smart_pruning=smart_pruning_value,
         legacy_options=legacy_execution_options,
     )
     resolved_execution = _resolve_execution_bundle_options(
@@ -2479,6 +2532,7 @@ def optimize(  # NOSONAR(S107)
     parallel_config = resolved_execution.parallel_config
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
+    smart_pruning_value = _normalize_smart_pruning(resolved_execution.smart_pruning)
     legacy_execution_options = resolved_execution.legacy_options
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
@@ -2678,6 +2732,7 @@ def optimize(  # NOSONAR(S107)
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
+            smart_pruning=smart_pruning_value,
             parallel_config=combined_parallel_config,
             mock_mode_config=mock_mode_config,
             custom_evaluator=custom_evaluator,

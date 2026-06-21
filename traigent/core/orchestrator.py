@@ -54,15 +54,14 @@ from traigent.core.cost_enforcement import (
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import VendorErrorCategory
 from traigent.core.execution_policy_runtime import (
-    CloudBrainUnavailableError,
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
+    CloudBrainUnavailableError,
     backend_egress_disabled,
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
 )
-from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
@@ -103,6 +102,9 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import (  # noqa: F401
+    is_backend_offline as is_backend_offline,
+)
 from traigent.utils.exceptions import OptimizationError, VendorPauseError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
@@ -670,6 +672,15 @@ class OptimizationOrchestrator:
             == SOURCE_CLOUD_BRAIN
             and not backend_egress_disabled(self.traigent_config)
         )
+
+    def _smart_pruning_config(self) -> dict[str, Any] | None:
+        """Return the normalized smart-pruning policy for this run, if any."""
+        raw = self.config.get("smart_pruning")
+        if raw is None:
+            custom_params = getattr(self.traigent_config, "custom_params", None) or {}
+            if isinstance(custom_params, dict):
+                raw = custom_params.get("smart_pruning")
+        return dict(raw) if isinstance(raw, dict) else None
 
     def _optimizer_uses_remote_guidance(self) -> bool:
         """Whether the active optimizer would call remote next-trial guidance."""
@@ -2170,6 +2181,7 @@ class OptimizationOrchestrator:
             objectives=list(self.optimizer.objectives or []),
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
+            smart_pruning=self._smart_pruning_config(),
             experiment_display_name=experiment_display_name,
         )
         session_id: str | None = session_context.session_id
@@ -2338,6 +2350,7 @@ class OptimizationOrchestrator:
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
                 metadata=metadata,
+                smart_pruning=self._smart_pruning_config(),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(

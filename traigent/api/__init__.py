@@ -6,9 +6,9 @@ This package intentionally uses lazy exports so submodule imports such as
 
 from __future__ import annotations
 
+import warnings
 from importlib import import_module
 from typing import Any
-import warnings
 
 __all__ = [
     "optimize",
@@ -56,6 +56,7 @@ __all__ = [
     "get_available_safety_presets",
     "TextDocument",
     "ExternalServiceEvaluator",
+    "SmartPruningConfig",
 ]
 
 _EXPORT_MAP = {
@@ -134,6 +135,7 @@ _EXPORT_MAP = {
         "traigent.api.decorators",
         "ExternalServiceEvaluator",
     ),
+    "SmartPruningConfig": ("traigent.api.decorators", "SmartPruningConfig"),
     "HybridAPIOptions": ("traigent.api.decorators", "HybridAPIOptions"),
 }
 

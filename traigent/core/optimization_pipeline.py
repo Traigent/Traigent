@@ -26,8 +26,8 @@ from traigent.config.types import (
     TraigentConfig,
     resolve_execution_mode,
 )
-from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
+from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
@@ -107,6 +107,7 @@ def create_traigent_config(
     result_source: str | None = None,
     fallback_reason: str | None = None,
     persistence_status: str | None = None,
+    smart_pruning: dict[str, Any] | None = None,
 ) -> TraigentConfig:
     """Create TraigentConfig for the optimization run.
 
@@ -119,6 +120,10 @@ def create_traigent_config(
     Returns:
         Configured TraigentConfig instance
     """
+    custom_params: dict[str, Any] = {}
+    if smart_pruning is not None:
+        custom_params["smart_pruning"] = dict(smart_pruning)
+
     return TraigentConfig(
         execution_mode=cast(
             Literal[
@@ -137,6 +142,7 @@ def create_traigent_config(
         result_source=result_source,
         fallback_reason=fallback_reason,
         persistence_status=persistence_status,
+        custom_params=custom_params,
     )
 
 
@@ -611,6 +617,7 @@ def collect_orchestrator_kwargs(
     promotion_gate: Any | None,
     safety_constraints: list[Any] | None = None,
     invocations_per_example: int = 1,
+    smart_pruning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -626,6 +633,7 @@ def collect_orchestrator_kwargs(
         promotion_gate: Promotion gate configuration
         safety_constraints: Post-evaluation safety constraints
         invocations_per_example: Number of invocations per example (default: 1)
+        smart_pruning: Optional cloud-side per-trial pruning policy.
 
     Returns:
         Dict of orchestrator keyword arguments.
@@ -671,6 +679,7 @@ def collect_orchestrator_kwargs(
         ("global_measures", global_measures, None),
         ("promotion_gate", promotion_gate, None),
         ("safety_constraints", safety_constraints, None),
+        ("smart_pruning", smart_pruning, lambda v: dict(v)),
     ]
     for attr_name, value, transform in optional_attrs:
         if value is not None:

@@ -246,6 +246,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.api.decorators",
         "ExternalServiceEvaluator",
     ),
+    "SmartPruningConfig": ("traigent.api.decorators", "SmartPruningConfig"),
     "HybridAPIOptions": ("traigent.api.decorators", "HybridAPIOptions"),
     "ConstraintValidator": (
         "traigent.api.validation_protocol",
@@ -528,6 +529,7 @@ __all__ = [
     # Configuration types
     "TraigentConfig",
     "ExternalServiceEvaluator",
+    "SmartPruningConfig",
     # Lifecycle and state
     "OptimizationState",
     # Thread context helpers

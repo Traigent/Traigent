@@ -328,6 +328,7 @@ class SessionOperations:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        smart_pruning: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -438,6 +439,7 @@ class SessionOperations:
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
                 optimization_strategy={"mode": "local_execution"},
+                smart_pruning=smart_pruning,
                 user_id=None,  # Privacy preserving
                 billing_tier="privacy",
                 metadata=metadata or {},

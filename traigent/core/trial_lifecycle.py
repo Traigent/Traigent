@@ -13,6 +13,8 @@ Classes:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import inspect
 import math
 import time
 import uuid
@@ -291,7 +293,7 @@ class TrialLifecycle:
 
         # Phase 2: Setup progress tracking and budget
         progress_callback, progress_state = self._create_progress_tracking(
-            optuna_trial_id, dataset, trial_id
+            optuna_trial_id, dataset, trial_id, session_id
         )
         lease = self._setup_trial_budget_lease(dataset, trial_id, sample_ceiling)
 
@@ -589,14 +591,260 @@ class TrialLifecycle:
         optuna_trial_id: int | None,
         dataset: Dataset,
         trial_id: str,
+        session_id: str | None = None,
     ) -> tuple[Callable[[int, dict[str, Any]], None] | None, dict[str, Any] | None]:
         """Return progress callback state.
 
-        Local Optuna-backed intermediate reporting has been evicted. Generic
-        pruned-trial result handling remains in the lifecycle for future callers
-        that raise :class:`TrialPrunedError` directly.
+        Local Optuna-backed intermediate reporting has been evicted. Cloud smart
+        pruning reuses the generic pruned-trial path: when the backend returns a
+        prune decision, the callback raises :class:`TrialPrunedError` so
+        ``build_pruned_result`` records ``TrialStatus.PRUNED`` for this trial
+        without stopping the whole optimization run.
         """
-        return None, None
+        _ = optuna_trial_id
+        orchestrator = self._orchestrator
+        smart_pruning = self._smart_pruning_config()
+        if smart_pruning is None or not session_id:
+            return None, None
+
+        is_cloud_brain_run = getattr(orchestrator, "_is_cloud_brain_run", None)
+        if not callable(is_cloud_brain_run) or not is_cloud_brain_run():
+            return None, None
+
+        backend_manager = getattr(orchestrator, "backend_session_manager", None)
+        if not bool(getattr(backend_manager, "backend_tracking_enabled", False)):
+            return None, None
+
+        client = getattr(orchestrator, "backend_client", None) or getattr(
+            orchestrator, "_cloud_guidance_client", None
+        )
+        reporter = getattr(client, "report_intermediate_trial", None)
+        if not callable(reporter):
+            return None, None
+
+        objective_name = self._primary_objective_name()
+        total_examples = len(dataset)
+        progress_state: dict[str, Any] = {
+            "total_examples": total_examples,
+            "evaluated": 0,
+            "correct_sum": 0.0,
+            "total_cost": 0.0,
+            "smart_pruning": True,
+            "smart_pruning_label": smart_pruning.get("label"),
+            "stop_reason": "smart_prune",
+        }
+        if objective_name:
+            progress_state["objective_name"] = objective_name
+
+        scores_by_index: dict[int, float] = {}
+        costs_by_index: dict[int, float] = {}
+        reported_indices: set[int] = set()
+
+        def progress_callback(example_index: int, payload: dict[str, Any]) -> None:
+            if not isinstance(payload, dict):
+                return
+            score = self._extract_progress_score(payload, objective_name)
+            if score is None:
+                return
+            if example_index in reported_indices:
+                return
+
+            scores_by_index[int(example_index)] = score
+            cost = self._extract_progress_cost(payload)
+            if cost is not None:
+                costs_by_index[int(example_index)] = cost
+
+            examples_attempted = max(max(scores_by_index) + 1, len(scores_by_index))
+            payload_attempted = payload.get("examples_attempted")
+            if isinstance(payload_attempted, int) and not isinstance(
+                payload_attempted, bool
+            ):
+                examples_attempted = max(examples_attempted, payload_attempted)
+            running_score = sum(scores_by_index.values()) / len(scores_by_index)
+            partial_cost_usd = sum(costs_by_index.values()) if costs_by_index else 0.0
+            reported_indices.add(int(example_index))
+
+            progress_state.update(
+                {
+                    "evaluated": len(scores_by_index),
+                    "examples_attempted": examples_attempted,
+                    "running_score": running_score,
+                    "correct_sum": sum(scores_by_index.values()),
+                    "total_cost": partial_cost_usd,
+                }
+            )
+
+            try:
+                response = self._call_intermediate_report(
+                    reporter=reporter,
+                    session_id=session_id,
+                    trial_id=trial_id,
+                    running_score=running_score,
+                    examples_attempted=examples_attempted,
+                    partial_cost_usd=partial_cost_usd,
+                    objective_name=objective_name,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Skipping smart-pruning decision for trial %s after "
+                    "intermediate-report failure: %s",
+                    trial_id,
+                    exc,
+                )
+                return
+            if self._response_prune(response):
+                prune_reason = self._response_prune_reason(response)
+                if prune_reason:
+                    progress_state["prune_reason"] = prune_reason
+                raise TrialPrunedError(
+                    prune_reason or "smart_prune",
+                    step=examples_attempted,
+                )
+
+        return progress_callback, progress_state
+
+    def _smart_pruning_config(self) -> dict[str, Any] | None:
+        """Read the normalized smart-pruning config from the orchestrator."""
+        orchestrator = self._orchestrator
+        getter = getattr(orchestrator, "_smart_pruning_config", None)
+        if callable(getter):
+            value = getter()
+            return dict(value) if isinstance(value, dict) else None
+        raw = getattr(orchestrator, "config", {}).get("smart_pruning")
+        if raw is None:
+            custom_params = getattr(
+                getattr(orchestrator, "traigent_config", None),
+                "custom_params",
+                {},
+            )
+            if isinstance(custom_params, dict):
+                raw = custom_params.get("smart_pruning")
+        return dict(raw) if isinstance(raw, dict) else None
+
+    def _primary_objective_name(self) -> str | None:
+        """Return the objective name to use for running-score reports."""
+        orchestrator = self._orchestrator
+        objective_schema = getattr(orchestrator, "objective_schema", None)
+        schema_objectives = getattr(objective_schema, "objectives", None)
+        if schema_objectives:
+            first = schema_objectives[0]
+            name = getattr(first, "name", None)
+            if isinstance(name, str) and name:
+                return name
+
+        for source in (
+            getattr(getattr(orchestrator, "optimizer", None), "objectives", None),
+            getattr(orchestrator, "objectives", None),
+        ):
+            if source:
+                first = source[0]
+                if isinstance(first, str) and first:
+                    return first
+        return None
+
+    @staticmethod
+    def _extract_numeric(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    @classmethod
+    def _extract_progress_score(
+        cls,
+        payload: dict[str, Any],
+        objective_name: str | None,
+    ) -> float | None:
+        metrics = payload.get("metrics")
+        if isinstance(metrics, dict):
+            if objective_name and objective_name in metrics:
+                value = cls._extract_numeric(metrics.get(objective_name))
+                if value is not None:
+                    return value
+            for key in ("score", "accuracy", "f1", "quality"):
+                value = cls._extract_numeric(metrics.get(key))
+                if value is not None:
+                    return value
+            for key, raw_value in metrics.items():
+                if key in {"examples_attempted", "total_cost", "cost"}:
+                    continue
+                value = cls._extract_numeric(raw_value)
+                if value is not None:
+                    return value
+
+        if objective_name:
+            value = cls._extract_numeric(payload.get(objective_name))
+            if value is not None:
+                return value
+        return cls._extract_numeric(payload.get("score"))
+
+    @classmethod
+    def _extract_progress_cost(cls, payload: dict[str, Any]) -> float | None:
+        for source in (payload.get("metrics"), payload.get("llm_metrics"), payload):
+            if not isinstance(source, dict):
+                continue
+            for key in (
+                "partial_cost_usd",
+                "total_cost_usd",
+                "total_cost",
+                "cost_usd",
+                "cost",
+            ):
+                value = cls._extract_numeric(source.get(key))
+                if value is not None:
+                    return max(value, 0.0)
+        return None
+
+    @staticmethod
+    def _await_if_needed(value: Any) -> Any:
+        if not inspect.isawaitable(value):
+            return value
+
+        async def _await_value() -> Any:
+            return await value
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(_await_value())
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(lambda: asyncio.run(_await_value())).result()
+
+    def _call_intermediate_report(
+        self,
+        *,
+        reporter: Callable[..., Any],
+        session_id: str,
+        trial_id: str,
+        running_score: float,
+        examples_attempted: int,
+        partial_cost_usd: float,
+        objective_name: str | None,
+    ) -> Any:
+        response = reporter(
+            session_id=session_id,
+            trial_id=trial_id,
+            running_score=running_score,
+            examples_attempted=examples_attempted,
+            partial_cost_usd=partial_cost_usd,
+            objective_name=objective_name,
+        )
+        return self._await_if_needed(response)
+
+    @staticmethod
+    def _response_prune(response: Any) -> bool:
+        if isinstance(response, dict):
+            return bool(response.get("prune"))
+        return bool(getattr(response, "prune", False))
+
+    @staticmethod
+    def _response_prune_reason(response: Any) -> str | None:
+        value = (
+            response.get("prune_reason")
+            if isinstance(response, dict)
+            else getattr(response, "prune_reason", None)
+        )
+        return value if isinstance(value, str) and value else None
 
     # =========================================================================
     # Budget Management

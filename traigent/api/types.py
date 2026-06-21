@@ -128,6 +128,7 @@ StopReason = Literal[
     "error",  # Optimization failed due to an exception
     "vendor_error",  # Provider error (rate limit/quota/service)
     "network_error",  # Connectivity failure
+    "smart_prune",  # Backend smart-pruning policy stopped the run
 ]
 
 TrialDatetimeFormat = Literal["iso", "epoch"]
@@ -661,6 +662,7 @@ class OptimizationResult:
             - "user_cancelled": User cancelled or declined cost approval
             - "condition": Generic stop condition was triggered
             - "error": Optimization failed due to an exception
+            - "smart_prune": Backend smart-pruning policy stopped the run
             - None: Unknown or not set
         experiment_id: Backend experiment identifier (None if offline/not synced).
         cloud_url: Direct link to the experiment on the cloud portal (None if offline).

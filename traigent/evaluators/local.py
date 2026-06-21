@@ -733,6 +733,7 @@ class LocalEvaluator(BaseEvaluator):
         example_metric: ExampleMetrics,
         example_result: Any,
         output: Any,
+        example_index: int,
     ) -> dict[str, Any]:
         """Build payload for progress callback in local evaluation mode.
 
@@ -743,6 +744,7 @@ class LocalEvaluator(BaseEvaluator):
             example_metric: Current example metrics
             example_result: Example result (if in detailed mode)
             output: Function output
+            example_index: Zero-based dataset example index.
 
         Returns:
             Payload dictionary for progress callback
@@ -760,12 +762,16 @@ class LocalEvaluator(BaseEvaluator):
                     continue
                 payload_metrics.setdefault(key, value)
 
-        return {
+        payload: dict[str, Any] = {
             "success": example_metric.success,
             "error": example_metric.error,
             "metrics": payload_metrics,
             "output": output,
+            "examples_attempted": example_index + 1,
         }
+        if total_cost_value is not None:
+            payload["partial_cost_usd"] = float(total_cost_value)
+        return payload
 
     def _extract_llm_metrics_for_output(
         self,
@@ -1140,7 +1146,7 @@ class LocalEvaluator(BaseEvaluator):
                 else None
             )
             payload = self._build_local_progress_payload(
-                example_metric, example_result_for_progress, output
+                example_metric, example_result_for_progress, output, index
             )
             progress_callback(index, payload)
 

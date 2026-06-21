@@ -223,6 +223,7 @@ class SyncManager:
                 "error",
                 "vendor_error",
                 "network_error",
+                "smart_prune",
                 # Legacy alias retained for backward-compat with pre-1.0 sessions
                 "budget_exhausted",
             ):

@@ -686,6 +686,9 @@ class OptimizedFunction:
         self.samples_include_pruned = self._store_optional_param(
             kwargs, sentinel, "samples_include_pruned", True, as_bool=True
         )
+        self.smart_pruning = self._store_optional_param(
+            kwargs, sentinel, "smart_pruning", None
+        )
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -736,6 +739,7 @@ class OptimizedFunction:
             "mock_mode_config",
             "max_total_examples",
             "samples_include_pruned",
+            "smart_pruning",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -1781,6 +1785,7 @@ class OptimizedFunction:
             global_measures=getattr(self, "global_measures", None),
             promotion_gate=getattr(self, "promotion_gate", None),
             safety_constraints=getattr(self, "safety_constraints", None),
+            smart_pruning=getattr(self, "smart_pruning", None),
         )
 
         # Auto-initialize workflow traces tracker if backend is configured
@@ -2236,6 +2241,7 @@ Remediation:
             execution_policy=execution_policy,
             no_egress=no_egress,
             result_source=result_source,
+            smart_pruning=getattr(self, "smart_pruning", None),
         )
         self.traigent_config = traigent_config
         self._check_ci_approval()

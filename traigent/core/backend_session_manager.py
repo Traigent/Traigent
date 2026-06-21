@@ -7,13 +7,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,
     OptimizationStatus,
+    StopReason,
     TrialResult,
     TrialStatus,
 )
@@ -634,6 +635,7 @@ class BackendSessionManager:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        smart_pruning: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
@@ -721,6 +723,7 @@ class BackendSessionManager:
                 objectives=objectives,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
+                smart_pruning=smart_pruning,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(result)
@@ -1396,9 +1399,9 @@ class BackendSessionManager:
             result.metadata.get("statistical_significance") if result.metadata else None
         )
         if stat_sig:
-            summary_stats_with_aggregation["metadata"]["statistical_significance"] = (
-                stat_sig
-            )
+            summary_stats_with_aggregation["metadata"][
+                "statistical_significance"
+            ] = stat_sig
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])
@@ -1495,7 +1498,7 @@ class BackendSessionManager:
         self,
         result: OptimizationResult,
         session_id: str | None,
-        session_summary: dict[str, Any] | None,
+        session_summary: Any | None,
     ) -> None:
         """Attach session identifiers and summary to result metadata.
 
@@ -1516,6 +1519,13 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+            stop_reason = self._summary_value(session_summary, "stop_reason")
+            if isinstance(stop_reason, str) and stop_reason:
+                result.stop_reason = cast(StopReason, stop_reason)
+                update_payload["stop_reason"] = stop_reason
+            prune_reason = self._summary_value(session_summary, "prune_reason")
+            if isinstance(prune_reason, str) and prune_reason:
+                update_payload["prune_reason"] = prune_reason
         if owning_context := self._session_owning_context.get(session_id):
             update_payload.update(owning_context)
 
@@ -1530,3 +1540,18 @@ class BackendSessionManager:
                 pass  # Silently ignore if mapping not available
 
         result.metadata.update(update_payload)
+
+    @staticmethod
+    def _summary_value(session_summary: Any, key: str) -> Any:
+        """Read a top-level or metadata field from dict/dataclass-style summaries."""
+        if isinstance(session_summary, dict):
+            value = session_summary.get(key)
+            metadata = session_summary.get("metadata")
+        else:
+            value = getattr(session_summary, key, None)
+            metadata = getattr(session_summary, "metadata", None)
+        if value is not None:
+            return value
+        if isinstance(metadata, dict):
+            return metadata.get(key)
+        return None

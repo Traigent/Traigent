@@ -42,6 +42,7 @@ from traigent.cloud.models import (
     AgentOptimizationRequest,
     AgentOptimizationResponse,
     AgentSpecification,
+    IntermediateReportResponse,
     NextTrialRequest,
     NextTrialResponse,
     OptimizationFinalizationResponse,
@@ -662,6 +663,7 @@ class BackendIntegratedClient:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        smart_pruning: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -675,6 +677,7 @@ class BackendIntegratedClient:
             objectives=objectives,
             promotion_policy=promotion_policy,
             tvl_governance=tvl_governance,
+            smart_pruning=smart_pruning,
         )
 
     async def create_hybrid_session(
@@ -1139,6 +1142,26 @@ class BackendIntegratedClient:
             declined). ``None`` never means "use a client id".
         """
         return cast(str | None, await self._trial_ops.request_trial_slot(session_id))
+
+    async def report_intermediate_trial(
+        self,
+        *,
+        session_id: str,
+        trial_id: str,
+        running_score: float,
+        examples_attempted: int,
+        partial_cost_usd: float | None = None,
+        objective_name: str | None = None,
+    ) -> IntermediateReportResponse:
+        """Send per-trial smart-pruning progress to the backend."""
+        return await self._trial_ops.report_intermediate_trial(
+            session_id=session_id,
+            trial_id=trial_id,
+            running_score=running_score,
+            examples_attempted=examples_attempted,
+            partial_cost_usd=partial_cost_usd,
+            objective_name=objective_name,
+        )
 
     def _generate_trial_id(
         self,

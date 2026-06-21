@@ -180,6 +180,26 @@ class TrialResultSubmission:
 
 
 @dataclass
+class IntermediateReportRequest:
+    """Per-trial intermediate progress report for cloud smart pruning."""
+
+    session_id: str
+    trial_id: str
+    running_score: float
+    examples_attempted: int
+    partial_cost_usd: float | None = None
+    objective_name: str | None = None
+
+
+@dataclass
+class IntermediateReportResponse:
+    """Cloud pruning decision returned for an intermediate report."""
+
+    prune: bool
+    prune_reason: str | None = None
+
+
+@dataclass
 class SessionCreationRequest:
     """Request to create a new optimization session."""
 
@@ -198,6 +218,7 @@ class SessionCreationRequest:
     # governed flags only — built by traigent.cloud.governance, never ad hoc.
     tvl_governance: dict[str, Any] | None = None
     optimization_strategy: dict[str, Any] | None = None
+    smart_pruning: dict[str, Any] | None = None
     user_id: str | None = None
     billing_tier: str = "standard"
     metadata: dict[str, Any] = field(default_factory=dict)
