@@ -157,7 +157,7 @@ class InjectionOptions(BaseModel):
 
 
 class HybridAPIOptions(BaseModel):
-    """External Hybrid API evaluator configuration."""
+    """Deprecated compatibility bundle for external-service evaluators."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
@@ -193,8 +193,8 @@ class ExecutionOptions(BaseModel):
 
     Attributes:
         algorithm: Optimizer selector. ``auto`` (default) resolves to the
-            cloud-brain policy, ``grid``/``random`` stay local, and known smart
-            algorithms require cloud.
+            managed optimizer policy, ``grid``/``random`` stay local, and known
+            smart algorithms require managed orchestration.
         offline: Force local-only, zero-egress resolution.
         local_storage_path: Path for local result storage.
         minimal_logging: Whether to minimize logging output.
@@ -228,9 +228,7 @@ class ExecutionOptions(BaseModel):
 
     algorithm: str = "auto"
     offline: bool = False
-    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None = (
-        None
-    )
+    evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None
     local_storage_path: str | None = None
     minimal_logging: bool = True
     parallel_config: ParallelConfig | dict[str, Any] | None = None
@@ -244,6 +242,19 @@ class ExecutionOptions(BaseModel):
     def _warn_legacy_execution_fields(cls, data: Any) -> Any:
         if isinstance(data, Mapping):
             _warn_for_legacy_execution_options(set(data))
+            if isinstance(data.get("evaluator"), HybridAPIOptions):
+                import warnings
+
+                warnings.warn(
+                    "HybridAPIOptions as an evaluator is deprecated. Pass an "
+                    "ExternalServiceEvaluator or evaluator options dict instead.",
+                    DeprecationWarning,
+                    stacklevel=4,
+                )
+                data = {
+                    **data,
+                    "evaluator": ExternalServiceEvaluator(hybrid_api=data["evaluator"]),
+                }
             legacy_hybrid_values = {
                 option_key: data[legacy_key]
                 for legacy_key, option_key in _LEGACY_HYBRID_API_OPTION_MAP.items()
@@ -578,9 +589,8 @@ def _warn_for_legacy_execution_options(keys: set[str]) -> None:
         )
     if keys & set(_LEGACY_HYBRID_API_OPTION_MAP):
         warnings.warn(
-            "Flat hybrid_api_* optimize options are deprecated. Pass "
-            "evaluator=ExternalServiceEvaluator(hybrid_api=HybridAPIOptions(...)) "
-            "instead.",
+            "Flat hybrid_api_* optimize options are deprecated. Pass an "
+            "ExternalServiceEvaluator or evaluator options dict instead.",
             DeprecationWarning,
             stacklevel=4,
         )
@@ -663,9 +673,7 @@ class LegacyOptimizeArgs:
     evaluation: EvaluationOptions | dict[str, Any] | None = None
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
-    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None = (
-        None
-    )
+    evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None
     mock: MockModeOptions | dict[str, Any] | None = None
     algorithm: str | None = None
     offline: bool | None = None
@@ -1307,7 +1315,7 @@ def _resolve_execution_policy_from_options(
 
 
 def _coerce_external_service_evaluator(
-    value: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None,
+    value: Any,
 ) -> ExternalServiceEvaluator | None:
     """Normalize evaluator/external-service config to a typed bundle."""
 
@@ -1316,6 +1324,14 @@ def _coerce_external_service_evaluator(
     if isinstance(value, ExternalServiceEvaluator):
         return value
     if isinstance(value, HybridAPIOptions):
+        import warnings
+
+        warnings.warn(
+            "HybridAPIOptions as an evaluator is deprecated. Pass an "
+            "ExternalServiceEvaluator or evaluator options dict instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         return ExternalServiceEvaluator(hybrid_api=value)
     if isinstance(value, dict):
         if "hybrid_api" in value or "kind" in value:
@@ -1369,7 +1385,7 @@ def _coerce_external_service_evaluator(
         )
 
     raise TypeError(
-        "evaluator must be an ExternalServiceEvaluator, HybridAPIOptions, dict, or None"
+        "evaluator must be an ExternalServiceEvaluator, external-service options dict, or None"
     )
 
 
@@ -1377,7 +1393,7 @@ def _merge_hybrid_api_options(
     current: HybridAPIOptions | None,
     legacy_values: dict[str, Any],
 ) -> HybridAPIOptions | None:
-    """Merge deprecated flat Hybrid API kwargs into a typed option bundle."""
+    """Merge deprecated flat evaluator kwargs into a typed option bundle."""
 
     if not legacy_values:
         return current
@@ -1385,8 +1401,8 @@ def _merge_hybrid_api_options(
     import warnings
 
     warnings.warn(
-        "Flat hybrid_api_* optimize options are deprecated. Use "
-        "HybridAPIOptions via evaluator=ExternalServiceEvaluator(...).",
+        "Flat hybrid_api_* optimize options are deprecated. Pass an "
+        "ExternalServiceEvaluator or evaluator options dict instead.",
         DeprecationWarning,
         stacklevel=3,
     )
@@ -1402,18 +1418,18 @@ def _merge_hybrid_api_options(
         default = HybridAPIOptions.model_fields[option_key].default
         if existing not in (None, default) and existing != value:
             raise TypeError(
-                f"Conflicting values for HybridAPIOptions.{option_key!r} supplied "
-                "via both evaluator and legacy flat hybrid_api_* arguments."
+                f"Conflicting values for external-service option {option_key!r} "
+                "supplied via both evaluator and deprecated flat arguments."
             )
         merged[option_key] = value
     return cast(HybridAPIOptions, HybridAPIOptions.model_validate(merged))
 
 
 def _resolve_external_service_evaluator(
-    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None,
+    evaluator: Any,
     legacy_options: Mapping[str, Any],
 ) -> ExternalServiceEvaluator | None:
-    """Resolve new evaluator config plus deprecated flat Hybrid API kwargs."""
+    """Resolve evaluator config plus deprecated flat external-service kwargs."""
 
     resolved = _coerce_external_service_evaluator(evaluator)
     legacy_hybrid_values = {
@@ -1520,11 +1536,11 @@ def _log_execution_mode_warnings(
     local_storage_path: str | None,
     minimal_logging: bool,
 ) -> None:
-    """Log warnings for incompatible execution mode settings."""
+    """Log warnings for incompatible runtime settings."""
     if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
         logger.warning(
-            "minimal_logging is only effective in Edge Analytics mode. "
-            f"It will be ignored in {actual_execution_mode} mode."
+            "minimal_logging is only effective for offline local runs. "
+            "It will be ignored for the selected managed execution path."
         )
 
 
@@ -1921,9 +1937,7 @@ def optimize(  # NOSONAR(S107)
     injection: InjectionOptions | dict[str, Any] | None = None,
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
-    evaluator: ExternalServiceEvaluator | HybridAPIOptions | dict[str, Any] | None = (
-        None
-    ),
+    evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
     algorithm: str = "auto",
     offline: bool = False,
@@ -2046,13 +2060,13 @@ def optimize(  # NOSONAR(S107)
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
                 orchestration, storage, and parallelism.
-            algorithm: Optimizer selector. ``auto`` (default) uses cloud-brain
+            algorithm: Optimizer selector. ``auto`` (default) uses managed
                 orchestration with local fallback, ``grid``/``random`` stay
-                local, and known smart optimizers require cloud orchestration.
+                local, and known smart optimizers require managed orchestration.
             offline: Force local-only, zero-egress resolution.
-            local_storage_path: Location for Edge Analytics storage. Falls back
+            local_storage_path: Location for local result storage. Falls back
                 to ``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent/`` when omitted.
-            minimal_logging: Toggle for reduced logging noise in Edge mode.
+            minimal_logging: Toggle for reduced logging noise in offline local runs.
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             max_total_examples: Global sample budget across all trials.

@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
+from inspect import Parameter, Signature
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -14,14 +15,9 @@ from traigent.utils.validation import Validators, validate_or_raise
 
 
 class ExecutionMode(StrEnum):
-    """Execution modes for Traigent optimization.
+    """Deprecated internal compatibility enum for runtime routing.
 
-    - EDGE_ANALYTICS: Optimization and LLM calls execute on the client.
-      Non-sensitive telemetry syncs to the backend when available for analytics.
-    - HYBRID: Smart algorithm (Optuna-based) with backend-provided next-trial suggestions
-      and client-side execution.
-    - HYBRID_API: External API-based optimization where trials execute via HTTP endpoints
-      implementing the Traigent Hybrid Mode API contract.
+    Public SDK code should use ``algorithm`` plus ``offline``.
     """
 
     EDGE_ANALYTICS = "edge_analytics"
@@ -55,7 +51,7 @@ class ResolvedExecutionPolicy:
 
     @property
     def allows_cloud_fallback(self) -> bool:
-        """Whether cloud-brain resolution may fall back to local execution."""
+        """Whether managed optimization may fall back to local execution."""
 
         return self.intent is ExecutionIntent.CLOUD_BRAIN and not self.require_cloud
 
@@ -72,11 +68,23 @@ _SUPPORTED_MODES = (
     ExecutionMode.HYBRID,
     ExecutionMode.HYBRID_API,
 )
+_LEGACY_CONFIG_EXECUTION_MODE_VALUES = frozenset(
+    mode.value for mode in _SUPPORTED_MODES
+)
 _EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
     "local": ExecutionMode.EDGE_ANALYTICS,
 }
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+_CONFIG_VALUE_UNSET = object()
+_PURGED_PUBLIC_CONFIG_KEYS = frozenset(
+    {
+        "execution_mode",
+        "privacy_enabled",
+        "cloud_fallback_policy",
+        "hybrid_api_endpoint",
+    }
+)
 _LOCAL_ALGORITHMS = frozenset({"grid", "random"})
 _SMART_ALGORITHMS = frozenset(
     {
@@ -131,7 +139,7 @@ def is_local_algorithm(algorithm: str | None) -> bool:
 
 
 def is_smart_algorithm(algorithm: str | None) -> bool:
-    """Return True for cloud-required smart optimizer names."""
+    """Return True for managed-service optimizer names."""
 
     normalized = normalize_algorithm_name(algorithm)
     return normalized in _SMART_ALGORITHMS or normalized.startswith("optuna_")
@@ -164,7 +172,7 @@ def validate_algorithm_name(algorithm: str | None) -> str:
 
 
 def accepted_execution_mode_values() -> tuple[str, ...]:
-    """Return accepted execution_mode strings for all public validators."""
+    """Return deprecated compatibility selector strings for internal validators."""
 
     values = {mode.value for mode in _SUPPORTED_MODES}
     values.update(_EXECUTION_MODE_ALIASES)
@@ -172,7 +180,10 @@ def accepted_execution_mode_values() -> tuple[str, ...]:
 
 
 def _accepted_execution_mode_message() -> str:
-    return f"accepted values are {list(accepted_execution_mode_values())}"
+    return (
+        "use algorithm='auto', 'grid', or 'random'; set offline=True for "
+        "local-only, zero-egress optimization"
+    )
 
 
 def _warn_deprecated_execution_mode_alias(mode: str, message: str) -> None:
@@ -182,6 +193,54 @@ def _warn_deprecated_execution_mode_alias(mode: str, message: str) -> None:
         f"execution_mode={mode!r} is deprecated. {message}",
         DeprecationWarning,
         stacklevel=4,
+    )
+
+
+def _warn_deprecated_config_execution_mode(
+    mode: ExecutionMode | str,
+    *,
+    stacklevel: int = 4,
+) -> None:
+    raw_mode = mode.value if isinstance(mode, ExecutionMode) else str(mode)
+    normalized = raw_mode.strip().lower()
+    if normalized not in _LEGACY_CONFIG_EXECUTION_MODE_VALUES:
+        return
+
+    import warnings
+
+    if normalized == ExecutionMode.EDGE_ANALYTICS.value:
+        guidance = (
+            "Use offline=True for local-only, zero-egress optimization; use "
+            "algorithm='grid' or 'random' to force local search."
+        )
+    elif normalized == ExecutionMode.HYBRID.value:
+        guidance = (
+            "Omit execution_mode and use algorithm='auto' for managed "
+            "optimization; set offline=True only when no egress is required."
+        )
+    else:
+        guidance = (
+            "Omit execution_mode and use algorithm='auto', 'grid', or 'random' "
+            "with offline=True when no egress is required. Configure an "
+            "external-service evaluator bundle separately."
+        )
+
+    warnings.warn(
+        f"execution_mode={raw_mode!r} is deprecated for TraigentConfig. {guidance}",
+        DeprecationWarning,
+        stacklevel=stacklevel,
+    )
+
+
+def _warn_deprecated_config_privacy_enabled(*, stacklevel: int = 4) -> None:
+    import warnings
+
+    warnings.warn(
+        "privacy_enabled is deprecated for TraigentConfig and has no effect in "
+        "execution policy resolution. Use offline=True for no-egress local "
+        "optimization.",
+        DeprecationWarning,
+        stacklevel=stacklevel,
     )
 
 
@@ -235,35 +294,31 @@ def resolve_execution_mode(
             return ExecutionMode(normalized)
         except ValueError as exc:  # pragma: no cover - defensive
             raise ValueError(
-                f"execution_mode must be one of {list(accepted_execution_mode_values())}, got '{mode}'"
+                f"Unsupported execution selector {mode!r}; "
+                f"{_accepted_execution_mode_message()}."
             ) from exc
     raise TypeError(
-        f"execution_mode must be a string or ExecutionMode, got {type(mode).__name__}"
+        "Execution selector must be a string or compatibility enum, "
+        f"got {type(mode).__name__}; {_accepted_execution_mode_message()}."
     )
 
 
 def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
-    """Resolve *and* validate that an execution mode is currently supported.
-
-    Legacy string values (``local``, ``privacy``, ``cloud``, ``standard``) emit a
-    DeprecationWarning and are mapped to a canonical mode.
-    Raises :class:`~traigent.utils.exceptions.ConfigurationError` for
-    unknown mode strings.
-    Use :func:`resolve_execution_mode` when you only need
-    string-to-enum conversion without support validation.
-    """
+    """Resolve and validate a deprecated compatibility selector."""
     from traigent.utils.exceptions import ConfigurationError
 
     try:
         resolved = resolve_execution_mode(mode)
     except ValueError:
         raise ConfigurationError(
-            f"No such mode '{mode}'; {_accepted_execution_mode_message()}"
+            f"Unsupported execution selector {mode!r}; "
+            f"{_accepted_execution_mode_message()}."
         ) from None
 
     if resolved not in _SUPPORTED_MODES:
         raise ConfigurationError(
-            f"No such mode '{resolved.value}'; {_accepted_execution_mode_message()}"
+            f"Unsupported execution selector {resolved.value!r}; "
+            f"{_accepted_execution_mode_message()}."
         )
 
     return resolved
@@ -282,13 +337,12 @@ def resolve_execution_policy(
     """Resolve public execution controls into a policy object.
 
     Semantics:
-    - ``algorithm='auto'`` with egress allowed resolves to cloud-brain mode.
+    - ``algorithm='auto'`` with egress allowed uses managed optimization when available.
     - ``grid``/``random`` resolve to local-only mode.
-    - smart algorithms resolve to cloud-required mode.
+    - smart algorithms require managed optimization.
     - ``offline=True`` or ``TRAIGENT_OFFLINE=1`` forces local-only mode and
       rejects smart algorithms.
-    - ``TRAIGENT_REQUIRE_CLOUD=1`` disables cloud-brain fallback.
-    - legacy ``execution_mode`` values warn and map into this policy surface.
+    - ``TRAIGENT_REQUIRE_CLOUD=1`` disables managed-to-local fallback.
     """
     import warnings
 
@@ -352,15 +406,15 @@ def resolve_execution_policy(
         elif normalized_mode == "hybrid_api":
             warnings.warn(
                 "execution_mode='hybrid_api' is deprecated as a public execution "
-                "selector. Configure HybridAPIOptions via the evaluator bundle.",
+                "selector. Configure an external-service evaluator bundle.",
                 DeprecationWarning,
                 stacklevel=3,
             )
         else:
             raise ConfigurationError(
-                f"No such mode '{raw_mode}'; legacy execution_mode is no longer "
-                "a public selector. Use algorithm='auto'|'grid'|'random' and "
-                "offline=True when no egress is required."
+                f"Unsupported execution selector {raw_mode!r}; use "
+                "algorithm='auto', 'grid', or 'random'; set offline=True when "
+                "no egress is required."
             )
 
     if privacy_enabled is not None:
@@ -383,7 +437,7 @@ def resolve_execution_policy(
 
     if offline_requested and is_smart_algorithm(normalized_algorithm):
         raise ConfigurationError(
-            f"algorithm={normalized_algorithm!r} requires cloud execution and "
+            f"algorithm={normalized_algorithm!r} requires managed optimization and "
             "cannot be used with offline=True or TRAIGENT_OFFLINE=1."
         )
 
@@ -474,6 +528,12 @@ class TraigentConfig:
         presence_penalty: Penalty for new topics
         stop_sequences: List of sequences that stop generation
         seed: Random seed for reproducibility
+        algorithm: Optimizer selector. Public values are ``auto``, ``grid``, and
+            ``random``; smart optimizer names are accepted where supported.
+        offline: Force local-only, zero-egress optimization.
+        local_storage_path: Path for local result storage.
+        auto_sync: Whether local results may sync to the backend/portal when
+            credentials are configured.
         custom_params: Additional custom parameters
 
     Example:
@@ -501,19 +561,17 @@ class TraigentConfig:
     # Custom parameters
     custom_params: dict[str, Any] = field(default_factory=dict)
 
-    # Execution mode and storage configuration
-    execution_mode: Literal[
-        "edge_analytics",
-        "local",
-        "privacy",
-        "hybrid",
-        "hybrid_api",
-    ] = "edge_analytics"
+    # Public execution controls.
+    algorithm: str = "auto"
+    offline: bool = False
+
+    # Deprecated compatibility state retained for existing config dictionaries.
+    execution_mode: str | ExecutionMode | None | object = _CONFIG_VALUE_UNSET
     local_storage_path: str | None = None
     minimal_logging: bool = True
     auto_sync: bool = False  # Auto-sync to backend/portal when API key is available
-    # Privacy toggle: when True, do not log or transmit input/output/prompts (local/hybrid)
-    privacy_enabled: bool = False
+    # Deprecated content-redaction compatibility flag; prefer offline/sync controls.
+    privacy_enabled: bool | object = _CONFIG_VALUE_UNSET
 
     # Metrics configuration
     strict_metrics_nulls: bool = (
@@ -565,15 +623,28 @@ class TraigentConfig:
                 )
                 validate_or_raise(result)
 
-        # Validate execution mode against the public support contract.
+        supplied_execution_mode = getattr(
+            self, "_supplied_execution_mode_value", _CONFIG_VALUE_UNSET
+        )
+        if self.execution_mode is _CONFIG_VALUE_UNSET:
+            object.__setattr__(
+                self, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
+            )
+        elif supplied_execution_mode is not None:
+            _warn_deprecated_config_execution_mode(supplied_execution_mode)
+
+        if self.privacy_enabled is _CONFIG_VALUE_UNSET:
+            object.__setattr__(self, "privacy_enabled", False)
+        if getattr(self, "_supplied_privacy_enabled", False):
+            _warn_deprecated_config_privacy_enabled()
+
+        # Validate deprecated compatibility selector against supported runtime modes.
         requested_mode = resolve_execution_mode(self.execution_mode)
         mode_enum = validate_execution_mode(requested_mode)
         if isinstance(self.execution_mode, str) and self.execution_mode == "privacy":
-            self.privacy_enabled = True
-        self.execution_mode = cast(
-            Literal["edge_analytics", "local", "privacy", "hybrid", "hybrid_api"],
-            mode_enum.value,
-        )
+            object.__setattr__(self, "privacy_enabled", True)
+        object.__setattr__(self, "execution_mode", cast(str, mode_enum.value))
+        object.__setattr__(self, "_warn_legacy_config_assignments", True)
 
         # Handle local storage path
         if self.is_edge_analytics_mode() and self.local_storage_path:
@@ -588,20 +659,30 @@ class TraigentConfig:
         Returns:
             Dictionary representation of configuration, excluding None values and defaults.
         """
+        return self._to_dict(include_legacy=False)
+
+    def _to_dict(self, *, include_legacy: bool) -> dict[str, Any]:
         result = {}
 
         # Define default values to exclude
         defaults = {
-            "execution_mode": "edge_analytics",
+            "algorithm": "auto",
+            "offline": False,
             "minimal_logging": True,
             "auto_sync": False,
-            "privacy_enabled": False,
             "strict_metrics_nulls": False,
             "comparability_mode": "warn",
         }
+        if include_legacy:
+            defaults.update(
+                {
+                    "execution_mode": "edge_analytics",
+                    "privacy_enabled": False,
+                }
+            )
 
         # Add defined parameters (only if not None and not default)
-        for field_name in [
+        field_names = [
             "model",
             "temperature",
             "max_tokens",
@@ -610,20 +691,26 @@ class TraigentConfig:
             "presence_penalty",
             "stop_sequences",
             "seed",
-            "execution_mode",
+            "algorithm",
+            "offline",
             "local_storage_path",
             "minimal_logging",
             "auto_sync",
-            "privacy_enabled",
             "strict_metrics_nulls",
             "comparability_mode",
-        ]:
+        ]
+        if include_legacy:
+            field_names.extend(["execution_mode", "privacy_enabled"])
+
+        for field_name in field_names:
             value = getattr(self, field_name)
             if value is not None and value != defaults.get(field_name):
                 result[field_name] = value
 
         # Add custom parameters
-        result.update(self.custom_params)
+        for key, value in self.custom_params.items():
+            if include_legacy or key not in _PURGED_PUBLIC_CONFIG_KEYS:
+                result[key] = value
 
         return result
 
@@ -647,6 +734,8 @@ class TraigentConfig:
             "presence_penalty",
             "stop_sequences",
             "seed",
+            "algorithm",
+            "offline",
             "execution_mode",
             "local_storage_path",
             "minimal_logging",
@@ -676,13 +765,13 @@ class TraigentConfig:
             other = self.from_dict(other)
 
         # Start with current values.
-        merged_dict = self.to_dict()
+        merged_dict = self._to_dict(include_legacy=True)
 
         # Override with non-default values from the other config. For dict
         # inputs, preserve explicitly supplied defaults such as
         # {"execution_mode": "edge_analytics"} so callers can intentionally
         # reset a value without default leakage from TraigentConfig().
-        override_dict = other.to_dict()
+        override_dict = other._to_dict(include_legacy=True)
         dataclass_fields = getattr(self, "__dataclass_fields__", {})
         for key in explicit_override_keys:
             if key in dataclass_fields and key != "custom_params":
@@ -763,18 +852,18 @@ class TraigentConfig:
 
     @property
     def execution_mode_enum(self) -> ExecutionMode:
-        """Return execution mode as an ExecutionMode enum."""
+        """Return internal compatibility selector as an enum."""
         return resolve_execution_mode(self.execution_mode)
 
     def is_edge_analytics_mode(self) -> bool:
-        """Check if configuration uses Edge Analytics mode."""
+        """Return whether the compatibility selector maps to local-only runtime."""
         return self.execution_mode_enum is ExecutionMode.EDGE_ANALYTICS
 
     def is_cloud_mode(self) -> bool:
         return False
 
     def is_privacy_enabled(self) -> bool:
-        """Whether privacy mode is enabled (content never logged or transmitted)."""
+        """Whether deprecated content-redaction compatibility is enabled."""
         return bool(self.privacy_enabled)
 
     def is_strict_metrics_nulls_enabled(self) -> bool:
@@ -801,7 +890,7 @@ class TraigentConfig:
         if env_path:
             return str(Path(env_path).expanduser().resolve())
 
-        # Default to ~/.traigent/ for Edge Analytics mode
+        # Default to ~/.traigent/ for local-only storage.
         if self.is_edge_analytics_mode():
             return str(Path.home() / ".traigent")
 
@@ -809,6 +898,19 @@ class TraigentConfig:
 
     def _validated_assignment(self, key: str, value: Any) -> Any:
         """Apply per-field validation when assigning configuration values."""
+        warn_legacy_assignment = getattr(self, "_warn_legacy_config_assignments", False)
+        if key == "execution_mode":
+            if not warn_legacy_assignment and value is not _CONFIG_VALUE_UNSET:
+                object.__setattr__(self, "_supplied_execution_mode_value", value)
+            elif warn_legacy_assignment and value is not None:
+                _warn_deprecated_config_execution_mode(value)
+        elif (
+            key == "privacy_enabled"
+            and not warn_legacy_assignment
+            and value is not _CONFIG_VALUE_UNSET
+        ):
+            object.__setattr__(self, "_supplied_privacy_enabled", True)
+
         if key == "temperature" and value is not None:
             validate_or_raise(
                 Validators.validate_number(value, "temperature", 0.0, 2.0)
@@ -819,10 +921,19 @@ class TraigentConfig:
             validate_or_raise(Validators.validate_probability(value, "top_p"))
         elif key in {"frequency_penalty", "presence_penalty"} and value is not None:
             validate_or_raise(Validators.validate_number(value, key, -2.0, 2.0))
+        elif key == "algorithm":
+            value = validate_algorithm_name(value)
+        elif key == "offline":
+            if not isinstance(value, bool):
+                raise TypeError(f"offline must be a bool, got {type(value).__name__}")
         elif key == "stop_sequences" and value is not None:
             if not isinstance(value, list):
                 raise TypeError("stop_sequences must be a list of strings")
-        elif key == "execution_mode" and value is not None:
+        elif (
+            key == "execution_mode"
+            and value is not None
+            and value is not _CONFIG_VALUE_UNSET
+        ):
             requested_mode = resolve_execution_mode(value)
             resolved_mode = validate_execution_mode(requested_mode)
             if isinstance(value, str) and value.strip().lower() == "privacy":
@@ -843,7 +954,11 @@ class TraigentConfig:
             ):
                 value = True
                 object.__setattr__(self, "_privacy_enforced_by_execution_mode", False)
+            elif value is _CONFIG_VALUE_UNSET:
+                return value
             else:
+                if key == "privacy_enabled" and warn_legacy_assignment:
+                    _warn_deprecated_config_privacy_enabled()
                 value = bool(value)
         elif key == "comparability_mode":
             mode = str(value or "warn").strip().lower()
@@ -865,7 +980,7 @@ class TraigentConfig:
         auto_sync: bool = False,
         **kwargs,
     ) -> TraigentConfig:
-        """Create a configuration for Edge Analytics execution.
+        """Deprecated compatibility constructor for offline local execution.
 
         Args:
             storage_path: Custom storage path for local data
@@ -874,9 +989,10 @@ class TraigentConfig:
             **kwargs: Additional configuration parameters
 
         Returns:
-            TraigentConfig configured for Edge Analytics mode
+            TraigentConfig configured for local-only execution
         """
         return cls(
+            offline=True,
             execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
             local_storage_path=storage_path,
             minimal_logging=minimal_logging,
@@ -889,11 +1005,12 @@ class TraigentConfig:
         """Create configuration from environment variables.
 
         Checks for:
-        - TRAIGENT_EDGE_ANALYTICS_MODE: Sets execution mode to edge_analytics if true
+        - TRAIGENT_OFFLINE: Sets offline local-only execution if true
         - TRAIGENT_RESULTS_FOLDER: Sets local storage path
         - TRAIGENT_MINIMAL_LOGGING: Sets minimal logging preference
         - TRAIGENT_AUTO_SYNC: Sets auto-sync preference
-        - TRAIGENT_PRIVACY_MODE: Sets privacy mode preference
+        - TRAIGENT_EDGE_ANALYTICS_MODE: Deprecated compatibility alias for offline
+        - TRAIGENT_PRIVACY_MODE: Deprecated compatibility content-redaction flag
         - TRAIGENT_STRICT_METRICS_NULLS: Use None instead of 0.0 for missing metrics
         - TRAIGENT_COMPARABILITY_MODE: one of legacy|warn|strict
 
@@ -902,13 +1019,30 @@ class TraigentConfig:
         """
         config = cls()
 
-        # Check for Edge Analytics mode
+        if is_traigent_offline_requested():
+            config.offline = True
+            object.__setattr__(
+                config, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
+            )
+
+        # Deprecated local-only compatibility env var.
         if os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").lower() in (
             "true",
             "1",
             "yes",
         ):
-            config.execution_mode = ExecutionMode.EDGE_ANALYTICS.value
+            import warnings
+
+            warnings.warn(
+                "TRAIGENT_EDGE_ANALYTICS_MODE is deprecated. Use "
+                "TRAIGENT_OFFLINE=1 for local-only, zero-egress optimization.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            config.offline = True
+            object.__setattr__(
+                config, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
+            )
 
         # Set storage path from environment
         env_path = os.getenv("TRAIGENT_RESULTS_FOLDER")
@@ -923,9 +1057,17 @@ class TraigentConfig:
         if os.getenv("TRAIGENT_AUTO_SYNC", "").lower() in ("true", "1", "yes"):
             config.auto_sync = True
 
-        # Privacy mode toggle
+        # Deprecated content-redaction compatibility toggle.
         if os.getenv("TRAIGENT_PRIVACY_MODE", "").lower() in ("true", "1", "yes"):
-            config.privacy_enabled = True
+            import warnings
+
+            warnings.warn(
+                "TRAIGENT_PRIVACY_MODE is deprecated. Use offline=True or "
+                "TRAIGENT_OFFLINE=1 for no-egress local optimization.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            object.__setattr__(config, "privacy_enabled", True)
 
         # Strict metrics nulls toggle
         if os.getenv("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
@@ -940,3 +1082,36 @@ class TraigentConfig:
             config.comparability_mode = mode  # type: ignore[assignment]
 
         return config
+
+
+def _public_config_param(name: str, default: Any, annotation: Any) -> Parameter:
+    return Parameter(
+        name,
+        kind=Parameter.KEYWORD_ONLY,
+        default=default,
+        annotation=annotation,
+    )
+
+
+TraigentConfig.__signature__ = Signature(
+    parameters=[
+        _public_config_param("model", None, str | None),
+        _public_config_param("temperature", None, float | None),
+        _public_config_param("max_tokens", None, int | None),
+        _public_config_param("top_p", None, float | None),
+        _public_config_param("frequency_penalty", None, float | None),
+        _public_config_param("presence_penalty", None, float | None),
+        _public_config_param("stop_sequences", None, list[str] | None),
+        _public_config_param("seed", None, int | None),
+        _public_config_param("algorithm", "auto", str),
+        _public_config_param("offline", False, bool),
+        _public_config_param("local_storage_path", None, str | None),
+        _public_config_param("minimal_logging", True, bool),
+        _public_config_param("auto_sync", False, bool),
+        _public_config_param("strict_metrics_nulls", False, bool),
+        _public_config_param(
+            "comparability_mode", "warn", Literal["legacy", "warn", "strict"]
+        ),
+        _public_config_param("custom_params", None, dict[str, Any] | None),
+    ]
+)

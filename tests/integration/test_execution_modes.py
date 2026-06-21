@@ -232,7 +232,7 @@ class TestExecutionModes:
 
     def test_invalid_mode_raises_configuration_error(self, mock_agent_builder):
         """Test that invalid modes raise ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="No such mode"):
+        with pytest.raises(ConfigurationError, match="Unsupported execution selector"):
             TraigentClient(
                 execution_mode="invalid_mode",
                 agent_builder=mock_agent_builder,
