@@ -41,7 +41,9 @@ def main() -> None:
     print("Running Optimization Routing - No-Egress Local Run")
     print("=" * 60)
 
-    opt_result = asyncio.run(sensitive_function.optimize(max_trials=10, algorithm="grid"))
+    opt_result = asyncio.run(
+        sensitive_function.optimize(max_trials=10, algorithm="grid")
+    )
 
     out: dict[str, Any] = {
         "example": "optimization-routing__offline-no-egress",

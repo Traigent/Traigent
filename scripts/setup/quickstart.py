@@ -86,10 +86,10 @@ def install_dependencies():
     """Install required dependencies."""
     print_header("Installing Dependencies")
 
-    print_info('Installing Traigent SDK with the documented source install...')
+    print_info("Installing Traigent SDK with the documented source install...")
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", '-e', '.[recommended]', "--quiet"],
+            [sys.executable, "-m", "pip", "install", "-e", ".[recommended]", "--quiet"],
             check=True,
             capture_output=True,
         )
@@ -231,7 +231,9 @@ def main():
     # Verify imports
     if not verify_imports():
         print_error("Some imports failed")
-        print_info('Try reinstalling the documented bundle: pip install -e ".[recommended]"')
+        print_info(
+            'Try reinstalling the documented bundle: pip install -e ".[recommended]"'
+        )
         return 1
 
     # Set up environment
