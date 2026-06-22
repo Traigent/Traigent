@@ -14,35 +14,49 @@ hybrid SDK mode when you need guided search beyond the local defaults.
 | ---------------- | --------------- | -------------------------------------------------------- |
 | `bayesian`       | TraigentBackend | Public alias for guided TPE-style search                 |
 | `tpe`            | TraigentBackend | Guided search over categorical and continuous spaces     |
-| `hyperband`      | TraigentBackend | Budget-aware early-stopping/pruning for expensive trials |
-| `frontier_scout` | TraigentBackend | Evidence-aware frontier tracking for multi-metric runs   |
+| `optuna`         | TraigentBackend | Managed Optuna-family routing                            |
+| `optuna_tpe`     | TraigentBackend | Explicit TPE routing                                     |
+| `optuna_random`  | TraigentBackend | Managed random-search routing                            |
+| `optuna_grid`    | TraigentBackend | Managed grid-search routing                              |
+| `optuna_cmaes`   | TraigentBackend | Managed CMA-ES routing                                   |
+| `optuna_nsga2`   | TraigentBackend | Managed NSGA-II routing                                  |
+| `nsga2`          | TraigentBackend | NSGA-II alias                                            |
+| `nsgaii`         | TraigentBackend | NSGA-II alias                                            |
+| `nsga_ii`        | TraigentBackend | NSGA-II alias                                            |
+| `cmaes`          | TraigentBackend | CMA-ES alias                                             |
+| `cma_es`         | TraigentBackend | CMA-ES alias                                             |
 
-Direct optimizer-engine names are not part of the SDK contract. SDKs should
-send the public strategy name and let TraigentBackend resolve the implementation.
+Local SDK runs accept `grid` and `random`. Smart strategies listed above are
+validated by the SDK and routed to TraigentBackend.
 
 ## Python Hybrid Session Example
 
 ```python
-from traigent.cloud.sessions import TraigentSessionClient
+import traigent
+from traigent import Choices, Range
 
-client = TraigentSessionClient()
 
-session = await client.create_optimization_session(
-    function_name="answer_quality",
-    configuration_space={
-        "model": {"type": "categorical", "choices": ["fast", "accurate"]},
-        "temperature": {"type": "float", "low": 0.0, "high": 1.0},
-    },
+@traigent.optimize(
+    eval_dataset=[
+        {"input": "What is the capital of France?", "expected": "Paris"},
+        {"input": "What is the capital of Germany?", "expected": "Berlin"},
+    ],
     objectives=["accuracy", "cost"],
-    dataset_metadata={"size": 20},
+    model=Choices(["fast", "accurate"]),
+    temperature=Range(0.0, 1.0),
+)
+def answer_quality(question: str, model: str, temperature: float) -> str:
+    return call_model(question, model=model, temperature=temperature)
+
+
+result = await answer_quality.optimize(
     max_trials=12,
-    optimization_strategy={"algorithm": "tpe"},
+    algorithm="tpe",
 )
 ```
 
-Use `hyperband` when trial results can be reported progressively and
-`frontier_scout` when the trial metadata includes per-example evidence rows for
-frontier analysis.
+Use `bayesian`, `tpe`, or one of the accepted Optuna-family aliases when you
+want managed smart search through TraigentBackend.
 
 ## Local Defaults
 

@@ -4,6 +4,7 @@
 
 -r requirements.txt
 -r requirements-analytics.txt
+-r requirements-bayesian.txt
 -r requirements-integrations.txt
 -r requirements-security.txt
 -r requirements-hybrid.txt

@@ -974,6 +974,116 @@ class TestRunSequentialTrial:
         assert orchestrator.optimizer._trial_count == 3
         assert orchestrator._trials[-1].status == TrialStatus.PRUNED
 
+    @pytest.mark.asyncio
+    async def test_consecutive_constraint_rejections_get_unique_non_consuming_ids(self):
+        """Regression: repeated rejected configs keep unique IDs and refund slots."""
+        orchestrator = MockOrchestrator()
+        orchestrator.max_trials = 10
+        orchestrator.optimizer._trial_count = 3
+
+        configs = iter(
+            [
+                {"temperature": 0.4, "model": "gpt-4"},
+                {"temperature": 0.6, "model": "gpt-4"},
+            ]
+        )
+
+        def suggest_with_increment(completed_trials):
+            orchestrator.optimizer._trial_count += 1
+            return next(configs)
+
+        orchestrator.optimizer.suggest_next_trial = suggest_with_increment
+
+        def failing_constraint(config, metrics=None):
+            return False
+
+        failing_constraint.__tvl_constraint__ = {
+            "id": "test",
+            "message": "Always fails",
+        }
+        orchestrator._constraints_pre_eval = [failing_constraint]
+
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_mock_dataset()
+
+        async def mock_func(input_data):
+            return "result"
+
+        first_count, first_action = await lifecycle.run_sequential_trial(
+            func=mock_func,
+            dataset=dataset,
+            session_id=None,
+            function_name="test_func",
+            trial_count=5,
+        )
+        second_count, second_action = await lifecycle.run_sequential_trial(
+            func=mock_func,
+            dataset=dataset,
+            session_id=None,
+            function_name="test_func",
+            trial_count=5,
+        )
+
+        assert first_action == "continue"
+        assert second_action == "continue"
+        assert first_count == 5
+        assert second_count == 5
+        assert orchestrator.optimizer._trial_count == 3
+
+        assert len(orchestrator._trials) == 2
+        rejected_trials = orchestrator._trials
+        assert all(trial.status == TrialStatus.PRUNED for trial in rejected_trials)
+        assert all(
+            trial.metadata["constraint_rejected"] is True for trial in rejected_trials
+        )
+        trial_ids = [trial.trial_id for trial in rejected_trials]
+        assert trial_ids == [
+            "test-optimization-123_5_rej1",
+            "test-optimization-123_5_rej2",
+        ]
+        assert len(set(trial_ids)) == 2
+
+    @pytest.mark.asyncio
+    async def test_constraint_rejection_refunds_optimizer_slot_when_logging_fails(self):
+        """Regression: logging failure must not leave optimizer trial slot consumed."""
+        orchestrator = MockOrchestrator()
+        orchestrator.optimizer._trial_count = 7
+        orchestrator._log_trial = MagicMock(side_effect=RuntimeError("log failed"))
+
+        def suggest_with_increment(completed_trials):
+            orchestrator.optimizer._trial_count += 1
+            return {"temperature": 0.4, "model": "gpt-4"}
+
+        orchestrator.optimizer.suggest_next_trial = suggest_with_increment
+
+        def failing_constraint(config, metrics=None):
+            return False
+
+        failing_constraint.__tvl_constraint__ = {
+            "id": "test",
+            "message": "Always fails",
+        }
+        orchestrator._constraints_pre_eval = [failing_constraint]
+
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_mock_dataset()
+
+        async def mock_func(input_data):
+            return "result"
+
+        with pytest.raises(RuntimeError, match="log failed"):
+            await lifecycle.run_sequential_trial(
+                func=mock_func,
+                dataset=dataset,
+                session_id=None,
+                function_name="test_func",
+                trial_count=5,
+            )
+
+        assert orchestrator.optimizer._trial_count == 7
+        assert len(orchestrator._trials) == 1
+        assert orchestrator._trials[0].status == TrialStatus.PRUNED
+
 
 # =============================================================================
 # CancelledError Propagation Tests

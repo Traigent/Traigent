@@ -79,6 +79,7 @@ class TrialLifecycle:
             orchestrator: Parent OptimizationOrchestrator instance
         """
         self._orchestrator = orchestrator
+        self._constraint_rejection_count = 0
 
     # =========================================================================
     # Sequential Trial Execution
@@ -105,6 +106,7 @@ class TrialLifecycle:
             Tuple of (updated_trial_count, action) where action is "continue" or "break"
         """
         orchestrator = self._orchestrator
+        optimizer_trial_count_before_suggest = self._snapshot_optimizer_trial_count()
 
         if (
             orchestrator.max_trials is not None
@@ -178,19 +180,19 @@ class TrialLifecycle:
                 config_for_run,
                 e,
             )
-            self._record_pre_constraint_pruned_result(
-                config=config_for_trial,
-                evaluation_config=config_for_run,
-                dataset=dataset,
-                trial_number=trial_count,
-                session_id=session_id,
-                optuna_trial_id=optuna_trial_id,
-                error=e,
-            )
-            # Give back the trial slot the optimizer consumed in suggest_next_trial
-            if hasattr(orchestrator.optimizer, "_trial_count"):
-                orchestrator.optimizer._trial_count = max(
-                    0, orchestrator.optimizer._trial_count - 1
+            try:
+                self._record_pre_constraint_pruned_result(
+                    config=config_for_trial,
+                    evaluation_config=config_for_run,
+                    dataset=dataset,
+                    trial_number=trial_count,
+                    session_id=session_id,
+                    optuna_trial_id=optuna_trial_id,
+                    error=e,
+                )
+            finally:
+                self._restore_optimizer_trial_count(
+                    optimizer_trial_count_before_suggest
                 )
             return trial_count, "continue"
 
@@ -589,6 +591,45 @@ class TrialLifecycle:
             # Fallback to sequential ID for backwards compatibility
             return f"{orchestrator._optimization_id}_{trial_number}"
 
+    def _snapshot_optimizer_trial_count(self) -> int | None:
+        trial_count = getattr(self._orchestrator.optimizer, "_trial_count", None)
+        if isinstance(trial_count, int):
+            return trial_count
+        return None
+
+    def _restore_optimizer_trial_count(self, previous_trial_count: int | None) -> None:
+        """Restore the optimizer's consumed slot for a rejected pre-constraint."""
+        if previous_trial_count is None:
+            return
+        current_trial_count = getattr(
+            self._orchestrator.optimizer, "_trial_count", None
+        )
+        if (
+            isinstance(current_trial_count, int)
+            and current_trial_count > 0
+            and current_trial_count > previous_trial_count
+        ):
+            self._orchestrator.optimizer._trial_count = previous_trial_count
+
+    def _generate_constraint_rejection_trial_id(
+        self,
+        config: dict[str, Any],
+        trial_number: int,
+        session_id: str | None,
+        dataset: Dataset,
+        optuna_trial_id: int | None,
+    ) -> str:
+        """Generate a unique, non-consuming trial ID for a constraint rejection."""
+        self._constraint_rejection_count += 1
+        base_trial_id = self._generate_trial_id(
+            config,
+            trial_number,
+            session_id,
+            dataset,
+            optuna_trial_id,
+        )
+        return f"{base_trial_id}_rej{self._constraint_rejection_count}"
+
     # =========================================================================
     # Progress Tracking
     # =========================================================================
@@ -620,7 +661,7 @@ class TrialLifecycle:
     ) -> None:
         """Record a constraint-rejected config without consuming a trial slot."""
         orchestrator = self._orchestrator
-        trial_id = self._generate_trial_id(
+        trial_id = self._generate_constraint_rejection_trial_id(
             config,
             trial_number,
             session_id,

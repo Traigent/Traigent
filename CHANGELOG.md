@@ -16,6 +16,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `auto`, explicit local `grid`/`random`, zero-egress offline mode, result
   provenance, and legacy selector deprecations.
 
+### Removed
+- Removed public pruner exports: `CeilingPruner`, `CeilingPrunerConfig`,
+  `StatisticalInferiorityPruner`, and `StatisticalInferiorityPrunerConfig`.
+- Dropped the `optuna` runtime dependency.
+- Removed `register_optuna_optimizers` and the legacy Optuna feature flag/env
+  var (`OPTUNA_ROLLOUT`, renamed during the managed-routing migration).
+- Smart algorithms (`bayesian` and the Optuna family) now route to the Traigent
+  cloud; the local SDK supports `grid` and `random` only.
+
 ## [0.14.1] - 2026-06-19
 
 ### Fixed
