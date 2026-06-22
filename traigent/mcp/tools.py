@@ -22,6 +22,7 @@ from traigent.api.functions import (
 from traigent.api.functions import (
     recommend_configuration_space as public_recommend_configuration_space,
 )
+from traigent.analytics.optimization_plan import OptimizationPlanClient
 from traigent.cloud.credential_manager import CredentialManager
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
@@ -44,6 +45,7 @@ V1_TOOL_NAMES: tuple[str, ...] = (
     "scaffold_eval",
     "validate_dataset",
     "estimate_cost",
+    "get_optimization_plan",
     "run_optimization",
     "get_results",
     "export_evidence",
@@ -542,6 +544,35 @@ def estimate_cost_tool(
         "pricing_source": pricing_source,
         "assumptions": assumptions,
     }
+
+
+async def get_optimization_plan_tool(
+    *,
+    task_description: str,
+    dataset_size: int,
+    dataset_has_holdout: bool,
+    objectives: list[str],
+    max_trials: int,
+    cost_limit_usd: float,
+    task_type: str | None = None,
+    agent_shape: str | None = None,
+    weights: dict[str, float] | None = None,
+    offline: bool | None = None,
+) -> dict[str, Any]:
+    """Fetch a backend-provided optimization plan without local planning."""
+    async with OptimizationPlanClient() as client:
+        return await client.get_optimization_plan(
+            task_description=task_description,
+            dataset_size=dataset_size,
+            dataset_has_holdout=dataset_has_holdout,
+            objectives=objectives,
+            max_trials=max_trials,
+            cost_limit_usd=cost_limit_usd,
+            task_type=task_type,
+            agent_shape=agent_shape,
+            weights=weights,
+            offline=offline,
+        )
 
 
 def _is_optimizable_function(obj: Any) -> bool:
