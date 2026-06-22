@@ -8,7 +8,7 @@ import warnings
 import pytest
 
 from traigent.api.decorators import ExecutionOptions, HybridAPIOptions, optimize
-from traigent.config.types import ExecutionIntent
+from traigent.config.types import ExecutionIntent, resolve_execution_policy
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.utils.exceptions import ConfigurationError
 
@@ -200,3 +200,12 @@ def test_known_smart_algorithm_names_accepted() -> None:
             return x
 
         assert sample.execution_policy.algorithm == name
+
+
+def test_smart_algorithm_resolves_cloud_required_policy() -> None:
+    policy = resolve_execution_policy(algorithm="tpe", offline=False)
+
+    assert policy.intent is ExecutionIntent.CLOUD_REQUIRED
+    assert policy.algorithm == "tpe"
+    assert policy.offline is False
+    assert policy.allows_cloud_fallback is False

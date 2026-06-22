@@ -5,6 +5,7 @@ import json
 import pytest
 
 from traigent.core.objectives import (
+    AggregationMode,
     ObjectiveDefinition,
     ObjectiveSchema,
     create_default_objectives,
@@ -316,6 +317,28 @@ class TestObjectiveSchema:
         assert schema2.weights_normalized["cost"] == 0.4
         assert schema2.objectives[0].bounds == (0.0, 1.0)
         assert schema2.objectives[0].unit == "percentage"
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [
+            pytest.param(AggregationMode.WEIGHTED_SUM, 23 / 30, id="weighted-sum"),
+            pytest.param(AggregationMode.HARMONIC, 16 / 21, id="harmonic"),
+            pytest.param(AggregationMode.CHEBYSHEV, -0.15, id="chebyshev"),
+        ],
+    )
+    def test_compute_aggregated_score_supports_all_modes(self, mode, expected):
+        """Each public aggregation mode should produce its documented score."""
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition("accuracy", "maximize", 0.75),
+                ObjectiveDefinition("cost", "minimize", 0.25),
+            ]
+        )
+        metrics = {"accuracy": 0.8, "cost": 0.5}
+
+        assert schema.compute_aggregated_score(metrics, mode) == pytest.approx(expected)
+        if mode is AggregationMode.WEIGHTED_SUM:
+            assert schema.compute_weighted_score(metrics) == pytest.approx(expected)
 
     def test_get_objective(self):
         """Test getting objective by name."""
