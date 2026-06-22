@@ -693,6 +693,15 @@ class OptimizationResult:
     cloud_url: str | None = None
     run_label: str | None = None
 
+    # User-facing, non-fatal warnings about this run (issue #1407). Populated
+    # when the run hit a money-correctness gap that the user should see — e.g.
+    # one or more models priced to $0 at runtime (a model hard-coded in the
+    # optimized function body that no pricing table covers), which silently
+    # under-reports spend. Empty by default. Each entry is a human-readable
+    # remediation message; structured codes live in ``warning_codes``.
+    warnings: list[str] = field(default_factory=list)
+    warning_codes: list[str] = field(default_factory=list)
+
     # Provenance of this result (issue #1265): "backend" when the run was
     # tracked end-to-end on the cloud backend, "local" when it was computed
     # locally — either an intentionally local mode or a hybrid/cloud run that

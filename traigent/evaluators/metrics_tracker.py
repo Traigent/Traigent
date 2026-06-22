@@ -1333,6 +1333,13 @@ def _calculate_cost_for_metrics(
         return
 
     if metrics.cost.total_cost > 0.0:
+        # total_cost is authoritative (e.g. provider-reported via OpenRouter
+        # ``_hidden_params['response_cost']`` or user-injected via
+        # ``__traigent_meta__``), but the per-trial input_cost/output_cost
+        # breakdown is dropped on those paths and persists as 0.0 even though
+        # spend is real (#1423). Re-derive the breakdown from the canonical
+        # calculator without ever changing the authoritative total_cost.
+        _backfill_cost_breakdown(metrics, model_name)
         return
 
     if not model_name:
@@ -1381,6 +1388,58 @@ def _calculate_cost_for_metrics(
             or os.environ.get("TRAIGENT_DEBUG", "").lower() == "true"
         ):
             raise
+
+
+def _backfill_cost_breakdown(metrics: ExampleMetrics, model_name: str | None) -> None:
+    """Populate input_cost/output_cost when only total_cost is known (#1423).
+
+    Provider-reported and user-injected cost paths set ``total_cost`` directly
+    and leave the per-trial breakdown at 0.0. When tokens are available, derive
+    the breakdown from the canonical calculator so it is not dropped. The
+    authoritative ``total_cost`` is NEVER modified here; only the split is
+    reconstructed (and only when it is currently zero and tokens are present).
+    """
+    if not model_name:
+        return
+    if metrics.cost.input_cost > 0.0 or metrics.cost.output_cost > 0.0:
+        return
+    in_tokens = metrics.tokens.input_tokens
+    out_tokens = metrics.tokens.output_tokens
+    if in_tokens <= 0 and out_tokens <= 0:
+        return
+
+    from traigent.utils.cost_calculator import cost_from_tokens
+
+    try:
+        input_cost, output_cost = cost_from_tokens(
+            in_tokens, out_tokens, model_name, strict=False
+        )
+    except Exception:  # pragma: no cover - defensive; never break the trial
+        logger.debug(
+            "Cost breakdown backfill failed for model %r", model_name, exc_info=True
+        )
+        return
+
+    derived_total = input_cost + output_cost
+    if derived_total <= 0.0:
+        # Calculator could not price this id (would be 0/0); leave the
+        # authoritative total_cost untouched and the breakdown at zero.
+        return
+
+    authoritative_total = metrics.cost.total_cost
+    # Scale the derived split to match the authoritative total so the two stay
+    # consistent (provider-reported totals can differ slightly from token math).
+    scale = authoritative_total / derived_total
+    metrics.cost.input_cost = input_cost * scale
+    metrics.cost.output_cost = output_cost * scale
+    metrics.cost.total_cost = authoritative_total
+    logger.debug(
+        "Backfilled cost breakdown for %s: in=$%.6f out=$%.6f (total=$%.6f)",
+        model_name,
+        metrics.cost.input_cost,
+        metrics.cost.output_cost,
+        metrics.cost.total_cost,
+    )
 
 
 def _handle_mock_mode(
@@ -1436,6 +1495,15 @@ def _compute_cost(
                 model_name,
                 metrics.cost.total_cost,
             )
+        else:
+            # Non-strict path: the model priced to $0 despite non-zero tokens
+            # (litellm + custom + built-in tables all miss). Record it so the
+            # optimizer can surface a result-level warning to the USER instead
+            # of leaving only a buried log (#1407). Strict accounting never
+            # reaches here — ``cost_from_tokens(strict=True)`` raises above.
+            from traigent.utils.cost_calculator import record_unpriced_runtime_model
+
+            record_unpriced_runtime_model(model_name)
     else:
         logger.debug(
             "No token usage extracted for model %s; "

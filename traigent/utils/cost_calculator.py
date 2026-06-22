@@ -381,13 +381,16 @@ def _try_litellm_prompt_cost(
             tokens = litellm.token_counter(model=model, messages=prompt)
         else:
             tokens = litellm.token_counter(model=model, text=prompt)
-    prompt_cost, _ = litellm.cost_per_token(
-        model=model, prompt_tokens=tokens, completion_tokens=0
-    )
-    if prompt_cost > 0:
-        return float(prompt_cost), tokens
-    if model_known:
-        return 0.0, tokens
+    # Price via the canonical candidate ladder (normalized id + aliases) so that
+    # provider-prefixed ids litellm cannot price directly (e.g.
+    # "openrouter/openai/gpt-4o-mini", which raises "This model isn't mapped yet"
+    # from ``litellm.cost_per_token``/``completion_cost`` even though
+    # ``litellm.model_cost`` HAS the underlying "gpt-4o-mini" entry) still resolve.
+    litellm_rates = _try_litellm_cost(_build_model_candidates(model), tokens, 0)
+    if litellm_rates is not None:
+        prompt_cost = litellm_rates[0]
+        if prompt_cost > 0 or model_known:
+            return float(prompt_cost), tokens
     return None, tokens
 
 
@@ -455,13 +458,14 @@ def _try_litellm_completion_cost(
     model_known = _is_model_known_to_litellm(model)
     if completion is not None:
         tokens = litellm.token_counter(model=model, text=completion)
-    _, completion_cost = litellm.cost_per_token(
-        model=model, prompt_tokens=0, completion_tokens=tokens
-    )
-    if completion_cost > 0:
-        return float(completion_cost), tokens
-    if model_known:
-        return 0.0, tokens
+    # Price via the canonical candidate ladder so provider-prefixed ids litellm
+    # cannot price directly (e.g. "openrouter/openai/gpt-4o-mini") still resolve
+    # against the underlying entry in ``litellm.model_cost``. (See #1423.)
+    litellm_rates = _try_litellm_cost(_build_model_candidates(model), 0, tokens)
+    if litellm_rates is not None:
+        completion_cost = litellm_rates[1]
+        if completion_cost > 0 or model_known:
+            return float(completion_cost), tokens
     return None, tokens
 
 
@@ -1229,3 +1233,112 @@ def get_model_pricing_per_1k(model_name: str) -> tuple[float, float]:
     input_per_1k, _ = cost_from_tokens(1000, 0, model_name, strict=False)
     _, output_per_1k = cost_from_tokens(0, 1000, model_name, strict=False)
     return float(input_per_1k), float(output_per_1k)
+
+
+def completion_cost(
+    completion: str | None = None,
+    model: str | None = None,
+    *,
+    output_tokens: int | None = None,
+) -> float:
+    """Output (completion) cost in USD via the canonical pricing pipeline.
+
+    Unlike ``litellm.completion_cost``, this prices provider-prefixed ids that
+    litellm cannot map directly (e.g. ``"openrouter/openai/gpt-4o-mini"``, which
+    raises ``"This model isn't mapped yet"`` from litellm even though
+    ``litellm.model_cost`` HAS the underlying ``"gpt-4o-mini"`` entry) by routing
+    through :func:`_build_model_candidates` / :func:`cost_from_tokens`. (See #1423.)
+
+    Provide either ``completion`` text (tokens are counted with litellm) or a
+    pre-computed ``output_tokens`` count.
+
+    Args:
+        completion: Completion text whose tokens should be priced.
+        model: Model identifier (with or without provider prefix).
+        output_tokens: Pre-computed completion token count (overrides ``completion``).
+
+    Returns:
+        Cost in USD for the output tokens. ``0.0`` for an unpriced model.
+    """
+    if not model:
+        return 0.0
+    tokens = output_tokens
+    if tokens is None:
+        if completion is None:
+            return 0.0
+        tokens = (
+            litellm.token_counter(model=model, text=completion)
+            if LITELLM_AVAILABLE
+            else max(1, len(completion) // 4)
+        )
+    _, out_cost = cost_from_tokens(0, max(int(tokens), 0), model, strict=False)
+    return float(out_cost)
+
+
+def prompt_cost(
+    prompt: str | list[dict[str, Any]] | None = None,
+    model: str | None = None,
+    *,
+    input_tokens: int | None = None,
+) -> float:
+    """Input (prompt) cost in USD via the canonical pricing pipeline.
+
+    Counterpart to :func:`completion_cost`; prices provider-prefixed ids the same
+    way. Provide either ``prompt`` text/messages or a pre-computed ``input_tokens``.
+
+    Returns:
+        Cost in USD for the input tokens. ``0.0`` for an unpriced model.
+    """
+    if not model:
+        return 0.0
+    tokens = input_tokens
+    if tokens is None:
+        if prompt is None:
+            return 0.0
+        if LITELLM_AVAILABLE:
+            tokens = (
+                litellm.token_counter(model=model, messages=prompt)
+                if isinstance(prompt, list)
+                else litellm.token_counter(model=model, text=prompt)
+            )
+        else:
+            tokens = max(1, len(str(prompt)) // 4)
+    in_cost, _ = cost_from_tokens(max(int(tokens), 0), 0, model, strict=False)
+    return float(in_cost)
+
+
+# ---------------------------------------------------------------------------
+# Unpriced-at-runtime model registry (issue #1407)
+# ---------------------------------------------------------------------------
+#
+# The pre-run cost-coverage preflight only inspects model ids declared in the
+# configuration space; it cannot see a model HARD-CODED inside the user's
+# @optimize function body. When such a model is unpriced, the non-strict runtime
+# cost path records $0 with only a buried log, silently under-reporting spend.
+# This registry lets the runtime cost path record those ids so the optimizer can
+# surface them on the OptimizationResult (a user-visible warning), reusing the
+# same remediation surface as the preflight. (Strict accounting still RAISES via
+# ``cost_from_tokens(strict=True)`` — fail-closed — so the registry only carries
+# the non-strict, warn-and-continue case.)
+_unpriced_runtime_models: set[str] = set()
+_unpriced_runtime_lock = threading.Lock()
+
+
+def record_unpriced_runtime_model(model: str) -> None:
+    """Record a model id that priced to $0 at runtime despite non-zero tokens."""
+    if not model or not str(model).strip():
+        return
+    with _unpriced_runtime_lock:
+        _unpriced_runtime_models.add(str(model).strip())
+
+
+def get_unpriced_runtime_models() -> list[str]:
+    """Return a snapshot of model ids that priced to $0 at runtime (sorted)."""
+    with _unpriced_runtime_lock:
+        return sorted(_unpriced_runtime_models)
+
+
+def reset_unpriced_runtime_models() -> None:
+    """Clear the unpriced-at-runtime model registry (call before a fresh run)."""
+    with _unpriced_runtime_lock:
+        _unpriced_runtime_models.clear()

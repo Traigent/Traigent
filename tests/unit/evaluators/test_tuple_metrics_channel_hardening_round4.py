@@ -170,16 +170,17 @@ def _eval_result_with_metrics(metrics: dict[str, float]) -> Mock:
 def test_final_cap_keeps_evaluator_computed_name_drops_user_key() -> None:
     """H3 (captain repro): 49 composite_metric_* user keys + ``f1`` arrive at the
     ceiling from the lane, then assembly writes ``examples_attempted`` and
-    ``total_cost`` AFTER the lane caps ran — pushing the final union to 52. The
-    cap must fire, KEEP ``f1`` (the primary objective, via ``extra_reserved``)
-    and drop composite user keys instead.
+    ``total_cost`` AFTER the lane caps ran. Assembly ALSO materializes the reserved
+    ``cost`` metric from ``total_cost`` when it is otherwise absent (#1423), so the
+    final union is 53. The cap must fire, KEEP ``f1`` (the primary objective, via
+    ``extra_reserved``) and the reserved assembly keys, and drop composite user
+    keys instead.
 
     Pre-fix: ``build_success_result`` passed no ``extra_reserved``, so ``f1`` was
     seen as a droppable user key and (sorting after the composites) the cap
     removed it — the objective vanished from ``TrialResult.metrics``. The
-    non-``None`` ``examples_attempted``/``total_cost`` are essential: with both
-    ``None`` the union is exactly 50 and the cap returns early without testing
-    anything (codex round-4 MINOR).
+    non-``None`` ``examples_attempted``/``total_cost`` are essential: they (plus
+    the derived ``cost``) push the union past the ceiling so the cap is exercised.
     """
     metrics = {f"composite_metric_{i:03d}": 1.0 for i in range(49)}
     metrics["f1"] = 0.93
@@ -196,23 +197,27 @@ def test_final_cap_keeps_evaluator_computed_name_drops_user_key() -> None:
         extra_reserved=frozenset({"f1"}),
     )
 
-    # The cap actually fired: 52-key union clamped back to the ceiling.
+    # The cap actually fired: 53-key union (49 composites + f1 + examples_attempted
+    # + total_cost + the derived ``cost``) clamped back to the ceiling.
     assert len(result.metrics) == 50
     # The evaluator-computed objective survived...
     assert result.metrics["f1"] == pytest.approx(0.93)
     # ...as did the reserved assembly keys written after the lane caps...
     assert "examples_attempted" in result.metrics
     assert "total_cost" in result.metrics
-    # ...and exactly TWO composite user keys were dropped to make room.
+    # ...including the per-config ``cost`` derived from ``total_cost`` (#1423)...
+    assert result.metrics["cost"] == pytest.approx(0.01)
+    # ...and exactly THREE composite user keys were dropped to make room.
     composite_kept = [k for k in result.metrics if k.startswith("composite_metric_")]
-    assert len(composite_kept) == 47
+    assert len(composite_kept) == 46
 
 
 def test_final_cap_without_extra_reserved_would_drop_objective() -> None:
-    """H3 counterfactual guard: the same 52-key union WITHOUT ``extra_reserved``
+    """H3 counterfactual guard: the same 53-key union WITHOUT ``extra_reserved``
     drops ``f1`` — proving the threaded set is what protects the objective (if a
     refactor silently stops threading it, the positive test above could go
-    vacuous; this pins the mechanism).
+    vacuous; this pins the mechanism). The union is 53 because assembly also
+    derives the reserved ``cost`` metric from ``total_cost`` (#1423).
     """
     metrics = {f"composite_metric_{i:03d}": 1.0 for i in range(49)}
     metrics["f1"] = 0.93

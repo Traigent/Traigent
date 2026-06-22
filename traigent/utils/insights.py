@@ -110,11 +110,19 @@ def _analyze_top_configurations(
             ),
         }
 
-        # Add cost analysis if cost metric is available
-        if "cost" in trial.metrics or "cost_per_1k" in trial.metrics:
-            cost_key = "cost_per_1k" if "cost_per_1k" in trial.metrics else "cost"
+        # Add cost analysis if any cost metric is available. Prefer cost_per_1k,
+        # then the per-config ``cost`` metric, then ``total_cost`` so that a run
+        # whose per-config ``cost`` was decoupled from the real spend still
+        # reports a non-zero cost-per-query (#1423).
+        if any(k in trial.metrics for k in ("cost", "cost_per_1k", "total_cost")):
+            cost_per_query = (
+                trial.metrics.get("cost_per_1k")
+                or trial.metrics.get("cost")
+                or trial.metrics.get("total_cost")
+                or 0.0
+            )
             config_analysis["cost_analysis"] = {
-                "cost_per_query": trial.metrics.get(cost_key, 0.0),
+                "cost_per_query": cost_per_query,
                 "cost_efficiency": _calculate_cost_efficiency(trial, primary_objective),
             }
 
@@ -219,7 +227,9 @@ def _analyze_parameter_importance(
                 "optimization_priority": (
                     "high"
                     if performance_impact > 0.1
-                    else "medium" if performance_impact > 0.05 else "low"
+                    else "medium"
+                    if performance_impact > 0.05
+                    else "low"
                 ),
             }
 
@@ -307,12 +317,24 @@ def _calculate_relative_performance(
 
 
 def _calculate_cost_efficiency(trial: TrialResult, primary_objective: str) -> float:
-    """Calculate cost efficiency score."""
-    score = trial.metrics.get(primary_objective, 0.0)
-    cost = trial.metrics.get("cost_per_1k", trial.metrics.get("cost", 1.0))
+    """Calculate cost efficiency score (quality per unit cost).
 
-    if cost == 0:
-        return float("inf")
+    Falls back to ``total_cost`` when the per-config ``cost`` metric is missing,
+    and guards against a zero/missing cost. Returning ``inf`` for cost==0 (the
+    old behavior) corrupted every downstream ranking/aggregation that consumed
+    this value, because a real run whose per-config ``cost`` was wrongly $0
+    produced ``inf`` efficiency for EVERY config (#1423). A non-finite efficiency
+    is not actionable, so we return ``0.0`` when cost is unavailable.
+    """
+    score = trial.metrics.get(primary_objective, 0.0)
+    cost = trial.metrics.get("cost_per_1k")
+    if cost is None:
+        cost = trial.metrics.get("cost")
+    if cost is None:
+        cost = trial.metrics.get("total_cost")
+
+    if not cost:  # None or 0.0
+        return 0.0
 
     return score / cost
 
