@@ -375,7 +375,9 @@ async def test_run_optimization_real_allows_user_approved_eval_manifest(
         manifest["approved_by"] = "pytest"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-        def fake_run(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], str, str]:
+        def fake_run(
+            *args: Any, **kwargs: Any
+        ) -> tuple[list[dict[str, Any]], str, str]:
             return (
                 [
                     {
