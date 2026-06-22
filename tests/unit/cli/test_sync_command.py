@@ -94,3 +94,63 @@ def test_sync_requires_api_key_when_not_dry_run():
 
     assert result.exit_code == 1
     assert "API key required" in result.output
+
+
+def test_sync_single_session_failure_exits_nonzero():
+    """A failed real sync (non dry-run) must exit non-zero so CI detects it.
+
+    Regression test for issue #1420 sub-bug (b): `traigent sync` was exiting 0
+    on failure, causing CI/scripts to believe the session was uploaded.
+    """
+    manager = _patched_manager()
+    manager.sync_session_to_cloud.return_value = {
+        "session_id": "s1",
+        "status": "error",
+        "errors": ["Experiment sync failed: HTTP 409: EXPERIMENT_HAS_NO_RUNS"],
+    }
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(cli, ["sync", "s1", "--api-key", "k"])
+
+    assert result.exit_code == 1, (
+        f"Expected exit code 1 on sync failure but got {result.exit_code}"
+    )
+
+
+def test_sync_all_failure_exits_nonzero():
+    """sync --all with any error exits non-zero."""
+    manager = _patched_manager()
+    manager.sync_all_sessions.return_value = {
+        "total_sessions": 2,
+        "eligible_sessions": 2,
+        "synced_successfully": 0,
+        "skipped": 0,
+        "sync_errors": 2,
+        "dry_run": False,
+        "session_results": [
+            {"session_id": "s1", "status": "error", "errors": ["409"]},
+            {"session_id": "s2", "status": "error", "errors": ["409"]},
+        ],
+        "overall_status": "failed",
+    }
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(cli, ["sync", "--all", "--api-key", "k"])
+
+    assert result.exit_code == 1, (
+        f"Expected exit code 1 when all syncs fail but got {result.exit_code}"
+    )
+
+
+def test_sync_failure_in_dry_run_exits_zero():
+    """--dry-run is non-destructive; failures in dry mode don't set exit code 1."""
+    manager = _patched_manager()
+    manager.sync_session_to_cloud.return_value = {
+        "session_id": "s1",
+        "status": "error",
+        "errors": ["Dry-run detected ordering issue"],
+        "dry_run": True,
+    }
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(cli, ["sync", "s1", "--dry-run"])
+
+    # Dry-run exit code is 0 even when it predicts failure (it's informational).
+    assert result.exit_code == 0

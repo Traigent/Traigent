@@ -9,7 +9,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -329,11 +329,18 @@ class SyncManager:
         }
 
         # agent_id and dataset_id are filled with returned backend IDs at sync time.
+        # Status is PENDING (a non-run-requiring status) so the backend accepts the
+        # POST before any experiment_run exists.  The backend rejects RUNNING and
+        # COMPLETED at create time with 409 EXPERIMENT_HAS_NO_RUNS when no runs
+        # exist yet (_RUN_REQUIRING_EXPERIMENT_STATUSES = {RUNNING, COMPLETED},
+        # TraigentBackend src/models/status_enums.py:333, issue #1420).
+        # After all runs are uploaded, _upload_session transitions the experiment
+        # to COMPLETED via PUT /experiments/{id} {"status":"COMPLETED"}.
         experiment_data = {
             "name": f"Local Import: {session.function_name}",
             "measures": measures,
             "configurations": configurations,
-            "status": "COMPLETED",
+            "status": "PENDING",
         }
 
         # experiment_data is filled with returned backend IDs at sync time.
@@ -469,6 +476,20 @@ class SyncManager:
         canonical = json.dumps(traigent_data, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
+    @staticmethod
+    def _config_run_key(index: int) -> str:
+        """Stable key identifying a configuration-run within a session's batch.
+
+        Configuration runs are derived deterministically from
+        ``session.trials`` in order (see
+        ``_convert_trials_to_configuration_runs``), so the zero-based position
+        in that list is a stable identity across sync attempts of the SAME
+        content. We record which config-runs already uploaded under this key so
+        a resume never re-POSTs them — the backend does NOT dedup config-run
+        creates (backend issue #1330), so the SDK must be idempotent itself.
+        """
+        return f"cfg_{index}"
+
     def sync_session_to_cloud(
         self, session_id: str, dry_run: bool = False, force: bool = False
     ) -> dict[str, Any]:
@@ -527,18 +548,44 @@ class SyncManager:
                 return sync_result
 
             if dry_run:
-                # Preserve the legacy "success" status for an un-synced
-                # validation run; only flag the already-synced case distinctly.
-                sync_result["status"] = (
-                    "already_synced" if already_synced else "success"
-                )
+                # Dry-run mirrors the real sync ordering so it predicts the same
+                # outcome.  The experiment is now created with status=PENDING (a
+                # non-run-requiring status).  The backend rejects RUNNING and
+                # COMPLETED at create time with 409 EXPERIMENT_HAS_NO_RUNS when no
+                # runs exist yet (_RUN_REQUIRING_EXPERIMENT_STATUSES = {RUNNING,
+                # COMPLETED}, issue #1420).  Validate the converted payload and flag
+                # any status that would cause the real sync to fail.
+                trial_count = len(traigent_data["configuration_runs"])
+                experiment_create_status = traigent_data["experiment"].get("status")
+                # Catch regressions where the create status is run-requiring
+                # (RUNNING or COMPLETED) — both would 409 on a real sync.
+                _RUN_REQUIRING = {"RUNNING", "COMPLETED"}
+                ordering_valid = (
+                    experiment_create_status or ""
+                ).upper() not in _RUN_REQUIRING
+
+                if already_synced:
+                    sync_result["status"] = "already_synced"
+                elif not ordering_valid:
+                    # The payload would 409 — flag as predictable failure.
+                    sync_result["status"] = "error"
+                    sync_result["errors"].append(
+                        f"Dry-run detected experiment would be created with "
+                        f"status={experiment_create_status!r} which is run-requiring "
+                        "(RUNNING or COMPLETED); this would 409 EXPERIMENT_HAS_NO_RUNS "
+                        "on the real sync — use a non-run-requiring status (e.g. PENDING)"
+                    )
+                else:
+                    sync_result["status"] = "success"
                 sync_result["preview"] = {
                     "experiment_name": traigent_data["experiment"]["name"],
                     "agent_name": traigent_data["agent"]["name"],
                     "benchmark_name": traigent_data["benchmark"]["name"],
-                    "trial_count": len(traigent_data["configuration_runs"]),
+                    "trial_count": trial_count,
                     "best_score": session.best_score,
                     "already_synced": already_synced,
+                    "experiment_create_status": experiment_create_status,
+                    "ordering_valid": ordering_valid,
                 }
                 return sync_result
 
@@ -562,7 +609,11 @@ class SyncManager:
             )
             try:
                 self._upload_session(
-                    traigent_data, sync_result, prior_state, resume=resume
+                    session_id,
+                    traigent_data,
+                    sync_result,
+                    prior_state,
+                    resume=resume,
                 )
             except Exception as e:
                 sync_result["status"] = "error"
@@ -577,6 +628,7 @@ class SyncManager:
 
     def _upload_session(
         self,
+        session_id: str,
         traigent_data: dict[str, Any],
         sync_result: dict[str, Any],
         prior_state: dict[str, Any],
@@ -665,19 +717,89 @@ class SyncManager:
         sync_result["cloud_experiment_run_id"] = experiment_run_id
         successful_steps += 1
 
+        # Resume idempotency (BLOCKER fix): on a retry of the SAME content we
+        # must NOT re-POST configuration-runs a prior attempt already created —
+        # the backend does not dedup config-run creates (backend issue #1330),
+        # so a re-POST silently duplicates rows. We persist each config-run as
+        # synced (keyed by its stable position) immediately after its POST
+        # succeeds, and on resume we skip the ones already recorded.
+        already_synced_keys: set[str] = set()
+        if reuse:
+            prior_trials = prior_state.get("trials")
+            if isinstance(prior_trials, dict):
+                already_synced_keys = {
+                    key
+                    for key, record in prior_trials.items()
+                    if isinstance(record, dict) and record.get("status") == "synced"
+                }
+
+        def _record_config_run_synced(
+            key: str, configuration_run_id: str | None
+        ) -> None:
+            """Persist one config-run as synced right after its POST succeeds.
+
+            Crash-safe: written incrementally (not batched at the end) so a
+            crash/failure mid-batch still leaves a durable marker that lets the
+            next resume skip the already-uploaded rows.
+            """
+            try:
+                self.storage.update_sync_state(
+                    session_id,
+                    {},
+                    trial_updates={
+                        key: {
+                            "status": "synced",
+                            "cloud_configuration_run_id": configuration_run_id,
+                        }
+                    },
+                )
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - bookkeeping must not break sync
+                logger.warning(
+                    "Failed to persist config-run progress (%s) for session %s: %s",
+                    key,
+                    session_id,
+                    exc,
+                )
+
         configuration_result = self._sync_configuration_runs(
-            experiment_run_id, configuration_runs
+            experiment_run_id,
+            configuration_runs,
+            already_synced_keys=already_synced_keys,
+            on_synced=_record_config_run_synced,
         )
+        # Both freshly-synced AND already-synced (skipped) config-runs count as
+        # done, so a fully-resumed session can still reach total_steps and be
+        # finalized to COMPLETED.
         successful_steps += configuration_result["synced"]
+        successful_steps += configuration_result["skipped"]
         if not configuration_result["success"]:
             sync_result["errors"].extend(
                 f"Configuration run sync failed: {error}"
                 for error in configuration_result["errors"]
             )
 
+        # Transition the experiment from RUNNING to COMPLETED now that all runs
+        # are uploaded.  This ordering is required: the backend rejects the
+        # POST /experiments payload when status=COMPLETED and no runs exist yet
+        # (HTTP 409 EXPERIMENT_HAS_NO_RUNS).  We finalize only on a clean upload
+        # (all config-runs synced); a partial upload stays RUNNING so a retry
+        # can resume and finish it.
+        if configuration_result["success"]:
+            finalize_result = self._finalize_experiment(experiment_id)
+            if not finalize_result["success"]:
+                sync_result["errors"].append(
+                    f"Experiment finalization failed: {finalize_result['error']}"
+                )
+                # Successful configuration uploads but failed finalization is partial.
+                if successful_steps == total_steps:
+                    sync_result["status"] = "partial"
+                    return
+
         if successful_steps == 0:
             sync_result["status"] = "error"  # Complete failure
-        elif successful_steps == total_steps:
+        elif successful_steps == total_steps and not sync_result.get("errors"):
             sync_result["status"] = "success"
             sync_result["cloud_url"] = build_experiment_url(
                 BackendConfig.get_cloud_backend_url(),
@@ -941,6 +1063,38 @@ class SyncManager:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _finalize_experiment(self, experiment_id: str) -> dict[str, Any]:
+        """Transition a synced experiment to COMPLETED via PUT /experiments/{id}.
+
+        Must be called after all experiment_run and configuration_run rows have
+        been uploaded.  The backend rejects experiment creation with a
+        run-requiring status (RUNNING or COMPLETED) when no runs exist yet
+        (#1420), and exposes only PUT (not PATCH) for experiment updates
+        (TraigentBackend src/routes/experiment_routes.py:1058).  The correct
+        sync protocol is therefore:
+          1. POST /experiments  (status="PENDING")
+          2. POST /experiment-runs/{id}/runs
+          3. POST /configuration-runs/runs/{run_id}/configurations  (N times)
+          4. PUT  /experiments/{id}  {"status":"COMPLETED"}   <-- this method
+        The PUT COMPLETED guard passes once >=1 experiment_run exists
+        (experiment_routes.py ~1108-1126).
+        """
+        self._raise_if_backend_egress_disabled("finalize experiment")
+        try:
+            response = self._session.put(
+                f"{self.base_url}/experiments/{experiment_id}",
+                json={"status": "COMPLETED"},
+                timeout=self._request_timeout,
+            )
+            if response.status_code in [200, 204]:
+                return {"success": True}
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def _sync_experiment_run(
         self, experiment_id: str, run_data: dict[str, Any]
     ) -> dict[str, Any]:
@@ -978,15 +1132,40 @@ class SyncManager:
             return {"success": False, "error": str(e)}
 
     def _sync_configuration_runs(
-        self, experiment_run_id: str, trials: list[dict[str, Any]]
+        self,
+        experiment_run_id: str,
+        trials: list[dict[str, Any]],
+        *,
+        already_synced_keys: set[str] | None = None,
+        on_synced: Callable[[str, str | None], None] | None = None,
     ) -> dict[str, Any]:
-        """Create the cost-bearing configuration rows for an experiment run."""
+        """Create the cost-bearing configuration rows for an experiment run.
+
+        Idempotent across resumes: each config-run carries a stable key
+        (``_config_run_key`` of its zero-based position). Runs whose key is in
+        ``already_synced_keys`` are SKIPPED (not re-POSTed) — the backend does
+        not dedup config-run creates (backend issue #1330), so re-POSTing would
+        duplicate rows. ``on_synced(key, configuration_run_id)`` is invoked
+        immediately after each successful POST so progress is persisted
+        incrementally (crash-safe), not only at the end of the batch.
+        """
         self._raise_if_backend_egress_disabled("sync configuration runs")
+        already_synced_keys = already_synced_keys or set()
         errors: list[str] = []
         configuration_run_ids: list[str] = []
         synced = 0
+        skipped = 0
 
-        for index, trial in enumerate(trials, start=1):
+        for index, trial in enumerate(trials):
+            key = self._config_run_key(index)
+            # Skip config-runs a prior attempt already uploaded so a resume
+            # never creates duplicate rows.
+            if key in already_synced_keys:
+                skipped += 1
+                continue
+
+            # 1-based ordinal for human-readable error messages.
+            ordinal = index + 1
             try:
                 response = self._session.post(
                     f"{self.base_url}/configuration-runs/runs/"
@@ -995,7 +1174,7 @@ class SyncManager:
                     timeout=self._request_timeout,
                 )
             except Exception as exc:
-                errors.append(f"trial {index}: {exc}")
+                errors.append(f"trial {ordinal}: {exc}")
                 continue
 
             if response.status_code == 201:
@@ -1003,15 +1182,21 @@ class SyncManager:
                 configuration_run_id = self._extract_response_id(response)
                 if configuration_run_id:
                     configuration_run_ids.append(configuration_run_id)
+                # Persist this config-run as synced RIGHT NOW (before the next
+                # POST) so a crash/failure on a later row leaves a durable
+                # marker the next resume can skip past.
+                if on_synced is not None:
+                    on_synced(key, configuration_run_id)
                 continue
 
             errors.append(
-                f"trial {index}: HTTP {response.status_code}: {response.text}"
+                f"trial {ordinal}: HTTP {response.status_code}: {response.text}"
             )
 
         return {
             "success": not errors,
             "synced": synced,
+            "skipped": skipped,
             "errors": errors,
             "configuration_run_ids": configuration_run_ids,
         }

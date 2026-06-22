@@ -445,7 +445,11 @@ class TestSyncManager:
 
         # Check experiment template
         assert result["experiment"]["name"] == "Local Import: test_function"
-        assert result["experiment"]["status"] == "COMPLETED"
+        # Experiment is created with PENDING (non-run-requiring) so the backend
+        # accepts it before runs exist.  Both RUNNING and COMPLETED are rejected at
+        # create time with 409 EXPERIMENT_HAS_NO_RUNS (#1420).
+        # _finalize_experiment transitions it to COMPLETED via PUT after all runs.
+        assert result["experiment"]["status"] == "PENDING"
         assert result["experiment"]["measures"]
         assert "agent_id" not in result["experiment"]
         assert "dataset_id" not in result["experiment"]
@@ -549,7 +553,9 @@ class TestSyncManager:
         assert experiment_payload["agent_id"] == "agent-id"
         assert experiment_payload["dataset_id"] == "benchmark-id"
         assert experiment_payload["measures"]
-        assert experiment_payload["status"] == "COMPLETED"
+        # Experiment is POSTed with PENDING; _finalize_experiment PUTs to COMPLETED.
+        # RUNNING and COMPLETED are both rejected at create time (#1420).
+        assert experiment_payload["status"] == "PENDING"
 
         experiment_run_payload = sync_manager._build_experiment_run_payload(
             result["experiment_run"], "agent-id", "benchmark-id"
@@ -650,9 +656,10 @@ class TestSyncManager:
         """Test successful sync of session to cloud."""
         sync_manager.storage.load_session.return_value = sample_session
 
-        # Mock successful responses
+        # Mock successful responses; PUT is used for experiment finalization.
         sync_manager._session.get.return_value = backend_response(404)
         sync_manager._session.post.return_value = backend_response()
+        sync_manager._session.put.return_value = backend_response(status_code=200)
 
         result = sync_manager.sync_session_to_cloud("test_session_123")
 
@@ -665,7 +672,18 @@ class TestSyncManager:
     def test_sync_session_to_cloud_posts_current_sequence_and_threads_ids(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
     ) -> None:
-        """Full mocked flow posts current endpoints and returned IDs."""
+        """Full mocked flow posts current endpoints and returned IDs.
+
+        Verifies the ordering contract required by issue #1420:
+          1. POST /experiments with status=PENDING (non-run-requiring)
+          2. POST /experiment-runs/{id}/runs
+          3. POST /configuration-runs/... (N times)
+          4. PUT  /experiments/{id} with status=COMPLETED
+
+        The backend rejects both RUNNING and COMPLETED at create time with
+        409 EXPERIMENT_HAS_NO_RUNS.  The finalization route is PUT, not PATCH
+        (TraigentBackend src/routes/experiment_routes.py:1058).
+        """
         sync_manager.storage.load_session.return_value = sample_session
         sync_manager._session.get.return_value = backend_response(404)
         sync_manager._session.post.side_effect = [
@@ -683,6 +701,8 @@ class TestSyncManager:
             backend_response(payload={"id": "configuration-run-2"}),
             backend_response(payload={"id": "configuration-run-3"}),
         ]
+        # PUT /experiments/{id} finalizes to COMPLETED after all runs are uploaded.
+        sync_manager._session.put.return_value = backend_response(status_code=200)
 
         with patch(
             "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
@@ -711,11 +731,18 @@ class TestSyncManager:
             "experiment-run-id/configurations",
         ]
 
+        # Verify experiment is created with PENDING (non-run-requiring) — the
+        # fix for issue #1420: both RUNNING and COMPLETED before runs exist
+        # cause 409 EXPERIMENT_HAS_NO_RUNS on the real backend.
         experiment_payload = post_calls[2].kwargs["json"]
         assert experiment_payload["agent_id"] == "agent-id"
         assert experiment_payload["dataset_id"] == "benchmark-id"
         assert experiment_payload["measures"]
-        assert experiment_payload["status"] == "COMPLETED"
+        assert experiment_payload["status"] == "PENDING", (
+            "Experiment must be created with status=PENDING (non-run-requiring) "
+            "so the backend accepts it before any experiment_run exists (#1420). "
+            "Both RUNNING and COMPLETED are rejected at create time."
+        )
 
         experiment_run_payload = post_calls[3].kwargs["json"]
         assert set(experiment_run_payload) == {"experiment_data"}
@@ -726,13 +753,62 @@ class TestSyncManager:
             "configurations": experiment_payload["configurations"],
         }
 
+        # Verify PUT /experiments/{id} with status=COMPLETED was called last.
+        # The backend exposes only PUT (not PATCH) for experiment updates
+        # (TraigentBackend src/routes/experiment_routes.py:1058).
+        put_calls = sync_manager._session.put.call_args_list
+        assert len(put_calls) == 1, "Expected exactly one PUT to finalize experiment"
+        assert put_calls[0].args[0] == (
+            f"{sync_manager.base_url}/experiments/experiment-id"
+        )
+        assert put_calls[0].kwargs["json"] == {"status": "COMPLETED"}
+
+    @staticmethod
+    def _wire_persisting_sync_state(
+        sync_manager: SyncManager, session: OptimizationSession
+    ) -> None:
+        """Make the mocked storage actually mutate ``session.sync_state``.
+
+        The default MagicMock ``update_sync_state`` is a no-op, so a resume
+        would never see the incremental per-config-run progress that the SUT
+        persists. This side_effect mirrors the real LocalStorageManager merge
+        (shallow top-level patch + per-trial merge under ``sync_state["trials"]``)
+        so the no-duplicate-on-resume behavior is exercised end-to-end instead
+        of being mocked away.
+        """
+
+        def _persist(session_id, patch, *, trial_updates=None):
+            state = dict(session.sync_state or {})
+            state.update(patch)
+            if trial_updates:
+                trials_state = dict(state.get("trials") or {})
+                for trial_key, trial_patch in trial_updates.items():
+                    merged = dict(trials_state.get(trial_key) or {})
+                    merged.update(trial_patch)
+                    trials_state[trial_key] = merged
+                state["trials"] = trials_state
+            session.sync_state = state
+            return session
+
+        sync_manager.storage.update_sync_state.side_effect = _persist
+
     def test_sync_session_to_cloud_resume_partial_uses_persisted_context_url(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
     ) -> None:
-        """A partial-sync retry preserves project/tenant context in success URL."""
+        """A partial-sync retry preserves context AND skips already-synced runs.
+
+        Regression guard for the data-integrity BLOCKER (#1420): the prior weak
+        version of this test asserted ALL three config-runs were re-POSTed on
+        resume — which is exactly the duplicate-on-retry bug, because the
+        backend does NOT dedup config-run creates (backend issue #1330). The
+        SDK must be idempotent itself: a resume re-POSTs only the config-runs
+        not yet recorded as synced.
+        """
         payload_hash = sync_manager._compute_payload_hash(
             sync_manager.convert_session_to_traigent_format(sample_session)
         )
+        # Prior attempt already uploaded config-runs cfg_0 and cfg_1 (2 of 3);
+        # cfg_2 is the only one left to upload on resume.
         sample_session.sync_state = {
             "status": "partial",
             "payload_hash": payload_hash,
@@ -743,13 +819,25 @@ class TestSyncManager:
             "project_id": "project/alpha",
             "tenant_id": "tenant acme",
             "attempts": 1,
+            "trials": {
+                "cfg_0": {
+                    "status": "synced",
+                    "cloud_configuration_run_id": "configuration-run-0",
+                },
+                "cfg_1": {
+                    "status": "synced",
+                    "cloud_configuration_run_id": "configuration-run-1",
+                },
+            },
         }
         sync_manager.storage.load_session.return_value = sample_session
+        self._wire_persisting_sync_state(sync_manager, sample_session)
+        # Only the single remaining config-run (cfg_2) should be POSTed.
         sync_manager._session.post.side_effect = [
-            backend_response(payload={"id": "configuration-run-1"}),
             backend_response(payload={"id": "configuration-run-2"}),
-            backend_response(payload={"id": "configuration-run-3"}),
         ]
+        # PUT finalizes the experiment to COMPLETED after all runs upload.
+        sync_manager._session.put.return_value = backend_response(status_code=200)
 
         with patch(
             "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
@@ -765,20 +853,148 @@ class TestSyncManager:
             == "https://portal.traigent.ai/experiments/view/experiment-id"
             "?project_id=project%2Falpha&tenant_id=tenant%20acme"
         )
-        assert [call.args[0] for call in sync_manager._session.post.call_args_list] == [
-            f"{sync_manager.base_url}/configuration-runs/runs/"
-            "experiment-run-id/configurations",
-            f"{sync_manager.base_url}/configuration-runs/runs/"
-            "experiment-run-id/configurations",
-            f"{sync_manager.base_url}/configuration-runs/runs/"
-            "experiment-run-id/configurations",
+        # No-duplicate guard: exactly ONE config-run POST (the remaining cfg_2),
+        # NOT three. The already-synced cfg_0 / cfg_1 are skipped.
+        config_post_urls = [
+            call.args[0]
+            for call in sync_manager._session.post.call_args_list
+            if "configurations" in call.args[0]
         ]
+        assert config_post_urls == [
+            f"{sync_manager.base_url}/configuration-runs/runs/"
+            "experiment-run-id/configurations",
+        ], (
+            "resume must POST only the not-yet-synced config-run, never re-post synced ones"
+        )
 
-        sync_state_patch = sync_manager.storage.update_sync_state.call_args.args[1]
+        # Finalized to COMPLETED exactly once.
+        put_calls = sync_manager._session.put.call_args_list
+        assert len(put_calls) == 1
+        assert put_calls[0].kwargs["json"] == {"status": "COMPLETED"}
+
+        # cfg_2 now recorded as synced so a further resume is a clean no-op.
+        assert sample_session.sync_state["trials"]["cfg_2"] == {
+            "status": "synced",
+            "cloud_configuration_run_id": "configuration-run-2",
+        }
+
+        # Top-level outcome patch still carries context + attempt bookkeeping.
+        outcome_calls = [
+            call
+            for call in sync_manager.storage.update_sync_state.call_args_list
+            if call.kwargs.get("trial_updates") is None
+        ]
+        sync_state_patch = outcome_calls[-1].args[1]
         assert sync_state_patch["project_id"] == "project/alpha"
         assert sync_state_patch["tenant_id"] == "tenant acme"
         assert sync_state_patch["cloud_url"] == result["cloud_url"]
         assert sync_state_patch["attempts"] == 2
+
+    def test_sync_resume_does_not_duplicate_config_runs_after_midbatch_failure(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """End-to-end no-duplicate-on-retry guard for the #1420 data-integrity fix.
+
+        Scenario (matches the codex BLOCKER reproduction):
+          - sample_session has 3 config-runs (cfg_0, cfg_1, cfg_2).
+          - Attempt 1: config-run #2 (cfg_1) FAILS with a 500; cfg_0 and cfg_2
+            succeed. The attempt records itself as ``partial``.
+          - Attempt 2 (resume, same payload_hash): cfg_0 and cfg_2 are recorded
+            as synced and MUST NOT be re-POSTed (the backend does not dedup —
+            backend issue #1330). Only cfg_1 is re-POSTed.
+          - After the resume the experiment is finalized to COMPLETED exactly
+            once and every config-run is POSTed exactly once across the two
+            attempts (no duplicates).
+        """
+        sample_session.sync_state = None
+        sync_manager.storage.load_session.return_value = sample_session
+        self._wire_persisting_sync_state(sync_manager, sample_session)
+
+        # --- Attempt 1: cfg_1 (the 2nd config-run POST) fails with 500. ---
+        # Order of POSTs: agent, benchmark, experiment, experiment-run,
+        # then config-runs cfg_0, cfg_1, cfg_2.
+        sync_manager._session.get.return_value = backend_response(404)
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "agent-id"}),
+            backend_response(payload={"id": "benchmark-id"}),
+            backend_response(payload={"id": "experiment-id"}),
+            backend_response(payload={"id": "experiment-run-id"}),
+            backend_response(payload={"id": "configuration-run-0"}),  # cfg_0 OK
+            backend_response(status_code=500, text="config 2 failed"),  # cfg_1 FAIL
+            backend_response(payload={"id": "configuration-run-2"}),  # cfg_2 OK
+        ]
+        # Finalization is gated on a clean upload, so it is not reached here.
+        sync_manager._session.put.return_value = backend_response(status_code=200)
+
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            first = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert first["status"] == "partial"
+        # cfg_0 and cfg_2 persisted as synced; cfg_1 NOT (it failed).
+        trials_state = sample_session.sync_state["trials"]
+        assert trials_state["cfg_0"]["status"] == "synced"
+        assert trials_state["cfg_2"]["status"] == "synced"
+        assert "cfg_1" not in trials_state
+        # No finalize on a partial upload — the experiment stays un-completed so
+        # the resume can finish it.
+        assert sync_manager._session.put.call_count == 0
+
+        # --- Attempt 2: resume. Only cfg_1 must be re-POSTed. ---
+        sync_manager._session.post.reset_mock()
+        sync_manager._session.put.reset_mock()
+        sync_manager._session.get.reset_mock()
+        # Resume reuses saved agent/benchmark/experiment/run ids, so the ONLY
+        # POST in attempt 2 is the single retried config-run cfg_1.
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "configuration-run-1"}),  # cfg_1 retry
+        ]
+        sync_manager._session.put.return_value = backend_response(status_code=200)
+
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            second = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert second["status"] == "success"
+
+        # CORE ASSERTION — no duplicate config-run POSTs on resume.
+        config_posts = [
+            call
+            for call in sync_manager._session.post.call_args_list
+            if "configurations" in call.args[0]
+        ]
+        # Exactly one config-run POST on resume: the previously-failed cfg_1.
+        assert len(config_posts) == 1, (
+            "resume must NOT re-post the already-synced config-runs (cfg_0/cfg_2); "
+            f"got {len(config_posts)} config-run POSTs"
+        )
+        # And it carried cfg_1's payload — the trial that actually failed before.
+        # Derive the expected per-config-run payloads from the SUT's own
+        # conversion so the assertion is grounded in real behavior, not a
+        # hand-mirrored copy.
+        expected_config_runs = sync_manager.convert_session_to_traigent_format(
+            sample_session
+        )["configuration_runs"]
+        retried_payload = config_posts[0].kwargs["json"]
+        assert retried_payload == expected_config_runs[1]  # cfg_1 == index 1
+
+        # Every config-run uploaded exactly once across the two attempts.
+        assert set(sample_session.sync_state["trials"]) == {"cfg_0", "cfg_1", "cfg_2"}
+        for key in ("cfg_0", "cfg_1", "cfg_2"):
+            assert sample_session.sync_state["trials"][key]["status"] == "synced"
+
+        # Experiment finalized to COMPLETED exactly once (only after the clean
+        # resume), never on the failed first attempt.
+        put_calls = sync_manager._session.put.call_args_list
+        assert len(put_calls) == 1, "experiment must be finalized exactly once"
+        assert put_calls[0].args[0] == (
+            f"{sync_manager.base_url}/experiments/experiment-id"
+        )
+        assert put_calls[0].kwargs["json"] == {"status": "COMPLETED"}
 
     def test_sync_session_to_cloud_reuses_agent_and_benchmark_for_idempotency(
         self, sync_manager: SyncManager
@@ -834,6 +1050,8 @@ class TestSyncManager:
             backend_response(payload={"id": "experiment-run-id"}),
             backend_response(payload={"id": "configuration-run-id"}),
         ]
+        # PUT finalizes experiment after all config runs are uploaded.
+        sync_manager._session.put.return_value = backend_response(status_code=200)
 
         result = sync_manager.sync_session_to_cloud("idem-session")
 
@@ -1374,3 +1592,191 @@ class TestSyncManager:
         # The base_url should have trailing slash removed
         assert not sync_manager.base_url.endswith("/")
         assert "http" in sync_manager.base_url
+
+    # Regression tests for issue #1420 — sync ordering and exit code
+
+    def test_sync_run_ordering_experiment_created_pending_then_finalized(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """Completed local session syncs without 409: experiment created PENDING,
+        runs uploaded, then experiment transitioned to COMPLETED via PUT.
+
+        Regression test for issue #1420: the backend rejects
+        POST /experiments with status=RUNNING or COMPLETED when no experiment_run
+        exists (HTTP 409 EXPERIMENT_HAS_NO_RUNS, _RUN_REQUIRING_EXPERIMENT_STATUSES
+        = {RUNNING, COMPLETED}, TraigentBackend src/models/status_enums.py:333).
+        The fix: create with PENDING (non-run-requiring) and PUT to COMPLETED after
+        all runs are uploaded (PUT /experiments/{id}, not PATCH).
+        """
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.get.return_value = backend_response(404)
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "agent-id"}),
+            backend_response(payload={"id": "benchmark-id"}),
+            backend_response(payload={"id": "experiment-id"}),
+            backend_response(payload={"id": "experiment-run-id"}),
+            backend_response(payload={"id": "cfg-run-1"}),
+            backend_response(payload={"id": "cfg-run-2"}),
+            backend_response(payload={"id": "cfg-run-3"}),
+        ]
+        sync_manager._session.put.return_value = backend_response(status_code=200)
+
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert result["status"] == "success", (
+            f"Expected success but got {result['status']}: {result.get('errors')}"
+        )
+
+        # ASSERT ORDERING: experiment POSTed with status=PENDING (non-run-requiring).
+        # Both RUNNING and COMPLETED are rejected at create time with
+        # 409 EXPERIMENT_HAS_NO_RUNS (#1420).
+        post_calls = sync_manager._session.post.call_args_list
+        experiment_post_payload = post_calls[2].kwargs["json"]
+        assert experiment_post_payload["status"] == "PENDING", (
+            "Experiment must be created with status=PENDING (non-run-requiring); "
+            "both RUNNING and COMPLETED before runs exist cause HTTP 409 "
+            "EXPERIMENT_HAS_NO_RUNS (#1420)"
+        )
+
+        # ASSERT ORDERING: runs uploaded BEFORE finalization.
+        # The 4th POST is experiment_run, 5th-7th are configuration_runs.
+        assert post_calls[3].args[0].endswith("/experiment-runs/experiment-id/runs")
+        for cfg_call in post_calls[4:]:
+            assert "configuration-runs" in cfg_call.args[0]
+
+        # ASSERT ORDERING: PUT to COMPLETED is the LAST call, after all runs.
+        # The backend exposes PUT (not PATCH) for experiment updates (#1420 fix).
+        put_calls = sync_manager._session.put.call_args_list
+        assert len(put_calls) == 1, "Expected exactly one PUT to finalize"
+        assert put_calls[0].args[0].endswith("/experiments/experiment-id")
+        assert put_calls[0].kwargs["json"] == {"status": "COMPLETED"}
+
+        # Confirm the final experiment state is COMPLETED in the result.
+        assert result["cloud_experiment_id"] == "experiment-id"
+
+    def test_dry_run_outcome_matches_real_sync_outcome(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """--dry-run predicts the same outcome as the real sync.
+
+        For a session with correct ordering (RUNNING create status), dry-run
+        must report success.  If the ordering regresses to COMPLETED on create,
+        dry-run must report error — not silently claim success while the real
+        sync would 409.
+        """
+        sync_manager.storage.load_session.return_value = sample_session
+
+        # Dry-run on a valid session (RUNNING create status) -> success.
+        dry_result = sync_manager.sync_session_to_cloud(
+            "test_session_123", dry_run=True
+        )
+        assert dry_result["status"] == "success", (
+            f"Dry-run reported {dry_result['status']} for a valid session"
+        )
+        assert dry_result["dry_run"] is True
+        assert "preview" in dry_result
+        assert dry_result["preview"]["ordering_valid"] is True
+        assert dry_result["preview"]["experiment_create_status"] == "PENDING"
+
+        # Simulate the regression: temporarily make the payload use COMPLETED.
+        # Dry-run must detect this and report error, not success.
+        with patch.object(
+            sync_manager,
+            "convert_session_to_traigent_format",
+            return_value={
+                "agent": {"name": "agent", "agent_type_id": "completion"},
+                "benchmark": {"name": "bench", "type": "input-output", "label": "l"},
+                "experiment": {
+                    "name": "exp",
+                    "measures": ["score"],
+                    "configurations": {},
+                    "status": "COMPLETED",  # regression: run-requiring status at create
+                },
+                "experiment_run": {"measures": ["score"], "configurations": {}},
+                "configuration_runs": [],
+            },
+        ):
+            regressed_result = sync_manager.sync_session_to_cloud(
+                "test_session_123", dry_run=True
+            )
+
+        assert regressed_result["status"] == "error", (
+            "Dry-run must report error when experiment would be created with "
+            "status=COMPLETED before any runs (would 409 on real sync)"
+        )
+        assert any(
+            "409" in err or "COMPLETED" in err or "run-requiring" in err
+            for err in regressed_result.get("errors", [])
+        ), (
+            f"Expected a 409/COMPLETED/run-requiring error, got {regressed_result.get('errors')}"
+        )
+
+    def test_dry_run_rejects_running_create_status(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """Dry-run must also flag RUNNING as a run-requiring create-status error.
+
+        The backend rejects both RUNNING and COMPLETED at create time with
+        409 EXPERIMENT_HAS_NO_RUNS.  Dry-run must predict failure for either.
+        """
+        sync_manager.storage.load_session.return_value = sample_session
+
+        with patch.object(
+            sync_manager,
+            "convert_session_to_traigent_format",
+            return_value={
+                "agent": {"name": "agent", "agent_type_id": "completion"},
+                "benchmark": {"name": "bench", "type": "input-output", "label": "l"},
+                "experiment": {
+                    "name": "exp",
+                    "measures": ["score"],
+                    "configurations": {},
+                    "status": "RUNNING",  # run-requiring: backend rejects this too
+                },
+                "experiment_run": {"measures": ["score"], "configurations": {}},
+                "configuration_runs": [],
+            },
+        ):
+            result = sync_manager.sync_session_to_cloud(
+                "test_session_123", dry_run=True
+            )
+
+        assert result["status"] == "error", (
+            "Dry-run must report error when experiment would be created with "
+            "status=RUNNING (also run-requiring, also causes 409 on real sync)"
+        )
+        assert result["preview"]["ordering_valid"] is False
+        assert any(
+            "run-requiring" in err or "RUNNING" in err or "409" in err
+            for err in result.get("errors", [])
+        ), f"Expected a run-requiring/RUNNING/409 error, got {result.get('errors')}"
+
+    def test_sync_experiment_failure_sets_error_status_in_result(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """A failed experiment POST leaves status as 'partial' (error before runs)."""
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.get.return_value = backend_response(404)
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "agent-id"}),
+            backend_response(payload={"id": "benchmark-id"}),
+            # Experiment POST fails — simulates the 409 that existed before fix.
+            backend_response(
+                status_code=409,
+                text='{"error": "EXPERIMENT_HAS_NO_RUNS"}',
+            ),
+        ]
+
+        result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        # Verify failure is surfaced correctly.
+        assert result["status"] in {"partial", "error"}, (
+            f"Expected partial/error, got {result['status']}"
+        )
+        assert any("Experiment sync failed" in err for err in result.get("errors", []))
+        # _finalize_experiment must NOT be called when experiment creation fails.
+        sync_manager._session.put.assert_not_called()
