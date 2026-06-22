@@ -13,7 +13,7 @@ python examples/core/simple-prompt/run.py
 # With real LLMs
 export ANTHROPIC_API_KEY="your-key" # pragma: allowlist secret
 export OPENAI_API_KEY="your-key" # pragma: allowlist secret
-python examples/core/multi-objective-tradeoff/run_openai_optuna.py
+python examples/core/multi-objective-tradeoff/run_openai_backend_smart.py
 ```
 
 ## Core optimize pattern

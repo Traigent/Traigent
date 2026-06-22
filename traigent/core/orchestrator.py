@@ -54,15 +54,14 @@ from traigent.core.cost_enforcement import (
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import VendorErrorCategory
 from traigent.core.execution_policy_runtime import (
-    CloudBrainUnavailableError,
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
+    CloudBrainUnavailableError,
     backend_egress_disabled,
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
 )
-from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
@@ -103,6 +102,9 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import (  # noqa: F401
+    is_backend_offline as is_backend_offline,
+)
 from traigent.utils.exceptions import OptimizationError, VendorPauseError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
@@ -2859,6 +2861,9 @@ class OptimizationOrchestrator:
         pruned_step: int = 0,
     ) -> None:
         """Finalize an asked Optuna trial that will never be executed.
+
+        Deferred cleanup: this ask/tell residual is guarded for local execution
+        and should be genericized or removed with the parallel path follow-up.
 
         Creates a TrialResult for the abandoned trial and:
         1. Appends it to self._trials so it appears in OptimizationResult

@@ -20,8 +20,8 @@ core/error-handling/run.py
 # Multi-Objective Variants (5)
 core/multi-objective-tradeoff/run_anthropic.py
 core/multi-objective-tradeoff/run_openai.py
-core/multi-objective-tradeoff/run_openai_optuna.py
-core/multi-objective-tradeoff/run_openai_optuna_concurrency.py
+core/multi-objective-tradeoff/run_openai_backend_smart.py
+core/multi-objective-tradeoff/run_openai_backend_smart_concurrency.py
 core/multi-objective-tradeoff/run_many_providers.py
 
 # Quickstart (3)

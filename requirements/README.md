@@ -8,7 +8,6 @@ This directory contains all Traigent SDK dependencies organized by feature categ
 requirements/
 ├── requirements.txt              # Core dependencies (required)
 ├── requirements-analytics.txt    # Analytics and intelligence features
-├── requirements-bayesian.txt     # Bayesian optimization (includes Optuna)
 ├── requirements-integrations.txt # Framework integrations (LangChain, OpenAI, etc.)
 ├── requirements-chroma.txt       # Chroma integration, explicit opt-in
 ├── requirements-security.txt     # Enterprise security features
@@ -49,13 +48,12 @@ requirements bundles while `chromadb` has no patched release for CVE-2026-45829.
 ### Added Dependencies
 1. ✅ `cryptography>=3.4.0` to `requirements.txt`
 2. ✅ `rank-bm25` to `requirements.txt`
-3. 🆕 `optuna>=4.5.0` to `requirements-bayesian.txt`
-4. 🆕 `langchain-anthropic>=0.2.0` to `requirements-integrations.txt`
-5. 🆕 `anthropic>=0.18.0` to `requirements-integrations.txt`
-6. 🆕 `rank_bm25>=0.2.2` to `requirements-integrations.txt`
-7. 🆕 `fastapi>=0.95.0` to `requirements-security.txt`
-8. 🆕 `uvicorn>=0.18.0` to `requirements-security.txt`
-9. 🆕 `redis>=4.0.0` to `requirements-security.txt`
+3. 🆕 `langchain-anthropic>=0.2.0` to `requirements-integrations.txt`
+4. 🆕 `anthropic>=0.18.0` to `requirements-integrations.txt`
+5. 🆕 `rank_bm25>=0.2.2` to `requirements-integrations.txt`
+6. 🆕 `fastapi>=0.95.0` to `requirements-security.txt`
+7. 🆕 `uvicorn>=0.18.0` to `requirements-security.txt`
+8. 🆕 `redis>=4.0.0` to `requirements-security.txt`
 
 ### Removed
 - ❌ Duplicate `scripts/test/requirements-test.txt` (consolidated)
