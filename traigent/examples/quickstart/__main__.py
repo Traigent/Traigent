@@ -24,7 +24,7 @@ calls stay mocked. For a real run with actual LLM calls, see
 
 import asyncio
 import os
-from pathlib import Path
+import sys
 
 # Flip the in-code mock-mode flag too. The bootstrap in traigent/__init__.py
 # already set TRAIGENT_MOCK_LLM=true so the env-var path is active, but
@@ -39,15 +39,28 @@ from traigent.examples.quickstart._env import configure_quickstart_env
 
 configure_quickstart_env(os.environ)
 
-# Bundled dataset — set TRAIGENT_DATASET_ROOT so the SDK's path
-# validation accepts it regardless of the user's CWD.
-_PACKAGE_DIR = str(Path(__file__).resolve().parent)
-os.environ.setdefault("TRAIGENT_DATASET_ROOT", _PACKAGE_DIR)
+try:
+    import litellm  # noqa: E402
+except ModuleNotFoundError as exc:
+    missing = exc.name or "litellm"
+    print(
+        f"[traigent] Missing required quickstart dependency '{missing}'. "
+        f'Run: {sys.executable} -m pip install "litellm==1.87.1"',
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from None
 
 import traigent  # noqa: E402
 from traigent.api.decorators import EvaluationOptions  # noqa: E402
 
-DATASET = str(Path(__file__).resolve().parent / "qa_samples.jsonl")
+DATASET = [
+    {"input": {"question": "What is the capital of France?"}, "output": "Paris"},
+    {"input": {"question": "What is 2 + 2?"}, "output": "4"},
+    {
+        "input": {"question": "Who wrote Romeo and Juliet?"},
+        "output": "William Shakespeare",
+    },
+]
 CONFIG_SPACE = {
     "model": ["gpt-4o-mini", "gpt-4o"],
     "temperature": [0.0, 0.7, 1.0],
@@ -127,12 +140,17 @@ def answer(question: str) -> str:
     """Call an LLM with the current trial's config (intercepted in mock mode)."""
     cfg = traigent.get_config()
 
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
-
-    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
-    response = llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)])
-    return str(response.content)
+    # Call through the litellm module attribute so Traigent's mock
+    # interceptor, which patches litellm.completion, is the call path.
+    response = litellm.completion(
+        model=str(cfg["model"]),
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ],
+        temperature=float(cfg["temperature"]),
+    )
+    return str(response.choices[0].message.content)
 
 
 def main() -> None:
