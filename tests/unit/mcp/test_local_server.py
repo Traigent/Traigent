@@ -83,6 +83,7 @@ async def test_tool_listing_matches_v1_set() -> None:
 
     assert [tool.name for tool in result.tools] == list(V1_TOOL_NAMES)
     assert "scaffold_eval" in {tool.name for tool in result.tools}
+    assert "get_optimization_plan" in {tool.name for tool in result.tools}
     assert "export_evidence" in {tool.name for tool in result.tools}
     assert "significant_variables" not in {tool.name for tool in result.tools}
     assert "generate_examples" not in {tool.name for tool in result.tools}
@@ -102,6 +103,87 @@ async def test_catalog_and_recommend_happy_path() -> None:
     assert recommendation["ok"] is True
     assert recommendation["recommendation"]["agent_type"] == "rag"
     assert "configuration_space" in recommendation["recommendation"]
+
+
+async def test_get_optimization_plan_delegates_to_backend_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "schema_version": "1.0.0",
+        "phase": "P1_STATIC",
+        "plan": {
+            "objectives": [
+                {"name": "accuracy", "weight": 1.0, "orientation": "maximize"}
+            ],
+            "models": ["gpt-4o-mini"],
+            "knobs": [{"name": "temperature", "values": ["0.0", "0.3"]}],
+            "algorithm": "auto",
+            "max_trials": 4,
+            "cost_limit_usd": 5.0,
+            "offline": False,
+        },
+        "steps": [
+            {
+                "id": "review_plan",
+                "label": "Review plan",
+                "command_template": "traigent optimize agent.py --max-trials 4",
+            }
+        ],
+        "evidence_level": "medium",
+        "caveat": "Plans are advisory until a run starts.",
+        "advisory": True,
+    }
+    calls: list[dict[str, Any]] = []
+
+    class FakeOptimizationPlanClient:
+        async def __aenter__(self) -> FakeOptimizationPlanClient:
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+            return None
+
+        async def get_optimization_plan(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            return payload
+
+    monkeypatch.setattr(
+        "traigent.mcp.tools.OptimizationPlanClient",
+        FakeOptimizationPlanClient,
+    )
+
+    async with mcp_session() as session:
+        result = await call_tool(
+            session,
+            "get_optimization_plan",
+            {
+                "task_description": "Tune a support chatbot.",
+                "dataset_size": 20,
+                "dataset_has_holdout": True,
+                "objectives": ["accuracy", "latency"],
+                "max_trials": 4,
+                "cost_limit_usd": 5.0,
+                "task_type": "chatbot",
+                "agent_shape": "tool_agent",
+                "weights": {"accuracy": 0.8, "latency": 0.2},
+                "offline": False,
+            },
+        )
+
+    assert result == payload
+    assert calls == [
+        {
+            "task_description": "Tune a support chatbot.",
+            "dataset_size": 20,
+            "dataset_has_holdout": True,
+            "objectives": ["accuracy", "latency"],
+            "max_trials": 4,
+            "cost_limit_usd": 5.0,
+            "task_type": "chatbot",
+            "agent_shape": "tool_agent",
+            "weights": {"accuracy": 0.8, "latency": 0.2},
+            "offline": False,
+        }
+    ]
 
 
 async def test_detect_validate_and_estimate_happy_paths(
