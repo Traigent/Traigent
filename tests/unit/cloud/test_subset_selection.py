@@ -148,7 +148,9 @@ class TestDiverseSampling:
             "traigent.cloud.subset_selection._SECURE_RANDOM.sample",
             side_effect=AssertionError("sklearn path fell back to random sampling"),
         ):
-            indices = await sampler._cluster_based_selection(text_features, target_size=4)
+            indices = await sampler._cluster_based_selection(
+                text_features, target_size=4
+            )
 
         assert len(indices) == 4
         assert len(set(indices)) == 4

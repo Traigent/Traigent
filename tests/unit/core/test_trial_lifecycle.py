@@ -83,7 +83,6 @@ class MockOrchestrator:
         self._default_config_used = False
         self.objective_schema = None  # For band-based pruning support
 
-
     def _apply_knob_resolution(self, config):
         """Mirror of OptimizationOrchestrator._apply_knob_resolution (RFC 0001):
         passthrough when no resolver is configured."""
@@ -91,6 +90,7 @@ class MockOrchestrator:
             return config
         resolved = self.knob_resolver.resolve(config)
         return dict(resolved.config)
+
     def _consume_default_config(self):
         return None
 

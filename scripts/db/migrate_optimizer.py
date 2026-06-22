@@ -75,9 +75,7 @@ def _connect(database_url: str) -> tuple[str, object]:
     try:
         from sqlalchemy import create_engine
     except ImportError as exc:  # pragma: no cover - depends on optional dependency
-        raise RuntimeError(
-            "sqlalchemy is required for non-sqlite migrations"
-        ) from exc
+        raise RuntimeError("sqlalchemy is required for non-sqlite migrations") from exc
 
     engine = create_engine(database_url, future=True)
     return "sqlalchemy", engine
@@ -89,7 +87,6 @@ def _execute_sql(engine_type: str, handle: object, sql: str) -> None:
         conn.executescript(sql)
         conn.commit()
         return
-
 
     engine = handle
     statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]

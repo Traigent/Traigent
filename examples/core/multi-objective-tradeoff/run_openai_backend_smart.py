@@ -171,9 +171,7 @@ def _evaluate_expression(question: str) -> str:
     try:
         # Add 0.1 seconds delay to simulate network latency
         time.sleep(0.1)
-        value = eval(
-            expr, safe_globals, {}
-        )  # noqa: S307 - controlled input for examples
+        value = eval(expr, safe_globals, {})  # noqa: S307 - controlled input for examples
     except Exception as exc:  # pragma: no cover - defensive fallback
         raise ValueError(f"Failed to evaluate expression '{expr}': {exc}") from exc
 
@@ -282,7 +280,9 @@ else:
 parallel_mode = (
     "sequential"
     if CONCURRENCY_PROFILE == "sequential"
-    else "parallel" if CONCURRENCY_PROFILE == "parallel" else "auto"
+    else "parallel"
+    if CONCURRENCY_PROFILE == "parallel"
+    else "auto"
 )
 
 PARALLEL_CONFIG = ParallelConfig(
