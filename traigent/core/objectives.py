@@ -113,12 +113,19 @@ class ObjectiveDefinition:
                     f"Invalid bounds: min ({self.bounds[0]}) must be less than max ({self.bounds[1]})"
                 )
 
-        # Validate normalization
-        valid_normalizations = ["min_max", "z_score", "robust"]
-        if self.normalization not in valid_normalizations:
+        # Validate normalization — only "min_max" is implemented.
+        # "z_score" and "robust" are reserved and will be supported in a future
+        # version; accepting them silently would produce incorrect results.
+        if self.normalization in ("z_score", "robust"):
+            raise NotImplementedError(
+                f"normalization='{self.normalization}' is not implemented; "
+                f"only 'min_max' is available in this version. "
+                f"Remove the normalization argument or set normalization='min_max'."
+            )
+        if self.normalization != "min_max":
             raise ValueError(
-                f"Normalization must be one of {valid_normalizations}, "
-                f"got '{self.normalization}' for objective '{self.name}'"
+                f"normalization='{self.normalization}' is not a recognised strategy "
+                f"for objective '{self.name}'. Only 'min_max' is supported."
             )
 
         # Validate band_alpha

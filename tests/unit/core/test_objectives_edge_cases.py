@@ -180,7 +180,8 @@ class TestProvidedBoundsVsObservedRanges:
         # Accuracy uses provided bounds
         metrics = {"accuracy": 0.8, "latency": 50}
         normalized = schema.normalize_metrics(
-            metrics, ranges={"latency": (10, 100)}  # Observed range for latency
+            metrics,
+            ranges={"latency": (10, 100)},  # Observed range for latency
         )
 
         assert normalized["accuracy"] == 0.8  # Direct with 0-1 bounds
@@ -449,7 +450,7 @@ class TestSerializationRoundTrips:
             name="f1_score",
             orientation="maximize",
             weight=0.7,
-            normalization="z_score",
+            normalization="min_max",
             bounds=(0.0, 1.0),
             unit="ratio",
         )
@@ -471,7 +472,7 @@ class TestSerializationRoundTrips:
         objectives = [
             ObjectiveDefinition("accuracy", "maximize", 0.5, bounds=(0, 1)),
             ObjectiveDefinition("cost", "minimize", 0.3, unit="USD"),
-            ObjectiveDefinition("latency", "minimize", 0.2, normalization="robust"),
+            ObjectiveDefinition("latency", "minimize", 0.2, normalization="min_max"),
         ]
         original = ObjectiveSchema.from_objectives(objectives, schema_version="1.2.3")
 
@@ -503,7 +504,7 @@ class TestSerializationRoundTrips:
                 name=f"metric_{i}",
                 orientation="maximize" if i % 2 == 0 else "minimize",
                 weight=1.0 / 10,  # Equal weights
-                normalization=["min_max", "z_score", "robust"][i % 3],
+                normalization="min_max",
                 bounds=(0, 100 * (i + 1)) if i % 2 == 0 else None,
                 unit=["percentage", "ms", "MB", None][i % 4],
             )

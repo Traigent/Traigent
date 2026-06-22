@@ -257,7 +257,7 @@ class TestOptimizationLoggerObjectives:
                 name="latency",
                 orientation="minimize",
                 weight=0.2,
-                normalization="z_score",
+                normalization="min_max",
                 bounds=(0, 1000),
                 unit="ms",
             ),
@@ -287,7 +287,7 @@ class TestOptimizationLoggerObjectives:
         assert objectives_by_name["cost"]["bounds"] == [0.0, 0.1]
         assert objectives_by_name["cost"]["unit"] == "USD"
 
-        assert objectives_by_name["latency"]["normalization"] == "z_score"
+        assert objectives_by_name["latency"]["normalization"] == "min_max"
         assert objectives_by_name["latency"]["bounds"] == [0, 1000]
         assert objectives_by_name["latency"]["unit"] == "ms"
 
