@@ -44,9 +44,16 @@ jobs:
     timeout-minutes: 15
     continue-on-error: true  # advisory mode — promote to blocking after calibration
     env:
-      SPINE_REF: 0dc2d057e7e33e71acc882388b546e5808e4002b  # pragma: allowlist secret
+      # MUST point at a spine commit that has the `validation security-ledger` CLI
+      # (added 2026-05-14, commit 42bbba8). The old pin 0dc2d057 (2026-05-13)
+      # predated it, so the scan exited "invalid choice: security-ledger" and
+      # failed with "no gap report emitted". Matches TraigentSchema develop's pin.
+      # When changing the scan command below, bump this ref in lockstep.
+      SPINE_REF: 7766f10589b24971696c63d0235763a743cd9cd3  # pragma: allowlist secret
       SPINE_FILE_LIMIT: "5000"
-      SPINE_RO_TOKEN: ${{ secrets.SPINE_RO_TOKEN }}
+      # Prefer a dedicated read-only spine token; fall back to this repo's existing
+      # VALIDATION_CI_PAT so the scan runs instead of failing closed when unset.
+      SPINE_RO_TOKEN: ${{ secrets.SPINE_RO_TOKEN || secrets.VALIDATION_CI_PAT }}
 
     steps:
       # Checkout the product repo as $GITHUB_WORKSPACE/Traigent/ so the
