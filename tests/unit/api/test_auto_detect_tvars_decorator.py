@@ -63,6 +63,53 @@ def test_auto_detect_tvars_apply_exclude_filter() -> None:
     assert "model" in sample_agent.configuration_space
 
 
+def test_auto_detect_tvars_mode_off_respects_explicit_configuration_space() -> None:
+    @optimize(
+        configuration_space={"manual_param": [1, 2, 3]},
+        auto_detect_tvars_mode="off",
+    )
+    def sample_agent(query: str) -> str:
+        temperature = 0.7  # noqa: F841
+        config = {"model": "gpt-4o-mini"}  # noqa: F841
+        return f"answer: {query}"
+
+    assert isinstance(sample_agent, OptimizedFunction)
+    assert sample_agent.configuration_space == {"manual_param": [1, 2, 3]}
+
+
+@pytest.mark.parametrize(
+    ("min_confidence", "expected_space"),
+    [
+        pytest.param("high", {"temperature": (0.0, 2.0)}, id="high"),
+        pytest.param(
+            "medium",
+            {"temperature": (0.0, 2.0), "model": ["gpt-4o-mini"]},
+            id="medium",
+        ),
+        pytest.param(
+            "low",
+            {"temperature": (0.0, 2.0), "model": ["gpt-4o-mini"]},
+            id="low",
+        ),
+    ],
+)
+def test_auto_detect_tvars_min_confidence_filters_candidates(
+    min_confidence: str,
+    expected_space: dict[str, object],
+) -> None:
+    @optimize(
+        auto_detect_tvars_mode="apply",
+        auto_detect_tvars_min_confidence=min_confidence,
+    )
+    def sample_agent(query: str) -> str:
+        temperature = 0.7  # noqa: F841
+        config = {"model": "gpt-4o-mini"}  # noqa: F841
+        return f"answer: {query}"
+
+    assert isinstance(sample_agent, OptimizedFunction)
+    assert sample_agent.configuration_space == expected_space
+
+
 def test_auto_detect_tvars_bool_remains_suggest_only() -> None:
     with pytest.raises(ValueError, match="Configuration space cannot be empty"):
 

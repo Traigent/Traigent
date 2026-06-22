@@ -20,11 +20,13 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.core.best_config_runtime import (
+    BEST_CONFIG_SCHEMA_VERSION,
     BestConfigSnapshot,
     BestConfigSource,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
     function_ref_for,
+    write_cloud_cache_best_config,
     write_repo_best_config,
 )
 from traigent.core.optimized_function import OptimizedFunction
@@ -40,6 +42,22 @@ def plain_answer(text: str, **kwargs):
 def context_answer(text: str):
     config = traigent.get_config()
     return f"{text}:{config.get('temperature')}"
+
+
+def _build_canonical_best_config_spec(
+    tmp_path: Path,
+    *,
+    config_id: str,
+    config: dict[str, float],
+    func,
+) -> dict[str, object]:
+    spec_path = write_repo_best_config(
+        tmp_path / ".spec-seed" / config_id,
+        config_id=config_id,
+        config=config,
+        function_ref=function_ref_for(func),
+    )
+    return json.loads(spec_path.read_text(encoding="utf-8"))
 
 
 def test_load_from_beats_env_path(tmp_path, monkeypatch):
@@ -506,6 +524,136 @@ def test_decorator_passes_cloud_cache_ttl_options(tmp_path):
 
     assert wrapped.current_config["temperature"] == 0.4
     assert wrapped.best_config_snapshot.source == BestConfigSource.CLOUD_CACHE.value
+
+
+def test_decorator_best_config_strict_rejects_invalid_repo_spec(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    spec_path = write_repo_best_config(
+        tmp_path / ".traigent" / "best-configs",
+        config_id="strict-answerer",
+        config={"temperature": 0.4},
+        function_ref=function_ref_for(context_answer),
+    )
+    spec_path.write_text(
+        json.dumps({"schema_version": BEST_CONFIG_SCHEMA_VERSION}),
+        encoding="utf-8",
+    )
+
+    relaxed = optimize(
+        configuration_space={"temperature": [0.1, 0.4]},
+        config_id="strict-answerer",
+        best_config_source="repo",
+        best_config_strict=False,
+        default_config={"temperature": 0.1},
+    )(context_answer)
+
+    assert relaxed.current_config["temperature"] == 0.1
+    assert relaxed.best_config_snapshot.source == BestConfigSource.DEFAULT.value
+
+    with pytest.raises(ConfigurationError, match="missing fields"):
+        optimize(
+            configuration_space={"temperature": [0.1, 0.4]},
+            config_id="strict-answerer",
+            best_config_source="repo",
+            best_config_strict=True,
+            default_config={"temperature": 0.1},
+        )(context_answer)
+
+
+def test_decorator_enable_auto_load_dev_logs_reads_latest_config(tmp_path):
+    artifacts_dir = (
+        tmp_path
+        / "optimization_logs"
+        / "experiments"
+        / "context_answer"
+        / "runs"
+        / "run-001"
+        / "artifacts"
+    )
+    artifacts_dir.mkdir(parents=True)
+    (artifacts_dir / "best_config.json").write_text(
+        json.dumps({"config": {"temperature": 0.6}}),
+        encoding="utf-8",
+    )
+
+    wrapped = optimize(
+        configuration_space={"temperature": [0.1, 0.6]},
+        local_storage_path=str(tmp_path),
+        enable_auto_load_dev_logs=True,
+        default_config={"temperature": 0.1},
+    )(context_answer)
+
+    assert wrapped.current_config["temperature"] == 0.6
+    assert wrapped.best_config_snapshot.source == BestConfigSource.DEV_LOG.value
+    assert wrapped("ok") == "ok:0.6"
+
+
+def test_decorator_repo_then_cloud_prefers_repo_before_cloud_cache(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    config_id = "waterfall-answerer"
+    cache_dir = tmp_path / "cache"
+
+    write_repo_best_config(
+        tmp_path / ".traigent" / "best-configs",
+        config_id=config_id,
+        config={"temperature": 0.4},
+        function_ref=function_ref_for(context_answer),
+    )
+    cloud_spec = _build_canonical_best_config_spec(
+        tmp_path,
+        config_id=config_id,
+        config={"temperature": 0.8},
+        func=context_answer,
+    )
+    write_cloud_cache_best_config(cache_dir, cloud_spec, version=1)
+
+    wrapped = optimize(
+        configuration_space={"temperature": [0.1, 0.4, 0.8]},
+        config_id=config_id,
+        best_config_source="repo_then_cloud",
+        best_config_cache_dir=str(cache_dir),
+        default_config={"temperature": 0.1},
+    )(context_answer)
+
+    assert wrapped.current_config["temperature"] == 0.4
+    assert wrapped.best_config_snapshot.source == BestConfigSource.REPO.value
+    assert wrapped("ok") == "ok:0.4"
+
+
+def test_decorator_cloud_then_repo_prefers_cloud_cache_before_repo(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    config_id = "waterfall-answerer"
+    cache_dir = tmp_path / "cache"
+
+    write_repo_best_config(
+        tmp_path / ".traigent" / "best-configs",
+        config_id=config_id,
+        config={"temperature": 0.4},
+        function_ref=function_ref_for(context_answer),
+    )
+    cloud_spec = _build_canonical_best_config_spec(
+        tmp_path,
+        config_id=config_id,
+        config={"temperature": 0.8},
+        func=context_answer,
+    )
+    write_cloud_cache_best_config(cache_dir, cloud_spec, version=1)
+
+    wrapped = optimize(
+        configuration_space={"temperature": [0.1, 0.4, 0.8]},
+        config_id=config_id,
+        best_config_source="cloud_then_repo",
+        best_config_cache_dir=str(cache_dir),
+        default_config={"temperature": 0.1},
+    )(context_answer)
+
+    assert wrapped.current_config["temperature"] == 0.8
+    assert wrapped.best_config_snapshot.source == BestConfigSource.CLOUD_CACHE.value
+    assert wrapped("ok") == "ok:0.8"
 
 
 def streaming_context_answer(text: str):

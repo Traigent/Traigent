@@ -10,11 +10,40 @@ import pytest
 from traigent.api.decorators import optimize
 from traigent.api.strategy_presets import (
     MAX_ACCURACY_THEN_CHEAPEST,
+    PARETO_FRONTIER,
     QUALITY_FLOOR_MIN_COST,
 )
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
+
+
+def _write_environment_tvl_spec(tmp_path: Path) -> Path:
+    spec_path = tmp_path / "environment_overlay.tvl.yml"
+    spec_path.write_text(
+        """tvl:
+  module: test.environment
+tvl_version: "0.9"
+tvars:
+  - name: retrieval_depth
+    type: int
+    domain:
+      range: [2, 6]
+objectives:
+  - name: accuracy
+    direction: maximize
+environments:
+  finals_week:
+    overrides:
+      tvars:
+        - name: retrieval_depth
+          type: int
+          domain:
+            range: [3, 8]
+""",
+        encoding="utf-8",
+    )
+    return spec_path
 
 
 class TestOptimizeDecorator:
@@ -225,6 +254,39 @@ class TestOptimizeDecorator:
                 "Selected the lowest-cost completed trial within the preset accuracy band."
             ),
         }
+
+    def test_decorator_accepts_pareto_frontier_strategy_preset(self):
+        """Pareto frontier preset should resolve objectives without extra params."""
+
+        @optimize(
+            configuration_space={"model": ["cheap", "accurate"]},
+            strategy=PARETO_FRONTIER,
+            strategy_params={},
+        )
+        def sample_function() -> str:
+            return "ok"
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.objectives == ["accuracy", "cost"]
+        assert sample_function.strategy_preset.to_metadata() == {
+            "preset_name": PARETO_FRONTIER,
+            "params": {},
+            "selection_grade": "advisory",
+            "selection_rationale": (
+                "Selected all completed trials on the advisory accuracy-cost Pareto frontier."
+            ),
+        }
+
+    def test_decorator_rejects_pareto_frontier_unexpected_params(self):
+        with pytest.raises(ValueError, match="does not accept strategy_params"):
+
+            @optimize(
+                configuration_space={"model": ["cheap", "accurate"]},
+                strategy=PARETO_FRONTIER,
+                strategy_params={"epsilon": 0.1},
+            )
+            def sample_function() -> str:
+                return "ok"
 
     def test_decorator_rejects_strategy_preset_with_objectives(self):
         """Preset business goals should not silently override hand-set objectives."""
@@ -538,6 +600,88 @@ objectives:
 
         assert isinstance(tvl_wrapped, OptimizedFunction)
         assert tvl_wrapped.eval_dataset == "user.jsonl"
+
+    def test_decorator_applies_tvl_environment_overlay(self, tmp_path):
+        spec_path = _write_environment_tvl_spec(tmp_path)
+
+        @optimize(tvl_spec=spec_path, tvl_environment="finals_week")
+        def tvl_wrapped(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_wrapped, OptimizedFunction)
+        assert tvl_wrapped.configuration_space["retrieval_depth"] == (3, 8)
+
+    def test_decorator_accepts_structured_tvl_options_model(self, tmp_path):
+        from traigent.tvl.options import TVLOptions
+
+        spec_path = _write_environment_tvl_spec(tmp_path)
+
+        @optimize(tvl=TVLOptions(spec_path=str(spec_path), environment="finals_week"))
+        def tvl_wrapped(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_wrapped, OptimizedFunction)
+        assert tvl_wrapped.configuration_space["retrieval_depth"] == (3, 8)
+
+    def test_decorator_accepts_structured_tvl_options_dict(self, tmp_path):
+        spec_path = _write_environment_tvl_spec(tmp_path)
+
+        @optimize(tvl={"spec_path": str(spec_path), "environment": "finals_week"})
+        def tvl_wrapped(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_wrapped, OptimizedFunction)
+        assert tvl_wrapped.configuration_space["retrieval_depth"] == (3, 8)
+
+    def test_mock_mode_options_round_trip_base_accuracy_and_variance(self):
+        from traigent.api.decorators import MockModeOptions
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            mock=MockModeOptions(base_accuracy=0.9, variance=0.05),
+        )
+        def func_with_mock_round_trip(x):
+            return x
+
+        # base_accuracy and variance are inert; this only confirms they survive
+        # decorator construction / round-trip into mock_mode_config.
+        assert isinstance(func_with_mock_round_trip, OptimizedFunction)
+        assert func_with_mock_round_trip.mock_mode_config["base_accuracy"] == 0.9
+        assert func_with_mock_round_trip.mock_mode_config["variance"] == 0.05
+
+    def test_decorator_wires_agent_configuration_parameters(self):
+        from traigent.api.types import AgentDefinition
+
+        @optimize(
+            configuration_space={
+                "router_model": ["gpt-4o"],
+                "draft_model": ["gpt-4o-mini"],
+            },
+            agents={
+                "router": AgentDefinition(
+                    display_name="Router",
+                    parameter_keys=["router_model"],
+                    measure_ids=["routing_accuracy"],
+                )
+            },
+            agent_prefixes=["draft"],
+            agent_measures={
+                "router": ["routing_accuracy"],
+                "draft": ["draft_accuracy"],
+            },
+            global_measures=["total_cost"],
+        )
+        def sample_function() -> str:
+            return "ok"
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.agents["router"].parameter_keys == ["router_model"]
+        assert sample_function.agent_prefixes == ["draft"]
+        assert sample_function.agent_measures == {
+            "router": ["routing_accuracy"],
+            "draft": ["draft_accuracy"],
+        }
+        assert sample_function.global_measures == ["total_cost"]
 
 
 class TestOptimizedFunctionIntegration:

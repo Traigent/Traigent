@@ -55,6 +55,38 @@ def test_decorator_stores_guidance_options() -> None:
     assert fn.grow_dataset_options is None
 
 
+def test_decorator_stores_grow_dataset_options() -> None:
+    @optimize(
+        eval_dataset=Dataset(
+            examples=[EvaluationExample(input_data={"q": "x"}, expected_output="y")]
+        ),
+        objectives=["accuracy"],
+        configuration_space={"prompt": Choices(["base prompt"])},
+        grow_dataset={"rounds": 2, "target_examples": 4},
+    )
+    def fn(**kwargs):  # noqa: ANN003, ANN202
+        return "ok"
+
+    assert fn.grow_dataset_options == {"rounds": 2, "target_examples": 4}
+    assert fn.skill_train_options is None
+
+
+def test_decorator_stores_skill_train_options() -> None:
+    @optimize(
+        eval_dataset=Dataset(
+            examples=[EvaluationExample(input_data={"q": "x"}, expected_output="y")]
+        ),
+        objectives=["accuracy"],
+        configuration_space={"prompt": Choices(["base prompt"])},
+        skill_train={"epochs": 1, "rollout_batch": 4},
+    )
+    def fn(**kwargs):  # noqa: ANN003, ANN202
+        return "ok"
+
+    assert fn.skill_train_options == {"epochs": 1, "rollout_batch": 4}
+    assert fn.grow_dataset_options is None
+
+
 def test_optimize_with_guidance_uses_stored_options() -> None:
     fn = _decorate()
     plan = GuidancePlan(
