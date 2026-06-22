@@ -328,6 +328,43 @@ def _set_metric_if_convertible(
         )
 
 
+def _reconcile_cost_with_total_cost(metrics: dict[str, Any], trial_id: str) -> None:
+    """Wire the per-config ``cost`` metric to ``total_cost`` when decoupled (#1423).
+
+    The per-config ``cost`` metric is what the optimizer minimizes and the portal
+    displays. On several real paths (provider-reported cost via OpenRouter, cost
+    injected via ``__traigent_meta__``) it can arrive missing or 0.0 even though
+    the SDK computed the correct ``total_cost`` for the same trial. Left
+    decoupled, the ``minimize cost`` objective is inert and the portal shows $0
+    per config for a real paid run. ``total_cost`` is authoritative and is never
+    wrongly zeroed, so back-fill ``cost`` from it. The authoritative ``total_cost``
+    is never modified.
+    """
+    raw_total = metrics.get("total_cost")
+    try:
+        total_cost = float(raw_total) if raw_total is not None else 0.0
+    except (TypeError, ValueError):
+        return
+    if total_cost <= 0.0:
+        return
+
+    raw_cost = metrics.get("cost")
+    try:
+        current_cost = float(raw_cost) if raw_cost is not None else 0.0
+    except (TypeError, ValueError):
+        current_cost = 0.0
+
+    if current_cost > 0.0:
+        return
+
+    metrics["cost"] = total_cost
+    logger.debug(
+        "Reconciled per-config cost from total_cost for trial %s: $%.6f",
+        trial_id,
+        total_cost,
+    )
+
+
 def _extract_success_comparability(eval_result: Any) -> dict[str, Any]:
     """Resolve comparability metadata from evaluator output or fallback synthesis."""
     comparability_payload = _validated_comparability_payload(
@@ -434,6 +471,14 @@ def build_success_result(
             float,
             trial_id,
         )
+
+    # Wire the per-config ``cost`` metric to the authoritative ``total_cost``
+    # whenever ``cost`` is absent or 0.0 while ``total_cost`` is non-zero (#1423).
+    # The ``cost`` metric is what the optimizer minimizes and the portal displays;
+    # leaving it decoupled at 0 makes the cost objective inert and shows $0 per
+    # config for a real paid run. ``total_cost`` is the SDK's authoritative spend
+    # and is never wrongly zeroed, so it is the correct source here.
+    _reconcile_cost_with_total_cost(trial_result.metrics, trial_id)
 
     # Authoritative final-union ceiling — the SINGLE cap that bounds what every
     # lane actually ships on a successful trial. Both evaluator lanes already cap
