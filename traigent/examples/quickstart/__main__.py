@@ -24,7 +24,7 @@ calls stay mocked. For a real run with actual LLM calls, see
 
 import asyncio
 import os
-from pathlib import Path
+import sys
 
 # Flip the in-code mock-mode flag too. The bootstrap in traigent/__init__.py
 # already set TRAIGENT_MOCK_LLM=true so the env-var path is active, but
@@ -39,15 +39,28 @@ from traigent.examples.quickstart._env import configure_quickstart_env
 
 configure_quickstart_env(os.environ)
 
-# Bundled dataset — set TRAIGENT_DATASET_ROOT so the SDK's path
-# validation accepts it regardless of the user's CWD.
-_PACKAGE_DIR = str(Path(__file__).resolve().parent)
-os.environ.setdefault("TRAIGENT_DATASET_ROOT", _PACKAGE_DIR)
+try:
+    import litellm  # noqa: E402
+except ModuleNotFoundError as exc:
+    missing = exc.name or "litellm"
+    print(
+        f"[traigent] Missing required quickstart dependency '{missing}'. "
+        f'Run: {sys.executable} -m pip install "litellm==1.87.1"',
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from None
 
 import traigent  # noqa: E402
 from traigent.api.decorators import EvaluationOptions  # noqa: E402
 
-DATASET = str(Path(__file__).resolve().parent / "qa_samples.jsonl")
+DATASET = [
+    {"input": {"question": "What is the capital of France?"}, "output": "Paris"},
+    {"input": {"question": "What is 2 + 2?"}, "output": "4"},
+    {
+        "input": {"question": "Who wrote Romeo and Juliet?"},
+        "output": "William Shakespeare",
+    },
+]
 CONFIG_SPACE = {
     "model": ["gpt-4o-mini", "gpt-4o"],
     "temperature": [0.0, 0.7, 1.0],
@@ -127,17 +140,42 @@ def answer(question: str) -> str:
     """Call an LLM with the current trial's config (intercepted in mock mode)."""
     cfg = traigent.get_config()
 
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
-
-    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
-    response = llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)])
-    return str(response.content)
+    # Call through the litellm module attribute so Traigent's mock
+    # interceptor, which patches litellm.completion, is the call path.
+    response = litellm.completion(
+        model=str(cfg["model"]),
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ],
+        temperature=float(cfg["temperature"]),
+    )
+    return str(response.choices[0].message.content)
 
 
 def main() -> None:
     """Synchronous entry point used by the CLI subcommand and ``python -m``."""
-    asyncio.run(answer.optimize(max_trials=6))
+    result = asyncio.run(answer.optimize(max_trials=6))
+
+    # Fail closed on an all-failed run. If every trial errors (or the run is
+    # otherwise misconfigured), optimize() returns NORMALLY with best_score=None
+    # / best_config={} — it does not raise — so without this guard the quickstart
+    # would exit 0 on a run that produced no winner, i.e. a silent all-failed run
+    # that looks like success (CLAUDE.md Rule 2: no fake completion). The import
+    # guard above only covers the missing-litellm case.
+    if result.best_score is None or not result.best_config:
+        print(
+            "[traigent] Quickstart produced no successful trials — no best "
+            "configuration was found (every trial failed). Re-run with "
+            "TRAIGENT_LOG_LEVEL=DEBUG to see the per-trial errors.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    print(
+        f"[traigent] Quickstart complete — best config {result.best_config} "
+        f"scored {result.best_score:.3f}."
+    )
 
 
 if __name__ == "__main__":
