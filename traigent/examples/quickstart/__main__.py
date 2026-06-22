@@ -155,7 +155,27 @@ def answer(question: str) -> str:
 
 def main() -> None:
     """Synchronous entry point used by the CLI subcommand and ``python -m``."""
-    asyncio.run(answer.optimize(max_trials=6))
+    result = asyncio.run(answer.optimize(max_trials=6))
+
+    # Fail closed on an all-failed run. If every trial errors (or the run is
+    # otherwise misconfigured), optimize() returns NORMALLY with best_score=None
+    # / best_config={} — it does not raise — so without this guard the quickstart
+    # would exit 0 on a run that produced no winner, i.e. a silent all-failed run
+    # that looks like success (CLAUDE.md Rule 2: no fake completion). The import
+    # guard above only covers the missing-litellm case.
+    if result.best_score is None or not result.best_config:
+        print(
+            "[traigent] Quickstart produced no successful trials — no best "
+            "configuration was found (every trial failed). Re-run with "
+            "TRAIGENT_LOG_LEVEL=DEBUG to see the per-trial errors.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    print(
+        f"[traigent] Quickstart complete — best config {result.best_config} "
+        f"scored {result.best_score:.3f}."
+    )
 
 
 if __name__ == "__main__":
