@@ -121,6 +121,7 @@ def sync_command(
             sys.exit(1)
 
         synced_ids: list[str] = []
+        had_errors = False
         if session_id:
             result = sync_manager.sync_session_to_cloud(
                 session_id, dry_run=dry_run, force=force
@@ -131,6 +132,10 @@ def sync_command(
                 _emit_session_result(result, dry_run=dry_run)
             if result.get("status") in {"success", "already_synced"}:
                 synced_ids.append(session_id)
+            elif not dry_run:
+                # A real sync that did not succeed is a failure — exit non-zero
+                # so callers (CI, scripts) do not assume the session was uploaded.
+                had_errors = True
         else:
             result = sync_manager.sync_all_sessions(dry_run, force=force)
             if as_json:
@@ -149,6 +154,8 @@ def sync_command(
                 for r in result["session_results"]
                 if r.get("status") in {"success", "already_synced"}
             ]
+            if not dry_run and result.get("sync_errors", 0) > 0:
+                had_errors = True
 
         # --clean: delete local copies only for runs verified synced, with backup.
         if clean and not dry_run and synced_ids:
@@ -159,6 +166,9 @@ def sync_command(
                     f"🧹 Cleaned {cleanup['sessions_deleted']} synced run(s) "
                     "(backed up first)."
                 )
+
+        if had_errors:
+            sys.exit(1)
 
     except Exception as e:  # noqa: BLE001 - CLI boundary surfaces a clean message
         click.echo(f"Error syncing to portal: {e}", err=True)
