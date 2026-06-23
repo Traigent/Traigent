@@ -102,11 +102,9 @@ class NextStepsClient:
 
         raise_if_backend_offline("NextStepsClient request")
         if self._client is None:
-            headers: dict[str, str] = {}
+            headers = {}
             if self.api_key:
-                from traigent.cloud.auth import _build_api_key_auth_headers
-
-                headers.update(_build_api_key_auth_headers(self.api_key))
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             self._client = httpx.AsyncClient(
                 base_url=self.backend_url,

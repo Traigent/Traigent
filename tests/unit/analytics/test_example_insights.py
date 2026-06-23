@@ -133,8 +133,8 @@ class TestExampleInsightsClientGetClient:
             mock_async_client.assert_called_once()
             # Check headers include auth
             call_kwargs = mock_async_client.call_args.kwargs
-            assert call_kwargs["headers"]["X-API-Key"] == "test_token"
-            assert "Authorization" not in call_kwargs["headers"]
+            assert "Authorization" in call_kwargs["headers"]
+            assert call_kwargs["headers"]["Authorization"] == "Bearer test_token"
 
     @pytest.mark.asyncio
     async def test_get_client_reuses_existing(self) -> None:
@@ -569,6 +569,4 @@ class TestNoSignalTaxonomyInSource:
             "score_distributions",
         ]
         leaked = [name for name in forbidden if name in source]
-        assert not leaked, (
-            f"Signal taxonomy leaked into example_insights source: {leaked}"
-        )
+        assert not leaked, f"Signal taxonomy leaked into example_insights source: {leaked}"

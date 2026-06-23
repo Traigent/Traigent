@@ -134,8 +134,7 @@ class TestNextStepsClientGetClient:
             assert result == mock_instance
             mock_async_client.assert_called_once()
             call_kwargs = mock_async_client.call_args.kwargs
-            assert call_kwargs["headers"]["X-API-Key"] == "test_token"
-            assert "Authorization" not in call_kwargs["headers"]
+            assert call_kwargs["headers"]["Authorization"] == "Bearer test_token"
 
     def test_get_client_without_api_key(self) -> None:
         from traigent.analytics.next_steps import NextStepsClient
