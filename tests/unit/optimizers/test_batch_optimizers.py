@@ -14,6 +14,8 @@ from traigent.optimizers.batch_optimizers import (
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import get_optimizer
+from traigent.optimizers.results import Trial
+from traigent.utils.multi_objective import scalarize_objectives
 
 
 class MockInvoker:
@@ -482,9 +484,7 @@ class TestLegacyPositionalConstructors:
         self.config_space = {"param1": [1, 2], "param2": [0.1, 0.2]}
         self.objectives = ["accuracy"]
         self.base_optimizer = GridSearchOptimizer(self.config_space, self.objectives)
-        self.batch_config = BatchOptimizationConfig(
-            max_parallel_trials=3, batch_size=7
-        )
+        self.batch_config = BatchOptimizationConfig(max_parallel_trials=3, batch_size=7)
 
     def test_parallel_batch_legacy_positional(self):
         """ParallelBatchOptimizer(base_optimizer, batch_config) still works."""
@@ -672,3 +672,113 @@ class TestBaseOptimizerKwargForwarding:
 
         assert equal_score != skewed_score
         assert skewed_score > equal_score
+
+
+class TestObjectiveOrientationInCompositeScore:
+    """Regression tests for #1466.
+
+    Batch/grid optimizers scalarized every objective as ``maximize``, so a
+    declared ``minimize`` objective (cost/latency/error) contributed
+    *positively* to the composite. Best-pick is ``max(score)``, so the most
+    expensive / slowest config was returned as ``best_config``. These tests
+    assert orientation is honored: for two configs with identical accuracy, the
+    cheaper config must score strictly higher and be selected as best.
+
+    All scoring is computed directly from in-memory metrics — no LLM calls.
+    """
+
+    config_space = {"param1": [1, 2]}
+    objectives = ["accuracy", "cost"]
+
+    def _cheap_and_expensive_metrics(self):
+        """Equal accuracy, different cost. Cheaper config should win."""
+        cheap = {"accuracy": 0.9, "cost": 0.1}
+        expensive = {"accuracy": 0.9, "cost": 0.9}
+        return cheap, expensive
+
+    def test_grid_composite_prefers_cheaper(self):
+        """GridSearchOptimizer composite ranks lower cost above higher cost."""
+        optimizer = get_optimizer("grid", self.config_space, self.objectives)
+        cheap, expensive = self._cheap_and_expensive_metrics()
+
+        cheap_score = optimizer._calculate_composite_score(cheap)
+        expensive_score = optimizer._calculate_composite_score(expensive)
+
+        # Pre-fix this was reversed (cost added positively → expensive higher).
+        assert cheap_score > expensive_score
+
+    def test_parallel_batch_composite_prefers_cheaper(self):
+        """ParallelBatchOptimizer composite ranks lower cost above higher cost."""
+        optimizer = get_optimizer("parallel_batch", self.config_space, self.objectives)
+        cheap, expensive = self._cheap_and_expensive_metrics()
+
+        assert optimizer._calculate_composite_score(
+            cheap
+        ) > optimizer._calculate_composite_score(expensive)
+
+    def test_adaptive_batch_composite_prefers_cheaper(self):
+        """AdaptiveBatchOptimizer composite ranks lower cost above higher cost."""
+        optimizer = get_optimizer("adaptive_batch", self.config_space, self.objectives)
+        cheap, expensive = self._cheap_and_expensive_metrics()
+
+        assert optimizer._calculate_composite_score(
+            cheap
+        ) > optimizer._calculate_composite_score(expensive)
+
+    def test_multi_objective_select_best_from_pareto_prefers_cheaper(self):
+        """_select_best_from_pareto returns the orientation-correct optimum.
+
+        Two configs sit on an accuracy/cost frontier with equal accuracy. Both
+        are non-dominated only if accuracy differs; with equal accuracy the
+        cheaper one dominates. Either way, the selected best must be the cheaper
+        config, never the orientation-blind ``max(score)`` (the expensive one).
+        """
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space=self.config_space,
+            objectives=self.objectives,
+        )
+
+        # cost is a minimize objective: direction must be False (minimize).
+        assert optimizer.objective_directions["cost"] is False
+        assert optimizer.objective_directions["accuracy"] is True
+
+        cheap_metrics = {"accuracy": 0.9, "cost": 0.1}
+        expensive_metrics = {"accuracy": 0.9, "cost": 0.9}
+
+        # Mirror the per-trial scoring path in ``_run_batch_trial`` (which uses
+        # scalarize_objectives over objective_weights, honoring orientation).
+        def _composite(metrics):
+            return scalarize_objectives(
+                metrics,
+                optimizer.objective_weights,
+                minimize_objectives=optimizer._minimize_objectives,
+            )
+
+        cheap_trial = Trial(
+            configuration={"param1": 1},
+            score=_composite(cheap_metrics),
+            duration=0.0,
+            metadata={"objective_scores": cheap_metrics},
+        )
+        expensive_trial = Trial(
+            configuration={"param1": 2},
+            score=_composite(expensive_metrics),
+            duration=0.0,
+            metadata={"objective_scores": expensive_metrics},
+        )
+
+        optimizer._update_pareto_frontier(cheap_trial)
+        optimizer._update_pareto_frontier(expensive_trial)
+
+        best = optimizer._select_best_from_pareto()
+        assert best is not None
+        # Pre-fix: expensive config selected (max of orientation-blind score).
+        assert best.configuration == {"param1": 1}
+
+    def test_minimize_objectives_resolved_on_base(self):
+        """Optimizers expose the resolved minimize-objective list (#1466)."""
+        optimizer = get_optimizer(
+            "grid", self.config_space, ["accuracy", "cost", "latency", "error"]
+        )
+        assert set(optimizer._minimize_objectives) == {"cost", "latency", "error"}
+        assert "accuracy" not in optimizer._minimize_objectives
