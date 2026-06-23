@@ -5,8 +5,9 @@ This module powers the ``client.analytics`` read namespace and the
 the backend owns all analytics intelligence, so the SDK only
 
 * sends the request with the user's existing credentials,
-* validates that the response is a JSON object (and, for the frozen v0
-  contracts, that the required top-level keys are present), and
+* validates that the response is the platform success envelope, unwraps ``data``
+  (and, for the frozen v0 contracts, validates that the required payload keys
+  are present), and
 * returns the allowlisted payload unchanged.
 
 It deliberately reuses the SDK's existing credential plumbing
@@ -84,6 +85,15 @@ def _require_object(payload: Any, *, what: str) -> dict[str, Any]:
             f"Malformed {what} response: expected a JSON object."
         )
     return cast(dict[str, Any], payload)
+
+
+def _unwrap_success_data(payload: Any, *, what: str) -> dict[str, Any]:
+    envelope = _require_object(payload, what=what)
+    if envelope.get("success") is not True or "data" not in envelope:
+        raise AnalyticsClientError(
+            f"Malformed {what} response: expected Traigent success envelope with data."
+        )
+    return _require_object(envelope["data"], what=what)
 
 
 def _require_keys(
@@ -223,7 +233,7 @@ class BackendAnalyticsClient:
         client = self._get_client()
         response = await client.get(path, headers=headers, params=params)
         response.raise_for_status()
-        return _require_object(response.json(), what=what)
+        return _unwrap_success_data(response.json(), what=what)
 
     # === Read methods (the client.analytics surface) ===
 
@@ -286,7 +296,7 @@ class BackendAnalyticsClient:
             headers=self._project_headers(project_id),
         )
         response.raise_for_status()
-        return _require_object(response.json(), what="run comparison")
+        return _unwrap_success_data(response.json(), what="run comparison")
 
     async def get_run_decision_brief(
         self,

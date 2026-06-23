@@ -51,6 +51,10 @@ def _make_client(api_key: str = "uk_test_key"):
     return BackendAnalyticsClient(backend_url="http://localhost:5000", api_key=api_key)
 
 
+def _success_envelope(data: object) -> dict[str, object]:
+    return {"success": True, "message": "ok", "data": data}
+
+
 class TestInit:
     def test_defaults_resolve_backend_url_and_key(self) -> None:
         from traigent.cloud.analytics_client import BackendAnalyticsClient
@@ -112,7 +116,7 @@ class TestGetRunReport:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = run_report_payload
+        mock_response.json.return_value = _success_envelope(run_report_payload)
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.get.return_value = mock_response
@@ -131,7 +135,7 @@ class TestGetRunReport:
     async def test_url_encodes_identifiers(self) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"ok": True}
+        mock_response.json.return_value = _success_envelope({"ok": True})
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.get.return_value = mock_response
@@ -167,13 +171,32 @@ class TestGetRunReport:
         with pytest.raises(AnalyticsClientError, match="expected a JSON object"):
             await client.get_run_report("proj_abc", "run_123")
 
+    @pytest.mark.asyncio
+    async def test_bare_dto_response_raises(
+        self, run_report_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = run_report_payload
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(AnalyticsClientError, match="success envelope"):
+            await client.get_run_report("proj_abc", "run_123")
+
 
 class TestGetProjectOverview:
     @pytest.mark.asyncio
     async def test_calls_correct_path(self) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"project_id": "proj_abc", "runs": []}
+        mock_response.json.return_value = _success_envelope(
+            {"project_id": "proj_abc", "runs": []}
+        )
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.get.return_value = mock_response
@@ -194,7 +217,7 @@ class TestCompareRuns:
     async def test_posts_run_ids_to_optimization_comparisons(self) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"comparison": []}
+        mock_response.json.return_value = _success_envelope({"comparison": []})
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -224,7 +247,7 @@ class TestGetRunDecisionBrief:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = decision_payload
+        mock_response.json.return_value = _success_envelope(decision_payload)
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.get.return_value = mock_response
@@ -248,7 +271,7 @@ class TestGetRunDecisionBrief:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = decision_payload
+        mock_response.json.return_value = _success_envelope(decision_payload)
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.get.return_value = mock_response
@@ -270,7 +293,7 @@ class TestGetRunDecisionBrief:
 
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = malformed
+        mock_response.json.return_value = _success_envelope(malformed)
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.get.return_value = mock_response
