@@ -1206,11 +1206,8 @@ class AuthManager:
         # Ensure credentials continue to reference the key for downstream usage
         credentials.api_key = api_key_value
 
-        # Include both headers for backward compatibility
-        headers = {
-            "X-API-Key": api_key_value,
-            "Authorization": f"Bearer {api_key_value}",
-        }
+        # X-API-Key only — Authorization: Bearer is reserved for JWTs.
+        headers = _build_api_key_auth_headers(api_key_value)
 
         return AuthResult(
             success=True,

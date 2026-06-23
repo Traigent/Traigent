@@ -108,12 +108,8 @@ class SyncManager:
         self.base_url = BackendConfig.get_cloud_api_url().rstrip("/")
 
         # Setup HTTP client - always create a requests session for sync operations
-        # Include both X-API-Key and Authorization for backward compatibility
-        self.headers = (
-            {"X-API-Key": api_key, "Authorization": f"Bearer {api_key}"}
-            if api_key
-            else {}
-        )
+        # X-API-Key only — Authorization: Bearer is reserved for JWTs.
+        self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
         self._session = requests.Session()
         if api_key:
