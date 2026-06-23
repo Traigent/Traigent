@@ -33,7 +33,7 @@ RESULT_SOURCES = frozenset(
 )
 
 CONNECTIVITY_STATUSES = frozenset({500, 502, 503, 504})
-HARD_FAILURE_STATUSES = frozenset({401, 402, 403, 409, 422, 429})
+HARD_FAILURE_STATUSES = frozenset({400, 401, 402, 403, 404, 405, 409, 415, 422, 429})
 
 CONNECTIVITY_PATTERNS = (
     "backend unavailable",
@@ -264,14 +264,18 @@ def exception_is_connectivity(exc: BaseException) -> bool:
     visited: set[int] = set()
     while current is not None and id(current) not in visited:
         visited.add(id(current))
-        if isinstance(current, CloudBrainUnavailableError):
-            return True
         status = exception_status(current)
         text = str(current).lower()
+        # A permanent client error (4xx) is NOT a connectivity failure and must
+        # not trigger a silent local fallback -- even when wrapped in a
+        # CloudBrainUnavailableError (e.g. a trial-result submission rejected
+        # with HTTP 400 for an unknown objective metric). Surface it loudly.
         if status in HARD_FAILURE_STATUSES or _contains_any(
             text, HARD_FAILURE_PATTERNS
         ):
             return False
+        if isinstance(current, CloudBrainUnavailableError):
+            return True
         if status in CONNECTIVITY_STATUSES or _contains_any(
             text, CONNECTIVITY_PATTERNS
         ):
