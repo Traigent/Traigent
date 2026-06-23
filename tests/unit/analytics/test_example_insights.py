@@ -133,8 +133,8 @@ class TestExampleInsightsClientGetClient:
             mock_async_client.assert_called_once()
             # Check headers include auth
             call_kwargs = mock_async_client.call_args.kwargs
-            assert "Authorization" in call_kwargs["headers"]
-            assert call_kwargs["headers"]["Authorization"] == "Bearer test_token"
+            assert call_kwargs["headers"]["X-API-Key"] == "test_token"
+            assert "Authorization" not in call_kwargs["headers"]
 
     @pytest.mark.asyncio
     async def test_get_client_reuses_existing(self) -> None:
