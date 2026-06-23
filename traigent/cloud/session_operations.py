@@ -432,6 +432,9 @@ class SessionOperations:
                 objectives=list(objectives) if objectives else [optimization_goal],
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
+                    # Carry the dataset label (content is not submitted) so the
+                    # portal "Dataset" column is populated instead of blank.
+                    "name": metadata.get("evaluation_set") if metadata else None,
                     "privacy_mode": True,
                 },
                 max_trials=max_trials_from_metadata,
