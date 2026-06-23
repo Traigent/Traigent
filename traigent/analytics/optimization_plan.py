@@ -38,6 +38,16 @@ _REQUIRED_RESPONSE_KEYS = {
 }
 
 
+def _build_auth_headers(credential: str | None) -> dict[str, str]:
+    """Return optimization-plan auth headers for an API-key credential."""
+    from traigent.cloud.auth import _build_api_key_auth_headers
+
+    # OptimizationPlanClient accepts API-key credentials only. Reuse the same
+    # X-API-Key-only construction as AuthManager._get_api_key_headers
+    # (cloud/auth.py) and do not infer JWT mode from string shape.
+    return _build_api_key_auth_headers(credential)
+
+
 class OptimizationPlanClient:
     """Client for retrieving allowlisted pre-run optimization plans.
 
@@ -75,7 +85,7 @@ class OptimizationPlanClient:
         from traigent.config.backend_config import get_no_credentials_hint
         from traigent.utils.env_config import get_api_key
 
-        self.api_key = api_key or get_api_key("traigent")
+        self.api_key = get_api_key("traigent") if api_key is None else api_key
         if not self.api_key:
             logger.warning(
                 "No API key found for OptimizationPlanClient. %s",
@@ -94,9 +104,9 @@ class OptimizationPlanClient:
 
         raise_if_backend_offline("OptimizationPlanClient request")
         if self._client is None:
-            headers = {}
+            headers: dict[str, str] = {}
             if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
+                headers.update(_build_auth_headers(self.api_key))
 
             self._client = httpx.AsyncClient(
                 base_url=self.backend_url,
