@@ -747,6 +747,37 @@ class TestLogSessionEnd:
         pareto_files = list((log.run_path / "artifacts").glob("pareto_front_v*.json"))
         assert len(pareto_files) == 1
 
+    def test_session_end_pareto_front_respects_minimize_objectives(
+        self, tmp_path: Path
+    ) -> None:
+        log = _make_logger(tmp_path)
+        cheap = TrialResult(
+            trial_id="cheap",
+            config={"model": "cheap"},
+            metrics={"accuracy": 0.9, "cost": 0.1},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+        )
+        expensive = TrialResult(
+            trial_id="expensive",
+            config={"model": "expensive"},
+            metrics={"accuracy": 0.8, "cost": 0.9},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+        )
+        result = _make_opt_result(
+            trials=[cheap, expensive],
+            objectives=["accuracy", "cost"],
+        )
+
+        log.log_session_end(result)
+
+        pareto_file = next((log.run_path / "artifacts").glob("pareto_front_v*.json"))
+        pareto_data = json.loads(pareto_file.read_text())
+        assert pareto_data["configurations"] == [{"model": "cheap"}]
+
     def test_session_end_creates_manifest(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path)
         result = _make_opt_result()

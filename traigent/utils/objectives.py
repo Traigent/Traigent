@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
+import math
+from typing import Any, Literal
 
 _MINIMIZE_OBJECTIVE_PATTERNS = (
     "cost",
@@ -53,6 +54,17 @@ def is_minimization_objective(
     return any(pattern in lowered for pattern in _MINIMIZE_OBJECTIVE_PATTERNS)
 
 
+def coerce_finite_objective_score(value: Any) -> float | None:
+    """Return a finite numeric objective score, or None when unrankable."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if math.isfinite(score) else None
+
+
 def classify_objective(
     objective_name: str,
 ) -> Literal["quality", "operational", "other"]:
@@ -77,6 +89,7 @@ def is_operational_objective(objective_name: str) -> bool:
 
 __all__ = [
     "classify_objective",
+    "coerce_finite_objective_score",
     "is_minimization_objective",
     "is_operational_objective",
     "is_quality_objective",

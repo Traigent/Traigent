@@ -7,10 +7,14 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from traigent.api.types import TrialResult
-from traigent.utils.objectives import classify_objective, is_minimization_objective
+from traigent.utils.objectives import (
+    classify_objective,
+    coerce_finite_objective_score,
+    is_minimization_objective,
+)
 
 __all__ = [
     "SelectionResult",
@@ -211,14 +215,14 @@ def _is_ranking_eligible(
         return False, False, ["MCI-007"]
 
     if comparability_mode == "legacy":
-        metric = trial.get_metric(primary_objective)
+        metric = coerce_finite_objective_score(trial.get_metric(primary_objective))
         return metric is not None, False, (["MCI-004"] if metric is None else [])
 
     comparability = _extract_trial_comparability(trial)
     if comparability is None:
         return False, True, ["UNKNOWN_COMPARABILITY"]
 
-    objective_value = trial.get_metric(primary_objective)
+    objective_value = coerce_finite_objective_score(trial.get_metric(primary_objective))
     if objective_value is None:
         return False, False, ["MCI-004"]
 
@@ -370,7 +374,7 @@ def _apply_min_abs_deviation(
     if band_target is not None:
 
         def deviation(t: TrialResult) -> float:
-            value = t.get_metric(objective)
+            value = coerce_finite_objective_score(t.get_metric(objective))
             return float("inf") if value is None else abs(value - band_target)
 
         return min(trials, key=deviation)
@@ -400,11 +404,11 @@ def _select_best_single_trial(
     )
     chooser = min if minimization else max
 
-    scored_trials = [
-        (t, cast(float, _coerce_float(t.get_metric(primary_objective))))
-        for t in successful_trials
-        if _coerce_float(t.get_metric(primary_objective)) is not None
-    ]
+    scored_trials = []
+    for trial in successful_trials:
+        score = coerce_finite_objective_score(trial.get_metric(primary_objective))
+        if score is not None:
+            scored_trials.append((trial, score))
     if not scored_trials:
         return SelectionResult(
             best_config={},
@@ -451,7 +455,9 @@ def _select_best_single_trial(
 
     return SelectionResult(
         best_config=best_trial.config or {},
-        best_score=best_trial.get_metric(primary_objective),
+        best_score=coerce_finite_objective_score(
+            best_trial.get_metric(primary_objective)
+        ),
         session_summary={"ranking": ranking_summary},
         best_trial_id=best_trial.trial_id,
     )
@@ -577,14 +583,16 @@ def _select_best_aggregated(
     )
 
     def score(entry: dict[str, Any]) -> float:
-        value = _compute_mean_metrics(entry).get(primary_objective)
+        value = coerce_finite_objective_score(
+            _compute_mean_metrics(entry).get(primary_objective)
+        )
         if value is None:
             return float("inf") if minimization else float("-inf")
         return value
 
     # Find the best score
     all_scores = [score(entry) for entry in aggregated.values()]
-    all_scores = [s for s in all_scores if s not in (float("inf"), float("-inf"))]
+    all_scores = [s for s in all_scores if math.isfinite(s)]
     if not all_scores:
         return SelectionResult(
             best_config={},
@@ -602,7 +610,7 @@ def _select_best_aggregated(
         tied_entries = [
             entry
             for entry in aggregated.values()
-            if (score_value := score(entry)) not in (float("inf"), float("-inf"))
+            if math.isfinite(score_value := score(entry))
             and _primary_scores_tied(abs(score_value - band_target), best_deviation)
         ]
     else:
@@ -616,7 +624,7 @@ def _select_best_aggregated(
                 score_value := score(entry),
                 best_score_val,
             )
-            and score_value not in (float("inf"), float("-inf"))
+            and math.isfinite(score_value)
         ]
 
     # Apply tie-breaking for aggregated entries
@@ -658,7 +666,7 @@ def _select_best_aggregated(
 
     return SelectionResult(
         best_config=best_entry["config"] or {},
-        best_score=best_metrics.get(primary_objective),
+        best_score=coerce_finite_objective_score(best_metrics.get(primary_objective)),
         session_summary=session_summary,
         best_trial_id=(best_entry.get("trial_ids") or [None])[0],
     )
