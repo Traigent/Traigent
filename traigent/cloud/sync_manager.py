@@ -802,7 +802,7 @@ class SyncManager:
         elif successful_steps == total_steps and not sync_result.get("errors"):
             sync_result["status"] = "success"
             sync_result["cloud_url"] = build_experiment_url(
-                BackendConfig.get_cloud_backend_url(),
+                BackendConfig.get_cloud_web_url(),
                 experiment_id,
                 project_id=project_id,
                 tenant_id=tenant_id,

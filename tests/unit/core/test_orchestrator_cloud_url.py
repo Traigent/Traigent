@@ -8,7 +8,7 @@ def test_orchestrator_cloud_url_includes_session_context(monkeypatch) -> None:
     """Cloud URL construction passes owning project/tenant context."""
     monkeypatch.setattr(
         BackendConfig,
-        "get_cloud_backend_url",
+        "get_cloud_web_url",
         lambda: "https://portal.traigent.ai/",
     )
     result = SimpleNamespace(

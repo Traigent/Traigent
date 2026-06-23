@@ -705,7 +705,7 @@ class TestSyncManager:
         sync_manager._session.put.return_value = backend_response(status_code=200)
 
         with patch(
-            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
             return_value="https://portal.traigent.ai/",
         ):
             result = sync_manager.sync_session_to_cloud("test_session_123")
@@ -840,7 +840,7 @@ class TestSyncManager:
         sync_manager._session.put.return_value = backend_response(status_code=200)
 
         with patch(
-            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
             return_value="https://portal.traigent.ai/",
         ):
             result = sync_manager.sync_session_to_cloud("test_session_123")
@@ -927,7 +927,7 @@ class TestSyncManager:
         sync_manager._session.put.return_value = backend_response(status_code=200)
 
         with patch(
-            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
             return_value="https://portal.traigent.ai/",
         ):
             first = sync_manager.sync_session_to_cloud("test_session_123")
@@ -954,7 +954,7 @@ class TestSyncManager:
         sync_manager._session.put.return_value = backend_response(status_code=200)
 
         with patch(
-            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
             return_value="https://portal.traigent.ai/",
         ):
             second = sync_manager.sync_session_to_cloud("test_session_123")
@@ -1622,7 +1622,7 @@ class TestSyncManager:
         sync_manager._session.put.return_value = backend_response(status_code=200)
 
         with patch(
-            "traigent.cloud.sync_manager.BackendConfig.get_cloud_backend_url",
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
             return_value="https://portal.traigent.ai/",
         ):
             result = sync_manager.sync_session_to_cloud("test_session_123")

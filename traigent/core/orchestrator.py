@@ -2097,7 +2097,7 @@ class OptimizationOrchestrator:
             from traigent.config.backend_config import BackendConfig
 
             result.cloud_url = build_experiment_url(
-                BackendConfig.get_cloud_backend_url(),
+                BackendConfig.get_cloud_web_url(),
                 exp_id,
                 project_id=metadata.get("project_id"),
                 tenant_id=metadata.get("tenant_id"),
