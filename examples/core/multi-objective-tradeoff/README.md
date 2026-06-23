@@ -43,7 +43,8 @@ Optimization summary:
 ## Variants
 
 - `run_openai.py` - OpenAI models with Bayesian search
-- `run_openai_optuna.py` - Optuna integration
+- `run_openai_backend_smart.py` - Backend-routed smart optimization
+- `run_openai_backend_smart_concurrency.py` - Backend-routed smart optimization with concurrency
 - `run_antropic.py` - Anthropic models
 - `run_many_providers.py` - Cross-provider comparison
 

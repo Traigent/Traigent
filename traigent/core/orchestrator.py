@@ -54,15 +54,14 @@ from traigent.core.cost_enforcement import (
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import VendorErrorCategory
 from traigent.core.execution_policy_runtime import (
-    CloudBrainUnavailableError,
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
+    CloudBrainUnavailableError,
     backend_egress_disabled,
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
 )
-from traigent.utils.env_config import is_backend_offline as is_backend_offline  # noqa: F401
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
@@ -103,6 +102,9 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import (  # noqa: F401
+    is_backend_offline as is_backend_offline,
+)
 from traigent.utils.exceptions import OptimizationError, VendorPauseError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
@@ -2095,7 +2097,7 @@ class OptimizationOrchestrator:
             from traigent.config.backend_config import BackendConfig
 
             result.cloud_url = build_experiment_url(
-                BackendConfig.get_cloud_backend_url(),
+                BackendConfig.get_cloud_web_url(),
                 exp_id,
                 project_id=metadata.get("project_id"),
                 tenant_id=metadata.get("tenant_id"),
@@ -2860,6 +2862,9 @@ class OptimizationOrchestrator:
     ) -> None:
         """Finalize an asked Optuna trial that will never be executed.
 
+        Deferred cleanup: this ask/tell residual is guarded for local execution
+        and should be genericized or removed with the parallel path follow-up.
+
         Creates a TrialResult for the abandoned trial and:
         1. Appends it to self._trials so it appears in OptimizationResult
         2. Logs the trial via the logger facade
@@ -2923,6 +2928,16 @@ class OptimizationOrchestrator:
             # Fallback for common objective aliases
             if metric_value is None and objective in {"accuracy", "success_rate"}:
                 metric_value = metrics.get("accuracy") or metrics.get("success_rate")
+            # The per-config ``cost`` metric can be decoupled from the real spend
+            # (provider/meta-reported total) and arrive missing or 0.0 while
+            # ``total_cost`` is correct. A ``minimize cost`` objective pinned at 0
+            # is inert — every config looks free — so prefer ``total_cost`` when
+            # the ``cost`` metric is absent or zero (#1423). ``total_cost`` is the
+            # SDK's authoritative aggregate cost and is never wrongly zeroed.
+            if objective == "cost" and not metric_value:
+                total_cost = metrics.get("total_cost")
+                if total_cost:
+                    metric_value = total_cost
             if metric_value is None and objective in {"cost", "latency", "error"}:
                 metric_value = metrics.get(objective, 0.0)
             values.append(float(metric_value if metric_value is not None else 0.0))

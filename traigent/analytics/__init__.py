@@ -92,6 +92,7 @@ except ImportError:
         PerformancePredictor,
     )
     from .next_steps import NextStepsClient
+    from .optimization_plan import OptimizationPlanClient
 
     # Predictive analytics
     from .predictive import (
@@ -130,6 +131,7 @@ __all__ = [
     # Example Insights
     "ExampleInsightsClient",
     "NextStepsClient",
+    "OptimizationPlanClient",
     # Historical analytics
     "HistoricalAnalyticsEngine",
     "OptimizationHistory",

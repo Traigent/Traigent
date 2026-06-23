@@ -144,7 +144,7 @@ class TestCredentialSecurity:
 
     def test_api_key_validation_bypass_attempts(self):
         """Test attempts to bypass API key validation."""
-        auth_manager = AuthManager()
+        auth_manager = AuthManager(no_egress=True)
 
         # Test format-invalid keys (these should fail format validation)
         format_invalid_keys = [
@@ -458,7 +458,7 @@ class TestAuthenticationFlows:
         # Note: Current implementation doesn't have rate limiting
         # This test documents the missing security feature
 
-        auth_manager = AuthManager()
+        auth_manager = AuthManager(no_egress=True)
 
         # Attempt a few failed authentications with invalid keys
         failed_attempts = 0
@@ -496,7 +496,7 @@ class TestAuthenticationFlows:
 
     def test_account_enumeration_prevention(self):
         """Test prevention of account enumeration attacks."""
-        auth_manager = AuthManager()
+        auth_manager = AuthManager(no_egress=True)
 
         # Different invalid credentials should give similar responses
         invalid_credentials = [

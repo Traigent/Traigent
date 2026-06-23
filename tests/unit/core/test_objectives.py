@@ -5,6 +5,7 @@ import json
 import pytest
 
 from traigent.core.objectives import (
+    AggregationMode,
     ObjectiveDefinition,
     ObjectiveSchema,
     create_default_objectives,
@@ -74,14 +75,65 @@ class TestObjectiveDefinition:
             )
 
     def test_invalid_normalization(self):
-        """Test that invalid normalization strategies are rejected."""
-        with pytest.raises(ValueError, match="Normalization must be one of"):
+        """Test that an unknown normalization strategy raises ValueError."""
+        with pytest.raises(ValueError, match="not a recognised strategy"):
             ObjectiveDefinition(
                 name="accuracy",
                 orientation="maximize",
                 weight=1.0,
                 normalization="invalid",
             )
+
+    def test_z_score_normalization_raises_not_implemented(self):
+        """Test that z_score raises NotImplementedError (reserved, not implemented)."""
+        with pytest.raises(NotImplementedError, match="z_score.*not implemented"):
+            ObjectiveDefinition(
+                name="accuracy",
+                orientation="maximize",
+                weight=1.0,
+                normalization="z_score",
+            )
+
+    def test_robust_normalization_raises_not_implemented(self):
+        """Test that robust raises NotImplementedError (reserved, not implemented)."""
+        with pytest.raises(NotImplementedError, match="robust.*not implemented"):
+            ObjectiveDefinition(
+                name="cost",
+                orientation="minimize",
+                weight=1.0,
+                normalization="robust",
+            )
+
+    def test_min_max_normalization_is_valid(self):
+        """Test that min_max is the only valid normalization and constructs without error."""
+        obj = ObjectiveDefinition(
+            name="accuracy",
+            orientation="maximize",
+            weight=1.0,
+            normalization="min_max",
+        )
+        assert obj.normalization == "min_max"
+
+    def test_default_normalization_is_min_max(self):
+        """Test that default normalization (no argument) is min_max."""
+        obj = ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0)
+        assert obj.normalization == "min_max"
+
+    def test_min_max_roundtrip_via_dict(self):
+        """Test that a min_max objective round-trips correctly through to_dict/from_dict."""
+        original = ObjectiveDefinition(
+            name="accuracy",
+            orientation="maximize",
+            weight=0.8,
+            normalization="min_max",
+            bounds=(0.0, 1.0),
+            unit="ratio",
+        )
+        restored = ObjectiveDefinition.from_dict(original.to_dict())
+        assert restored.name == original.name
+        assert restored.normalization == "min_max"
+        assert restored.bounds == original.bounds
+        assert restored.unit == original.unit
 
     def test_to_dict(self):
         """Test conversion to dictionary."""
@@ -109,7 +161,7 @@ class TestObjectiveDefinition:
             "name": "latency",
             "orientation": "minimize",
             "weight": 0.2,
-            "normalization": "z_score",
+            "normalization": "min_max",
             "bounds": [0.0, 5.0],
             "unit": "seconds",
         }
@@ -118,9 +170,32 @@ class TestObjectiveDefinition:
         assert obj.name == "latency"
         assert obj.orientation == "minimize"
         assert obj.weight == 0.2
-        assert obj.normalization == "z_score"
+        assert obj.normalization == "min_max"
         assert obj.bounds == (0.0, 5.0)
         assert obj.unit == "seconds"
+
+    def test_from_dict_z_score_raises(self):
+        """Test that from_dict with z_score normalization raises NotImplementedError."""
+        data = {
+            "name": "latency",
+            "orientation": "minimize",
+            "weight": 0.2,
+            "normalization": "z_score",
+            "bounds": [0.0, 5.0],
+        }
+        with pytest.raises(NotImplementedError, match="z_score.*not implemented"):
+            ObjectiveDefinition.from_dict(data)
+
+    def test_from_dict_robust_raises(self):
+        """Test that from_dict with robust normalization raises NotImplementedError."""
+        data = {
+            "name": "latency",
+            "orientation": "minimize",
+            "weight": 0.2,
+            "normalization": "robust",
+        }
+        with pytest.raises(NotImplementedError, match="robust.*not implemented"):
+            ObjectiveDefinition.from_dict(data)
 
 
 class TestObjectiveSchema:
@@ -242,6 +317,28 @@ class TestObjectiveSchema:
         assert schema2.weights_normalized["cost"] == 0.4
         assert schema2.objectives[0].bounds == (0.0, 1.0)
         assert schema2.objectives[0].unit == "percentage"
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [
+            pytest.param(AggregationMode.WEIGHTED_SUM, 23 / 30, id="weighted-sum"),
+            pytest.param(AggregationMode.HARMONIC, 16 / 21, id="harmonic"),
+            pytest.param(AggregationMode.CHEBYSHEV, -0.15, id="chebyshev"),
+        ],
+    )
+    def test_compute_aggregated_score_supports_all_modes(self, mode, expected):
+        """Each public aggregation mode should produce its documented score."""
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition("accuracy", "maximize", 0.75),
+                ObjectiveDefinition("cost", "minimize", 0.25),
+            ]
+        )
+        metrics = {"accuracy": 0.8, "cost": 0.5}
+
+        assert schema.compute_aggregated_score(metrics, mode) == pytest.approx(expected)
+        if mode is AggregationMode.WEIGHTED_SUM:
+            assert schema.compute_weighted_score(metrics) == pytest.approx(expected)
 
     def test_get_objective(self):
         """Test getting objective by name."""

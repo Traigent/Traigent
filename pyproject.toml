@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.16.0"
+version = "0.17.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -45,8 +45,6 @@ dependencies = [
     "backoff>=2.2.0",
     "litellm==1.87.1",  # Stable pin: 1.83.x python-dotenv==1.0.1 and 1.83.14 openai==2.24.0 sub-pins are gone from stable 1.84+ (1.87.1 ships openai>=2.20,<3 and python-dotenv>=1.0,<2, compatible with langchain-openai>=1.1.14). Keep pinned + verified on bumps; no need for RC/dev builds anymore.
     "rank-bm25",
-    # Required by core optimizer modules
-    "optuna>=4.5.0",
     "psutil>=5.8.0",
     # Required by API decorators and config validation
     "pydantic>=2.0.0",

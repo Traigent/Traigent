@@ -468,6 +468,34 @@ class TestGridSearchOptimizer:
             "prompt",
         ]
 
+    def test_order_alias_matches_parameter_order_behavior(self):
+        """The public order alias should behave like parameter_order."""
+        config_space = {
+            "temperature": [0.0, 0.5],
+            "embedding_model": ["embed-a"],
+            "model": ["gpt-4o"],
+            "prompt": ["cot", "zero_shot"],
+        }
+
+        optimizer = GridSearchOptimizer(
+            config_space,
+            ["accuracy"],
+            order={"temperature": 0, "model": 2},
+        )
+
+        assert optimizer._ordered_param_names == [
+            "temperature",
+            "model",
+            "embedding_model",
+            "prompt",
+        ]
+        assert list(optimizer._grid_points[0].keys()) == [
+            "temperature",
+            "model",
+            "embedding_model",
+            "prompt",
+        ]
+
     def test_parameter_order_invalid_type_raises(self):
         """Reject non-mapping parameter order specifications."""
         config_space = {"model": ["gpt-4o"], "temperature": [0.0, 0.5]}

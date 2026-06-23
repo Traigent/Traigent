@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from traigent.cloud import subset_selection as subset_selection_module
 from traigent.cloud.subset_selection import (
     DiverseSampling,
     HighConfidenceSampling,
@@ -125,6 +126,35 @@ class TestDiverseSampling:
         assert result.original_size == 100
         assert result.reduction_ratio == 0.8
         assert 0.0 <= result.diversity_score <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_cluster_based_selection_uses_real_sklearn_path(self):
+        """Regression: bayesian deps should exercise sklearn clustering in tests."""
+        assert subset_selection_module.SKLEARN_AVAILABLE is True
+
+        sampler = DiverseSampling(random_seed=7)
+        text_features = [
+            "urgent production incident database outage",
+            "calendar meeting agenda scheduling invite",
+            "invoice payment finance account overdue",
+            "general support question documentation",
+            "server latency spike immediate escalation",
+            "weekly planning meeting project timeline",
+            "budget forecast finance operations",
+            "customer onboarding guide setup",
+        ]
+
+        with patch(
+            "traigent.cloud.subset_selection._SECURE_RANDOM.sample",
+            side_effect=AssertionError("sklearn path fell back to random sampling"),
+        ):
+            indices = await sampler._cluster_based_selection(
+                text_features, target_size=4
+            )
+
+        assert len(indices) == 4
+        assert len(set(indices)) == 4
+        assert all(0 <= index < len(text_features) for index in indices)
 
     @pytest.mark.asyncio
     async def test_select_subset_similarity_based(self, sample_dataset):

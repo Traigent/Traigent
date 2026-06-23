@@ -9,6 +9,7 @@ from traigent.mcp.tools import (
     detect_tvars_tool,
     estimate_cost_tool,
     export_evidence_tool,
+    get_optimization_plan_tool,
     get_results_tool,
     list_recommendation_agent_types_tool,
     recommend_configuration_space_tool,
@@ -139,6 +140,37 @@ def create_server() -> Any:
             dataset_path=dataset_path,
             max_trials=max_trials,
             model=model,
+        )
+
+    @server.tool(
+        description=(
+            "fetch an aggregated pre-run optimization plan from the Traigent "
+            "backend; requires backend auth"
+        )
+    )
+    async def get_optimization_plan(
+        task_description: str,
+        dataset_size: int,
+        dataset_has_holdout: bool,
+        objectives: list[str],
+        max_trials: int,
+        cost_limit_usd: float,
+        task_type: str | None = None,
+        agent_shape: str | None = None,
+        weights: dict[str, float] | None = None,
+        offline: bool | None = None,
+    ) -> dict[str, Any]:
+        return await get_optimization_plan_tool(
+            task_description=task_description,
+            dataset_size=dataset_size,
+            dataset_has_holdout=dataset_has_holdout,
+            objectives=objectives,
+            max_trials=max_trials,
+            cost_limit_usd=cost_limit_usd,
+            task_type=task_type,
+            agent_shape=agent_shape,
+            weights=weights,
+            offline=offline,
         )
 
     @server.tool(

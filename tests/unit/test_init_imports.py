@@ -420,9 +420,3 @@ class TestOptimizersInit:
         from traigent import optimizers
 
         assert optimizers is not None
-
-    def test_pruners_available(self) -> None:
-        """Test that pruners are available."""
-        from traigent.optimizers import pruners
-
-        assert pruners is not None

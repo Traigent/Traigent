@@ -12,12 +12,6 @@ from traigent.optimizers.batch_optimizers import (
     ParallelBatchOptimizer,
 )
 from traigent.optimizers.grid import GridSearchOptimizer
-from traigent.optimizers.pruners import (
-    CeilingPruner,
-    CeilingPrunerConfig,
-    StatisticalInferiorityPruner,
-    StatisticalInferiorityPrunerConfig,
-)
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import (
     _is_smart_algorithm,
@@ -79,11 +73,6 @@ __all__ = [
     "get_optimizer",
     "register_optimizer",
     "list_optimizers",
-    # Pruners for early stopping
-    "CeilingPruner",
-    "CeilingPrunerConfig",
-    "StatisticalInferiorityPruner",
-    "StatisticalInferiorityPrunerConfig",
 ]
 
 if "RemoteOptimizer" in globals():

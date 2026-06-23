@@ -220,22 +220,5 @@ def _register_remote_optimizer() -> None:
         register_optimizer("remote", RemoteOptimizer)
 
 
-def register_optuna_optimizers(force: bool = False) -> None:
-    """No-op: Optuna/smart optimizers run in the Traigent cloud, not locally.
-
-    This function is retained so existing call sites and imports do not break,
-    but it intentionally does not register any algorithms.  Smart optimization
-    (Bayesian, Optuna TPE/CMA-ES/NSGA-II, etc.) is available when the SDK is
-    connected to the Traigent backend.
-    """
-    logger.debug(
-        "Smart optimizers run in the Traigent cloud; not registered locally"
-        " (force=%s ignored)",
-        force,
-    )
-
-
 # Register built-in optimizers on module import
 _register_builtin_optimizers()
-# Register Optuna optimizers after builtin ones
-register_optuna_optimizers()

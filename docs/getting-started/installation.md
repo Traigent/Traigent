@@ -36,7 +36,7 @@ License: Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigen
 | **`recommended`** | **All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)** | **`pip install "traigent[recommended]"`** |
 | `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `pip install -e ".[integrations]"` |
 | `analytics` | numpy, pandas, matplotlib | `pip install -e ".[analytics]"` |
-| `bayesian` | Optuna + sklearn/scipy | `pip install -e ".[bayesian]"` |
+| `bayesian` | scikit-learn + scipy | `pip install -e ".[bayesian]"` |
 | `visualization` | matplotlib, plotly | `pip install -e ".[visualization]"` |
 | `hybrid` | HTTP/2 transport plus MCP-backed hybrid integrations | `pip install -e ".[hybrid]"` |
 | `cloud` | Reserved dependencies for future remote execution; not required for portal-tracked `hybrid` runs | `pip install -e ".[cloud]"` |

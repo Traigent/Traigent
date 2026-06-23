@@ -2730,6 +2730,10 @@ from traigent.cli.next_steps_command import next_steps  # noqa: E402
 
 cli.add_command(next_steps)
 
+from traigent.cli.plan_command import plan  # noqa: E402
+
+cli.add_command(plan)
+
 from traigent.cli.playbook_commands import playbook  # noqa: E402
 
 cli.add_command(playbook)

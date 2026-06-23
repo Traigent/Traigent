@@ -164,61 +164,23 @@ Any other value (including unset) means telemetry is enabled.
 
 When `TRAIGENT_DISABLE_TELEMETRY` is set:
 
-1. **No telemetry events are emitted** - The `OptunaMetricsEmitter` immediately returns without recording
+1. **No telemetry events are emitted** - SDK telemetry collectors return without recording
 2. **No metrics are sent to collectors** - MetricsCollector calls are skipped
 3. **Optimization still works normally** - Only telemetry is disabled, not functionality
 4. **Local results are still saved** - Optimization results are still persisted locally for your use
 
 ## Telemetry Implementation
 
-### OptunaMetricsEmitter
-
-The main telemetry component is `OptunaMetricsEmitter` in `traigent/telemetry/optuna_metrics.py`:
-
-```python
-from traigent.telemetry.optuna_metrics import OptunaMetricsEmitter
-
-# Telemetry is automatically disabled when env var is set
-emitter = OptunaMetricsEmitter(
-    metrics_collector=collector,
-    listeners=[my_listener],
-)
-
-# This call does nothing if TRAIGENT_DISABLE_TELEMETRY is set
-emitter.emit_trial_update(
-    event="trial_completed",
-    trial_id=123,
-    study_name="my_optimization",
-    payload={"metrics": {"accuracy": 0.95}},
-)
-```
-
-### Implementation Details
-
-The `OptunaMetricsEmitter` checks the environment variable on initialization:
-
-```python
-class OptunaMetricsEmitter:
-    def __init__(self, ...):
-        self._disabled = os.getenv("TRAIGENT_DISABLE_TELEMETRY", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-
-    def emit_trial_update(self, ...):
-        if self._disabled:
-            return {}  # No-op when disabled
-
-        # Normal telemetry emission
-        ...
-```
+Telemetry is routed through optimization storage, observability clients, and
+workflow tracing. The previous SDK-local Optuna telemetry emitter has been
+removed with the local Optuna dependency; smart optimizer telemetry is now a
+backend concern.
 
 ### Event Types
 
 When telemetry is enabled, the following events may be emitted (not exhaustive):
 
-- `trial_suggested` - Optuna proposed a new trial configuration
+- `trial_suggested` - An optimizer proposed a new trial configuration
 - `trial_intermediate` - Intermediate metric reported (pruning signal)
 - `trial_completed` - A trial finished successfully
 - `trial_failed` - A trial encountered an error
@@ -282,49 +244,12 @@ Traigent writes a `.gitignore` (`*`) into the log root so this content is not
 accidentally committed, but you should still keep `.traigent/` out of version
 control and CI artifact collection in sensitive projects.
 
-## Telemetry Listeners
-
-You can subscribe to telemetry events for your own monitoring:
-
-```python
-from traigent.telemetry.optuna_metrics import OptunaMetricsEmitter
-
-def my_listener(event_data: dict):
-    print(f"Trial event: {event_data['event']}")
-    print(f"Trial ID: {event_data['trial_id']}")
-    print(f"Metrics: {event_data.get('payload', {})}")
-
-emitter = OptunaMetricsEmitter()
-emitter.subscribe(my_listener)
-
-# Your listener will be called for each telemetry event
-# (unless TRAIGENT_DISABLE_TELEMETRY is set)
-```
-
 ## Security and Sensitive Data
 
 ### Data Sanitization
 
-Configuration data is automatically sanitized before telemetry:
-
-```python
-from traigent.telemetry.optuna_metrics import sanitize_config
-
-config = {
-    "model": "gpt-4",
-    "temperature": 0.7,
-    "_internal_key": "should_not_be_logged",
-}
-
-safe_config = sanitize_config(config)
-# Returns: {"model": "gpt-4", "temperature": 0.7"}
-```
-
-Private/internal keys (starting with `_`) are automatically removed.
-
-### Thread Safety
-
-The `OptunaMetricsEmitter` is thread-safe and uses `threading.RLock` to protect listener subscription operations.
+Configuration data is sanitized before telemetry. Private/internal keys
+(starting with `_`) are automatically removed.
 
 ### Error Handling
 

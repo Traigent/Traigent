@@ -48,9 +48,12 @@ from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import (
+    ExecutionIntent,
     ExecutionMode,
     ResolvedExecutionPolicy,
     TraigentConfig,
+    is_local_algorithm,
+    normalize_algorithm_name,
     resolve_execution_policy,
     validate_execution_mode,
 )
@@ -1825,6 +1828,15 @@ class OptimizedFunction:
 
         trial_func = self._trial_callable_for_config_space(effective_config_space)
 
+        # Reset the unpriced-at-runtime model registry so this run starts clean.
+        # The runtime cost path records models that priced to $0 despite non-zero
+        # tokens (e.g. a model hard-coded in the optimized function body that no
+        # pricing table covers, invisible to the config-space preflight); we drain
+        # it onto the result below to surface a user-visible warning (#1407).
+        from traigent.utils.cost_calculator import reset_unpriced_runtime_models
+
+        reset_unpriced_runtime_models()
+
         # Set state to OPTIMIZING before starting
         self._state = OptimizationState.OPTIMIZING
 
@@ -1859,6 +1871,13 @@ class OptimizedFunction:
             # Set state to ERROR on failure
             self._state = OptimizationState.ERROR
             raise
+        # Surface any models that priced to $0 at runtime despite non-zero tokens
+        # (#1407). Strict accounting already raised mid-run via
+        # ``cost_from_tokens(strict=True)`` (fail-closed), so anything collected
+        # here is the non-strict warn-and-continue case — make it visible on the
+        # result instead of leaving only a buried log.
+        self._attach_unpriced_model_warning(result)
+
         # Save results if requested
         if save_to:
             self.save_optimization_results(save_to)
@@ -1880,6 +1899,44 @@ class OptimizedFunction:
                 logger.debug(f"Failed to show upgrade hint: {e}")
 
         return result  # type: ignore[no-any-return]
+
+    def _attach_unpriced_model_warning(self, result: OptimizationResult) -> None:
+        """Attach a user-visible warning for models that priced to $0 at runtime.
+
+        Closes the runtime half of the cost-coverage gap (#1407): the pre-run
+        preflight only inspects config-space model ids, so a model HARD-CODED in
+        the optimized function body is invisible to it. When such a model is
+        unpriced, the non-strict runtime cost path records $0 with only a buried
+        log. Here we lift the collected ids onto the result (``warnings`` /
+        ``warning_codes`` and ``metadata``) using the SAME remediation surface as
+        the preflight, so the user can opt into custom pricing or acknowledge the
+        gap. Strict accounting never reaches this surface — it fails closed
+        mid-run via ``cost_from_tokens(strict=True)``.
+        """
+        try:
+            from traigent.utils.cost_calculator import get_unpriced_runtime_models
+
+            unpriced = get_unpriced_runtime_models()
+        except Exception:  # pragma: no cover - defensive; never break a run
+            return
+
+        if not unpriced:
+            return
+
+        message = _format_unpriced_model_warning(unpriced)
+        if message not in result.warnings:
+            result.warnings.append(message)
+        if "UNPRICED_MODEL_RUNTIME" not in result.warning_codes:
+            result.warning_codes.append("UNPRICED_MODEL_RUNTIME")
+        if isinstance(result.metadata, dict):
+            result.metadata.setdefault("unpriced_models_runtime", list(unpriced))
+
+        warnings.warn(message, UserWarning, stacklevel=2)
+        logger.warning(
+            "Models priced at $0 at runtime (real spend under-reported): %s. %s",
+            ", ".join(unpriced),
+            message,
+        )
 
     async def _try_cloud_execution(
         self,
@@ -2139,6 +2196,62 @@ Remediation:
             ", ".join(missing),
         )
 
+    def _policy_for_runtime_algorithm(
+        self,
+        stored_policy: ResolvedExecutionPolicy | None,
+        runtime_algorithm: str | None,
+    ) -> ResolvedExecutionPolicy | None:
+        """Re-derive cloud-vs-local routing from the resolved runtime algorithm.
+
+        The policy stored on the instance is resolved at construction time
+        *without* knowing the algorithm that ``optimize(...)`` is finally called
+        with. A runtime override such as ``optimize(algorithm="grid")`` must
+        route from that resolved runtime algorithm, exactly like the decorator
+        path (``decorators._resolve_execution_policy_from_options``). Otherwise a
+        stale ``auto`` policy (intent ``CLOUD_BRAIN``) keeps grid/random on the
+        backend-guided/typed cloud session, which samples one config per trial
+        instead of running the exhaustive local ``GridSearchOptimizer`` (#1421).
+
+        Scope is deliberately narrow: only a runtime override to a *local*
+        algorithm (``grid``/``random``) flips an otherwise cloud-capable policy
+        to ``LOCAL_ONLY``. Everything else keeps the stored policy verbatim so
+        that:
+
+        * genuinely cloud algorithms (``auto``/smart) keep their cloud routing;
+        * ``offline`` / ``require_cloud`` / ``HYBRID_API`` intent is preserved;
+        * unknown algorithm names still fail through the existing optimizer
+          lookup (``get_optimizer``) rather than being rejected early here,
+          keeping error semantics unchanged.
+        """
+
+        if stored_policy is None:
+            return None
+
+        # Already local (offline or explicit grid/random decorator): nothing to
+        # flip — and never silently relax an offline/no-egress guarantee.
+        if stored_policy.intent is ExecutionIntent.LOCAL_ONLY:
+            return stored_policy
+
+        # Only a local runtime override needs to leave the cloud path. Anything
+        # else (auto, smart, or an unknown name) keeps the stored cloud-capable
+        # policy and is validated/routed downstream as before.
+        if not is_local_algorithm(runtime_algorithm):
+            return stored_policy
+
+        normalized_runtime = normalize_algorithm_name(runtime_algorithm)
+        legacy_mode = (
+            ExecutionMode.HYBRID_API
+            if stored_policy.legacy_execution_mode is ExecutionMode.HYBRID_API
+            else None
+        )
+        return resolve_execution_policy(
+            algorithm=normalized_runtime,
+            offline=stored_policy.offline,
+            require_cloud=stored_policy.require_cloud,
+            execution_mode=legacy_mode,
+            source_hint="optimize_runtime",
+        )
+
     async def _execute_optimization(
         self,
         *,
@@ -2211,9 +2324,14 @@ Remediation:
             fallback_max_trials=getattr(self, "max_trials", None),
         )
 
-        execution_policy = getattr(self, "execution_policy", None)
-        if not isinstance(execution_policy, ResolvedExecutionPolicy):
-            execution_policy = None
+        stored_policy = getattr(self, "execution_policy", None)
+        if not isinstance(stored_policy, ResolvedExecutionPolicy):
+            stored_policy = None
+        # Re-derive cloud-vs-local routing from the *resolved runtime* algorithm
+        # so a runtime override such as optimize(algorithm="grid") stays local
+        # and exhaustive even when the construction-time policy was a
+        # cloud-capable ``auto`` (issue #1421).
+        execution_policy = self._policy_for_runtime_algorithm(stored_policy, algorithm)
         external_evaluator = (
             getattr(self, "external_service_evaluator", None) is not None
             or self.execution_mode == ExecutionMode.HYBRID_API.value

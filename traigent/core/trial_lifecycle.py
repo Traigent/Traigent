@@ -18,7 +18,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.context import TrialContext, WorkflowTraceContext
 from traigent.core.orchestrator_helpers import (
@@ -27,7 +27,6 @@ from traigent.core.orchestrator_helpers import (
     extract_optuna_trial_id,
     prepare_evaluation_config,
 )
-from traigent.core.pruning_progress_tracker import PruningProgressTracker
 from traigent.core.sample_budget import LeaseClosure, SampleBudgetLease
 from traigent.core.trial_result_factory import (
     build_failed_result,
@@ -80,6 +79,7 @@ class TrialLifecycle:
             orchestrator: Parent OptimizationOrchestrator instance
         """
         self._orchestrator = orchestrator
+        self._constraint_rejection_count = 0
 
     # =========================================================================
     # Sequential Trial Execution
@@ -106,6 +106,7 @@ class TrialLifecycle:
             Tuple of (updated_trial_count, action) where action is "continue" or "break"
         """
         orchestrator = self._orchestrator
+        optimizer_trial_count_before_suggest = self._snapshot_optimizer_trial_count()
 
         if (
             orchestrator.max_trials is not None
@@ -135,6 +136,10 @@ class TrialLifecycle:
                 logger.exception("Optimizer failed to suggest the next trial: %s", e)
                 return trial_count, "break"
 
+        if config is None:
+            logger.info("Optimizer did not suggest a trial configuration")
+            return trial_count, "break"
+
         optuna_trial_id = (
             config.get("_optuna_trial_id") if isinstance(config, dict) else None
         )
@@ -150,14 +155,6 @@ class TrialLifecycle:
             )
             if not filtered_configs:
                 logger.info("Configuration already evaluated, skipping")
-                if hasattr(orchestrator, "_abandon_optuna_trial"):
-                    orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
-                        optuna_trial_id,
-                        reason=f"trial_filtered_by_cache_policy:{cache_policy}",
-                        config=config,
-                        status=TrialStatus.PRUNED,
-                        pruned_step=0,
-                    )
                 return trial_count, "continue"
             config = filtered_configs[0]
             optuna_trial_id = (
@@ -165,6 +162,7 @@ class TrialLifecycle:
             )
 
         config_for_run = prepare_evaluation_config(config)  # type: ignore[arg-type]
+        config_for_trial = cast(dict[str, Any], config)
 
         # Phase 2: Enforce pre-evaluation constraints
         try:
@@ -182,18 +180,19 @@ class TrialLifecycle:
                 config_for_run,
                 e,
             )
-            # Give back the trial slot the optimizer consumed in suggest_next_trial
-            if hasattr(orchestrator.optimizer, "_trial_count"):
-                orchestrator.optimizer._trial_count = max(
-                    0, orchestrator.optimizer._trial_count - 1
+            try:
+                self._record_pre_constraint_pruned_result(
+                    config=config_for_trial,
+                    evaluation_config=config_for_run,
+                    dataset=dataset,
+                    trial_number=trial_count,
+                    session_id=session_id,
+                    optuna_trial_id=optuna_trial_id,
+                    error=e,
                 )
-            if hasattr(orchestrator, "_abandon_optuna_trial"):
-                orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
-                    optuna_trial_id,
-                    reason=f"trial_rejected_by_constraint:{e}",
-                    config=config_for_run,
-                    status=TrialStatus.PRUNED,
-                    pruned_step=0,
+            finally:
+                self._restore_optimizer_trial_count(
+                    optimizer_trial_count_before_suggest
                 )
             return trial_count, "continue"
 
@@ -208,14 +207,6 @@ class TrialLifecycle:
                     config_for_run,
                 )
                 orchestrator._stop_reason = "cost_limit"
-                if hasattr(orchestrator, "_abandon_optuna_trial"):
-                    orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
-                        optuna_trial_id,
-                        reason="trial_cancelled_by_cost_limit",
-                        config=config_for_run,
-                        status=TrialStatus.CANCELLED,
-                        pruned_step=0,
-                    )
                 return trial_count, "break"
 
         orchestrator.callback_manager.on_trial_start(trial_count, config_for_run)
@@ -223,7 +214,7 @@ class TrialLifecycle:
         try:
             trial_result = await self.run_trial(
                 func,
-                config,
+                config_for_trial,
                 dataset,
                 trial_count,
                 session_id,
@@ -232,7 +223,7 @@ class TrialLifecycle:
 
             trial_count = await orchestrator._handle_trial_result(
                 trial_result=trial_result,
-                optimizer_config=config,
+                optimizer_config=config_for_trial,
                 current_trial_index=trial_count,
                 session_id=session_id,
                 optuna_trial_id=optuna_trial_id,
@@ -600,6 +591,45 @@ class TrialLifecycle:
             # Fallback to sequential ID for backwards compatibility
             return f"{orchestrator._optimization_id}_{trial_number}"
 
+    def _snapshot_optimizer_trial_count(self) -> int | None:
+        trial_count = getattr(self._orchestrator.optimizer, "_trial_count", None)
+        if isinstance(trial_count, int):
+            return trial_count
+        return None
+
+    def _restore_optimizer_trial_count(self, previous_trial_count: int | None) -> None:
+        """Restore the optimizer's consumed slot for a rejected pre-constraint."""
+        if previous_trial_count is None:
+            return
+        current_trial_count = getattr(
+            self._orchestrator.optimizer, "_trial_count", None
+        )
+        if (
+            isinstance(current_trial_count, int)
+            and current_trial_count > 0
+            and current_trial_count > previous_trial_count
+        ):
+            self._orchestrator.optimizer._trial_count = previous_trial_count
+
+    def _generate_constraint_rejection_trial_id(
+        self,
+        config: dict[str, Any],
+        trial_number: int,
+        session_id: str | None,
+        dataset: Dataset,
+        optuna_trial_id: int | None,
+    ) -> str:
+        """Generate a unique, non-consuming trial ID for a constraint rejection."""
+        self._constraint_rejection_count += 1
+        base_trial_id = self._generate_trial_id(
+            config,
+            trial_number,
+            session_id,
+            dataset,
+            optuna_trial_id,
+        )
+        return f"{base_trial_id}_rej{self._constraint_rejection_count}"
+
     # =========================================================================
     # Progress Tracking
     # =========================================================================
@@ -610,45 +640,64 @@ class TrialLifecycle:
         dataset: Dataset,
         trial_id: str,
     ) -> tuple[Callable[[int, dict[str, Any]], None] | None, dict[str, Any] | None]:
-        """Create progress callback and state for pruning if applicable.
+        """Return progress callback state.
 
-        Returns (None, None) early if no Optuna trial ID is available, so evaluators
-        don't receive a callback that would fail.
-
-        Args:
-            optuna_trial_id: Optuna trial ID for pruning integration
-            dataset: Evaluation dataset
-            trial_id: Trial identifier for logging
-
-        Returns:
-            Tuple of (progress_callback, progress_state) or (None, None) if no pruning
+        Local Optuna-backed intermediate reporting has been evicted. Generic
+        pruned-trial result handling remains in the lifecycle for future callers
+        that raise :class:`TrialPrunedError` directly.
         """
+        return None, None
+
+    def _record_pre_constraint_pruned_result(
+        self,
+        *,
+        config: dict[str, Any],
+        evaluation_config: dict[str, Any],
+        dataset: Dataset,
+        trial_number: int,
+        session_id: str | None,
+        optuna_trial_id: int | None,
+        error: TVLConstraintError,
+    ) -> None:
+        """Record a constraint-rejected config without consuming a trial slot."""
         orchestrator = self._orchestrator
-
-        # Early return if no Optuna trial ID or optimizer lacks reporting capability
-        if optuna_trial_id is None or not hasattr(
-            orchestrator.optimizer, "report_intermediate_value"
-        ):
-            return None, None
-
-        # Extract band target for banded objective pruning
-        band_target = None
-        if (
-            orchestrator.objective_schema is not None
-            and orchestrator.objective_schema.objectives
-        ):
-            primary_obj = orchestrator.objective_schema.objectives[0]
-            if hasattr(primary_obj, "band") and primary_obj.band is not None:
-                band_target = primary_obj.band
-
-        tracker = PruningProgressTracker(
-            optimizer=orchestrator.optimizer,
-            dataset=dataset,
-            trial_id=trial_id,
-            optuna_trial_id=optuna_trial_id,
-            band_target=band_target,
+        trial_id = self._generate_constraint_rejection_trial_id(
+            config,
+            trial_number,
+            session_id,
+            dataset,
+            optuna_trial_id,
         )
-        return tracker.callback, tracker.state
+        try:
+            total_examples = len(dataset)
+        except TypeError:
+            total_examples = 0
+
+        result = build_pruned_result(
+            trial_id=trial_id,
+            evaluation_config=evaluation_config,
+            duration=0.0,
+            prune_error=TrialPrunedError(
+                f"trial_rejected_by_constraint: {error}",
+                step=0,
+            ),
+            progress_state={"evaluated": 0, "total_examples": total_examples},
+            optuna_trial_id=optuna_trial_id,
+        )
+        result.error_message = str(error)
+        metadata = dict(result.metadata or {})
+        metadata.update(
+            {
+                "constraint_rejected": True,
+                "stop_reason": "trial_rejected_by_constraint",
+            }
+        )
+        result.metadata = metadata
+
+        orchestrator._trials.append(result)
+        log_trial = getattr(orchestrator, "_log_trial", None)
+        if callable(log_trial):
+            log_trial(result)
 
     # =========================================================================
     # Budget Management

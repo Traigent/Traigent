@@ -2,7 +2,6 @@
 
 This module adds tests for specific uncovered code paths in:
 - traigent/_version.py
-- traigent/telemetry/optuna_metrics.py
 - traigent/agents/executor.py
 - traigent/storage/local_storage.py
 - traigent/utils/persistence.py
@@ -107,61 +106,6 @@ def test_get_version_info():
     assert info["major"] == expected_parts[0]
     assert info["minor"] == expected_parts[1]
     assert info["patch"] == expected_parts[2]
-
-
-# =============================================================================
-# optuna_metrics.py coverage tests
-# =============================================================================
-
-
-def test_optuna_emitter_disabled_by_env():
-    """Test OptunaMetricsEmitter respects TRAIGENT_DISABLE_TELEMETRY."""
-    from traigent.telemetry.optuna_metrics import OptunaMetricsEmitter
-
-    with patch.dict(os.environ, {"TRAIGENT_DISABLE_TELEMETRY": "true"}):
-        emitter = OptunaMetricsEmitter()
-        # When disabled, emit_trial_update should return empty dict
-        result = emitter.emit_trial_update(
-            event="trial_started",
-            trial_id=1,
-            study_name="test_study",
-            payload={"test": "data"},
-        )
-        assert result == {}
-
-
-def test_optuna_emitter_subscribe_unsubscribe():
-    """Test subscribe/unsubscribe functionality."""
-    from traigent.telemetry.optuna_metrics import OptunaMetricsEmitter
-
-    emitter = OptunaMetricsEmitter()
-    events = []
-
-    def listener(event):
-        events.append(event)
-
-    emitter.subscribe(listener)
-    emitter.emit_trial_update(event="test", trial_id=1, study_name="s")
-    assert len(events) == 1
-
-    emitter.unsubscribe(listener)
-    emitter.emit_trial_update(event="test2", trial_id=2, study_name="s")
-    # Should still be 1 after unsubscribe
-    assert len(events) == 1
-
-
-def test_optuna_emitter_unsubscribe_nonexistent():
-    """Test unsubscribe with listener not in list."""
-    from traigent.telemetry.optuna_metrics import OptunaMetricsEmitter
-
-    emitter = OptunaMetricsEmitter()
-
-    def listener(event):
-        pass
-
-    # Unsubscribe without subscribing should not raise
-    result = emitter.unsubscribe(listener)
-    assert result is None  # Method returns None
 
 
 # =============================================================================

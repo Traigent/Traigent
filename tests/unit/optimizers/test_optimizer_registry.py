@@ -53,12 +53,12 @@ class NotAnOptimizer:
 
 
 @pytest.fixture(autouse=True)
-def reset_optuna_flag(monkeypatch):
-    """Reset Optuna flag state for registry tests.
+def reset_local_advanced_optimizer_flag(monkeypatch):
+    """Reset local advanced optimizer flag state for registry tests.
 
-    Optuna is enabled by default, so we just ensure consistent state.
+    The flag is enabled by default, so we just ensure consistent state.
     """
-    monkeypatch.delenv("TRAIGENT_OPTUNA_ENABLED", raising=False)
+    monkeypatch.delenv("TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED", raising=False)
     flag_registry.reset()
     yield
     flag_registry.reset()

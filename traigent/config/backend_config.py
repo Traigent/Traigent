@@ -194,6 +194,68 @@ class BackendConfig:
         return f"{backend_origin}{cls._DEFAULT_API_PATH}"
 
     @classmethod
+    def _derive_web_origin_from_api_origin(cls, origin: str | None) -> str | None:
+        """Derive the portal/web origin from a backend API origin.
+
+        In split-host deployments the API lives on ``api-*.traigent.ai`` while
+        the portal SPA lives on ``portal-*.traigent.ai``.  This helper rewrites
+        the ``api``/``api.``/``api-`` prefix to ``portal`` so that experiment
+        view URLs resolve to the correct frontend host.
+
+        Falls back to the original origin when no ``api`` prefix is found (e.g.
+        single-origin dev stacks or prod where DEFAULT_PROD_URL already starts
+        with ``portal``).
+        """
+        parsed_origin = cls._normalize_origin(origin)
+        if not parsed_origin:
+            return None
+        parsed = urlparse(parsed_origin)
+        host = parsed.hostname or ""
+        if host == "api" or host.startswith("api.") or host.startswith("api-"):
+            web_host = f"portal{host[3:]}"
+            # Rebuild the authority from parsed parts (preserving any userinfo and
+            # port) instead of string-replacing in the original-case netloc — the
+            # latter misses uppercase hosts because ``parsed.hostname`` is
+            # lowercased (e.g. ``API-DEV.traigent.ai`` would not be rewritten).
+            userinfo = ""
+            if parsed.username:
+                userinfo = parsed.username
+                if parsed.password:
+                    userinfo += f":{parsed.password}"
+                userinfo += "@"
+            port = f":{parsed.port}" if parsed.port else ""
+            netloc = f"{userinfo}{web_host}{port}"
+            return urlunparse((parsed.scheme, netloc, "", "", "", "")).rstrip("/")
+        return parsed_origin
+
+    @classmethod
+    def get_cloud_web_url(cls) -> str:
+        """Return the portal/web origin used for user-facing experiment view URLs.
+
+        Priority:
+            1. ``TRAIGENT_WEB_URL`` environment variable (explicit override)
+            2. ``TRAIGENT_PORTAL_URL`` environment variable (explicit override)
+            3. Derive portal origin from the configured backend API origin by
+               rewriting the ``api``/``api.``/``api-`` host prefix to ``portal``
+               (handles split-host dev environments transparently).
+            4. ``DEFAULT_PROD_URL`` (``https://portal.traigent.ai``)
+
+        Prod installations have no ``api`` prefix in their configured origin so
+        the derivation step is a no-op and the default is returned unchanged.
+        """
+        for env_var in ("TRAIGENT_WEB_URL", "TRAIGENT_PORTAL_URL"):
+            origin = cls._normalize_origin(os.environ.get(env_var))
+            if origin:
+                return origin
+        configured_origin = cls._get_configured_backend_origin()
+        if configured_origin:
+            return (
+                cls._derive_web_origin_from_api_origin(configured_origin)
+                or configured_origin
+            )
+        return cls.DEFAULT_PROD_URL
+
+    @classmethod
     def get_backend_api_url(cls) -> str:
         """Return the base API URL (including version path)."""
 

@@ -39,6 +39,7 @@ class TestEnums:
         assert OptimizationStatus.COMPLETED == "completed"
         assert OptimizationStatus.FAILED == "failed"
         assert OptimizationStatus.CANCELLED == "cancelled"
+        assert OptimizationStatus.UNKNOWN == "unknown"
 
     def test_trial_status_values(self):
         """Test TrialStatus enum values."""

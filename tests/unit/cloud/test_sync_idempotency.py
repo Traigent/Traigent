@@ -56,10 +56,22 @@ def _stub_backend_success(sync_manager: SyncManager) -> dict[str, Mock]:
         "_sync_experiment_run": Mock(
             return_value={"success": True, "experiment_run_id": "run1"}
         ),
+        # The post-hoc sync now finalizes the experiment to COMPLETED via
+        # PUT /experiments/{id} after all runs upload (issue #1420); stub it so
+        # the no-HTTP success path reaches finalization without a real request.
+        "_finalize_experiment": Mock(return_value={"success": True}),
     }
 
-    def _runs(_run_id, configuration_runs):
-        return {"success": True, "synced": len(configuration_runs), "errors": []}
+    # ``_sync_configuration_runs`` gained ``already_synced_keys`` / ``on_synced``
+    # kwargs and now returns a ``skipped`` count (resume idempotency, #1420).
+    # Mirror the real contract: accept the kwargs and report 0 skipped.
+    def _runs(_run_id, configuration_runs, **_kwargs):
+        return {
+            "success": True,
+            "synced": len(configuration_runs),
+            "skipped": 0,
+            "errors": [],
+        }
 
     mocks["_sync_configuration_runs"] = Mock(side_effect=_runs)
     for name, mock in mocks.items():
