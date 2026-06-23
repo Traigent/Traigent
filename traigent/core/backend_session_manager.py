@@ -662,18 +662,14 @@ class BackendSessionManager:
         if self._egress_disabled():
             return SessionContext(
                 session_id=None,
-                dataset_name=(
-                    getattr(dataset, "name", None) or "default_evaluation"
-                ),
+                dataset_name=(getattr(dataset, "name", None) or "default_evaluation"),
                 function_name=function_identifier,
                 optimization_id=self._optimization_id,
                 start_time=start_time,
             )
 
         if self._backend_client:
-            evaluation_set_name = (
-                getattr(dataset, "name", None) or "default_evaluation"
-            )
+            evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
 
             max_trials_value = max_trials if max_trials is not None else 10
             max_samples_value = (
@@ -759,9 +755,7 @@ class BackendSessionManager:
                         ),
                     )
 
-        dataset_name = (
-            getattr(dataset, "name", None) or "default_evaluation"
-        )
+        dataset_name = getattr(dataset, "name", None) or "default_evaluation"
 
         return SessionContext(
             session_id=session_id,
