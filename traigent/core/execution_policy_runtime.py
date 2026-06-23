@@ -251,6 +251,11 @@ def exception_status(exc: BaseException) -> int | None:
         value = getattr(exc, name, None)
         if isinstance(value, int):
             return value
+    # httpx.HTTPStatusError and similar carry the code on .response.status_code
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    if isinstance(response_status, int):
+        return response_status
     match = re.search(r"\bHTTP\s+(\d{3})\b", str(exc), flags=re.IGNORECASE)
     if match:
         return int(match.group(1))
