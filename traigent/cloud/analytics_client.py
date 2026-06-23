@@ -19,9 +19,9 @@ from the authenticated principal; this client never sends a caller-supplied
 
 Today's wired endpoints (Wave-1):
 
-* ``GET /api/v1/analytics/projects/{project_id}/runs/{run_id}/report``
-* ``GET /api/v1/analytics/projects/{project_id}/overview``
-* ``GET /api/v1/analytics/projects/{project_id}/runs/compare``
+* ``GET /api/v1/analytics/runs/{run_id}/report``
+* ``GET /api/v1/analytics/dashboards/optimization-overview``
+* ``POST /api/v1/optimization-comparisons``
 * ``GET /api/v1/analytics/runs/{run_id}/decision-payload``
 """
 
@@ -208,9 +208,20 @@ class BackendAnalyticsClient:
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         await self.close()
 
-    async def _get_json(self, path: str, *, what: str) -> dict[str, Any]:
+    @staticmethod
+    def _project_headers(project_id: str) -> dict[str, str]:
+        return {"X-Project-Id": _require_non_empty(project_id, field="project_id")}
+
+    async def _get_json(
+        self,
+        path: str,
+        *,
+        what: str,
+        headers: dict[str, str] | None = None,
+        params: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         client = self._get_client()
-        response = await client.get(path)
+        response = await client.get(path, headers=headers, params=params)
         response.raise_for_status()
         return _require_object(response.json(), what=what)
 
@@ -227,11 +238,12 @@ class BackendAnalyticsClient:
         Returns:
             The backend report payload (returned unchanged).
         """
-        path = (
-            f"/api/v1/analytics/projects/{_quote_segment(project_id, field='project_id')}"
-            f"/runs/{_quote_segment(run_id, field='run_id')}/report"
+        path = f"/api/v1/analytics/runs/{_quote_segment(run_id, field='run_id')}/report"
+        return await self._get_json(
+            path,
+            what="run report",
+            headers=self._project_headers(project_id),
         )
-        return await self._get_json(path, what="run report")
 
     async def get_project_overview(self, project_id: str) -> dict[str, Any]:
         """Return the backend's cross-run overview for a project.
@@ -242,11 +254,12 @@ class BackendAnalyticsClient:
         Returns:
             The backend overview payload (returned unchanged).
         """
-        path = (
-            "/api/v1/analytics/projects/"
-            f"{_quote_segment(project_id, field='project_id')}/overview"
+        path = "/api/v1/analytics/dashboards/optimization-overview"
+        return await self._get_json(
+            path,
+            what="project overview",
+            headers=self._project_headers(project_id),
         )
-        return await self._get_json(path, what="project overview")
 
     async def compare_runs(
         self, project_id: str, run_ids: Sequence[str]
@@ -265,14 +278,13 @@ class BackendAnalyticsClient:
         if len(cleaned) < 2:
             raise ValueError("compare_runs requires at least two run_ids.")
 
-        path = (
-            "/api/v1/analytics/projects/"
-            f"{_quote_segment(project_id, field='project_id')}/runs/compare"
-        )
+        path = "/api/v1/optimization-comparisons"
         client = self._get_client()
-        # Repeated ``run_ids`` query params keep the request RESTful and let the
-        # backend own the comparison semantics.
-        response = await client.get(path, params=[("run_ids", rid) for rid in cleaned])
+        response = await client.post(
+            path,
+            json={"run_ids": cleaned},
+            headers=self._project_headers(project_id),
+        )
         response.raise_for_status()
         return _require_object(response.json(), what="run comparison")
 
@@ -291,8 +303,9 @@ class BackendAnalyticsClient:
         as a confident recommendation.
 
         Args:
-            project_id: Project identifier (explicit). Sent as a query param so
-                the backend can scope/validate against the run's owning project.
+            project_id: Project identifier (explicit). Sent via
+                ``X-Project-Id`` so the backend can scope/validate against the
+                run's owning project.
             run_id: Experiment-run identifier.
             intent: One of ``iterate`` / ``promote`` / ``stop`` (the backend is
                 the source of truth and rejects unknown intents).
@@ -305,14 +318,12 @@ class BackendAnalyticsClient:
             "/api/v1/analytics/runs/"
             f"{_quote_segment(run_id, field='run_id')}/decision-payload"
         )
-        params = {
-            "project_id": _require_non_empty(project_id, field="project_id"),
-            "intent": normalized_intent,
-        }
-        client = self._get_client()
-        response = await client.get(path, params=params)
-        response.raise_for_status()
-        payload = _require_object(response.json(), what="decision brief")
+        payload = await self._get_json(
+            path,
+            what="decision brief",
+            headers=self._project_headers(project_id),
+            params={"intent": normalized_intent},
+        )
         _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what="decision brief")
         return payload
 

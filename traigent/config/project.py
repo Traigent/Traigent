@@ -24,6 +24,12 @@ def scope_api_path(api_path: str, project_id: str | None) -> str:
     if normalized.startswith("/api/v1beta/"):
         suffix = normalized[len("/api/v1beta") :]
         return f"/api/v1beta/projects/{project_segment}{suffix}"
+    if normalized == "/api/v1/analytics" or normalized.startswith("/api/v1/analytics/"):
+        return normalized
+    if normalized == "/api/v1/optimization-comparisons" or normalized.startswith(
+        "/api/v1/optimization-comparisons/"
+    ):
+        return normalized
     if normalized == "/api/v1/measures":
         return f"/api/v1beta/projects/{project_segment}/measures"
     if normalized.startswith("/api/v1/"):

@@ -43,18 +43,18 @@ def test_client_configs_propagate_tenant_id_header(monkeypatch) -> None:
     assert evaluation_headers[TENANT_HEADER_NAME] == "tenant_env"
     assert core_metrics_headers[TENANT_HEADER_NAME] == "tenant_env"
     assert admin_headers[TENANT_HEADER_NAME] == "tenant_env"
-    assert ObservabilityConfig(backend_origin="https://backend.example").api_path.endswith(
-        "/projects/project_env/observability"
-    )
-    assert PromptManagementConfig(backend_origin="https://backend.example").api_path.endswith(
-        "/projects/project_env/prompts"
-    )
+    assert ObservabilityConfig(
+        backend_origin="https://backend.example"
+    ).api_path.endswith("/projects/project_env/observability")
+    assert PromptManagementConfig(
+        backend_origin="https://backend.example"
+    ).api_path.endswith("/projects/project_env/prompts")
     assert EvaluationConfig(backend_origin="https://backend.example").api_path.endswith(
         "/projects/project_env"
     )
-    assert CoreMetricsConfig(backend_origin="https://backend.example").api_path.endswith(
-        "/projects/project_env"
-    )
+    assert CoreMetricsConfig(
+        backend_origin="https://backend.example"
+    ).api_path.endswith("/projects/project_env")
 
 
 def test_client_configs_allow_explicit_tenant_override() -> None:
@@ -116,11 +116,25 @@ def test_project_scope_helpers_normalize_paths_and_blank_env(monkeypatch) -> Non
     assert scope_api_path("/api/v1beta/core-metrics/overview", "project_alpha") == (
         "/api/v1beta/projects/project_alpha/core-metrics/overview"
     )
-    assert scope_api_path("/api/v1beta/projects/project_alpha/prompts", "project_beta") == (
-        "/api/v1beta/projects/project_alpha/prompts"
-    )
+    assert scope_api_path(
+        "/api/v1beta/projects/project_alpha/prompts", "project_beta"
+    ) == ("/api/v1beta/projects/project_alpha/prompts")
     assert scope_api_path("/api/v1/measures", "project_alpha") == (
         "/api/v1beta/projects/project_alpha/measures"
+    )
+    assert (
+        scope_api_path("/api/v1/analytics/runs/run_123/report", "project_alpha")
+        == "/api/v1/analytics/runs/run_123/report"
+    )
+    assert (
+        scope_api_path(
+            "/api/v1/analytics/dashboards/optimization-overview", "project_alpha"
+        )
+        == "/api/v1/analytics/dashboards/optimization-overview"
+    )
+    assert (
+        scope_api_path("/api/v1/optimization-comparisons", "project_alpha")
+        == "/api/v1/optimization-comparisons"
     )
     assert scope_api_path("/api/v1/experiments", "project_alpha") == (
         "/api/v1beta/projects/project_alpha/experiments"

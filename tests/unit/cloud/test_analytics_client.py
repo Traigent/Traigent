@@ -122,7 +122,9 @@ class TestGetRunReport:
 
         assert result == run_report_payload
         mock_http.get.assert_called_once_with(
-            "/api/v1/analytics/projects/proj_abc/runs/run_123/report"
+            "/api/v1/analytics/runs/run_123/report",
+            headers={"X-Project-Id": "proj_abc"},
+            params=None,
         )
 
     @pytest.mark.asyncio
@@ -138,8 +140,10 @@ class TestGetRunReport:
         await client.get_run_report("proj/with slash", "run id")
 
         called_path = mock_http.get.call_args.args[0]
-        assert "proj%2Fwith%20slash" in called_path
         assert "run%20id" in called_path
+        assert mock_http.get.call_args.kwargs["headers"] == {
+            "X-Project-Id": "proj/with slash"
+        }
 
     @pytest.mark.asyncio
     async def test_empty_project_id_rejected(self) -> None:
@@ -179,32 +183,31 @@ class TestGetProjectOverview:
 
         assert result == {"project_id": "proj_abc", "runs": []}
         mock_http.get.assert_called_once_with(
-            "/api/v1/analytics/projects/proj_abc/overview"
+            "/api/v1/analytics/dashboards/optimization-overview",
+            headers={"X-Project-Id": "proj_abc"},
+            params=None,
         )
 
 
 class TestCompareRuns:
     @pytest.mark.asyncio
-    async def test_sends_repeated_run_ids_params(self) -> None:
+    async def test_posts_run_ids_to_optimization_comparisons(self) -> None:
         client = _make_client()
         mock_response = MagicMock()
         mock_response.json.return_value = {"comparison": []}
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
-        mock_http.get.return_value = mock_response
+        mock_http.post.return_value = mock_response
         client._client = mock_http
 
         result = await client.compare_runs("proj_abc", ["run_1", "run_2", "run_3"])
 
         assert result == {"comparison": []}
-        path = mock_http.get.call_args.args[0]
-        params = mock_http.get.call_args.kwargs["params"]
-        assert path == "/api/v1/analytics/projects/proj_abc/runs/compare"
-        assert params == [
-            ("run_ids", "run_1"),
-            ("run_ids", "run_2"),
-            ("run_ids", "run_3"),
-        ]
+        path = mock_http.post.call_args.args[0]
+        kwargs = mock_http.post.call_args.kwargs
+        assert path == "/api/v1/optimization-comparisons"
+        assert kwargs["json"] == {"run_ids": ["run_1", "run_2", "run_3"]}
+        assert kwargs["headers"] == {"X-Project-Id": "proj_abc"}
 
     @pytest.mark.asyncio
     async def test_requires_two_runs(self) -> None:
@@ -216,7 +219,7 @@ class TestCompareRuns:
 
 class TestGetRunDecisionBrief:
     @pytest.mark.asyncio
-    async def test_calls_decision_payload_endpoint_with_query(
+    async def test_calls_decision_payload_endpoint_with_project_header(
         self, decision_payload: dict[str, object]
     ) -> None:
         client = _make_client()
@@ -234,8 +237,10 @@ class TestGetRunDecisionBrief:
         assert result == decision_payload
         path = mock_http.get.call_args.args[0]
         params = mock_http.get.call_args.kwargs["params"]
+        headers = mock_http.get.call_args.kwargs["headers"]
         assert path == "/api/v1/analytics/runs/run_123/decision-payload"
-        assert params == {"project_id": "proj_abc", "intent": "promote"}
+        assert params == {"intent": "promote"}
+        assert headers == {"X-Project-Id": "proj_abc"}
 
     @pytest.mark.asyncio
     async def test_defaults_intent_to_iterate(
