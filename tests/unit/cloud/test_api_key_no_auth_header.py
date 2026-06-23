@@ -28,7 +28,9 @@ from traigent.config.types import TraigentConfig
 # Helpers
 # ---------------------------------------------------------------------------
 
-_VALID_API_KEY = "tg_" + "a" * 61  # 64 chars, passes SDK prefix validation  # pragma: allowlist secret
+_VALID_API_KEY = (
+    "tg_" + "a" * 61
+)  # 64 chars, passes SDK prefix validation  # pragma: allowlist secret
 
 
 async def _stub_validate_ok(self, api_key):  # noqa: ARG001
