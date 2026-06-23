@@ -47,9 +47,7 @@ except ImportError:  # pragma: no cover - exercised only when httpx is absent
     httpx = None  # type: ignore[assignment]
 
 
-# Intents the backend decision-payload endpoint understands. Kept permissive
-# on the client side: the backend is the source of truth and will reject an
-# unknown intent. We only constrain the obviously-wrong (empty) value.
+SUPPORTED_DECISION_INTENTS: tuple[str, ...] = ("iterate", "deploy", "debug", "report")
 _DEFAULT_DECISION_INTENT = "iterate"
 
 # Frozen v0 contract keys the SDK asserts before returning a payload. The
@@ -118,6 +116,15 @@ def _quote_segment(value: str, *, field: str) -> str:
     if not text:
         raise ValueError(f"{field} must be a non-empty string.")
     return quote(text, safe="")
+
+
+def normalize_decision_intent(intent: str | None = None) -> str:
+    """Return a supported decision-payload intent or raise ``ValueError``."""
+    normalized = (intent or "").strip() or _DEFAULT_DECISION_INTENT
+    if normalized not in SUPPORTED_DECISION_INTENTS:
+        allowed = ", ".join(SUPPORTED_DECISION_INTENTS)
+        raise ValueError(f"intent must be one of: {allowed}.")
+    return normalized
 
 
 class BackendAnalyticsClient:
@@ -317,13 +324,12 @@ class BackendAnalyticsClient:
                 ``X-Project-Id`` so the backend can scope/validate against the
                 run's owning project.
             run_id: Experiment-run identifier.
-            intent: One of ``iterate`` / ``promote`` / ``stop`` (the backend is
-                the source of truth and rejects unknown intents).
+            intent: One of ``iterate`` / ``deploy`` / ``debug`` / ``report``.
 
         Returns:
             The decision_payload v0 dict (returned unchanged on success).
         """
-        normalized_intent = (intent or "").strip() or _DEFAULT_DECISION_INTENT
+        normalized_intent = normalize_decision_intent(intent)
         path = (
             "/api/v1/analytics/runs/"
             f"{_quote_segment(run_id, field='run_id')}/decision-payload"

@@ -254,7 +254,7 @@ class TestGetRunDecisionBrief:
         client._client = mock_http
 
         result = await client.get_run_decision_brief(
-            "proj_abc", "run_123", intent="promote"
+            "proj_abc", "run_123", intent="deploy"
         )
 
         assert result == decision_payload
@@ -262,7 +262,7 @@ class TestGetRunDecisionBrief:
         params = mock_http.get.call_args.kwargs["params"]
         headers = mock_http.get.call_args.kwargs["headers"]
         assert path == "/api/v1/analytics/runs/run_123/decision-payload"
-        assert params == {"intent": "promote"}
+        assert params == {"intent": "deploy"}
         assert headers == {"X-Project-Id": "proj_abc"}
 
     @pytest.mark.asyncio
@@ -301,3 +301,14 @@ class TestGetRunDecisionBrief:
 
         with pytest.raises(AnalyticsClientError, match="missing required key"):
             await client.get_run_decision_brief("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_rejects_unsupported_intent_before_request(self) -> None:
+        client = _make_client()
+        mock_http = AsyncMock()
+        client._client = mock_http
+
+        with pytest.raises(ValueError, match="intent must be one of"):
+            await client.get_run_decision_brief("proj_abc", "run_123", intent="promote")
+
+        mock_http.get.assert_not_called()

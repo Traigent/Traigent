@@ -33,6 +33,7 @@ from traigent.analytics_mcp.tools import (
     auth_status_tool,
     health_check_tool,
 )
+from traigent.cloud.analytics_client import SUPPORTED_DECISION_INTENTS
 
 _MCP_INSTALL_MESSAGE = (
     "The optional MCP dependency is not installed. "
@@ -116,7 +117,8 @@ def create_server() -> Any:
             "Fetch the backend's decision brief (decision_payload v0) for a "
             "run: a headline, confidence, recommended action, and evidence. "
             "Requires explicit project_id and run_id; optional intent "
-            "(iterate/promote/stop, default iterate). Backend auth required."
+            f"({', '.join(SUPPORTED_DECISION_INTENTS)}, default iterate). "
+            "Backend auth required."
         )
     )
     async def analytics_get_run_decision_brief(

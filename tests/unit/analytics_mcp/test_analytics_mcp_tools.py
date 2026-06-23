@@ -151,13 +151,13 @@ class TestDecisionBriefTool:
         _install_fake_client(monkeypatch, reader)
 
         result = await analytics_get_run_decision_brief_tool(
-            "proj_abc", "run_123", intent="promote"
+            "proj_abc", "run_123", intent="deploy"
         )
 
         assert result["ok"] is True
         assert result["decision_brief"] == {"run_id": "run_123"}
         reader.get_run_decision_brief.assert_awaited_once_with(
-            "proj_abc", "run_123", "promote"
+            "proj_abc", "run_123", "deploy"
         )
 
     @pytest.mark.asyncio
@@ -172,6 +172,23 @@ class TestDecisionBriefTool:
 
         args = reader.get_run_decision_brief.await_args.args
         assert args[2] == "iterate"
+
+    @pytest.mark.asyncio
+    async def test_rejects_unregistered_intent_without_client_call(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_run_decision_brief_tool
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_run_decision_brief_tool(
+            "proj_abc", "run_123", intent="promote"
+        )
+
+        assert result["ok"] is False
+        assert "intent must be one of" in result["message"]
+        reader.get_run_decision_brief.assert_not_called()
 
 
 class TestRenderChartTool:

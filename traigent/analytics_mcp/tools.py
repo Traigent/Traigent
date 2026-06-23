@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from traigent.cloud.analytics_client import normalize_decision_intent
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -244,7 +245,10 @@ async def analytics_get_run_decision_brief_tool(
         rid = _require_identifier(run_id, field="run_id")
     except _ToolInputError as exc:
         return _failure(str(exc))
-    normalized_intent = (intent or "").strip() or "iterate"
+    try:
+        normalized_intent = normalize_decision_intent(intent)
+    except ValueError as exc:
+        return _failure(str(exc))
     return await _call_backend(
         lambda reader: reader.get_run_decision_brief(pid, rid, normalized_intent),
         what="decision brief",
