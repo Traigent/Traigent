@@ -131,10 +131,10 @@ class TestExampleInsightsClientGetClient:
 
             assert result == mock_instance
             mock_async_client.assert_called_once()
-            # Check headers include auth
+            # API keys must travel via X-API-Key, not Authorization: Bearer
             call_kwargs = mock_async_client.call_args.kwargs
-            assert "Authorization" in call_kwargs["headers"]
-            assert call_kwargs["headers"]["Authorization"] == "Bearer test_token"
+            assert call_kwargs["headers"]["X-API-Key"] == "test_token"
+            assert "Authorization" not in call_kwargs["headers"]
 
     @pytest.mark.asyncio
     async def test_get_client_reuses_existing(self) -> None:
@@ -167,6 +167,42 @@ class TestExampleInsightsClientGetClient:
 
             call_kwargs = mock_async_client.call_args.kwargs
             # Authorization header should not be present without key
+            assert "Authorization" not in call_kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_get_client_uk_api_key_uses_x_api_key_header(self) -> None:
+        """uk_-style API keys must use X-API-Key only, never Authorization: Bearer."""
+        from traigent.analytics.example_insights import ExampleInsightsClient
+
+        api_key = "uk_testkey1234567890"  # pragma: allowlist secret
+        client = ExampleInsightsClient(api_key=api_key)
+
+        with patch("httpx.AsyncClient") as mock_async_client:
+            mock_instance = MagicMock()
+            mock_async_client.return_value = mock_instance
+
+            client._get_client()
+
+            call_kwargs = mock_async_client.call_args.kwargs
+            assert call_kwargs["headers"]["X-API-Key"] == api_key
+            assert "Authorization" not in call_kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_get_client_jwt_string_uses_x_api_key_header(self) -> None:
+        """JWT-shaped API-key strings must not be inferred as Bearer tokens."""
+        from traigent.analytics.example_insights import ExampleInsightsClient
+
+        api_key = "eyJnotjwt.with.dots"  # pragma: allowlist secret
+        client = ExampleInsightsClient(api_key=api_key)
+
+        with patch("httpx.AsyncClient") as mock_async_client:
+            mock_instance = MagicMock()
+            mock_async_client.return_value = mock_instance
+
+            client._get_client()
+
+            call_kwargs = mock_async_client.call_args.kwargs
+            assert call_kwargs["headers"] == {"X-API-Key": api_key}
             assert "Authorization" not in call_kwargs["headers"]
 
 
@@ -569,4 +605,6 @@ class TestNoSignalTaxonomyInSource:
             "score_distributions",
         ]
         leaked = [name for name in forbidden if name in source]
-        assert not leaked, f"Signal taxonomy leaked into example_insights source: {leaked}"
+        assert not leaked, (
+            f"Signal taxonomy leaked into example_insights source: {leaked}"
+        )
