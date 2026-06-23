@@ -242,10 +242,18 @@ class GridSearchOptimizer(BaseOptimizer):
         if not metrics:
             return 0.0
 
-        # Use scalarize_objectives for weighted scoring
+        # Use scalarize_objectives for weighted scoring, honoring objective
+        # orientation so minimize objectives (cost/latency/error) lower the
+        # composite instead of raising it (#1466).
         from traigent.utils.multi_objective import scalarize_objectives
 
-        return scalarize_objectives(metrics, self.objective_weights)
+        return float(
+            scalarize_objectives(
+                metrics,
+                self.objective_weights,
+                minimize_objectives=self._minimize_objectives,
+            )
+        )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate.

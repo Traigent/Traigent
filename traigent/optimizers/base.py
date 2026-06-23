@@ -86,6 +86,16 @@ class BaseOptimizer(ABC):
                 if obj in self.objectives
             }
 
+        # Resolve objective orientation once so composite/scalarized scoring
+        # respects ``minimize`` objectives (cost/latency/error) instead of
+        # treating every objective as ``maximize`` (#1466). Name-pattern
+        # heuristics are used here because optimizers receive string objective
+        # names; callers with an ``ObjectiveSchema`` should pass it through to
+        # ``scalarize_objectives`` directly for exact orientation.
+        self._minimize_objectives: list[str] = [
+            obj for obj in self.objectives if is_minimization_objective(obj)
+        ]
+
         # Initialize internal state
         self._trial_count = 0
         self._best_score: float | None = None

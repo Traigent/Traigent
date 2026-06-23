@@ -23,6 +23,7 @@ from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.results import OptimizationResult, Trial
 from traigent.utils.batch_processing import AdaptiveBatchSizer
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import is_minimization_objective
 
 logger = get_logger(__name__)
 
@@ -330,10 +331,18 @@ class ParallelBatchOptimizer(BaseOptimizer):
         if not metrics:
             return 0.0
 
-        # Use scalarize_objectives for weighted scoring
+        # Use scalarize_objectives for weighted scoring, honoring objective
+        # orientation so minimize objectives (cost/latency/error) lower the
+        # composite instead of raising it (#1466).
         from traigent.utils.multi_objective import scalarize_objectives
 
-        return float(scalarize_objectives(metrics, self.objective_weights))
+        return float(
+            scalarize_objectives(
+                metrics,
+                self.objective_weights,
+                minimize_objectives=self._minimize_objectives,
+            )
+        )
 
 
 class MultiObjectiveBatchOptimizer(BaseOptimizer):
@@ -377,19 +386,14 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         self.pareto_frontier: list[Trial] = []
         self._current_trial_count = 0
 
-        # Define objective directions (True = maximize, False = minimize)
-        # Cost should be minimized, accuracy should be maximized
+        # Define objective directions (True = maximize, False = minimize).
+        # Derive from the canonical orientation helper (#1466) so Pareto
+        # dominance in ``_dominates`` uses the same orientation as the
+        # composite/scalarized score (cost/latency/error/loss/... → minimize).
         resolved_objectives = objectives or []
-        self.objective_directions: dict[str, Any] = {}
-        for obj in resolved_objectives:
-            if (
-                "cost" in obj.lower()
-                or "latency" in obj.lower()
-                or "error" in obj.lower()
-            ):
-                self.objective_directions[obj] = False  # minimize
-            else:
-                self.objective_directions[obj] = True  # maximize
+        self.objective_directions: dict[str, Any] = {
+            obj: not is_minimization_objective(obj) for obj in resolved_objectives
+        }
 
         # Use random search for multi-objective exploration
         self._base_optimizer = RandomSearchOptimizer(
@@ -531,8 +535,17 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 # Equal weights for all objectives if not specified
                 objective_weights = dict.fromkeys(self.objectives, 1.0)
 
-            # Use the scalarize_objectives function for proper weighted averaging
-            composite_score = scalarize_objectives(objective_scores, objective_weights)
+            # Use the scalarize_objectives function for proper weighted
+            # averaging, honoring objective orientation so minimize objectives
+            # (cost/latency/error) lower the composite instead of raising it
+            # (#1466). This keeps the composite consistent with the
+            # orientation-aware Pareto dominance in ``_dominates`` and the
+            # ``max(score)`` pick in ``_select_best_from_pareto``.
+            composite_score = scalarize_objectives(
+                objective_scores,
+                objective_weights,
+                minimize_objectives=self._minimize_objectives,
+            )
 
             trial_duration = time.time() - trial_start
 
@@ -874,7 +887,15 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         if not metrics:
             return 0.0
 
-        # Use scalarize_objectives for weighted scoring
+        # Use scalarize_objectives for weighted scoring, honoring objective
+        # orientation so minimize objectives (cost/latency/error) lower the
+        # composite instead of raising it (#1466).
         from traigent.utils.multi_objective import scalarize_objectives
 
-        return float(scalarize_objectives(metrics, self.objective_weights))
+        return float(
+            scalarize_objectives(
+                metrics,
+                self.objective_weights,
+                minimize_objectives=self._minimize_objectives,
+            )
+        )
