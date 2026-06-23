@@ -118,9 +118,62 @@ def _session_is_closed(session: Any) -> bool:
 
 # Export public API
 __all__ = [
+    "AnalyticsNamespace",
     "BackendClientConfig",
     "BackendIntegratedClient",
 ]
+
+
+class AnalyticsNamespace:
+    """Read-only ``client.analytics`` accessor for backend analytics.
+
+    A thin facade over :class:`traigent.cloud.analytics_client.BackendAnalyticsClient`.
+    Each call opens and closes a short-lived async read client that reuses the
+    owning client's resolved backend URL and the SDK's existing credential
+    resolution. It is READ-only: there are no write methods here, and tenancy is
+    owned by the backend (no caller-supplied ``tenant_id``).
+    """
+
+    def __init__(self, client: "BackendIntegratedClient") -> None:
+        self._client = client
+
+    def _new_read_client(self) -> Any:
+        from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+        return BackendAnalyticsClient(
+            backend_url=self._client.base_url,
+            api_key=self._client._api_key_fallback,
+            timeout=self._client.timeout,
+        )
+
+    async def get_run_report(self, project_id: str, run_id: str) -> dict[str, Any]:
+        """Return the backend's full analytics report for one run."""
+        async with self._new_read_client() as reader:
+            return cast(dict[str, Any], await reader.get_run_report(project_id, run_id))
+
+    async def get_project_overview(self, project_id: str) -> dict[str, Any]:
+        """Return the backend's cross-run overview for a project."""
+        async with self._new_read_client() as reader:
+            return cast(dict[str, Any], await reader.get_project_overview(project_id))
+
+    async def compare_runs(self, project_id: str, run_ids: list[str]) -> dict[str, Any]:
+        """Compare two or more runs within a project."""
+        async with self._new_read_client() as reader:
+            return cast(dict[str, Any], await reader.compare_runs(project_id, run_ids))
+
+    async def get_run_decision_brief(
+        self,
+        project_id: str,
+        run_id: str,
+        intent: str = "iterate",
+    ) -> dict[str, Any]:
+        """Return the backend's decision brief (decision_payload v0) for a run."""
+        async with self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_run_decision_brief(project_id, run_id, intent),
+            )
+
 
 # Backwards compatibility: expose shared bridge instance at this module scope so
 # existing tests patching ``traigent.cloud.backend_client.bridge`` continue to
@@ -298,6 +351,23 @@ class BackendIntegratedClient:
         self._cloud_ops = CloudOperations(self)
         self._session_ops = SessionOperations(self)
         self._trial_ops = TrialOperations(self)
+
+        # Read-only analytics accessor (lazily exposed via the ``analytics``
+        # property). Kept separate from the write paths above.
+        self._analytics_ns: AnalyticsNamespace | None = None
+
+    @property
+    def analytics(self) -> "AnalyticsNamespace":
+        """Read-only ``client.analytics`` namespace for backend analytics.
+
+        Provides cloud-READ access to optimization-results analytics
+        (run reports, project overviews, run comparisons, decision briefs)
+        using this client's resolved backend URL and the SDK's existing
+        credentials. This namespace performs no writes.
+        """
+        if self._analytics_ns is None:
+            self._analytics_ns = AnalyticsNamespace(self)
+        return self._analytics_ns
 
     @property
     def session_bridge(self) -> "SDKBackendBridge":
