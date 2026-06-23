@@ -74,7 +74,11 @@ console = Console(width=120)
     "--backend-url",
     default=DEFAULT_LOCAL_URL,
     show_default=True,
-    help=("Backend API base URL. Requires the optimization plan endpoint."),
+    envvar=["TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL"],
+    help=(
+        "Backend API base URL (env: TRAIGENT_BACKEND_URL / TRAIGENT_API_URL). "
+        "Requires the optimization plan endpoint."
+    ),
 )
 def plan(
     task_description: str,

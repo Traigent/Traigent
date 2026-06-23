@@ -100,10 +100,17 @@ class TestOptimizationPlanClientInit:
 class TestOptimizationPlanClientGetClient:
     """Tests for _get_client method."""
 
-    def test_get_client_creates_client_with_auth_header(self) -> None:
+    def test_get_client_creates_client_with_x_api_key_header_for_api_key(self) -> None:
+        """uk_-style (and other non-JWT) keys must travel via X-API-Key, never Bearer.
+
+        See auth.py:_get_api_key_headers: Bearer is reserved for JWTs; sending
+        an API key as Bearer causes a 401 INVALID_TOKEN before X-API-Key is
+        considered.
+        """
         from traigent.analytics.optimization_plan import OptimizationPlanClient
 
-        client = OptimizationPlanClient(api_key="test_token")
+        api_key = "uk_testkey1234567890"  # pragma: allowlist secret
+        client = OptimizationPlanClient(api_key=api_key)
 
         with patch("httpx.AsyncClient") as mock_async_client:
             mock_instance = MagicMock()
@@ -114,19 +121,39 @@ class TestOptimizationPlanClientGetClient:
             assert result == mock_instance
             mock_async_client.assert_called_once()
             call_kwargs = mock_async_client.call_args.kwargs
-            assert call_kwargs["headers"]["Authorization"] == "Bearer test_token"
+            assert call_kwargs["headers"]["X-API-Key"] == api_key
+            # Must NOT send the API key as a Bearer token
+            assert "Authorization" not in call_kwargs["headers"]
 
-    def test_get_client_without_api_key(self) -> None:
+    def test_get_client_uses_x_api_key_for_jwt_shaped_api_key(self) -> None:
+        """JWT-shaped API-key strings must not be inferred as Bearer tokens."""
         from traigent.analytics.optimization_plan import OptimizationPlanClient
 
-        client = OptimizationPlanClient(api_key=None)
-        client.api_key = None
+        api_key = "eyJnotjwt.with.dots"  # pragma: allowlist secret
+        client = OptimizationPlanClient(api_key=api_key)
+
+        with patch("httpx.AsyncClient") as mock_async_client:
+            mock_instance = MagicMock()
+            mock_async_client.return_value = mock_instance
+
+            client._get_client()
+
+            call_kwargs = mock_async_client.call_args.kwargs
+            assert call_kwargs["headers"] == {"X-API-Key": api_key}
+            assert "Authorization" not in call_kwargs["headers"]
+
+    @pytest.mark.parametrize("api_key", [None, ""])
+    def test_get_client_without_api_key(self, api_key: str | None) -> None:
+        from traigent.analytics.optimization_plan import OptimizationPlanClient
+
+        with patch("traigent.utils.env_config.get_api_key", return_value=None):
+            client = OptimizationPlanClient(api_key=api_key)
 
         with patch("httpx.AsyncClient") as mock_async_client:
             client._get_client()
 
             call_kwargs = mock_async_client.call_args.kwargs
-            assert "Authorization" not in call_kwargs["headers"]
+            assert call_kwargs["headers"] == {}
 
 
 @pytest.mark.skipif(not HTTPX_AVAILABLE, reason="httpx not installed")
@@ -263,3 +290,71 @@ class TestGetOptimizationPlan:
                 max_trials=4,
                 cost_limit_usd=5.0,
             )
+
+
+class TestBuildAuthHeaders:
+    """Unit tests for the _build_auth_headers module-level helper.
+
+    This helper delegates API-key header construction to cloud/auth.py.
+    """
+
+    def test_uk_api_key_uses_x_api_key_header(self) -> None:
+        from traigent.analytics.optimization_plan import _build_auth_headers
+
+        key = "uk_testkey1234567890"  # pragma: allowlist secret
+        headers = _build_auth_headers(key)
+
+        assert headers == {"X-API-Key": key}
+        assert "Authorization" not in headers
+
+    def test_generic_api_key_uses_x_api_key_header(self) -> None:
+        """Any API-key credential string uses X-API-Key."""
+        from traigent.analytics.optimization_plan import _build_auth_headers
+
+        for key in (
+            "tg_abc123",  # pragma: allowlist secret
+            "sk_livekey",  # pragma: allowlist secret
+            "ak_somekey",  # pragma: allowlist secret
+            "plain_secret",  # pragma: allowlist secret
+            "eyJnotjwt.with.dots",  # pragma: allowlist secret
+        ):
+            headers = _build_auth_headers(key)
+            assert "X-API-Key" in headers, f"expected X-API-Key for {key!r}"
+            assert "Authorization" not in headers, f"must not set Bearer for {key!r}"
+
+    def test_jwt_shaped_api_key_uses_x_api_key_header(self) -> None:
+        from traigent.analytics.optimization_plan import _build_auth_headers
+
+        key = "eyJnotjwt.with.dots"  # pragma: allowlist secret
+        headers = _build_auth_headers(key)
+
+        assert headers == {"X-API-Key": key}
+        assert "Authorization" not in headers
+
+    def test_real_jwt_string_passed_as_api_key_uses_x_api_key_header(self) -> None:
+        """The API-key-only client must not infer JWT mode from token shape."""
+        from traigent.analytics.optimization_plan import _build_auth_headers
+
+        jwt = "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJ0cmFpZ2VudCJ9.RSASIG"  # pragma: allowlist secret
+        headers = _build_auth_headers(jwt)
+
+        assert headers == {"X-API-Key": jwt}
+        assert "Authorization" not in headers
+
+    @pytest.mark.parametrize("credential", [None, ""])
+    def test_empty_key_returns_no_auth_headers(self, credential: str | None) -> None:
+        from traigent.analytics.optimization_plan import _build_auth_headers
+
+        assert _build_auth_headers(credential) == {}
+
+    def test_api_key_not_sent_as_bearer(self) -> None:
+        """Regression guard: uk_ API key must never appear in Authorization header."""
+        from traigent.analytics.optimization_plan import _build_auth_headers
+
+        key = "uk_regressionkey00000"  # pragma: allowlist secret
+        headers = _build_auth_headers(key)
+
+        assert "Authorization" not in headers
+        # And the Bearer value must not contain the key at all
+        bearer = headers.get("Authorization", "")
+        assert key not in bearer
