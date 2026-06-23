@@ -53,6 +53,17 @@ _LOOPBACK_BACKEND_DEV_HINT = (
 )
 
 
+def _build_api_key_auth_headers(api_key_value: str | None) -> dict[str, str]:
+    """Build API-key auth headers.
+
+    API-key auth emits only X-API-Key. Authorization: Bearer is reserved for
+    JWT-token auth mode and must not be inferred from the credential string.
+    """
+    if api_key_value:
+        return {"X-API-Key": api_key_value}
+    return {}
+
+
 def _is_loopback_backend_host(normalized_host: str) -> bool:
     """Return True for localhost names and loopback IP literals only."""
     host_for_match = normalized_host.rstrip(".")
@@ -874,11 +885,8 @@ class AuthManager:
         valid ``X-API-Key`` is considered. Sending one unambiguous credential
         keeps API-key auth working across all routes.
         """
-        headers: dict[str, str] = {}
         api_key_value = self._get_api_key_for_internal_use()
-        if api_key_value:
-            headers["X-API-Key"] = api_key_value
-        return headers
+        return _build_api_key_auth_headers(api_key_value)
 
     async def _get_jwt_headers(self) -> dict[str, str]:
         """Generate headers for JWT token authentication.
@@ -1447,8 +1455,8 @@ class AuthManager:
         validation failures (fail-closed) so a missing backend cannot be used
         to bypass authentication.
         """
-        from traigent.config.backend_config import BackendConfig
         from traigent.cloud.client import cloud_backend_egress_disabled
+        from traigent.config.backend_config import BackendConfig
         from traigent.utils.env_config import is_backend_offline
 
         if cloud_backend_egress_disabled(self.no_egress):
@@ -1584,6 +1592,7 @@ class AuthManager:
     ) -> str | None:
         """Requests fallback for backend key validation when aiohttp is unavailable."""
         import requests
+
         from traigent.cloud.client import cloud_backend_egress_disabled
         from traigent.utils.env_config import is_backend_offline
 
