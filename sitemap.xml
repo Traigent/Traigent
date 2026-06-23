@@ -2,370 +2,370 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://docs.traigent.ai/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/LOCAL_CI_GATE/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/SYNC_MAP/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/agent-skill/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/fake-completion-tracking/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/hybrid-mode-api-contract/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/hybrid-mode-client-guide/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/walkthrough/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/api-reference/complete-function-specification/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/api-reference/decorator-reference/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/api-reference/enterprise-beta-api/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/api-reference/interactive_optimizer/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/api-reference/telemetry/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/api-reference/thread-pool-examples/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/architecture/ARCHITECTURE/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/architecture/cost-architecture-validation/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/architecture/execution_mode_follow_up/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/architecture/integrations-inventory/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/architecture/plugin_architecture/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/architecture/project-structure/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/architecture/stop_conditions/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/concepts/composite-knob-ir/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/concepts/composite-knobs/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/concepts/guided-generation/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/ADDING_NEW_INTEGRATIONS/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/CODE_OF_CONDUCT/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/CONTRIBUTING/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/EXAMPLE_TEMPLATE/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/SECURITY/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/aikido_triage/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/code_review_instructions/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/contributing/test-quality-guide/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/demos/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/demos/DEMO_VIDEO_GUIDE/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/examples/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/examples/API_PATTERNS/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/examples/LEARNING_ROADMAP/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/examples/QUICK_REFERENCE/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/examples/START_HERE/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/examples/TROUBLESHOOTING/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/feature_matrices/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/authentication/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/constraint-dsl/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/dataflow-detection/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/framework_override_enhanced_features/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/mcp-server/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/observability-spans/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/onboarding/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/prompt_management/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/recommendations/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/safety-gates/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/seamless_injection/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/strategy-presets/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/features/strict_metrics_nulls/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/getting-started/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/getting-started/GETTING_STARTED/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/getting-started/installation/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/getting-started/minimal-integration/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/getting-started/portal-dev-laptop-agent/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/getting-started/testing/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/VSCODE_RESTART_GUIDE/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/evaluation/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/execution-mode-migration/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/execution-modes/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/js-bridge/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/llm_plugin_migration_guide/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/parallel-configuration/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/guides/secrets_management/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/operations/azure_openai/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/operations/bedrock/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/operations/google_gemini/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/security/trust_model/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/testing/CREATIVE_STRESS_TESTING/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/testing/RELEASE_READINESS_TESTING/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/traceability/schema/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/traceability/tagging_tracking/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/traceability/taxonomy_reference/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/traceability/concepts/composite-knob-ir/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/traceability/concepts/composite-knobs/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/traceability/concepts/guided-generation/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/tvl/CONSTRAINT_EXPRESSIONS/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/agent_optimization/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/choosing_optimization_model/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/configuration-spaces/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/evaluation_guide/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/injection_modes/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/interactive_optimization/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
-         <loc>https://docs.traigent.ai/user-guide/optuna_integration/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <loc>https://docs.traigent.ai/user-guide/smart_optimization/</loc>
+         <lastmod>2026-06-23</lastmod>
     </url>
     <url>
          <loc>https://docs.traigent.ai/user-guide/tuned_variables/</loc>
-         <lastmod>2026-06-21</lastmod>
+         <lastmod>2026-06-23</lastmod>
     </url>
 </urlset>
