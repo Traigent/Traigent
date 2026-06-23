@@ -112,7 +112,10 @@ from traigent.utils.function_identity import (
 )
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
-from traigent.utils.objectives import is_minimization_objective
+from traigent.utils.objectives import (
+    coerce_finite_objective_score,
+    is_minimization_objective,
+)
 from traigent.utils.optimization_logger import OptimizationLogger
 
 from .tracing import optimization_session_span, record_optimization_complete
@@ -768,16 +771,22 @@ class OptimizationOrchestrator:
         if self.optimizer.objectives:
             primary_objective = self.optimizer.objectives[0]
             minimization = is_minimization_objective(primary_objective)
+            scored_trials = [
+                (trial, score)
+                for trial in rankable_trials
+                if (
+                    score := coerce_finite_objective_score(
+                        trial.metrics.get(primary_objective)
+                    )
+                )
+                is not None
+            ]
+            if not scored_trials:
+                return None
             if minimization:
-                best_trial = min(
-                    rankable_trials,
-                    key=lambda t: t.metrics.get(primary_objective, float("inf")),
-                )
+                best_trial = min(scored_trials, key=lambda item: item[1])[0]
             else:
-                best_trial = max(
-                    rankable_trials,
-                    key=lambda t: t.metrics.get(primary_objective, float("-inf")),
-                )
+                best_trial = max(scored_trials, key=lambda item: item[1])[0]
             self._best_trial_cached = best_trial
             return best_trial
 
@@ -1101,32 +1110,30 @@ class OptimizationOrchestrator:
 
     def _simple_is_better(self, trial_result: TrialResult) -> bool:
         """Check if trial_result is better than current best using simple comparison."""
-        if self._best_trial_cached is None:
-            return True
-
         if not self.optimizer.objectives:
             return True
 
         primary_objective = self.optimizer.objectives[0]
-        new_score = (
+        new_score_value = coerce_finite_objective_score(
             trial_result.get_metric(primary_objective)
             if hasattr(trial_result, "get_metric")
-            else ((trial_result.metrics or {}).get(primary_objective))
+            else (trial_result.metrics or {}).get(primary_objective)
         )
-        if new_score is None:
+        if new_score_value is None:
             return False
 
-        current_score = (
+        if self._best_trial_cached is None:
+            return True
+
+        current_score_value = coerce_finite_objective_score(
             self._best_trial_cached.get_metric(primary_objective)
             if hasattr(self._best_trial_cached, "get_metric")
             else (self._best_trial_cached.metrics or {}).get(primary_objective)
         )
-        if current_score is None:
+        if current_score_value is None:
             return True
 
         minimization = is_minimization_objective(primary_objective)
-        new_score_value = cast(float, new_score)
-        current_score_value = cast(float, current_score)
         if _primary_scores_tied(new_score_value, current_score_value):
             return self._secondary_tie_breaks_incumbent(trial_result, primary_objective)
         if minimization:
@@ -1157,6 +1164,13 @@ class OptimizationOrchestrator:
     def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
         if not self.optimizer.objectives:
             self._best_trial_cached = trial_result
+            return
+
+        primary_objective = self.optimizer.objectives[0]
+        if (
+            coerce_finite_objective_score(trial_result.get_metric(primary_objective))
+            is None
+        ):
             return
 
         # Track metrics for this trial
