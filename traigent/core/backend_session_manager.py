@@ -663,7 +663,7 @@ class BackendSessionManager:
             return SessionContext(
                 session_id=None,
                 dataset_name=(
-                    dataset.name if hasattr(dataset, "name") else "default_evaluation"
+                    getattr(dataset, "name", None) or "default_evaluation"
                 ),
                 function_name=function_identifier,
                 optimization_id=self._optimization_id,
@@ -672,7 +672,7 @@ class BackendSessionManager:
 
         if self._backend_client:
             evaluation_set_name = (
-                dataset.name if hasattr(dataset, "name") else "default_evaluation"
+                getattr(dataset, "name", None) or "default_evaluation"
             )
 
             max_trials_value = max_trials if max_trials is not None else 10
@@ -760,7 +760,7 @@ class BackendSessionManager:
                     )
 
         dataset_name = (
-            dataset.name if hasattr(dataset, "name") else "default_evaluation"
+            getattr(dataset, "name", None) or "default_evaluation"
         )
 
         return SessionContext(
