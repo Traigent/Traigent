@@ -239,6 +239,7 @@ Changelog = "https://github.com/Traigent/Traigent/blob/main/CHANGELOG.md"
 
 [project.scripts]
 traigent = "traigent.cli.main:cli"
+traigent-analytics-mcp = "traigent.analytics_mcp.server:main"
 
 [project.entry-points."traigent.validators"]
 python = "traigent_validation.validators:PythonConstraintValidator"
