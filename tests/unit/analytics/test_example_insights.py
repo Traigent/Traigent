@@ -569,4 +569,6 @@ class TestNoSignalTaxonomyInSource:
             "score_distributions",
         ]
         leaked = [name for name in forbidden if name in source]
-        assert not leaked, f"Signal taxonomy leaked into example_insights source: {leaked}"
+        assert not leaked, (
+            f"Signal taxonomy leaked into example_insights source: {leaked}"
+        )
