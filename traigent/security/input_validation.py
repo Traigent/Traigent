@@ -29,6 +29,8 @@ logger = get_logger(__name__)
 
 T = TypeVar("T")
 
+INVALID_URL_HOST = "Invalid URL host"
+
 
 class InputValidator:
     """Comprehensive input validation and sanitization."""
@@ -204,22 +206,22 @@ class InputValidator:
             raise ValidationError("Invalid URL format")
 
         if parsed.username or parsed.password:
-            raise ValidationError("Invalid URL host")
+            raise ValidationError(INVALID_URL_HOST)
 
         try:
             if parsed.port is not None:
-                raise ValidationError("Invalid URL host")
+                raise ValidationError(INVALID_URL_HOST)
         except ValueError:
-            raise ValidationError("Invalid URL host") from None
+            raise ValidationError(INVALID_URL_HOST) from None
 
         hostname = parsed.hostname
         if not hostname or len(hostname) > 253 or hostname.endswith("."):
-            raise ValidationError("Invalid URL host")
+            raise ValidationError(INVALID_URL_HOST)
 
         # Validate bounded DNS labels instead of a whole-host regex to avoid ReDoS.
         labels = hostname.split(".")
         if any(not cls.PATTERNS["hostname_label"].match(label) for label in labels):
-            raise ValidationError("Invalid URL host")
+            raise ValidationError(INVALID_URL_HOST)
 
         if any(char in raw_url for char in ['"', "'", "<", ">"]):
             raise ValidationError("Invalid URL format")
