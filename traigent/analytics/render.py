@@ -103,6 +103,16 @@ def _require_mapping(payload: Any) -> dict[str, Any]:
     return payload
 
 
+def _resolve_axis_metric_key(measures: Any, axis: str) -> str:
+    """Resolve a canonical axis name to the payload's actual metric key."""
+    if not isinstance(measures, dict):
+        return axis
+    resolved = measures.get(axis)
+    if isinstance(resolved, str) and resolved:
+        return resolved
+    return axis
+
+
 def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
     """Plot a cost/quality scatter from a ``run_pareto`` payload.
 
@@ -111,8 +121,8 @@ def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
     is recomputed.
     """
     measures = payload.get("measures") or {}
-    quality_key = "quality"
-    cost_key = "cost"
+    quality_key = _resolve_axis_metric_key(measures, "quality")
+    cost_key = _resolve_axis_metric_key(measures, "cost")
 
     fig, ax = plt.subplots(figsize=(7, 5))
 
@@ -187,7 +197,8 @@ def _render_pareto(plt: Any, payload: dict[str, Any]) -> Any:
     if not plotted_any:
         raise ChartRenderError(
             "run_pareto payload had no plottable points "
-            "(need frontier/dominated entries with metrics.cost and metrics.quality)."
+            f"(need frontier/dominated entries with metrics.{cost_key} "
+            f"and metrics.{quality_key})."
         )
 
     quality_meta = measures.get(quality_key) if isinstance(measures, dict) else None
