@@ -12,6 +12,12 @@ from traigent_validation.base import (
     SatStatus,
     ValidationResult,
 )
+from traigent.utils.discrete_domains import (
+    stepped_float_cardinality,
+    stepped_float_values,
+    stepped_int_cardinality,
+    stepped_int_values,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -87,12 +93,11 @@ class PythonConstraintValidator:
         if not tvars:
             return SatResult(status=SatStatus.UNSAT, message="No parameters defined")
 
-        domains = self._finite_domains(tvars)
-        if domains is not None:
-            names = list(domains)
+        cardinalities = self._finite_domain_cardinalities(tvars)
+        if cardinalities is not None:
             total_configs = 1
-            for values in domains.values():
-                total_configs *= len(values)
+            for cardinality in cardinalities.values():
+                total_configs *= cardinality
                 if total_configs > _MAX_SAT_ENUMERATION_CONFIGS:
                     return SatResult(
                         status=SatStatus.UNKNOWN,
@@ -103,6 +108,17 @@ class PythonConstraintValidator:
                         ),
                     )
 
+            domains = self._finite_domains(tvars)
+            if domains is None:
+                return SatResult(
+                    status=SatStatus.UNKNOWN,
+                    message=(
+                        "Python validator cannot prove satisfiability. "
+                        "Consider a SAT/SMT validator for complex constraints."
+                    ),
+                )
+
+            names = list(domains)
             var_names = {id(tvar): name for name, tvar in tvars.items()}
             for values in product(*(domains[name] for name in names)):
                 config = dict(zip(names, values, strict=True))
@@ -128,6 +144,42 @@ class PythonConstraintValidator:
             ),
         )
 
+    def _finite_domain_cardinalities(
+        self, tvars: Mapping[str, ParameterRange]
+    ) -> dict[str, int] | None:
+        cardinalities: dict[str, int] = {}
+        for name, tvar in tvars.items():
+            cardinality = self._finite_domain_cardinality(tvar)
+            if cardinality is None:
+                return None
+            cardinalities[name] = cardinality
+        return cardinalities
+
+    def _finite_domain_cardinality(self, tvar: ParameterRange) -> int | None:
+        values = getattr(tvar, "values", None)
+        if values is not None:
+            try:
+                return len(values)
+            except TypeError:
+                return None
+
+        low = getattr(tvar, "low", None)
+        high = getattr(tvar, "high", None)
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+            return None
+
+        if type(tvar).__name__ == "IntRange":
+            step = getattr(tvar, "step", None) or 1
+            if not isinstance(step, int) or step <= 0:
+                return None
+            return stepped_int_cardinality(int(low), int(high), step)
+
+        step = getattr(tvar, "step", None)
+        if step is None or not isinstance(step, (int, float)) or step <= 0:
+            return None
+
+        return stepped_float_cardinality(float(low), float(high), float(step))
+
     def _finite_domains(
         self, tvars: Mapping[str, ParameterRange]
     ) -> dict[str, tuple[Any, ...]] | None:
@@ -146,14 +198,20 @@ class PythonConstraintValidator:
 
         low = getattr(tvar, "low", None)
         high = getattr(tvar, "high", None)
-        if not isinstance(low, int) or not isinstance(high, int):
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
             return None
 
-        step = getattr(tvar, "step", None) or 1
-        if not isinstance(step, int) or step <= 0:
+        if type(tvar).__name__ == "IntRange":
+            step = getattr(tvar, "step", None) or 1
+            if not isinstance(step, int) or step <= 0:
+                return None
+            return stepped_int_values(int(low), int(high), step)
+
+        step = getattr(tvar, "step", None)
+        if step is None or not isinstance(step, (int, float)) or step <= 0:
             return None
 
-        return tuple(range(low, high + 1, step))
+        return stepped_float_values(float(low), float(high), float(step))
 
     def validate_structural_constraints(
         self,

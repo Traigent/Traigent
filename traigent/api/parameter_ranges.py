@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -58,6 +59,7 @@ from traigent.api.constraint_builders import (
     CategoricalConstraintBuilderMixin,
     NumericConstraintBuilderMixin,
 )
+from traigent.utils.discrete_domains import float_step_divides_span
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +193,16 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
             )
         if self.step is not None and self.step <= 0:
             raise ValueError(f"Range step must be positive, got {self.step}")
+        if self.step is not None and not float_step_divides_span(
+            float(self.low), float(self.high), float(self.step)
+        ):
+            warnings.warn(
+                f"Range step {self.step} does not evenly divide span "
+                f"[{self.low}, {self.high}]; upper bound {self.high} will be "
+                "included as an extra discrete point with uneven spacing.",
+                UserWarning,
+                stacklevel=2,
+            )
         if self.log and self.low <= 0:
             raise ValueError(f"log=True requires positive bounds, got low={self.low}")
         if self.log and self.step is not None:
