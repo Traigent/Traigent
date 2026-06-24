@@ -7,6 +7,7 @@ Run with: TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/langchain/ -v
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -475,6 +476,67 @@ class TestTraigentHandlerChatModelCallbacks:
         assert call.total_tokens == 150
         assert call.model == "gpt-4o"
 
+    def test_on_chat_model_end_reads_generation_usage_metadata(self, handler):
+        """Anthropic/Gemini chat usage_metadata should populate tokens and cost."""
+        run_id = str(uuid4())
+        handler.on_chat_model_start(
+            serialized={"kwargs": {"model": "claude-3-haiku-20240307"}},
+            messages=[[]],
+            run_id=run_id,
+        )
+
+        message = SimpleNamespace(
+            usage_metadata={
+                "input_tokens": 12,
+                "output_tokens": 7,
+                "total_tokens": 19,
+            },
+            response_metadata={"model_name": "claude-3-haiku-20240307"},
+        )
+        response = SimpleNamespace(
+            llm_output={},
+            generations=[[SimpleNamespace(message=message)]],
+        )
+
+        with patch.object(handler, "_estimate_cost", return_value=0.000123):
+            handler.on_chat_model_end(response=response, run_id=run_id)
+
+        call = handler._completed_llm_calls[0]
+        assert call.input_tokens == 12
+        assert call.output_tokens == 7
+        assert call.total_tokens == 19
+        assert call.cost == pytest.approx(0.000123)
+
+    def test_on_chat_model_end_reads_gemini_usage_metadata(self, handler):
+        """Gemini prompt/candidate token count fields should be counted."""
+        run_id = str(uuid4())
+        handler.on_chat_model_start(
+            serialized={"kwargs": {"model": "gemini-1.5-flash"}},
+            messages=[[]],
+            run_id=run_id,
+        )
+
+        message = SimpleNamespace(
+            usage_metadata={
+                "prompt_token_count": 20,
+                "candidates_token_count": 8,
+                "total_token_count": 28,
+            }
+        )
+        response = SimpleNamespace(
+            llm_output={},
+            generations=[[SimpleNamespace(message=message)]],
+        )
+
+        with patch.object(handler, "_estimate_cost", return_value=0.000456):
+            handler.on_chat_model_end(response=response, run_id=run_id)
+
+        call = handler._completed_llm_calls[0]
+        assert call.input_tokens == 20
+        assert call.output_tokens == 8
+        assert call.total_tokens == 28
+        assert call.cost == pytest.approx(0.000456)
+
     def test_on_chat_model_error(self, handler):
         """Test on_chat_model_error callback."""
         run_id = str(uuid4())
@@ -827,9 +889,9 @@ class TestCostEstimation:
     def test_estimate_cost_unknown_model_returns_zero(self, handler):
         """Test _estimate_cost returns 0.0 for unknown model (strict=False)."""
         cost = handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
-        assert cost == pytest.approx(
-            0.0
-        ), "Unknown model should return 0.0 with strict=False"
+        assert cost == pytest.approx(0.0), (
+            "Unknown model should return 0.0 with strict=False"
+        )
 
     def test_estimate_cost_unknown_model_raises_in_strict_mode(self):
         """Strict cost accounting raises for unknown model pricing."""

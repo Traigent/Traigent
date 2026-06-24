@@ -11,6 +11,7 @@ Cost resolution is intentionally fail-fast:
 
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -262,10 +263,17 @@ def _parse_custom_pricing_entry(
             f"Invalid numeric pricing for model '{model}' in {source}"
         ) from exc
 
+    if not math.isfinite(input_cost) or not math.isfinite(output_cost):
+        raise ValueError(f"Invalid non-finite pricing for model '{model}' in {source}")
+
     if input_cost < 0 or output_cost < 0:
         raise ValueError(f"Invalid negative pricing for model '{model}' in {source}")
 
     return input_cost, output_cost
+
+
+def _reject_non_finite_json_constant(token: str) -> None:
+    raise ValueError(f"Non-finite literal '{token}' not allowed in custom pricing")
 
 
 def _normalize_custom_pricing_map(
@@ -293,7 +301,9 @@ def _load_custom_pricing_from_sources() -> dict[str, tuple[float, float]]:
     if file_path:
         try:
             with open(file_path, encoding="utf-8") as f:
-                file_payload = json.load(f)
+                file_payload = json.load(
+                    f, parse_constant=_reject_non_finite_json_constant
+                )
         except Exception as exc:
             raise ValueError(
                 f"Failed to parse custom pricing file '{file_path}'."
@@ -307,7 +317,9 @@ def _load_custom_pricing_from_sources() -> dict[str, tuple[float, float]]:
     env_json = os.environ.get(_CUSTOM_PRICING_JSON_ENV, "").strip()
     if env_json:
         try:
-            env_payload = json.loads(env_json)
+            env_payload = json.loads(
+                env_json, parse_constant=_reject_non_finite_json_constant
+            )
         except Exception as exc:
             raise ValueError(
                 f"Failed to parse {_CUSTOM_PRICING_JSON_ENV}: invalid JSON"

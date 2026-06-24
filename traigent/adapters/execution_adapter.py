@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Any, cast
 
 from traigent.config.types import ExecutionMode
+from traigent.evaluators.base import _accuracy_values_match
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
             # Exact / case-insensitive match — must stay aligned with
             # LocalEvaluator and the public docs (the tracked fix). Diverging
             # here was how "Paris" vs "paris" silently scored 0.0.
-            is_correct = str(output).strip().lower() == str(expected).strip().lower()
+            is_correct = _accuracy_values_match(output, expected)
             result["correct"] = is_correct
 
         elif eval_type == "contains":
@@ -245,8 +246,21 @@ class LocalExecutionAdapter(ExecutionAdapter):
 
         else:
             # Unknown evaluation type
-            result["correct"] = None
+            result["correct"] = False
+            result["success"] = False
             result["unknown_eval_type"] = eval_type
+            result["error"] = (
+                f"Unsupported evaluation_type '{eval_type}'. "
+                "Use exact_match, contains, numeric, semantic with a custom evaluator, "
+                "or provide a scoring_function."
+            )
+            logger.error(
+                "Unsupported evaluation_type %r for LocalExecutionAdapter; marking "
+                "example as failed. trial_id=%s example_index=%s",
+                eval_type,
+                trial_id or "<unknown>",
+                example_index if example_index is not None else "<unknown>",
+            )
 
         return result
 

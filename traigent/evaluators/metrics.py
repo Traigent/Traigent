@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from traigent.evaluators.base import _accuracy_values_match
 from traigent.invokers.base import InvocationResult
 from traigent.utils.logging import get_logger
 
@@ -117,7 +118,9 @@ class MetricsComputer:
         # Accuracy (exact match)
         if "accuracy" in self.metrics and successful_pairs:
             correct = sum(
-                1 for output, expected in successful_pairs if output == expected
+                1
+                for output, expected in successful_pairs
+                if _accuracy_values_match(output, expected)
             )
             computed_metrics["accuracy"] = correct / len(successful_pairs)
         elif "accuracy" in self.metrics:

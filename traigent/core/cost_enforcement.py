@@ -667,12 +667,15 @@ Options:
             CostTrackingRequiredError: If cost is None and
                 TRAIGENT_REQUIRE_COST_TRACKING=true or
                 TRAIGENT_STRICT_COST_ACCOUNTING=true.
-            ValueError: If a negative cost is provided.
+            ValueError: If a negative or non-finite cost is provided.
         """
         self._check_mixing(is_async=False)
 
-        if cost is not None and cost < 0:
-            raise ValueError(f"Cost must be non-negative, got {cost}")
+        if cost is not None:
+            if not math.isfinite(cost):
+                raise ValueError(f"Cost must be finite, got {cost}")
+            if cost < 0:
+                raise ValueError(f"Cost must be non-negative, got {cost}")
 
         # Read environment-driven strictness once per call.
         # Keep this outside the lock to minimize lock hold time.
@@ -875,12 +878,15 @@ Options:
             CostTrackingRequiredError: If cost is None and
                 TRAIGENT_REQUIRE_COST_TRACKING=true or
                 TRAIGENT_STRICT_COST_ACCOUNTING=true.
-            ValueError: If a negative cost is provided.
+            ValueError: If a negative or non-finite cost is provided.
         """
         self._check_mixing(is_async=True)
 
-        if cost is not None and cost < 0:
-            raise ValueError(f"Cost must be non-negative, got {cost}")
+        if cost is not None:
+            if not math.isfinite(cost):
+                raise ValueError(f"Cost must be finite, got {cost}")
+            if cost < 0:
+                raise ValueError(f"Cost must be non-negative, got {cost}")
 
         # Read environment-driven strictness once per call.
         # Keep this outside the lock to minimize lock hold time.
