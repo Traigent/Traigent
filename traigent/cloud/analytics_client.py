@@ -18,19 +18,24 @@ than adding a second auth path. Tenancy is owned by the backend and derived
 from the authenticated principal; this client never sends a caller-supplied
 ``tenant_id``.
 
-Today's wired endpoints (Wave-1):
+Wired analytics endpoints:
 
 * ``GET /api/v1/analytics/runs/{run_id}/report``
 * ``GET /api/v1/analytics/dashboards/optimization-overview``
 * ``POST /api/v1/optimization-comparisons``
 * ``GET /api/v1/analytics/runs/{run_id}/decision-payload``
+* ``GET /api/v1/analytics/runs/{run_id}/pareto``
+* ``GET /api/v1/analytics/runs/{run_id}/correlations``
+* ``GET /api/v1/analytics/runs/{run_id}/leaderboard``
+* ``GET /api/v1/analytics/runs/{run_id}/parameter-insights``
 """
 
 # Traceability: CONC-Layer-Infra CONC-Security FUNC-CLOUD-HYBRID FUNC-ANALYTICS REQ-CLOUD-009
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from urllib.parse import quote
 
@@ -63,6 +68,38 @@ _DECISION_PAYLOAD_REQUIRED_KEYS = frozenset(
         "recommended_action",
         "evidence",
         "drilldowns",
+        "warnings",
+    }
+)
+_RUN_PARETO_REQUIRED_KEYS = frozenset(
+    {
+        "run_id",
+        "project_id",
+        "measures",
+        "frontier",
+        "dominated",
+        "shape",
+        "warnings",
+    }
+)
+_RUN_CORRELATIONS_REQUIRED_KEYS = frozenset(
+    {
+        "run_id",
+        "method",
+        "sample_size",
+        "measure_correlations",
+        "parameter_correlations",
+        "warnings",
+    }
+)
+_RUN_LEADERBOARD_REQUIRED_KEYS = frozenset({"run_id", "ranking_basis", "configs"})
+_RUN_PARAMETER_INSIGHTS_REQUIRED_KEYS = frozenset(
+    {
+        "run_id",
+        "target_measure",
+        "min_trials",
+        "drivers",
+        "interactions",
         "warnings",
     }
 )
@@ -116,6 +153,25 @@ def _quote_segment(value: str, *, field: str) -> str:
     if not text:
         raise ValueError(f"{field} must be a non-empty string.")
     return quote(text, safe="")
+
+
+def _json_object_query_value(
+    value: Mapping[str, object] | str | None, *, field: str
+) -> str | None:
+    """Serialize a leaderboard JSON-object query value."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    try:
+        return json.dumps(value, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be JSON-object serializable.") from exc
+
+
+def _without_none(params: dict[str, str | None]) -> dict[str, str]:
+    return {key: value for key, value in params.items() if value is not None}
 
 
 def normalize_decision_intent(intent: str | None = None) -> str:
@@ -341,6 +397,120 @@ class BackendAnalyticsClient:
             params={"intent": normalized_intent},
         )
         _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what="decision brief")
+        return payload
+
+    async def get_single_run_pareto(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        x_measure: str = "cost",
+        y_measure: str = "quality",
+        request_count: int = 1,
+    ) -> dict[str, Any]:
+        """Return the backend's run_pareto v0 payload for one run."""
+        path = f"/api/v1/analytics/runs/{_quote_segment(run_id, field='run_id')}/pareto"
+        payload = await self._get_json(
+            path,
+            what="single-run Pareto",
+            headers=self._project_headers(project_id),
+            params={
+                "x_measure": str(x_measure),
+                "y_measure": str(y_measure),
+                "request_count": str(request_count),
+            },
+        )
+        _require_keys(payload, _RUN_PARETO_REQUIRED_KEYS, what="single-run Pareto")
+        return payload
+
+    async def get_correlation_matrix(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        method: str = "pearson",
+        min_sample: int = 3,
+    ) -> dict[str, Any]:
+        """Return the backend's run_correlations v0 payload for one run."""
+        path = (
+            "/api/v1/analytics/runs/"
+            f"{_quote_segment(run_id, field='run_id')}/correlations"
+        )
+        payload = await self._get_json(
+            path,
+            what="correlation matrix",
+            headers=self._project_headers(project_id),
+            params={"method": str(method), "min_sample": str(min_sample)},
+        )
+        _require_keys(
+            payload, _RUN_CORRELATIONS_REQUIRED_KEYS, what="correlation matrix"
+        )
+        return payload
+
+    async def get_run_leaderboard(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        objective: str = "weighted",
+        weights: Mapping[str, object] | str | None = None,
+        constraints: Mapping[str, object] | str | None = None,
+        request_count: int = 1,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return the backend's run_leaderboard v0 payload for one run."""
+        path = (
+            "/api/v1/analytics/runs/"
+            f"{_quote_segment(run_id, field='run_id')}/leaderboard"
+        )
+        payload = await self._get_json(
+            path,
+            what="run leaderboard",
+            headers=self._project_headers(project_id),
+            params=_without_none(
+                {
+                    "objective": str(objective),
+                    "weights": _json_object_query_value(weights, field="weights"),
+                    "constraints": _json_object_query_value(
+                        constraints, field="constraints"
+                    ),
+                    "request_count": str(request_count),
+                    "limit": str(limit),
+                }
+            ),
+        )
+        _require_keys(payload, _RUN_LEADERBOARD_REQUIRED_KEYS, what="run leaderboard")
+        return payload
+
+    async def get_parameter_insights(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        target_measure: str = "quality",
+        min_trials: int = 10,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """Return the backend's run_parameter_insights v0 payload for one run."""
+        path = (
+            "/api/v1/analytics/runs/"
+            f"{_quote_segment(run_id, field='run_id')}/parameter-insights"
+        )
+        payload = await self._get_json(
+            path,
+            what="parameter insights",
+            headers=self._project_headers(project_id),
+            params={
+                "target_measure": str(target_measure),
+                "min_trials": str(min_trials),
+                "top_k": str(top_k),
+            },
+        )
+        _require_keys(
+            payload,
+            _RUN_PARAMETER_INSIGHTS_REQUIRED_KEYS,
+            what="parameter insights",
+        )
         return payload
 
 

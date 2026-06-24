@@ -191,6 +191,167 @@ class TestDecisionBriefTool:
         reader.get_run_decision_brief.assert_not_called()
 
 
+class TestWave2AnalyticsTools:
+    @pytest.mark.asyncio
+    async def test_pareto_tool_calls_client(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_single_run_pareto_tool
+
+        reader = AsyncMock()
+        reader.get_single_run_pareto.return_value = {"run_id": "run_123"}
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_single_run_pareto_tool(
+            "proj_abc",
+            "run_123",
+            x_measure="cost",
+            y_measure="quality",
+            request_count=5,
+        )
+
+        assert result["ok"] is True
+        assert result["single_run_pareto"] == {"run_id": "run_123"}
+        reader.get_single_run_pareto.assert_awaited_once_with(
+            "proj_abc",
+            "run_123",
+            x_measure="cost",
+            y_measure="quality",
+            request_count=5,
+        )
+
+    @pytest.mark.asyncio
+    async def test_correlation_tool_calls_client(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_correlation_matrix_tool
+
+        reader = AsyncMock()
+        reader.get_correlation_matrix.return_value = {"run_id": "run_123"}
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_correlation_matrix_tool(
+            "proj_abc", "run_123", method="spearman", min_sample=4
+        )
+
+        assert result["ok"] is True
+        assert result["correlation_matrix"] == {"run_id": "run_123"}
+        reader.get_correlation_matrix.assert_awaited_once_with(
+            "proj_abc", "run_123", method="spearman", min_sample=4
+        )
+
+    @pytest.mark.asyncio
+    async def test_leaderboard_tool_calls_client(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_run_leaderboard_tool
+
+        reader = AsyncMock()
+        reader.get_run_leaderboard.return_value = {"run_id": "run_123"}
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_run_leaderboard_tool(
+            "proj_abc",
+            "run_123",
+            objective="weighted",
+            weights={"quality": 0.8},
+            constraints='{"cost":1.0}',
+            request_count=7,
+            limit=10,
+        )
+
+        assert result["ok"] is True
+        assert result["run_leaderboard"] == {"run_id": "run_123"}
+        reader.get_run_leaderboard.assert_awaited_once_with(
+            "proj_abc",
+            "run_123",
+            objective="weighted",
+            weights={"quality": 0.8},
+            constraints='{"cost":1.0}',
+            request_count=7,
+            limit=10,
+        )
+
+    @pytest.mark.asyncio
+    async def test_parameter_insights_tool_calls_client(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_parameter_insights_tool
+
+        reader = AsyncMock()
+        reader.get_parameter_insights.return_value = {"run_id": "run_123"}
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_parameter_insights_tool(
+            "proj_abc",
+            "run_123",
+            target_measure="accuracy",
+            min_trials=12,
+            top_k=5,
+        )
+
+        assert result["ok"] is True
+        assert result["parameter_insights"] == {"run_id": "run_123"}
+        reader.get_parameter_insights.assert_awaited_once_with(
+            "proj_abc",
+            "run_123",
+            target_measure="accuracy",
+            min_trials=12,
+            top_k=5,
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_project_id_is_rejected_for_new_tools(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+        calls = [
+            tools_mod.analytics_get_single_run_pareto_tool("", "run_123"),
+            tools_mod.analytics_get_correlation_matrix_tool("", "run_123"),
+            tools_mod.analytics_get_run_leaderboard_tool("", "run_123"),
+            tools_mod.analytics_get_parameter_insights_tool("", "run_123"),
+        ]
+
+        for call in calls:
+            result = await call
+            assert result["ok"] is False
+            assert "project_id" in result["message"]
+
+        reader.get_single_run_pareto.assert_not_called()
+        reader.get_correlation_matrix.assert_not_called()
+        reader.get_run_leaderboard.assert_not_called()
+        reader.get_parameter_insights.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_backend_failures_are_structured_for_new_tools(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        reader = AsyncMock()
+        reader.get_single_run_pareto.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
+        reader.get_correlation_matrix.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
+        reader.get_run_leaderboard.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
+        reader.get_parameter_insights.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
+        _install_fake_client(monkeypatch, reader)
+
+        calls = [
+            tools_mod.analytics_get_single_run_pareto_tool("proj_abc", "run_123"),
+            tools_mod.analytics_get_correlation_matrix_tool("proj_abc", "run_123"),
+            tools_mod.analytics_get_run_leaderboard_tool("proj_abc", "run_123"),
+            tools_mod.analytics_get_parameter_insights_tool("proj_abc", "run_123"),
+        ]
+
+        for call in calls:
+            result = await call
+            assert result["ok"] is False
+            assert result["code"] == "backend_unavailable"
+            assert "secret-host" not in result["message"]
+
+
 class TestRenderChartTool:
     def test_renders_and_returns_path(self, tmp_path) -> None:
         from traigent.analytics_mcp.tools import analytics_render_chart_tool
@@ -276,6 +437,10 @@ class TestNoTenantArgument:
             tools_mod.analytics_get_project_overview_tool,
             tools_mod.analytics_compare_runs_tool,
             tools_mod.analytics_get_run_decision_brief_tool,
+            tools_mod.analytics_get_single_run_pareto_tool,
+            tools_mod.analytics_get_correlation_matrix_tool,
+            tools_mod.analytics_get_run_leaderboard_tool,
+            tools_mod.analytics_get_parameter_insights_tool,
             tools_mod.analytics_render_chart_tool,
         ]
         for fn in tool_callables:

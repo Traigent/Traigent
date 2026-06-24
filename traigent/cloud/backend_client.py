@@ -12,6 +12,7 @@ import os
 import secrets
 import sys
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -172,6 +173,96 @@ class AnalyticsNamespace:
             return cast(
                 dict[str, Any],
                 await reader.get_run_decision_brief(project_id, run_id, intent),
+            )
+
+    async def get_single_run_pareto(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        x_measure: str = "cost",
+        y_measure: str = "quality",
+        request_count: int = 1,
+    ) -> dict[str, Any]:
+        """Return the backend's Pareto frontier for one run."""
+        async with self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_single_run_pareto(
+                    project_id,
+                    run_id,
+                    x_measure=x_measure,
+                    y_measure=y_measure,
+                    request_count=request_count,
+                ),
+            )
+
+    async def get_correlation_matrix(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        method: str = "pearson",
+        min_sample: int = 3,
+    ) -> dict[str, Any]:
+        """Return the backend's correlation matrix for one run."""
+        async with self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_correlation_matrix(
+                    project_id,
+                    run_id,
+                    method=method,
+                    min_sample=min_sample,
+                ),
+            )
+
+    async def get_run_leaderboard(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        objective: str = "weighted",
+        weights: Mapping[str, object] | str | None = None,
+        constraints: Mapping[str, object] | str | None = None,
+        request_count: int = 1,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return the backend's ranked configuration leaderboard for one run."""
+        async with self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_run_leaderboard(
+                    project_id,
+                    run_id,
+                    objective=objective,
+                    weights=weights,
+                    constraints=constraints,
+                    request_count=request_count,
+                    limit=limit,
+                ),
+            )
+
+    async def get_parameter_insights(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        target_measure: str = "quality",
+        min_trials: int = 10,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """Return the backend's parameter-importance insights for one run."""
+        async with self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_parameter_insights(
+                    project_id,
+                    run_id,
+                    target_measure=target_measure,
+                    min_trials=min_trials,
+                    top_k=top_k,
+                ),
             )
 
 

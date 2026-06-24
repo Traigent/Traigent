@@ -37,6 +37,10 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "analytics_get_project_overview",
     "analytics_compare_runs",
     "analytics_get_run_decision_brief",
+    "analytics_get_single_run_pareto",
+    "analytics_get_correlation_matrix",
+    "analytics_get_run_leaderboard",
+    "analytics_get_parameter_insights",
     "analytics_render_chart",
 )
 
@@ -252,6 +256,108 @@ async def analytics_get_run_decision_brief_tool(
     return await _call_backend(
         lambda reader: reader.get_run_decision_brief(pid, rid, normalized_intent),
         what="decision brief",
+    )
+
+
+async def analytics_get_single_run_pareto_tool(
+    project_id: str,
+    run_id: str,
+    x_measure: str = "cost",
+    y_measure: str = "quality",
+    request_count: int = 1,
+) -> dict[str, Any]:
+    """Fetch the backend's Pareto frontier (run_pareto v0) for one run."""
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        rid = _require_identifier(run_id, field="run_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.get_single_run_pareto(
+            pid,
+            rid,
+            x_measure=x_measure,
+            y_measure=y_measure,
+            request_count=request_count,
+        ),
+        what="single run pareto",
+    )
+
+
+async def analytics_get_correlation_matrix_tool(
+    project_id: str,
+    run_id: str,
+    method: str = "pearson",
+    min_sample: int = 3,
+) -> dict[str, Any]:
+    """Fetch the backend's correlation matrix (run_correlations v0)."""
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        rid = _require_identifier(run_id, field="run_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.get_correlation_matrix(
+            pid,
+            rid,
+            method=method,
+            min_sample=min_sample,
+        ),
+        what="correlation matrix",
+    )
+
+
+async def analytics_get_run_leaderboard_tool(
+    project_id: str,
+    run_id: str,
+    objective: str = "weighted",
+    weights: dict[str, object] | str | None = None,
+    constraints: dict[str, object] | str | None = None,
+    request_count: int = 1,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Fetch the backend's ranked configuration leaderboard for one run."""
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        rid = _require_identifier(run_id, field="run_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.get_run_leaderboard(
+            pid,
+            rid,
+            objective=objective,
+            weights=weights,
+            constraints=constraints,
+            request_count=request_count,
+            limit=limit,
+        ),
+        what="run leaderboard",
+    )
+
+
+async def analytics_get_parameter_insights_tool(
+    project_id: str,
+    run_id: str,
+    target_measure: str = "quality",
+    min_trials: int = 10,
+    top_k: int = 10,
+) -> dict[str, Any]:
+    """Fetch the backend's parameter-importance insights for one run."""
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        rid = _require_identifier(run_id, field="run_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.get_parameter_insights(
+            pid,
+            rid,
+            target_measure=target_measure,
+            min_trials=min_trials,
+            top_k=top_k,
+        ),
+        what="parameter insights",
     )
 
 
