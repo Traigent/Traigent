@@ -529,6 +529,38 @@ class TestPythonConstraintValidator:
         assert result.status == SatStatus.UNSAT
         assert result.unsat_core == [0, 1]
 
+    def test_check_satisfiability_stepped_int_includes_high(self) -> None:
+        """Stepped IntRange satisfiability includes the inclusive high endpoint."""
+        count = IntRange(0, 5, step=2, name="count")
+        constraints = [require(count.equals(5))]
+
+        validator = PythonConstraintValidator()
+        result = validator.check_satisfiability({"count": count}, constraints)
+
+        assert result.status == SatStatus.SAT
+        assert result.example_config == {"count": 5}
+
+    def test_check_satisfiability_stepped_float_unsat(self) -> None:
+        """Stepped float ranges are finite and can prove contradictions UNSAT."""
+        temp = Range(0.0, 1.0, step=0.5, name="temp")
+        constraints = [require(temp.equals(0.5)), require(temp.equals(1.0))]
+
+        validator = PythonConstraintValidator()
+        result = validator.check_satisfiability({"temp": temp}, constraints)
+
+        assert result.status == SatStatus.UNSAT
+
+    def test_check_satisfiability_stepped_float_sat_example(self) -> None:
+        """Stepped float satisfiable examples come from the snapped grid."""
+        temp = Range(0.0, 1.0, step=0.5, name="temp")
+        constraints = [require(temp.gte(0.5))]
+
+        validator = PythonConstraintValidator()
+        result = validator.check_satisfiability({"temp": temp}, constraints)
+
+        assert result.status == SatStatus.SAT
+        assert result.example_config in ({"temp": 0.5}, {"temp": 1.0})
+
 
 class TestSATConstraintValidator:
     """Tests for SATConstraintValidator compatibility adapter."""

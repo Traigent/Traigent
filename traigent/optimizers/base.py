@@ -14,6 +14,7 @@ from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
 )
+from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
 from traigent.utils.validation import validate_objectives
 
 logger = get_logger(__name__)
@@ -280,34 +281,7 @@ class BaseOptimizer(ABC):
         Returns:
             Cardinality count, 0 for empty, or None for continuous types.
         """
-        # Detect range dicts from hybrid discovery ({"low": x, "high": y})
-        # before falling back to "categorical" default
-        has_range = "low" in definition and "high" in definition
-        param_type = (definition.get("type") or "").lower()
-
-        if not param_type and has_range:
-            # No explicit type but has low/high → continuous float range
-            return None
-
-        if not param_type:
-            param_type = "categorical"
-
-        if param_type in {"fixed", "constant"}:
-            return 1
-
-        if param_type in {"categorical", "choice"}:
-            choices = definition.get("choices") or definition.get("values") or []
-            return len(choices) if choices else 0
-
-        if param_type in {"int", "integer"}:
-            low, high = definition.get("low"), definition.get("high")
-            if low is not None and high is not None:
-                step = definition.get("step", 1)
-                return max(((int(high) - int(low)) // int(step)) + 1, 1)
-            return None
-
-        # Float or other continuous types
-        return None
+        return discrete_cardinality_for_config_param(definition)
 
     def _get_param_cardinality(self, definition: Any) -> int | None:
         """Get cardinality for a single parameter definition.

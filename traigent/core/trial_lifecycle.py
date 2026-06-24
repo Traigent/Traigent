@@ -106,7 +106,7 @@ class TrialLifecycle:
             Tuple of (updated_trial_count, action) where action is "continue" or "break"
         """
         orchestrator = self._orchestrator
-        optimizer_trial_count_before_suggest = self._snapshot_optimizer_trial_count()
+        optimizer_state_before_suggest = self._snapshot_optimizer_state()
 
         if (
             orchestrator.max_trials is not None
@@ -130,8 +130,16 @@ class TrialLifecycle:
                         orchestrator._trials
                     )
                     config = orchestrator._apply_knob_resolution(config)
-            except OptimizationError:
-                raise
+            except OptimizationError as e:
+                stop_reason = self._terminal_optimizer_stop_reason(e)
+                if stop_reason is None:
+                    logger.exception(
+                        "Optimizer failed to suggest the next trial: %s", e
+                    )
+                    raise
+                logger.info("Optimizer could not suggest another trial: %s", e)
+                orchestrator._stop_reason = stop_reason
+                return trial_count, "break"
             except (ValueError, TypeError, KeyError, AttributeError) as e:
                 logger.exception("Optimizer failed to suggest the next trial: %s", e)
                 return trial_count, "break"
@@ -191,9 +199,7 @@ class TrialLifecycle:
                     error=e,
                 )
             finally:
-                self._restore_optimizer_trial_count(
-                    optimizer_trial_count_before_suggest
-                )
+                self._restore_optimizer_state(optimizer_state_before_suggest)
             return trial_count, "continue"
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
@@ -245,6 +251,18 @@ class TrialLifecycle:
             raise
 
         return trial_count, "continue"
+
+    def _terminal_optimizer_stop_reason(self, error: OptimizationError) -> str | None:
+        """Classify explicit optimizer terminal states without swallowing defects."""
+
+        message = str(error)
+        if "Maximum trials" in message:
+            return "max_trials_reached"
+        if message.startswith("Config space exhausted"):
+            return "space_exhausted"
+        if message == "All grid combinations have been evaluated":
+            return "space_exhausted"
+        return None
 
     # =========================================================================
     # Core Trial Execution
@@ -597,6 +615,18 @@ class TrialLifecycle:
             return trial_count
         return None
 
+    def _snapshot_optimizer_state(self) -> tuple[int | None, set[str] | None]:
+        """Snapshot optimizer counters that suggestion may consume."""
+
+        tried_hashes = getattr(
+            self._orchestrator.optimizer, "_tried_config_hashes", None
+        )
+        if isinstance(tried_hashes, set):
+            tried_snapshot = set(tried_hashes)
+        else:
+            tried_snapshot = None
+        return self._snapshot_optimizer_trial_count(), tried_snapshot
+
     def _restore_optimizer_trial_count(self, previous_trial_count: int | None) -> None:
         """Restore the optimizer's consumed slot for a rejected pre-constraint."""
         if previous_trial_count is None:
@@ -610,6 +640,18 @@ class TrialLifecycle:
             and current_trial_count > previous_trial_count
         ):
             self._orchestrator.optimizer._trial_count = previous_trial_count
+
+    def _restore_optimizer_state(
+        self, previous_state: tuple[int | None, set[str] | None]
+    ) -> None:
+        """Restore optimizer state for a rejected pre-constraint."""
+
+        previous_trial_count, previous_tried_hashes = previous_state
+        self._restore_optimizer_trial_count(previous_trial_count)
+        if previous_tried_hashes is not None and hasattr(
+            self._orchestrator.optimizer, "_tried_config_hashes"
+        ):
+            self._orchestrator.optimizer._tried_config_hashes = previous_tried_hashes
 
     def _generate_constraint_rejection_trial_id(
         self,
