@@ -133,6 +133,12 @@ def test_project_scope_helpers_normalize_paths_and_blank_env(monkeypatch) -> Non
         == "/api/v1/analytics/dashboards/optimization-overview"
     )
     assert (
+        scope_api_path(
+            "/api/v1/analytics/runs/run_123/example-insights", "project_alpha"
+        )
+        == "/api/v1/analytics/runs/run_123/example-insights"
+    )
+    assert (
         scope_api_path("/api/v1/optimization-comparisons", "project_alpha")
         == "/api/v1/optimization-comparisons"
     )

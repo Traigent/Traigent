@@ -41,6 +41,7 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "analytics_get_correlation_matrix",
     "analytics_get_run_leaderboard",
     "analytics_get_parameter_insights",
+    "analytics_get_example_insights",
     "analytics_render_chart",
 )
 
@@ -401,6 +402,22 @@ async def analytics_get_parameter_insights_tool(
             top_k=top_k,
         ),
         what="parameter insights",
+    )
+
+
+async def analytics_get_example_insights_tool(
+    project_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Fetch the backend's privacy-bounded example insights for one run."""
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        rid = _require_identifier(run_id, field="run_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.get_example_insights(pid, rid),
+        what="example insights",
     )
 
 

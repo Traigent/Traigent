@@ -398,6 +398,38 @@ class TestWave2SingleRunAnalytics:
             "warnings": [],
         }
 
+    @pytest.fixture()
+    def example_insights_payload(self) -> dict[str, object]:
+        return {
+            "run_id": "run_123",
+            "privacy_mode": "safe_agent_projection",
+            "summary": {
+                "example_count": 10,
+                "weak_example_count": 2,
+                "unstable_example_count": 1,
+                "dataset_quality": "medium",
+            },
+            "cohorts": [
+                {
+                    "kind": "weak_examples",
+                    "count": 2,
+                    "impact": "quality_risk",
+                    "safe_example_refs": ["exref_abc123"],
+                    "recommendation": "Review weak examples before promotion.",
+                }
+            ],
+            "recommendations": [
+                {
+                    "action": "rebalance_dataset",
+                    "reason": "Weak example cohort is non-empty.",
+                }
+            ],
+            "redactions": {
+                "raw_proprietary_signals_hidden": True,
+                "raw_prompt_text_hidden_by_default": True,
+            },
+        }
+
     @pytest.mark.asyncio
     async def test_get_single_run_pareto_calls_endpoint(
         self, pareto_payload: dict[str, object]
@@ -505,6 +537,37 @@ class TestWave2SingleRunAnalytics:
         )
 
     @pytest.mark.asyncio
+    async def test_get_example_insights_calls_endpoint(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_http, mock_response = _mock_get_response(client, example_insights_payload)
+
+        result = await client.get_example_insights("proj_abc", "run 123")
+
+        assert result == example_insights_payload
+        mock_response.raise_for_status.assert_called_once()
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/runs/run%20123/example-insights",
+            headers={"X-Project-Id": "proj_abc"},
+            params=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_empty_ids(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_http, _ = _mock_get_response(client, example_insights_payload)
+
+        with pytest.raises(ValueError, match="project_id"):
+            await client.get_example_insights("", "run_123")
+        with pytest.raises(ValueError, match="run_id"):
+            await client.get_example_insights("proj_abc", " ")
+
+        mock_http.get.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_defaults_match_backend_query_schema(
         self,
         pareto_payload: dict[str, object],
@@ -554,6 +617,7 @@ class TestWave2SingleRunAnalytics:
         correlations_payload: dict[str, object],
         leaderboard_payload: dict[str, object],
         parameter_insights_payload: dict[str, object],
+        example_insights_payload: dict[str, object],
     ) -> None:
         from traigent.cloud.analytics_client import AnalyticsClientError
 
@@ -577,6 +641,11 @@ class TestWave2SingleRunAnalytics:
                 "drivers",
                 parameter_insights_payload,
                 lambda client: client.get_parameter_insights("proj_abc", "run_123"),
+            ),
+            (
+                "redactions",
+                example_insights_payload,
+                lambda client: client.get_example_insights("proj_abc", "run_123"),
             ),
         ]
 

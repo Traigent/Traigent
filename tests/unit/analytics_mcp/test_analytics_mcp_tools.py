@@ -316,6 +316,26 @@ class TestWave2AnalyticsTools:
         )
 
     @pytest.mark.asyncio
+    async def test_example_insights_tool_calls_client(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_example_insights_tool
+
+        reader = AsyncMock()
+        reader.get_example_insights.return_value = {
+            "run_id": "run_123",
+            "privacy_mode": "safe_agent_projection",
+        }
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_example_insights_tool("proj_abc", "run_123")
+
+        assert result["ok"] is True
+        assert result["example_insights"] == {
+            "run_id": "run_123",
+            "privacy_mode": "safe_agent_projection",
+        }
+        reader.get_example_insights.assert_awaited_once_with("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
     async def test_missing_project_id_is_rejected_for_new_tools(
         self, monkeypatch
     ) -> None:
@@ -328,6 +348,7 @@ class TestWave2AnalyticsTools:
             tools_mod.analytics_get_correlation_matrix_tool("", "run_123"),
             tools_mod.analytics_get_run_leaderboard_tool("", "run_123"),
             tools_mod.analytics_get_parameter_insights_tool("", "run_123"),
+            tools_mod.analytics_get_example_insights_tool("", "run_123"),
         ]
 
         for call in calls:
@@ -339,6 +360,20 @@ class TestWave2AnalyticsTools:
         reader.get_correlation_matrix.assert_not_called()
         reader.get_run_leaderboard.assert_not_called()
         reader.get_parameter_insights.assert_not_called()
+        reader.get_example_insights.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_example_insights_requires_run_id(self, monkeypatch) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        result = await tools_mod.analytics_get_example_insights_tool("proj_abc", "")
+
+        assert result["ok"] is False
+        assert "run_id" in result["message"]
+        reader.get_example_insights.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_backend_failures_are_structured_for_new_tools(
@@ -359,6 +394,9 @@ class TestWave2AnalyticsTools:
         reader.get_parameter_insights.side_effect = RuntimeError(
             "https://secret-host/internal leaked"
         )
+        reader.get_example_insights.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
         _install_fake_client(monkeypatch, reader)
 
         calls = [
@@ -366,6 +404,7 @@ class TestWave2AnalyticsTools:
             tools_mod.analytics_get_correlation_matrix_tool("proj_abc", "run_123"),
             tools_mod.analytics_get_run_leaderboard_tool("proj_abc", "run_123"),
             tools_mod.analytics_get_parameter_insights_tool("proj_abc", "run_123"),
+            tools_mod.analytics_get_example_insights_tool("proj_abc", "run_123"),
         ]
 
         for call in calls:
@@ -630,6 +669,7 @@ class TestNoTenantArgument:
             tools_mod.analytics_get_correlation_matrix_tool,
             tools_mod.analytics_get_run_leaderboard_tool,
             tools_mod.analytics_get_parameter_insights_tool,
+            tools_mod.analytics_get_example_insights_tool,
             tools_mod.analytics_render_chart_tool,
         ]
         for fn in tool_callables:
