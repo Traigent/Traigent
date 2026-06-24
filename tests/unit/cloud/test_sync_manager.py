@@ -46,11 +46,12 @@ def test_build_experiment_url_adds_encoded_context_query() -> None:
         build_experiment_url(
             "https://portal.traigent.ai/",
             "exp/123",
+            run_id="run/456",
             project_id="project/alpha",
             tenant_id="tenant acme",
         )
         == "https://portal.traigent.ai/experiments/view/exp%2F123"
-        "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+        "?run_id=run%2F456&project_id=project%2Falpha&tenant_id=tenant%20acme"
     )
 
 
@@ -715,7 +716,7 @@ class TestSyncManager:
         assert (
             result["cloud_url"]
             == "https://portal.traigent.ai/experiments/view/experiment-id"
-            "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+            "?run_id=experiment-run-id&project_id=project%2Falpha&tenant_id=tenant%20acme"
         )
         post_calls = sync_manager._session.post.call_args_list
         assert [call.args[0] for call in post_calls] == [
@@ -851,7 +852,7 @@ class TestSyncManager:
         assert (
             result["cloud_url"]
             == "https://portal.traigent.ai/experiments/view/experiment-id"
-            "?project_id=project%2Falpha&tenant_id=tenant%20acme"
+            "?run_id=experiment-run-id&project_id=project%2Falpha&tenant_id=tenant%20acme"
         )
         # No-duplicate guard: exactly ONE config-run POST (the remaining cfg_2),
         # NOT three. The already-synced cfg_0 / cfg_1 are skipped.
@@ -1774,9 +1775,10 @@ class TestSyncManager:
         result = sync_manager.sync_session_to_cloud("test_session_123")
 
         # Verify failure is surfaced correctly.
-        assert result["status"] in {"partial", "error"}, (
-            f"Expected partial/error, got {result['status']}"
-        )
+        assert result["status"] in {
+            "partial",
+            "error",
+        }, f"Expected partial/error, got {result['status']}"
         assert any("Experiment sync failed" in err for err in result.get("errors", []))
         # _finalize_experiment must NOT be called when experiment creation fails.
         sync_manager._session.put.assert_not_called()

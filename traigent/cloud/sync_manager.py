@@ -50,6 +50,7 @@ def build_experiment_url(
     base_url: str,
     experiment_id: str,
     *,
+    run_id: str | None = None,
     project_id: str | None = None,
     tenant_id: str | None = None,
 ) -> str:
@@ -63,7 +64,11 @@ def build_experiment_url(
     )
     query_params = {
         key: normalized
-        for key, value in (("project_id", project_id), ("tenant_id", tenant_id))
+        for key, value in (
+            ("run_id", run_id),
+            ("project_id", project_id),
+            ("tenant_id", tenant_id),
+        )
         if value is not None and (normalized := str(value).strip())
     }
     if not query_params:
@@ -800,6 +805,7 @@ class SyncManager:
             sync_result["cloud_url"] = build_experiment_url(
                 BackendConfig.get_cloud_web_url(),
                 experiment_id,
+                run_id=experiment_run_id,
                 project_id=project_id,
                 tenant_id=tenant_id,
             )

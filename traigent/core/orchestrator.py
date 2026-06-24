@@ -2100,19 +2100,23 @@ class OptimizationOrchestrator:
 
     @staticmethod
     def _populate_experiment_cloud_url(result: OptimizationResult) -> None:
-        """Populate result experiment_id/cloud_url from backend session metadata."""
+        """Populate backend experiment/run ids and portal URL from session metadata."""
         metadata = result.metadata or {}
         exp_id = metadata.get("experiment_id")
         if not exp_id:
             return
-        result.experiment_id = exp_id
+        run_id = metadata.get("experiment_run_id")
+        result.experiment_id = str(exp_id)
+        if run_id:
+            result.experiment_run_id = str(run_id)
         try:
             from traigent.cloud.sync_manager import build_experiment_url
             from traigent.config.backend_config import BackendConfig
 
             result.cloud_url = build_experiment_url(
                 BackendConfig.get_cloud_web_url(),
-                exp_id,
+                str(exp_id),
+                run_id=str(run_id) if run_id else None,
                 project_id=metadata.get("project_id"),
                 tenant_id=metadata.get("tenant_id"),
             )
