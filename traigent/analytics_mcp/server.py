@@ -26,9 +26,13 @@ from typing import Any
 
 from traigent.analytics_mcp.tools import (
     analytics_compare_runs_tool,
+    analytics_get_correlation_matrix_tool,
+    analytics_get_parameter_insights_tool,
     analytics_get_project_overview_tool,
     analytics_get_run_decision_brief_tool,
+    analytics_get_run_leaderboard_tool,
     analytics_get_run_report_tool,
+    analytics_get_single_run_pareto_tool,
     analytics_render_chart_tool,
     auth_status_tool,
     health_check_tool,
@@ -127,6 +131,101 @@ def create_server() -> Any:
         intent: str = "iterate",
     ) -> dict[str, Any]:
         return await analytics_get_run_decision_brief_tool(project_id, run_id, intent)
+
+    @server.tool(
+        description=(
+            "Fetch the backend's Pareto frontier (run_pareto v0) for one "
+            "optimization run. Requires explicit project_id and run_id; "
+            "optional x_measure, y_measure, and request_count query params. "
+            "Backend auth required."
+        )
+    )
+    async def analytics_get_single_run_pareto(
+        project_id: str,
+        run_id: str,
+        x_measure: str = "cost",
+        y_measure: str = "quality",
+        request_count: int = 1,
+    ) -> dict[str, Any]:
+        return await analytics_get_single_run_pareto_tool(
+            project_id,
+            run_id,
+            x_measure,
+            y_measure,
+            request_count,
+        )
+
+    @server.tool(
+        description=(
+            "Fetch the backend's correlation matrix (run_correlations v0) for "
+            "one optimization run. Requires explicit project_id and run_id; "
+            "optional method (pearson/spearman) and min_sample query params. "
+            "Backend auth required."
+        )
+    )
+    async def analytics_get_correlation_matrix(
+        project_id: str,
+        run_id: str,
+        method: str = "pearson",
+        min_sample: int = 3,
+    ) -> dict[str, Any]:
+        return await analytics_get_correlation_matrix_tool(
+            project_id,
+            run_id,
+            method,
+            min_sample,
+        )
+
+    @server.tool(
+        description=(
+            "Fetch the backend's ranked configuration leaderboard "
+            "(run_leaderboard v0) for one optimization run. Requires explicit "
+            "project_id and run_id; optional objective, weights, constraints, "
+            "request_count, and limit query params. weights/constraints are "
+            "JSON-object values on the wire. Backend auth required."
+        )
+    )
+    async def analytics_get_run_leaderboard(
+        project_id: str,
+        run_id: str,
+        objective: str = "weighted",
+        weights: dict[str, object] | str | None = None,
+        constraints: dict[str, object] | str | None = None,
+        request_count: int = 1,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return await analytics_get_run_leaderboard_tool(
+            project_id,
+            run_id,
+            objective,
+            weights,
+            constraints,
+            request_count,
+            limit,
+        )
+
+    @server.tool(
+        description=(
+            "Fetch the backend's parameter-importance insights "
+            "(run_parameter_insights v0) for one optimization run. Requires "
+            "explicit project_id and run_id; optional target_measure, "
+            "min_trials, and top_k query params. Backend auth required."
+        )
+    )
+    async def analytics_get_parameter_insights(
+        project_id: str,
+        run_id: str,
+        target_measure: str = "quality",
+        min_trials: int = 10,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        return await analytics_get_parameter_insights_tool(
+            project_id,
+            run_id,
+            target_measure,
+            min_trials,
+            top_k,
+        )
 
     @server.tool(
         description=(

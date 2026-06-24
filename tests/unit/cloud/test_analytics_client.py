@@ -55,6 +55,16 @@ def _success_envelope(data: object) -> dict[str, object]:
     return {"success": True, "message": "ok", "data": data}
 
 
+def _mock_get_response(client, data: object):
+    mock_response = MagicMock()
+    mock_response.json.return_value = _success_envelope(data)
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.get.return_value = mock_response
+    client._client = mock_http
+    return mock_http, mock_response
+
+
 class TestInit:
     def test_defaults_resolve_backend_url_and_key(self) -> None:
         from traigent.cloud.analytics_client import BackendAnalyticsClient
@@ -312,3 +322,272 @@ class TestGetRunDecisionBrief:
             await client.get_run_decision_brief("proj_abc", "run_123", intent="promote")
 
         mock_http.get.assert_not_called()
+
+
+class TestWave2SingleRunAnalytics:
+    @pytest.fixture()
+    def pareto_payload(self) -> dict[str, object]:
+        return {
+            "run_id": "run_123",
+            "project_id": "proj_abc",
+            "measures": {
+                "quality": "quality",
+                "cost": "cost",
+                "latency": "latency",
+            },
+            "frontier": [],
+            "dominated": [],
+            "shape": "flat",
+            "warnings": [],
+        }
+
+    @pytest.fixture()
+    def correlations_payload(self) -> dict[str, object]:
+        return {
+            "run_id": "run_123",
+            "method": "spearman",
+            "sample_size": 12,
+            "measure_correlations": [],
+            "parameter_correlations": [],
+            "warnings": [],
+        }
+
+    @pytest.fixture()
+    def leaderboard_payload(self) -> dict[str, object]:
+        return {
+            "run_id": "run_123",
+            "ranking_basis": {
+                "objective": "weighted",
+                "weights": {"quality": 0.8},
+                "constraints": {"cost": 1.0},
+            },
+            "configs": [],
+        }
+
+    @pytest.fixture()
+    def parameter_insights_payload(self) -> dict[str, object]:
+        return {
+            "run_id": "run_123",
+            "target_measure": "quality",
+            "min_trials": 10,
+            "drivers": [],
+            "interactions": [],
+            "warnings": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_single_run_pareto_calls_endpoint(
+        self, pareto_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_http, mock_response = _mock_get_response(client, pareto_payload)
+
+        result = await client.get_single_run_pareto(
+            "proj_abc",
+            "run 123",
+            x_measure="cost",
+            y_measure="quality",
+            request_count=5,
+        )
+
+        assert result == pareto_payload
+        mock_response.raise_for_status.assert_called_once()
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/runs/run%20123/pareto",
+            headers={"X-Project-Id": "proj_abc"},
+            params={
+                "x_measure": "cost",
+                "y_measure": "quality",
+                "request_count": "5",
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_correlation_matrix_calls_endpoint(
+        self, correlations_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_http, mock_response = _mock_get_response(client, correlations_payload)
+
+        result = await client.get_correlation_matrix(
+            "proj_abc", "run_123", method="spearman", min_sample=4
+        )
+
+        assert result == correlations_payload
+        mock_response.raise_for_status.assert_called_once()
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/runs/run_123/correlations",
+            headers={"X-Project-Id": "proj_abc"},
+            params={"method": "spearman", "min_sample": "4"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_run_leaderboard_calls_endpoint_with_json_query(
+        self, leaderboard_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_http, mock_response = _mock_get_response(client, leaderboard_payload)
+
+        result = await client.get_run_leaderboard(
+            "proj_abc",
+            "run_123",
+            objective="weighted",
+            weights={"quality": 0.8},
+            constraints='{"cost":1.0}',
+            request_count=7,
+            limit=10,
+        )
+
+        assert result == leaderboard_payload
+        mock_response.raise_for_status.assert_called_once()
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/runs/run_123/leaderboard",
+            headers={"X-Project-Id": "proj_abc"},
+            params={
+                "objective": "weighted",
+                "weights": '{"quality":0.8}',
+                "constraints": '{"cost":1.0}',
+                "request_count": "7",
+                "limit": "10",
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_parameter_insights_calls_endpoint(
+        self, parameter_insights_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_http, mock_response = _mock_get_response(
+            client, parameter_insights_payload
+        )
+
+        result = await client.get_parameter_insights(
+            "proj_abc",
+            "run_123",
+            target_measure="accuracy",
+            min_trials=12,
+            top_k=5,
+        )
+
+        assert result == parameter_insights_payload
+        mock_response.raise_for_status.assert_called_once()
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/runs/run_123/parameter-insights",
+            headers={"X-Project-Id": "proj_abc"},
+            params={
+                "target_measure": "accuracy",
+                "min_trials": "12",
+                "top_k": "5",
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_defaults_match_backend_query_schema(
+        self,
+        pareto_payload: dict[str, object],
+        correlations_payload: dict[str, object],
+        leaderboard_payload: dict[str, object],
+        parameter_insights_payload: dict[str, object],
+    ) -> None:
+        cases = [
+            (
+                lambda client: client.get_single_run_pareto("proj_abc", "run_123"),
+                pareto_payload,
+                {
+                    "x_measure": "cost",
+                    "y_measure": "quality",
+                    "request_count": "1",
+                },
+            ),
+            (
+                lambda client: client.get_correlation_matrix("proj_abc", "run_123"),
+                correlations_payload,
+                {"method": "pearson", "min_sample": "3"},
+            ),
+            (
+                lambda client: client.get_run_leaderboard("proj_abc", "run_123"),
+                leaderboard_payload,
+                {"objective": "weighted", "request_count": "1", "limit": "50"},
+            ),
+            (
+                lambda client: client.get_parameter_insights("proj_abc", "run_123"),
+                parameter_insights_payload,
+                {"target_measure": "quality", "min_trials": "10", "top_k": "10"},
+            ),
+        ]
+
+        for call, payload, expected_params in cases:
+            client = _make_client()
+            mock_http, _ = _mock_get_response(client, payload)
+
+            await call(client)
+
+            assert mock_http.get.call_args.kwargs["params"] == expected_params
+
+    @pytest.mark.asyncio
+    async def test_missing_required_dto_keys_fail_closed(
+        self,
+        pareto_payload: dict[str, object],
+        correlations_payload: dict[str, object],
+        leaderboard_payload: dict[str, object],
+        parameter_insights_payload: dict[str, object],
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        cases = [
+            (
+                "shape",
+                pareto_payload,
+                lambda client: client.get_single_run_pareto("proj_abc", "run_123"),
+            ),
+            (
+                "sample_size",
+                correlations_payload,
+                lambda client: client.get_correlation_matrix("proj_abc", "run_123"),
+            ),
+            (
+                "ranking_basis",
+                leaderboard_payload,
+                lambda client: client.get_run_leaderboard("proj_abc", "run_123"),
+            ),
+            (
+                "drivers",
+                parameter_insights_payload,
+                lambda client: client.get_parameter_insights("proj_abc", "run_123"),
+            ),
+        ]
+
+        for missing_key, payload, call in cases:
+            malformed = dict(payload)
+            malformed.pop(missing_key)
+            client = _make_client()
+            _mock_get_response(client, malformed)
+
+            with pytest.raises(AnalyticsClientError, match=missing_key):
+                await call(client)
+
+    @pytest.mark.asyncio
+    async def test_malformed_envelope_fails_closed(self) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": True}
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(AnalyticsClientError, match="success envelope"):
+            await client.get_parameter_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_transport_error_surfaces_before_unwrap(
+        self, pareto_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        _, mock_response = _mock_get_response(client, pareto_payload)
+        mock_response.raise_for_status.side_effect = RuntimeError("http error")
+
+        with pytest.raises(RuntimeError, match="http error"):
+            await client.get_single_run_pareto("proj_abc", "run_123")
