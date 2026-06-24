@@ -265,6 +265,16 @@ class AnalyticsNamespace:
                 ),
             )
 
+    async def get_example_insights(
+        self, project_id: str, run_id: str
+    ) -> dict[str, Any]:
+        """Return the backend's privacy-bounded example insights for one run."""
+        async with self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_example_insights(project_id, run_id),
+            )
+
 
 # Backwards compatibility: expose shared bridge instance at this module scope so
 # existing tests patching ``traigent.cloud.backend_client.bridge`` continue to

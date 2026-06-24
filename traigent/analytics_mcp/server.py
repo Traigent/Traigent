@@ -27,6 +27,7 @@ from typing import Any
 from traigent.analytics_mcp.tools import (
     analytics_compare_runs_tool,
     analytics_get_correlation_matrix_tool,
+    analytics_get_example_insights_tool,
     analytics_get_parameter_insights_tool,
     analytics_get_project_overview_tool,
     analytics_get_run_decision_brief_tool,
@@ -226,6 +227,21 @@ def create_server() -> Any:
             min_trials,
             top_k,
         )
+
+    @server.tool(
+        description=(
+            "Fetch privacy-bounded example insights for one optimization run. "
+            "Requires explicit project_id and run_id. The backend returns only "
+            "safe-agent-projection data: coarse counts, dataset-quality "
+            "buckets, safe example refs, templated recommendations, and "
+            "redaction metadata. Backend auth required."
+        )
+    )
+    async def analytics_get_example_insights(
+        project_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        return await analytics_get_example_insights_tool(project_id, run_id)
 
     @server.tool(
         description=(

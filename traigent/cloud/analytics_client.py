@@ -28,6 +28,7 @@ Wired analytics endpoints:
 * ``GET /api/v1/analytics/runs/{run_id}/correlations``
 * ``GET /api/v1/analytics/runs/{run_id}/leaderboard``
 * ``GET /api/v1/analytics/runs/{run_id}/parameter-insights``
+* ``GET /api/v1/analytics/runs/{run_id}/example-insights``
 """
 
 # Traceability: CONC-Layer-Infra CONC-Security FUNC-CLOUD-HYBRID FUNC-ANALYTICS REQ-CLOUD-009
@@ -101,6 +102,16 @@ _RUN_PARAMETER_INSIGHTS_REQUIRED_KEYS = frozenset(
         "drivers",
         "interactions",
         "warnings",
+    }
+)
+_RUN_EXAMPLE_INSIGHTS_REQUIRED_KEYS = frozenset(
+    {
+        "run_id",
+        "privacy_mode",
+        "summary",
+        "cohorts",
+        "recommendations",
+        "redactions",
     }
 )
 
@@ -510,6 +521,28 @@ class BackendAnalyticsClient:
             payload,
             _RUN_PARAMETER_INSIGHTS_REQUIRED_KEYS,
             what="parameter insights",
+        )
+        return payload
+
+    async def get_example_insights(
+        self,
+        project_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Return the backend's privacy-bounded example insights for one run."""
+        path = (
+            "/api/v1/analytics/runs/"
+            f"{_quote_segment(run_id, field='run_id')}/example-insights"
+        )
+        payload = await self._get_json(
+            path,
+            what="example insights",
+            headers=self._project_headers(project_id),
+        )
+        _require_keys(
+            payload,
+            _RUN_EXAMPLE_INSIGHTS_REQUIRED_KEYS,
+            what="example insights",
         )
         return payload
 
