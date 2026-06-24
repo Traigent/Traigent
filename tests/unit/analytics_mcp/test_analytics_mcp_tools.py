@@ -20,7 +20,7 @@ HTTPX_AVAILABLE = importlib.util.find_spec("httpx") is not None
 def _install_fake_client(monkeypatch, reader: AsyncMock):
     """Patch ``_new_analytics_client`` to yield ``reader`` as an async ctx mgr.
 
-    The tools open the client with ``async with _new_analytics_client() as
+    The tools open the client with ``async with await _new_analytics_client() as
     reader``; this returns an object whose async context manager yields the
     provided mock ``reader`` so each tool's real call path is exercised.
     """
@@ -33,7 +33,10 @@ def _install_fake_client(monkeypatch, reader: AsyncMock):
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(tools_mod, "_new_analytics_client", lambda: _FakeClient())
+    async def _fake_new_analytics_client():
+        return _FakeClient()
+
+    monkeypatch.setattr(tools_mod, "_new_analytics_client", _fake_new_analytics_client)
     return reader
 
 
@@ -95,6 +98,26 @@ class TestRunReportTool:
 
         assert result["ok"] is False
         assert result["code"] == "malformed_response"
+
+    @pytest.mark.asyncio
+    async def test_client_construction_auth_failure_is_structured(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+        from traigent.cloud.auth import InvalidCredentialsError
+
+        async def _raise_invalid_credentials():
+            raise InvalidCredentialsError("https://secret-host rejected the token")
+
+        monkeypatch.setattr(
+            tools_mod, "_new_analytics_client", _raise_invalid_credentials
+        )
+
+        result = await tools_mod.analytics_get_run_report_tool("proj_abc", "run_123")
+
+        assert result["ok"] is False
+        assert result["code"] == "authentication_failed"
+        assert "secret-host" not in result["message"]
 
 
 class TestProjectOverviewTool:
@@ -424,6 +447,172 @@ class TestHealthAndAuthTools:
         assert result["api_key"]["prefix"] == "uk_a"
         assert result["api_key"]["last4"] == "3456"
         assert "uk_abcdef123456" not in str(result)
+
+    @pytest.mark.asyncio
+    async def test_auth_status_rejects_malformed_jwt_only_credential(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            classmethod(
+                lambda cls: {
+                    "jwt_token": "not-a-jwt",
+                    "backend_url": "http://localhost:5000",
+                    "source": "cli",
+                }
+            ),
+        )
+        validation_result = type(
+            "ValidationResult",
+            (),
+            {
+                "valid": False,
+                "claims": {},
+                "warnings": [],
+                "expires_at": None,
+                "error": "malformed JWT",
+            },
+        )()
+        monkeypatch.setattr(
+            "traigent.security.jwt_validator.get_secure_jwt_validator",
+            lambda mode: type(
+                "Validator",
+                (),
+                {"validate_token": lambda self, token: validation_result},
+            )(),
+        )
+
+        result = await tools_mod.auth_status_tool()
+
+        assert result["ok"] is True
+        assert result["credential_present"] is True
+        assert result["authenticated"] is False
+        assert result["auth_type"] == "jwt"
+        assert "malformed JWT" not in str(result)
+
+    @pytest.mark.asyncio
+    async def test_auth_status_accepts_valid_jwt_only_credential(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            classmethod(
+                lambda cls: {
+                    "jwt_token": "header.payload.signature",
+                    "backend_url": "http://localhost:5000",
+                    "source": "cli",
+                }
+            ),
+        )
+        validation_result = type(
+            "ValidationResult",
+            (),
+            {
+                "valid": True,
+                "claims": {"sub": "user_123"},
+                "warnings": [],
+                "expires_at": None,
+                "error": None,
+            },
+        )()
+        monkeypatch.setattr(
+            "traigent.security.jwt_validator.get_secure_jwt_validator",
+            lambda mode: type(
+                "Validator",
+                (),
+                {"validate_token": lambda self, token: validation_result},
+            )(),
+        )
+
+        result = await tools_mod.auth_status_tool()
+
+        assert result["ok"] is True
+        assert result["credential_present"] is True
+        assert result["authenticated"] is True
+        assert result["auth_type"] == "jwt"
+
+    @pytest.mark.asyncio
+    async def test_new_client_uses_bearer_header_for_jwt_only_credential(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            classmethod(
+                lambda cls: {
+                    "jwt_token": "header.payload.signature",
+                    "backend_url": "http://localhost:5000",
+                    "source": "cli",
+                }
+            ),
+        )
+
+        validation_result = type(
+            "ValidationResult",
+            (),
+            {
+                "valid": True,
+                "claims": {"sub": "user_123"},
+                "warnings": [],
+                "expires_at": None,
+                "error": None,
+            },
+        )()
+        monkeypatch.setattr(
+            "traigent.security.jwt_validator.get_secure_jwt_validator",
+            lambda mode: type(
+                "Validator",
+                (),
+                {"validate_token": lambda self, token: validation_result},
+            )(),
+        )
+
+        client = await tools_mod._new_analytics_client()
+
+        assert client._auth_headers() == {
+            "Authorization": "Bearer header.payload.signature"
+        }
+
+    @pytest.mark.asyncio
+    async def test_new_client_uses_x_api_key_header_for_api_key(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+        from traigent.cloud.auth import AuthManager
+
+        async def _ok(self, api_key):  # noqa: ARG001
+            return None
+
+        api_key = "uk_" + "a" * 43
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            classmethod(
+                lambda cls: {
+                    "api_key": api_key,
+                    "backend_url": "http://localhost:5000",
+                    "source": "cli",
+                }
+            ),
+        )
+        monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", _ok)
+
+        client = await tools_mod._new_analytics_client()
+
+        assert client._auth_headers() == {"X-API-Key": api_key}
+        assert "Authorization" not in client._auth_headers()
 
 
 class TestNoTenantArgument:

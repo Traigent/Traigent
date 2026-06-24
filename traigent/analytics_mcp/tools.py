@@ -51,6 +51,13 @@ def _failure(message: str, *, code: str = "invalid_input") -> dict[str, Any]:
     return {"ok": False, "code": code, "message": message}
 
 
+def _auth_failure() -> dict[str, Any]:
+    return _failure(
+        "Analytics authentication failed; configure valid Traigent credentials.",
+        code="authentication_failed",
+    )
+
+
 def _require_identifier(value: str | None, *, field: str) -> str:
     text = (value or "").strip()
     if not text:
@@ -62,15 +69,17 @@ class _ToolInputError(ValueError):
     """Raised for user-correctable analytics MCP tool input errors."""
 
 
-def _new_analytics_client() -> Any:
+async def _new_analytics_client() -> Any:
     """Construct a backend analytics read client using SDK credentials.
 
-    Reuses :class:`BackendAnalyticsClient`, which resolves the backend URL and
-    API key through the SDK's existing credential plumbing.
+    Reuses the same AuthManager-backed analytics credential resolver as
+    ``client.analytics`` before constructing the low-level read client.
     """
+    from traigent.cloud.analytics_auth import resolve_analytics_read_client_credentials
     from traigent.cloud.analytics_client import BackendAnalyticsClient
 
-    return BackendAnalyticsClient()
+    credential_kwargs = await resolve_analytics_read_client_credentials()
+    return BackendAnalyticsClient(**credential_kwargs)
 
 
 async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
@@ -82,11 +91,15 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
     response bodies) never reaches the caller.
     """
     from traigent.cloud.analytics_client import AnalyticsClientError
+    from traigent.cloud.auth import InvalidCredentialsError
 
     try:
-        client = _new_analytics_client()
+        client = await _new_analytics_client()
     except ImportError as exc:
         return _failure(str(exc), code="dependency_missing")
+    except InvalidCredentialsError as exc:
+        logger.debug("Analytics %s authentication failed: %s", what, exc)
+        return _auth_failure()
 
     try:
         async with client as reader:
@@ -96,6 +109,9 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
             f"The backend returned a malformed {what} response.",
             code="malformed_response",
         )
+    except InvalidCredentialsError as exc:
+        logger.debug("Analytics %s authentication failed: %s", what, exc)
+        return _auth_failure()
     except Exception as exc:  # noqa: BLE001 - normalize all transport failures
         # Do not surface raw exception text: it can contain the backend URL,
         # auth header echoes, or response bodies. Log at debug for operators.
@@ -174,22 +190,49 @@ async def auth_status_tool() -> dict[str, Any]:
 
     API key material is masked to prefix and last4 only.
     """
+    import os
+
     from traigent.cloud.credential_manager import CredentialManager
 
     credentials = CredentialManager.get_credentials()
     api_key = credentials.get("api_key")
     if api_key is not None and not isinstance(api_key, str):
         api_key = None
-    authenticated = bool(api_key or credentials.get("jwt_token"))
+    jwt_token = credentials.get("jwt_token")
+    if jwt_token is not None and not isinstance(jwt_token, str):
+        jwt_token = None
+    if isinstance(jwt_token, str) and not jwt_token.strip():
+        jwt_token = None
+
+    credential_source = credentials.get("source") or "none"
+    if not api_key and not jwt_token:
+        env_jwt_token = os.getenv("TRAIGENT_JWT_TOKEN")
+        if env_jwt_token:
+            jwt_token = env_jwt_token
+            credential_source = "environment"
+
+    credential_present = bool(api_key or jwt_token)
+    authenticated = bool(api_key)
+    if jwt_token and not api_key:
+        from traigent.cloud.analytics_auth import (
+            resolve_analytics_read_client_credentials,
+        )
+        from traigent.cloud.auth import InvalidCredentialsError
+
+        try:
+            credential_kwargs = await resolve_analytics_read_client_credentials()
+        except InvalidCredentialsError as exc:
+            logger.debug("Analytics JWT credential validation failed: %s", exc)
+            authenticated = False
+        else:
+            authenticated = bool(credential_kwargs.get("jwt_token"))
+
     return {
         "ok": True,
         "authenticated": authenticated,
-        "credential_source": credentials.get("source") or "none",
-        "auth_type": (
-            "api_key"
-            if api_key
-            else ("jwt" if credentials.get("jwt_token") else "none")
-        ),
+        "credential_present": credential_present,
+        "credential_source": credential_source if credential_present else "none",
+        "auth_type": "api_key" if api_key else ("jwt" if jwt_token else "none"),
         "api_key": _mask_api_key(api_key),
         "backend_url": _sanitize_url(credentials.get("backend_url")),
     }

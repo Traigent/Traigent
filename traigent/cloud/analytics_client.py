@@ -11,12 +11,11 @@ the backend owns all analytics intelligence, so the SDK only
 * returns the allowlisted payload unchanged.
 
 It deliberately reuses the SDK's existing credential plumbing
-(:func:`traigent.utils.env_config.get_api_key`,
-:meth:`traigent.cloud.credential_manager.CredentialManager.get_auth_headers`,
+(:func:`traigent.cloud.auth._build_api_key_auth_headers`,
 :meth:`traigent.config.backend_config.BackendConfig.get_backend_url`) rather
-than adding a second auth path. Tenancy is owned by the backend and derived
-from the authenticated principal; this client never sends a caller-supplied
-``tenant_id``.
+than adding a second API-key auth path. Tenancy is owned by the backend and
+derived from the authenticated principal; this client never sends a
+caller-supplied ``tenant_id``.
 
 Wired analytics endpoints:
 
@@ -194,6 +193,7 @@ class BackendAnalyticsClient:
         self,
         backend_url: str | None = None,
         api_key: str | None = None,
+        jwt_token: str | None = None,
         timeout: float = 30.0,
     ) -> None:
         """Initialize the analytics read client.
@@ -204,6 +204,9 @@ class BackendAnalyticsClient:
             api_key: Explicit API key. When ``None`` the SDK's existing
                 credential resolution is used (``TRAIGENT_API_KEY`` /
                 stored CLI credentials / dev-mode key).
+            jwt_token: Explicit JWT bearer token. If ``api_key`` is also
+                provided, ``api_key`` wins to match the JS SDK header builder.
+                API-key values are never treated as JWTs based on string shape.
             timeout: Per-request timeout in seconds.
 
         Raises:
@@ -225,10 +228,13 @@ class BackendAnalyticsClient:
         self.backend_url = resolved_url.rstrip("/")
         self.timeout = timeout
 
-        self.api_key = api_key if api_key is not None else self._resolve_api_key()
-        if not self.api_key:
+        self.api_key = api_key if api_key is not None else None
+        self.jwt_token = jwt_token
+        if self.api_key is None and self.jwt_token is None:
+            self.api_key = self._resolve_api_key()
+        if not self.api_key and not self.jwt_token:
             logger.warning(
-                "No API key found for BackendAnalyticsClient. %s",
+                "No API key or JWT found for BackendAnalyticsClient. %s",
                 get_no_credentials_hint(),
             )
 
@@ -246,15 +252,20 @@ class BackendAnalyticsClient:
     def _auth_headers(self) -> dict[str, str]:
         """Build auth headers using the canonical credential helper.
 
-        Reuses :meth:`CredentialManager.get_auth_headers`, which correctly
-        routes API keys to ``X-API-Key`` and JWTs to ``Authorization: Bearer``
-        (an API key sent as a bearer token is rejected by the backend).
+        Reuses :func:`traigent.cloud.auth._build_api_key_auth_headers`, the same
+        API-key header builder used by ``AuthManager`` and other analytics
+        clients. API keys always route to ``X-API-Key`` and win when both
+        credential types are present; JWTs are explicit and route to
+        ``Authorization: Bearer``.
         """
-        if not self.api_key:
-            return {}
-        if "." in self.api_key and len(self.api_key.split(".")) == 3:
-            return {"Authorization": f"Bearer {self.api_key}"}
-        return {"X-API-Key": self.api_key}
+        from traigent.cloud.auth import _build_api_key_auth_headers
+
+        api_key_headers = _build_api_key_auth_headers(self.api_key)
+        if api_key_headers:
+            return api_key_headers
+        if self.jwt_token:
+            return {"Authorization": f"Bearer {self.jwt_token}"}
+        return {}
 
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the async HTTP client, failing closed when offline."""

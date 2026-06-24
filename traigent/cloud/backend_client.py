@@ -138,28 +138,35 @@ class AnalyticsNamespace:
     def __init__(self, client: "BackendIntegratedClient") -> None:
         self._client = client
 
-    def _new_read_client(self) -> Any:
+    async def _new_read_client(self) -> Any:
+        from traigent.cloud.analytics_auth import (
+            resolve_analytics_read_client_credentials,
+        )
         from traigent.cloud.analytics_client import BackendAnalyticsClient
 
+        credential_kwargs = await resolve_analytics_read_client_credentials(
+            self._client.auth_manager.auth,
+            api_key_fallback=self._client._api_key_fallback,
+        )
         return BackendAnalyticsClient(
             backend_url=self._client.base_url,
-            api_key=self._client._api_key_fallback,
             timeout=self._client.timeout,
+            **credential_kwargs,
         )
 
     async def get_run_report(self, project_id: str, run_id: str) -> dict[str, Any]:
         """Return the backend's full analytics report for one run."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(dict[str, Any], await reader.get_run_report(project_id, run_id))
 
     async def get_project_overview(self, project_id: str) -> dict[str, Any]:
         """Return the backend's cross-run overview for a project."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(dict[str, Any], await reader.get_project_overview(project_id))
 
     async def compare_runs(self, project_id: str, run_ids: list[str]) -> dict[str, Any]:
         """Compare two or more runs within a project."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(dict[str, Any], await reader.compare_runs(project_id, run_ids))
 
     async def get_run_decision_brief(
@@ -169,7 +176,7 @@ class AnalyticsNamespace:
         intent: str = "iterate",
     ) -> dict[str, Any]:
         """Return the backend's decision brief (decision_payload v0) for a run."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(
                 dict[str, Any],
                 await reader.get_run_decision_brief(project_id, run_id, intent),
@@ -185,7 +192,7 @@ class AnalyticsNamespace:
         request_count: int = 1,
     ) -> dict[str, Any]:
         """Return the backend's Pareto frontier for one run."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(
                 dict[str, Any],
                 await reader.get_single_run_pareto(
@@ -206,7 +213,7 @@ class AnalyticsNamespace:
         min_sample: int = 3,
     ) -> dict[str, Any]:
         """Return the backend's correlation matrix for one run."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(
                 dict[str, Any],
                 await reader.get_correlation_matrix(
@@ -229,7 +236,7 @@ class AnalyticsNamespace:
         limit: int = 50,
     ) -> dict[str, Any]:
         """Return the backend's ranked configuration leaderboard for one run."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(
                 dict[str, Any],
                 await reader.get_run_leaderboard(
@@ -253,7 +260,7 @@ class AnalyticsNamespace:
         top_k: int = 10,
     ) -> dict[str, Any]:
         """Return the backend's parameter-importance insights for one run."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(
                 dict[str, Any],
                 await reader.get_parameter_insights(
