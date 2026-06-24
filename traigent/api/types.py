@@ -663,6 +663,8 @@ class OptimizationResult:
             - "error": Optimization failed due to an exception
             - None: Unknown or not set
         experiment_id: Backend experiment identifier (None if offline/not synced).
+        experiment_run_id: Backend experiment-run identifier for analytics reads
+            (None if offline/not synced).
         cloud_url: Direct link to the experiment on the cloud portal (None if offline).
         run_label: Human-readable run identifier (e.g. answer_question_20260315_143022_a3f1b2).
     """
@@ -692,6 +694,7 @@ class OptimizationResult:
     experiment_id: str | None = None
     cloud_url: str | None = None
     run_label: str | None = None
+    experiment_run_id: str | None = None
 
     # User-facing, non-fatal warnings about this run (issue #1407). Populated
     # when the run hit a money-correctness gap that the user should see — e.g.
