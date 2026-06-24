@@ -162,8 +162,10 @@ class TestMandatoryMetricsCollectorBasics:
         assert totals.total_duration == 1.5
         assert totals.total_examples_attempted == 10
 
-    def test_accumulate_failed_trial_ignored(self, failed_trial):
-        """Test that failed trials are ignored."""
+    def test_accumulate_failed_trial_without_metrics_contributes_zero(
+        self, failed_trial
+    ):
+        """Test that failed trials without spend metrics contribute zero."""
         collector = MandatoryMetricsCollector()
 
         collector.accumulate(failed_trial)
@@ -171,7 +173,7 @@ class TestMandatoryMetricsCollectorBasics:
         totals = collector.totals()
         assert totals.total_cost == 0.0
         assert totals.total_tokens == 0
-        assert totals.total_duration == 0.0
+        assert totals.total_duration == 0.5
 
     def test_accumulate_multiple_trials(self, completed_trial):
         """Test accumulating multiple trials."""
@@ -383,6 +385,59 @@ class TestMandatoryMetricsCollectorCostAndTokens:
 
         assert collector.totals().total_cost == 0.0
 
+    def test_pruned_and_failed_trials_with_spend_are_accumulated(self):
+        """Mid-execution PRUNED/FAILED trials should count real provider spend."""
+        collector = MandatoryMetricsCollector()
+
+        completed = Mock(spec=TrialResult)
+        completed.trial_id = "completed"
+        completed.status = TrialStatus.COMPLETED
+        completed.duration = 1.0
+        completed.metrics = {
+            "total_cost": 0.10,
+            "total_tokens": 100,
+            "examples_attempted": 10,
+        }
+        completed.metadata = {}
+
+        pruned = Mock(spec=TrialResult)
+        pruned.trial_id = "pruned"
+        pruned.status = TrialStatus.PRUNED
+        pruned.duration = 0.5
+        pruned.metrics = {
+            "total_cost": 0.20,
+            "total_tokens": 50,
+            "examples_attempted": 3,
+        }
+        pruned.metadata = {}
+
+        failed = Mock(spec=TrialResult)
+        failed.trial_id = "failed"
+        failed.status = TrialStatus.FAILED
+        failed.duration = 0.25
+        failed.metrics = {
+            "total_cost": 0.30,
+            "total_tokens": 25,
+            "examples_attempted": 2,
+        }
+        failed.metadata = {}
+
+        abandoned = Mock(spec=TrialResult)
+        abandoned.trial_id = "abandoned"
+        abandoned.status = TrialStatus.PRUNED
+        abandoned.duration = 0.0
+        abandoned.metrics = {}
+        abandoned.metadata = {}
+
+        for trial in (completed, pruned, failed, abandoned):
+            collector.accumulate(trial)
+
+        totals = collector.totals()
+        assert totals.total_cost == pytest.approx(0.60)
+        assert totals.total_tokens == 175
+        assert totals.total_duration == pytest.approx(1.75)
+        assert totals.total_examples_attempted == 15
+
 
 class TestMandatoryMetricsCollectorAggregatedMetrics:
     """Test extraction from aggregated metrics."""
@@ -500,8 +555,8 @@ class TestMandatoryMetricsCollectorEdgeCases:
 
         assert collector.totals().total_examples_attempted == 0
 
-    def test_pruned_trial_ignored(self):
-        """Test pruned trials are ignored."""
+    def test_pruned_trial_spend_is_accumulated(self):
+        """Test pruned trials with spend metrics are accumulated."""
         collector = MandatoryMetricsCollector()
         trial = Mock(spec=TrialResult)
         trial.trial_id = "trial_123"
@@ -512,7 +567,9 @@ class TestMandatoryMetricsCollectorEdgeCases:
 
         collector.accumulate(trial)
 
-        assert collector.totals().total_cost == 0.0
+        totals = collector.totals()
+        assert totals.total_cost == 0.5
+        assert totals.total_duration == 1.0
 
     def test_accumulate_preserves_previous_totals(self, completed_trial):
         """Test that accumulate adds to existing totals."""
@@ -554,7 +611,7 @@ class TestMandatoryMetricsCollectorIntegration:
         trial2.trial_id = "trial_2"
         trial2.status = TrialStatus.FAILED
         trial2.duration = 0.5
-        trial2.metrics = {"total_cost": 0.20}  # Should be ignored
+        trial2.metrics = {"total_cost": 0.20}
         trial2.metadata = {}
 
         trial3 = Mock(spec=TrialResult)
@@ -571,9 +628,9 @@ class TestMandatoryMetricsCollectorIntegration:
         totals = collector.totals()
         metrics = totals.as_metrics_dict()
 
-        assert totals.total_cost == 0.10
+        assert totals.total_cost == pytest.approx(0.30)
         assert totals.total_tokens == 100
-        assert totals.total_duration == 3.0  # 1.0 + 2.0 (failed ignored)
+        assert totals.total_duration == 3.5
         assert totals.total_examples_attempted == 15  # 10 + 5
 
         assert "total_cost" in metrics

@@ -101,6 +101,31 @@ async def test_local_adapter_preserves_evaluation_type_and_reports_per_type_accu
 
 
 @pytest.mark.asyncio
+async def test_local_adapter_unknown_evaluation_type_fails_closed():
+    agent = _SimpleAgent()
+    adapter = LocalExecutionAdapter(_AgentBuilder(agent))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"text": "a"},
+                "expected_output": "OK",
+                "metadata": {"evaluation_type": "bogus"},
+            },
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="unknown-eval"
+    )
+
+    assert result["metrics"]["accuracy"] == 0.0
+    assert result["metrics"]["success_rate"] == 0.0
+    assert result["metrics"]["accuracy_bogus"] == 0.0
+    assert result["metadata"]["failures"] == 1
+
+
+@pytest.mark.asyncio
 async def test_local_adapter_accepts_dataset_object_from_core_types():
     agent = _SimpleAgent()
     adapter = LocalExecutionAdapter(_AgentBuilder(agent))
