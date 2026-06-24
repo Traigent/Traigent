@@ -45,10 +45,14 @@ def run_report_payload() -> dict[str, object]:
     return {"run_id": "run_123", "project_id": "proj_abc", "measures": {}}
 
 
-def _make_client(api_key: str = "uk_test_key"):
+def _make_client(api_key: str | None = "uk_test_key", jwt_token: str | None = None):
     from traigent.cloud.analytics_client import BackendAnalyticsClient
 
-    return BackendAnalyticsClient(backend_url="http://localhost:5000", api_key=api_key)
+    return BackendAnalyticsClient(
+        backend_url="http://localhost:5000",
+        api_key=api_key,
+        jwt_token=jwt_token,
+    )
 
 
 def _success_envelope(data: object) -> dict[str, object]:
@@ -95,10 +99,29 @@ class TestInit:
         headers = client._auth_headers()
         assert headers == {"X-API-Key": "uk_abcdef"}
 
+    def test_dotted_api_key_uses_x_api_key_header(self) -> None:
+        """Regression: a three-segment API key is still an API key, not a JWT."""
+        client = _make_client(api_key="uk_test.segment.withdots")
+        headers = client._auth_headers()
+        assert headers == {"X-API-Key": "uk_test.segment.withdots"}
+        assert "Authorization" not in headers
+
     def test_jwt_uses_bearer_header(self) -> None:
-        client = _make_client(api_key="aaa.bbb.ccc")
+        client = _make_client(api_key=None, jwt_token="aaa.bbb.ccc")
         headers = client._auth_headers()
         assert headers == {"Authorization": "Bearer aaa.bbb.ccc"}
+
+    def test_api_key_wins_when_api_key_and_jwt_are_both_set(self) -> None:
+        """Match JS buildTraigentHeaders: apiKey wins over jwtToken."""
+        client = _make_client(
+            api_key="uk_abcdef",
+            jwt_token="aaa.bbb.ccc",
+        )
+
+        headers = client._auth_headers()
+
+        assert headers == {"X-API-Key": "uk_abcdef"}
+        assert "Authorization" not in headers
 
 
 @pytest.mark.skipif(HTTPX_AVAILABLE, reason="only when httpx missing")
