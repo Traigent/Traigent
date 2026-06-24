@@ -19,27 +19,27 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture()
 def pareto_payload() -> dict[str, object]:
-    """A frozen-v0 run_pareto contract instance."""
+    """A backend-realistic run_pareto contract instance."""
     return {
         "run_id": "run_123",
         "project_id": "proj_abc",
         "measures": {
-            "quality": {"label": "Accuracy", "unit": "%"},
-            "cost": {"label": "Cost", "unit": "USD"},
-            "latency": {"label": "Latency", "unit": "ms"},
+            "quality": "accuracy_score",
+            "cost": "cost",
+            "latency": "latency_ms",
         },
         "frontier": [
             {
                 "config_id": "cfg_1",
                 "rank_on_frontier": 1,
-                "metrics": {"quality": 0.9, "cost": 0.02, "latency": 800},
+                "metrics": {"accuracy_score": 0.9, "cost": 0.02, "latency_ms": 800},
                 "is_knee": True,
                 "tradeoff_summary": "Best balance.",
             },
             {
                 "config_id": "cfg_2",
                 "rank_on_frontier": 2,
-                "metrics": {"quality": 0.95, "cost": 0.05, "latency": 1200},
+                "metrics": {"accuracy_score": 0.95, "cost": 0.05, "latency_ms": 1200},
                 "is_knee": False,
                 "tradeoff_summary": "Highest quality.",
             },
@@ -49,7 +49,7 @@ def pareto_payload() -> dict[str, object]:
                 "config_id": "cfg_3",
                 "dominated_by": "cfg_1",
                 "reason": "Worse on both axes.",
-                "metrics": {"quality": 0.8, "cost": 0.04, "latency": 1500},
+                "metrics": {"accuracy_score": 0.8, "cost": 0.04, "latency_ms": 1500},
             }
         ],
         "shape": "convex",
@@ -87,10 +87,13 @@ def correlations_payload() -> dict[str, object]:
 
 class TestRenderPareto:
     def test_writes_png_file(self, pareto_payload, tmp_path) -> None:
-        from traigent.analytics.render import render_chart
+        from traigent.analytics.render import ChartRenderError, render_chart
 
         out = tmp_path / "pareto.png"
-        path = render_chart(pareto_payload, "run_pareto", str(out))
+        try:
+            path = render_chart(pareto_payload, "run_pareto", str(out))
+        except ChartRenderError as exc:  # pragma: no cover - assertion aid
+            pytest.fail(f"realistic backend pareto payload should render: {exc}")
 
         assert path == str(out.resolve())
         assert out.exists()
@@ -135,10 +138,21 @@ class TestRenderPareto:
 
         payload = {
             "run_id": "r",
-            "measures": {},
+            "measures": {
+                "quality": "accuracy_score",
+                "cost": "cost",
+                "latency": "latency_ms",
+            },
             "frontier": [
-                {"config_id": "good", "metrics": {"quality": 0.9, "cost": 0.01}},
-                {"config_id": "bad", "metrics": {"quality": None}},
+                {
+                    "config_id": "good",
+                    "metrics": {
+                        "accuracy_score": 0.9,
+                        "cost": 0.01,
+                        "latency_ms": 100,
+                    },
+                },
+                {"config_id": "bad", "metrics": {"cost": 0.02, "latency_ms": 110}},
             ],
             "dominated": [],
         }
