@@ -850,11 +850,11 @@ class TestTraigentClientEdgeAnalyticsMode:
                 if module_obj is not None:
                     sys.modules[mod] = module_obj
 
-    def test_traigent_client_cloud_mode_deprecated_resolves_to_edge_analytics(self):
+    def test_traigent_client_cloud_mode_deprecated_resolves_to_hybrid(self):
         """TraigentClient accepts deprecated cloud mode with DeprecationWarning.
 
         Cloud mode is no longer reserved — it emits DeprecationWarning and
-        resolves to edge_analytics.
+        resolves to hybrid.
         """
         import warnings
 
@@ -864,5 +864,5 @@ class TestTraigentClientEdgeAnalyticsMode:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             client = TraigentClient(execution_mode="cloud", agent_builder=None)
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert client.execution_mode == ExecutionMode.HYBRID
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)

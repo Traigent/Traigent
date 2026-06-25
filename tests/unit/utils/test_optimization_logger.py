@@ -465,7 +465,7 @@ class TestLogTrialResult:
         assert len(log._trial_buffer) == 0
 
     def test_deprecated_cloud_mode_still_buffers(self, tmp_path: Path) -> None:
-        """Deprecated cloud mode resolves to edge_analytics and buffers trials normally."""
+        """Deprecated cloud mode resolves to a supported runtime and buffers trials normally."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:

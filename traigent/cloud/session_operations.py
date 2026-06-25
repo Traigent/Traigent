@@ -605,6 +605,9 @@ class SessionOperations:
                     reason=SessionCreationFailureReason.SESSION_FAILED,
                     detail=detail,
                     failure_response=failure_response,
+                    typed_legacy_session_create_400=bool(
+                        getattr(e, "typed_legacy_session_create_400", False)
+                    ),
                 )
 
         # Run async method in sync context

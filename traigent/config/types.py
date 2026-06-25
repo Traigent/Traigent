@@ -280,10 +280,10 @@ def resolve_execution_mode(
             _warn_deprecated_execution_mode_alias(
                 mode,
                 "Use resolve_execution_policy() for the new cloud-first policy. "
-                "This deprecated compatibility helper still maps it to "
-                "edge_analytics.",
+                "This deprecated compatibility helper maps it to the cloud-first "
+                "hybrid runtime.",
             )
-            return ExecutionMode.EDGE_ANALYTICS
+            return ExecutionMode.HYBRID
         if normalized == "local":
             _warn_deprecated_execution_mode_alias(
                 mode,

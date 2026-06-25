@@ -1551,6 +1551,147 @@ class TestHandleSessionCreationResult:
             "Bad request from session endpoint" in msg for msg in caplog.messages
         )
 
+    def test_cloud_brain_session_create_400_warns_and_marks_local_fallback(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Non-governed auto runs degrade locally when typed+legacy session create 400."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Typed and legacy session-create returned HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+            typed_legacy_session_create_400=True,
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert manager.result_source(trial_count=0) == "local_fallback"
+        assert traigent_config.result_source == "local_fallback"
+        assert traigent_config.no_egress is True
+        assert any("traigent.cloud_brain_fallback" in msg for msg in caplog.messages)
+        assert any("HTTP 400" in msg for msg in caplog.messages)
+
+    @pytest.mark.parametrize(
+        "policy_kwargs,require_cloud_env,governed_session",
+        [
+            ({"algorithm": "bayesian"}, None, False),
+            ({"algorithm": "auto", "require_cloud": True}, None, False),
+            ({"algorithm": "auto"}, "1", False),
+            ({"algorithm": "auto"}, None, True),
+        ],
+    )
+    def test_cloud_brain_session_create_400_still_raises_when_cloud_required(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        monkeypatch,
+        policy_kwargs,
+        require_cloud_env,
+        governed_session,
+    ):
+        """Strict/governed-style cloud-required runs do not absorb session-create 400."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+        from traigent.utils.exceptions import ConfigurationError
+
+        if require_cloud_env:
+            monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", require_cloud_env)
+        else:
+            monkeypatch.delenv("TRAIGENT_REQUIRE_CLOUD", raising=False)
+
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(**policy_kwargs)
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Typed and legacy session-create returned HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+            typed_legacy_session_create_400=True,
+        )
+
+        with pytest.raises(ConfigurationError):
+            manager.handle_session_creation_result(
+                result, governed_session=governed_session
+            )
+
+    def test_cloud_brain_typed_only_session_create_400_still_raises(
+        self, traigent_config, objective_schema, mock_optimizer, monkeypatch
+    ):
+        """The 400 downgrade is limited to typed+legacy auto-contract failure."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+        from traigent.utils.exceptions import ConfigurationError
+
+        monkeypatch.delenv("TRAIGENT_REQUIRE_CLOUD", raising=False)
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Typed session-create returned HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+        )
+
+        with pytest.raises(ConfigurationError):
+            manager.handle_session_creation_result(result)
+
     def test_idempotent_warns_only_once(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):

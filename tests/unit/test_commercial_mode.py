@@ -22,10 +22,10 @@ def sample_dataset():
 
 
 class TestDeprecatedCloudMode:
-    """Public cloud mode is deprecated and emits DeprecationWarning, resolving to edge_analytics."""
+    """Public cloud mode is deprecated and emits DeprecationWarning, resolving to hybrid."""
 
     def test_decorator_with_cloud_execution_deprecated(self):
-        """The deprecated cloud mode emits DeprecationWarning and resolves to edge_analytics."""
+        """The deprecated cloud mode emits DeprecationWarning and resolves to hybrid."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -61,10 +61,10 @@ class TestDeprecatedCloudMode:
 
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_optimized_function_cloud_deprecated_resolves_to_edge_analytics(
+    def test_optimized_function_cloud_deprecated_resolves_to_hybrid(
         self, sample_dataset
     ):
-        """Direct OptimizedFunction with cloud mode resolves to edge_analytics."""
+        """Direct OptimizedFunction with cloud mode resolves to hybrid."""
         import warnings
 
         def test_func(x: str) -> str:
@@ -79,7 +79,7 @@ class TestDeprecatedCloudMode:
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_mode == "hybrid"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 

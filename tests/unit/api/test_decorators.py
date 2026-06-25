@@ -113,8 +113,8 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_deprecated_cloud_resolves_to_edge_analytics_mode(self):
-        """Deprecated cloud keeps cloud-first policy with edge_analytics compat mode."""
+    def test_execution_bundle_deprecated_cloud_resolves_to_hybrid_mode(self):
+        """Deprecated cloud keeps cloud-first policy with hybrid compat mode."""
         import warnings
 
         from traigent.api.decorators import ExecutionOptions
@@ -133,7 +133,7 @@ class TestOptimizeDecorator:
                 return x
 
         assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.execution_mode == "edge_analytics"
+        assert sample_function.execution_mode == "hybrid"
         assert sample_function.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
@@ -443,7 +443,7 @@ class TestOptimizeDecorator:
         assert "test-10-1-1" in result
 
     def test_decorator_with_cloud_execution_mode_deprecated(self):
-        """Deprecated cloud mode warns and keeps edge_analytics compat mode."""
+        """Deprecated cloud mode warns and keeps hybrid compat mode."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -457,7 +457,7 @@ class TestOptimizeDecorator:
                 return f"Using {model}"
 
         assert isinstance(ai_function, OptimizedFunction)
-        assert ai_function.execution_mode == "edge_analytics"
+        assert ai_function.execution_mode == "hybrid"
         assert ai_function.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 

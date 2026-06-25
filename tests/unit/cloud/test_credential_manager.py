@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import patch
 
+import pytest
+
+import traigent.cloud.credential_manager as credential_manager_module
 from traigent.cloud.credential_manager import CredentialManager
 
 
@@ -48,10 +52,14 @@ def test_dev_mode_with_dev_api_key_returns_value(monkeypatch) -> None:
     """When TRAIGENT_DEV_API_KEY is set alongside dev mode, return that value."""
     _clear_env(monkeypatch)
     monkeypatch.setenv("TRAIGENT_DEV_MODE", "true")
-    monkeypatch.setenv("TRAIGENT_DEV_API_KEY", "dev-key-xyz")  # pragma: allowlist secret
+    monkeypatch.setenv(
+        "TRAIGENT_DEV_API_KEY", "dev-key-xyz"
+    )  # pragma: allowlist secret
 
     with patch.object(CredentialManager, "_load_cli_credentials", return_value=None):
-        assert CredentialManager.get_api_key() == "dev-key-xyz"  # pragma: allowlist secret
+        assert (
+            CredentialManager.get_api_key() == "dev-key-xyz"
+        )  # pragma: allowlist secret
         creds = CredentialManager.get_credentials()
 
     assert creds["api_key"] == "dev-key-xyz"  # pragma: allowlist secret
@@ -78,7 +86,9 @@ def test_dev_api_key_alone_does_not_activate_dev_fallback(monkeypatch) -> None:
     if no credentials are configured.
     """
     _clear_env(monkeypatch)
-    monkeypatch.setenv("TRAIGENT_DEV_API_KEY", "leaked-dev-key")  # pragma: allowlist secret
+    monkeypatch.setenv(
+        "TRAIGENT_DEV_API_KEY", "leaked-dev-key"
+    )  # pragma: allowlist secret
 
     with patch.object(CredentialManager, "_load_cli_credentials", return_value=None):
         assert CredentialManager.get_api_key() is None
@@ -91,7 +101,9 @@ def test_get_auth_headers_jwt_shaped_dev_key_uses_bearer(monkeypatch) -> None:
     `get_auth_headers` for the env-driven dev path."""
     _clear_env(monkeypatch)
     monkeypatch.setenv("TRAIGENT_DEV_MODE", "true")
-    monkeypatch.setenv("TRAIGENT_DEV_API_KEY", "header.payload.signature")  # pragma: allowlist secret
+    monkeypatch.setenv(
+        "TRAIGENT_DEV_API_KEY", "header.payload.signature"
+    )  # pragma: allowlist secret
 
     with patch.object(CredentialManager, "_load_cli_credentials", return_value=None):
         headers = CredentialManager.get_auth_headers()
@@ -103,7 +115,9 @@ def test_get_auth_headers_opaque_dev_key_uses_x_api_key(monkeypatch) -> None:
     """An opaque (non-JWT-shaped) dev key uses the X-API-Key header."""
     _clear_env(monkeypatch)
     monkeypatch.setenv("TRAIGENT_DEV_MODE", "true")
-    monkeypatch.setenv("TRAIGENT_DEV_API_KEY", "tg_opaque_token_value")  # pragma: allowlist secret
+    monkeypatch.setenv(
+        "TRAIGENT_DEV_API_KEY", "tg_opaque_token_value"
+    )  # pragma: allowlist secret
 
     with patch.object(CredentialManager, "_load_cli_credentials", return_value=None):
         headers = CredentialManager.get_auth_headers()
@@ -135,7 +149,9 @@ def test_load_cli_credentials_prefers_secure_store(monkeypatch) -> None:
         lambda: _FakeSecureStore(payload),
     )
 
-    assert CredentialManager.get_api_key() == "secure-api-key"  # pragma: allowlist secret
+    assert (
+        CredentialManager.get_api_key() == "secure-api-key"
+    )  # pragma: allowlist secret
     assert CredentialManager.get_stored_backend_url() == "https://api.example.test"
 
 
@@ -161,4 +177,74 @@ def test_legacy_plaintext_cli_credentials_are_ignored_without_opt_in(
 
     monkeypatch.setenv("TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS", "true")
 
-    assert CredentialManager.get_api_key() == "plaintext-api-key"  # pragma: allowlist secret
+    assert (
+        CredentialManager.get_api_key() == "plaintext-api-key"
+    )  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize(
+    ("url_env_name", "url_env_value", "expected_backend_url"),
+    [
+        (
+            "TRAIGENT_BACKEND_URL",
+            "https://env-backend.example.test",
+            "https://env-backend.example.test",
+        ),
+        (
+            "TRAIGENT_API_URL",
+            "https://env-api.example.test/api/v1",
+            "https://env-api.example.test",
+        ),
+    ],
+)
+def test_get_credentials_env_url_and_key_override_stale_stored_credentials(
+    monkeypatch,
+    tmp_path,
+    caplog,
+    url_env_name,
+    url_env_value,
+    expected_backend_url,
+) -> None:
+    """Full CredentialManager path must prefer env over stale CLI credentials."""
+    _clear_env(monkeypatch)
+    monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+    monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
+    monkeypatch.delenv("TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS", raising=False)
+
+    config_dir = tmp_path / ".traigent"
+    config_dir.mkdir()
+    credentials_file = config_dir / "credentials.json"
+    credentials_file.write_text(
+        json.dumps(
+            {
+                "api_key": "stale-stored-key",  # pragma: allowlist secret
+                "backend_url": "http://stale-localhost.example.test",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(credential_manager_module, "TRAIGENT_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(credential_manager_module, "CREDENTIALS_FILE", credentials_file)
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.get_secure_credential_store",
+        lambda: _FakeSecureStore(None),
+    )
+
+    monkeypatch.setenv("TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS", "true")
+    monkeypatch.setenv("TRAIGENT_API_KEY", "env-api-key")  # pragma: allowlist secret
+    monkeypatch.setenv(url_env_name, url_env_value)
+
+    with caplog.at_level(logging.INFO, logger="traigent.config.backend_config"):
+        credentials = CredentialManager.get_credentials()
+
+    assert credentials == {
+        "api_key": "env-api-key",  # pragma: allowlist secret
+        "backend_url": expected_backend_url,
+        "source": "environment",
+    }
+    assert any(
+        f"{url_env_name} overrides stored CLI backend_url" in record.message
+        and "http://stale-localhost.example.test" in record.message
+        and expected_backend_url in record.message
+        for record in caplog.records
+    )

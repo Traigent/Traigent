@@ -828,10 +828,10 @@ class TestOptimization:
             opt_func.apply_best_config()
 
     @pytest.mark.asyncio
-    async def test_optimization_with_deprecated_cloud_resolves_to_edge_analytics(
+    async def test_optimization_with_deprecated_cloud_resolves_to_hybrid(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        """Deprecated cloud mode resolves to cloud-first hybrid with DeprecationWarning."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -843,7 +843,7 @@ class TestOptimization:
                 eval_dataset=sample_dataset,
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_mode == "hybrid"
         assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 

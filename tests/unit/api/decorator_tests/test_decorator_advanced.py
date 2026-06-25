@@ -241,7 +241,7 @@ class TestOptimizationScenarios(DecoratorTestBase):
         assert callable(test_func)
         assert test_func("hello") == "Response: hello"
 
-    def test_cloud_execution_mode_deprecated_resolves_to_edge_analytics(self):
+    def test_cloud_execution_mode_deprecated_resolves_to_hybrid(self):
         """Deprecated cloud execution mode is accepted with DeprecationWarning."""
         import warnings
 
@@ -255,7 +255,7 @@ class TestOptimizationScenarios(DecoratorTestBase):
             def test_func(text: str) -> str:
                 return f"Commercial response: {text}"
 
-        assert test_func.execution_mode == "edge_analytics"
+        assert test_func.execution_mode == "hybrid"
         assert test_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 

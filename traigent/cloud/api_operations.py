@@ -445,7 +445,7 @@ class ApiOperations:
                 return await self._post_session_creation(
                     session_payload, headers, connector
                 )
-            except CloudServiceError:
+            except CloudServiceError as typed_exc:
                 # auto-contract fallback: a failed TYPED create may retry the
                 # legacy shape ONCE — and only for NON-governed sessions
                 # (governed sessions must fail loudly; the legacy contract
@@ -463,9 +463,20 @@ class ApiOperations:
                 legacy_payload = self._build_legacy_session_payload(
                     session_request, max_trials_value
                 )
-                return await self._post_session_creation(
-                    legacy_payload, headers, connector
-                )
+                try:
+                    return await self._post_session_creation(
+                        legacy_payload, headers, connector
+                    )
+                except CloudServiceError as legacy_exc:
+                    typed_detail = getattr(typed_exc, "session_creation_failure", None)
+                    legacy_detail = getattr(
+                        legacy_exc, "session_creation_failure", None
+                    )
+                    typed_status = getattr(typed_detail, "status_code", None)
+                    legacy_status = getattr(legacy_detail, "status_code", None)
+                    if typed_status == 400 and legacy_status == 400:
+                        cast(Any, legacy_exc).typed_legacy_session_create_400 = True
+                    raise
         except SessionContractError:
             # Review round 3: contract failures must reach the caller AS
             # THEMSELVES — the generic wrap below would demote them to a
@@ -481,6 +492,10 @@ class ApiOperations:
             # BACKEND_UNREACHABLE ("check your network/URL") instead of an
             # auth/permission error (MISSING_PERMISSION / INVALID_OR_REVOKED_KEY).
             raise
+        except CloudServiceError as e:
+            if getattr(e, "typed_legacy_session_create_400", False):
+                raise
+            self._handle_generic_session_exception(e)
         except aiohttp.ClientConnectorError as e:
             self._handle_connector_error(e)
         except aiohttp.ClientError as e:
