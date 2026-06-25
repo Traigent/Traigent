@@ -246,7 +246,6 @@ class LocalExecutionAdapter(ExecutionAdapter):
 
         else:
             # Unknown evaluation type
-            result["correct"] = False
             result["success"] = False
             result["unknown_eval_type"] = eval_type
             result["error"] = (
@@ -256,7 +255,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
             )
             logger.error(
                 "Unsupported evaluation_type %r for LocalExecutionAdapter; marking "
-                "example as failed. trial_id=%s example_index=%s",
+                "example as failed and excluding it from accuracy. "
+                "trial_id=%s example_index=%s",
                 eval_type,
                 trial_id or "<unknown>",
                 example_index if example_index is not None else "<unknown>",
