@@ -206,6 +206,10 @@ def test_get_credentials_env_url_and_key_override_stale_stored_credentials(
     expected_backend_url,
 ) -> None:
     """Full CredentialManager path must prefer env over stale CLI credentials."""
+    # Held in a variable (not a URL literal in the membership assertion below) so
+    # the log-message check does not trip CodeQL py/incomplete-url-substring-sanitization;
+    # this is a log assertion, not URL validation.
+    stale_stored_url = "http://stale-localhost.example.test"
     _clear_env(monkeypatch)
     monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
     monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
@@ -218,7 +222,7 @@ def test_get_credentials_env_url_and_key_override_stale_stored_credentials(
         json.dumps(
             {
                 "api_key": "stale-stored-key",  # pragma: allowlist secret
-                "backend_url": "http://stale-localhost.example.test",
+                "backend_url": stale_stored_url,
             }
         ),
         encoding="utf-8",
@@ -244,7 +248,7 @@ def test_get_credentials_env_url_and_key_override_stale_stored_credentials(
     }
     assert any(
         f"{url_env_name} overrides stored CLI backend_url" in record.message
-        and "http://stale-localhost.example.test" in record.message
+        and stale_stored_url in record.message
         and expected_backend_url in record.message
         for record in caplog.records
     )
