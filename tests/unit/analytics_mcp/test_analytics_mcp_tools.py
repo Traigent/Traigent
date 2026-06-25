@@ -17,7 +17,16 @@ import pytest
 HTTPX_AVAILABLE = importlib.util.find_spec("httpx") is not None
 
 
-def _install_fake_client(monkeypatch, reader: AsyncMock):
+def _backend_url_with_userinfo() -> str:
+    return "https://" + "user:pass@" + "backend.example.com/root?token=raw-secret"
+
+
+def _install_fake_client(
+    monkeypatch,
+    reader: AsyncMock,
+    *,
+    backend_url: str = "https://backend.example.com",
+):
     """Patch ``_new_analytics_client`` to yield ``reader`` as an async ctx mgr.
 
     The tools open the client with ``async with await _new_analytics_client() as
@@ -27,6 +36,9 @@ def _install_fake_client(monkeypatch, reader: AsyncMock):
     from traigent.analytics_mcp import tools as tools_mod
 
     class _FakeClient:
+        def __init__(self) -> None:
+            self.backend_url = backend_url
+
         async def __aenter__(self):
             return reader
 
@@ -38,6 +50,35 @@ def _install_fake_client(monkeypatch, reader: AsyncMock):
 
     monkeypatch.setattr(tools_mod, "_new_analytics_client", _fake_new_analytics_client)
     return reader
+
+
+def _http_status_error(status_code: int, payload: dict[str, object]):
+    import httpx
+
+    request = httpx.Request(
+        "GET",
+        "https://secret-host.invalid/internal/run?api_key=raw-secret",
+    )
+    response = httpx.Response(status_code, json=payload, request=request)
+    return httpx.HTTPStatusError(
+        f"HTTP {status_code} raw-response-body https://secret-host.invalid",
+        request=request,
+        response=response,
+    )
+
+
+def _assert_failure_context(
+    result: dict[str, object],
+    *,
+    http_status: int | None,
+) -> None:
+    assert result["http_status"] == http_status
+    assert result["backend_url"] == "https://backend.example.com/root"
+    rendered = str(result)
+    assert "user:pass" not in rendered
+    assert "token=raw-secret" not in rendered
+    assert "raw-response-body" not in rendered
+    assert "secret-host" not in rendered
 
 
 class TestRunReportTool:
@@ -118,6 +159,93 @@ class TestRunReportTool:
         assert result["ok"] is False
         assert result["code"] == "authentication_failed"
         assert "secret-host" not in result["message"]
+
+
+@pytest.mark.skipif(not HTTPX_AVAILABLE, reason="httpx not installed")
+class TestBackendErrorTaxonomy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status_code", "payload", "expected_code", "message_fragment"),
+        [
+            (
+                401,
+                {"error": "raw-response-body"},
+                "authentication_failed",
+                "authentication failed",
+            ),
+            (
+                403,
+                {"error": "raw-response-body"},
+                "forbidden",
+                "WAF/Cloudflare",
+            ),
+            (
+                404,
+                {"error_code": "NOT_FOUND", "message": "Run not found"},
+                "not_found",
+                "not found",
+            ),
+            (
+                404,
+                {
+                    "error": "Scores not yet computed",
+                    "message": "Call POST /compute to trigger scoring",
+                },
+                "not_ready",
+                "not ready",
+            ),
+        ],
+    )
+    async def test_http_status_errors_map_to_specific_failure_codes(
+        self,
+        monkeypatch,
+        status_code: int,
+        payload: dict[str, object],
+        expected_code: str,
+        message_fragment: str,
+    ) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_run_report_tool
+
+        reader = AsyncMock()
+        reader.get_run_report.side_effect = _http_status_error(status_code, payload)
+        _install_fake_client(
+            monkeypatch,
+            reader,
+            backend_url=_backend_url_with_userinfo(),
+        )
+
+        result = await analytics_get_run_report_tool("proj_abc", "run_123")
+
+        assert result["ok"] is False
+        assert result["code"] == expected_code
+        assert message_fragment in str(result["message"])
+        _assert_failure_context(result, http_status=status_code)
+
+    @pytest.mark.asyncio
+    async def test_connect_error_maps_to_backend_unavailable(self, monkeypatch) -> None:
+        import httpx
+
+        from traigent.analytics_mcp.tools import analytics_get_run_report_tool
+
+        request = httpx.Request(
+            "GET",
+            "https://secret-host.invalid/internal/run?api_key=raw-secret",
+        )
+        reader = AsyncMock()
+        reader.get_run_report.side_effect = httpx.ConnectError(
+            "connect failed https://secret-host.invalid", request=request
+        )
+        _install_fake_client(
+            monkeypatch,
+            reader,
+            backend_url=_backend_url_with_userinfo(),
+        )
+
+        result = await analytics_get_run_report_tool("proj_abc", "run_123")
+
+        assert result["ok"] is False
+        assert result["code"] == "backend_unavailable"
+        _assert_failure_context(result, http_status=None)
 
 
 class TestProjectOverviewTool:
@@ -633,14 +761,14 @@ class TestHealthAndAuthTools:
         async def _ok(self, api_key):  # noqa: ARG001
             return None
 
-        api_key = "uk_" + "a" * 43
+        fake_key = "uk_" + "a" * 43
         monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
         monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
         monkeypatch.setattr(
             "traigent.cloud.credential_manager.CredentialManager.get_credentials",
             classmethod(
                 lambda cls: {
-                    "api_key": api_key,
+                    "api_key": fake_key,
                     "backend_url": "http://localhost:5000",
                     "source": "cli",
                 }
@@ -650,7 +778,7 @@ class TestHealthAndAuthTools:
 
         client = await tools_mod._new_analytics_client()
 
-        assert client._auth_headers() == {"X-API-Key": api_key}
+        assert client._auth_headers() == {"X-API-Key": fake_key}
         assert "Authorization" not in client._auth_headers()
 
 

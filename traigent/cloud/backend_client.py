@@ -59,6 +59,7 @@ from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import TrialOperations
+from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
@@ -106,7 +107,7 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
-_SDK_USER_AGENT = "Traigent-SDK/1.0"
+_SDK_USER_AGENT = get_sdk_user_agent()
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -276,7 +277,7 @@ class AnalyticsNamespace:
         self, project_id: str, run_id: str
     ) -> dict[str, Any]:
         """Return the backend's privacy-bounded example insights for one run."""
-        async with self._new_read_client() as reader:
+        async with await self._new_read_client() as reader:
             return cast(
                 dict[str, Any],
                 await reader.get_example_insights(project_id, run_id),
