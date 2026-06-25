@@ -659,10 +659,10 @@ class TestOptimizedFunction:
             assert evaluator_arg.custom_evaluator is mock_custom_evaluator
 
     @pytest.mark.asyncio
-    async def test_optimize_with_deprecated_cloud_resolves_to_edge_analytics(
+    async def test_optimize_with_deprecated_cloud_resolves_to_hybrid(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Deprecated cloud mode keeps cloud-first policy with edge_analytics compat mode."""
+        """Deprecated cloud mode keeps cloud-first policy with hybrid compat mode."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -675,7 +675,7 @@ class TestOptimizedFunction:
                 max_trials=5,
                 eval_dataset=sample_dataset,
             )
-        assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_mode == "hybrid"
         assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
@@ -823,10 +823,10 @@ class TestOptimizedFunction:
             # This would happen during actual optimization call
             assert opt_func.algorithm == "random"  # Original value
 
-    def test_cloud_mode_deprecated_resolves_to_edge_analytics(
+    def test_cloud_mode_deprecated_resolves_to_hybrid(
         self, mock_function, sample_config_space, sample_objectives
     ):
-        """Deprecated cloud mode is accepted and resolves to edge_analytics."""
+        """Deprecated cloud mode is accepted and resolves to cloud-first hybrid."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -837,7 +837,7 @@ class TestOptimizedFunction:
                 objectives=sample_objectives,
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_mode == "hybrid"
         assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 

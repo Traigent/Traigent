@@ -51,7 +51,7 @@ def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
     assert any("preserve the legacy no-egress guarantee" in msg for msg in messages)
 
 
-def test_legacy_cloud_maps_to_cloud_first_with_edge_analytics_compat_mode() -> None:
+def test_legacy_cloud_maps_to_cloud_first_with_hybrid_compat_mode() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
@@ -64,8 +64,31 @@ def test_legacy_cloud_maps_to_cloud_first_with_edge_analytics_compat_mode() -> N
     ]
     assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
     assert sample.execution_policy.offline is False
-    assert sample.execution_mode == "edge_analytics"
+    assert sample.execution_mode == "hybrid"
     assert any("semantic flip" in msg for msg in messages)
+
+
+def test_initialize_cloud_global_default_matches_decorator_cloud_policy() -> None:
+    from traigent.api.functions import _GLOBAL_CONFIG, initialize
+
+    original_config = _GLOBAL_CONFIG.copy()
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            initialize(execution_mode="cloud")
+            initialized_mode = _GLOBAL_CONFIG.get("execution_mode")
+
+            @optimize(configuration_space={"x": [1, 2]})
+            def sample(x: int) -> int:
+                return x
+    finally:
+        _GLOBAL_CONFIG.clear()
+        _GLOBAL_CONFIG.update(original_config)
+
+    assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
+    assert sample.execution_mode == "hybrid"
+    assert initialized_mode == "hybrid"
+    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 def test_legacy_auto_execution_mode_is_rejected() -> None:

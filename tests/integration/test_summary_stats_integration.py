@@ -299,7 +299,7 @@ class TestExecutionModeHandling:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = validate_execution_mode("cloud")
-        assert result.value == "edge_analytics"
+        assert result.value == "hybrid"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
         assert validate_execution_mode("hybrid").value == "hybrid"
@@ -314,7 +314,7 @@ class TestExecutionModeHandling:
     def test_traigent_config_invalid_execution_mode(self):
         """Test that TraigentConfig rejects truly invalid execution mode strings."""
         for invalid_mode in ["invalid_mode"]:
-            with pytest.raises(ValueError, match="execution_mode must be one of"):
+            with pytest.raises(ValueError, match="Unsupported execution selector"):
                 TraigentConfig(execution_mode=invalid_mode)
 
         # "local" is a valid alias for edge_analytics

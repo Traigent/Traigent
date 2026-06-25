@@ -21,10 +21,10 @@ def _dataset() -> Dataset:
 
 
 class TestTraigentDecoratorCloudIntegration:
-    """Deprecated cloud mode resolves to edge_analytics; standard mode resolves to hybrid."""
+    """Deprecated cloud and standard modes resolve to hybrid."""
 
     def test_basic_decorator_with_cloud_mode_deprecated(self):
-        """A cloud request emits DeprecationWarning and resolves to edge_analytics."""
+        """A cloud request emits DeprecationWarning and resolves to cloud-first hybrid."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
 
@@ -38,11 +38,11 @@ class TestTraigentDecoratorCloudIntegration:
                 return question
 
         assert isinstance(answer, OptimizedFunction)
-        assert answer.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        assert answer.execution_mode == ExecutionMode.HYBRID.value
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_execution_bundle_with_cloud_mode_deprecated(self):
-        """ExecutionOptions with cloud emits DeprecationWarning and resolves to edge_analytics."""
+        """ExecutionOptions with cloud emits DeprecationWarning and resolves to hybrid."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
 
@@ -59,7 +59,7 @@ class TestTraigentDecoratorCloudIntegration:
                 return question
 
         assert isinstance(answer, OptimizedFunction)
-        assert answer.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        assert answer.execution_mode == ExecutionMode.HYBRID.value
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_standard_mode_deprecated_resolves_to_hybrid(self):

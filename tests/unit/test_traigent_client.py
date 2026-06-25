@@ -108,14 +108,14 @@ class TestDetermineExecutionMode:
         assert client.execution_mode == ExecutionMode.HYBRID
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_explicit_cloud_mode_deprecated_resolves_to_edge_analytics(self) -> None:
-        """Deprecated cloud mode warns and resolves to edge_analytics."""
+    def test_explicit_cloud_mode_deprecated_resolves_to_hybrid(self) -> None:
+        """Deprecated cloud mode warns and resolves to hybrid."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             client = TraigentClient(execution_mode="cloud")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert client.execution_mode == ExecutionMode.HYBRID
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     @patch("traigent.traigent_client.BackendIntegratedClient")

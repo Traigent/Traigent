@@ -2,18 +2,17 @@
 
 import warnings
 
-
 from traigent.config.types import ExecutionMode
 from traigent.core.optimized_function import OptimizedFunction
 
 
 class TestCloudIntegration:
-    """Cloud mode is deprecated; it resolves to edge_analytics with a DeprecationWarning."""
+    """Cloud mode is deprecated; it resolves to hybrid with a DeprecationWarning."""
 
-    def test_cloud_mode_deprecated_resolves_to_edge_analytics(
+    def test_cloud_mode_deprecated_resolves_to_hybrid(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
+        """Deprecated cloud mode resolves to cloud-first hybrid with DeprecationWarning."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             opt_func = OptimizedFunction(
@@ -23,8 +22,8 @@ class TestCloudIntegration:
                 eval_dataset=sample_dataset,
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
-        assert opt_func._effective_execution_mode is ExecutionMode.EDGE_ANALYTICS
+        assert opt_func.execution_mode == ExecutionMode.HYBRID.value
+        assert opt_func._effective_execution_mode is ExecutionMode.HYBRID
         assert opt_func.execution_policy.intent.value == "cloud_brain"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 

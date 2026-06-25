@@ -77,7 +77,7 @@ def test_traigent_client_deprecated_execution_mode_warns_and_maps_local(
     backend_client_factory.assert_not_called()
 
 
-def test_traigent_client_deprecated_cloud_warns_and_maps_edge_analytics_mode(
+def test_traigent_client_deprecated_cloud_warns_and_maps_hybrid_mode(
     backend_client_factory: Mock,
 ) -> None:
     with pytest.warns(DeprecationWarning, match="semantic flip"):
@@ -85,9 +85,8 @@ def test_traigent_client_deprecated_cloud_warns_and_maps_edge_analytics_mode(
 
     assert client.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
     assert client.execution_policy.offline is False
-    assert client.execution_mode is ExecutionMode.EDGE_ANALYTICS
-    assert client.backend_client is None
-    backend_client_factory.assert_not_called()
+    assert client.execution_mode is ExecutionMode.HYBRID
+    backend_client_factory.assert_called_once()
 
 
 def test_traigent_client_deprecated_execution_mode_auto_maps_edge_analytics(

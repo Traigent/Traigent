@@ -143,7 +143,7 @@ def test_execution_mode_deprecated_values_warn_and_resolve(mode):
         warnings.simplefilter("always")
         config = TraigentConfig(execution_mode=mode)
 
-    expected = "edge_analytics" if mode in {"local", "cloud"} else "hybrid"
+    expected = "edge_analytics" if mode == "local" else "hybrid"
     assert config.execution_mode == expected
     assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 

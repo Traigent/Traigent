@@ -2227,6 +2227,8 @@ def optimize(  # NOSONAR(S107)
     legacy_args = _parse_legacy_args(legacy)
 
     combined_settings = dict(_OPTIMIZE_DEFAULTS)
+    if "execution_mode" in _GLOBAL_CONFIG:
+        combined_settings["execution_mode"] = _GLOBAL_CONFIG["execution_mode"]
     provided_sources: dict[str, str] = {}
     record_option = _build_settings_recorder(combined_settings, provided_sources)
 

@@ -497,8 +497,6 @@ class OptimizedFunction:
                 execution_mode=execution_mode,
                 source_hint="optimized_function",
             )
-        else:
-            execution_mode = self._requested_execution_mode or execution_mode
 
         try:
             effective_mode_enum = validate_execution_mode(execution_mode)

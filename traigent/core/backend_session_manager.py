@@ -37,6 +37,7 @@ from traigent.core.execution_policy_runtime import (
     policy_is_cloud_brain,
     policy_requires_cloud,
     session_failure_is_connectivity,
+    session_failure_is_session_create_400,
 )
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
@@ -366,7 +367,9 @@ class BackendSessionManager:
         self._backend_tracking_enabled = False
         self._backend_disabled_reason = reason
 
-    def handle_session_creation_result(self, result: SessionCreationResult) -> str:
+    def handle_session_creation_result(
+        self, result: SessionCreationResult, *, governed_session: bool = False
+    ) -> str:
         """Consume a SessionCreationResult: flip breaker, emit warning, return session_id.
 
         Single place that interprets the structured result — ensures warning text
@@ -392,10 +395,17 @@ class BackendSessionManager:
                     "Cloud execution is required, but backend session creation "
                     f"failed: {fallback_reason}"
                 )
+            if governed_session:
+                raise ConfigurationError(
+                    "Governed backend session creation failed; local fallback is "
+                    f"not allowed: {fallback_reason}"
+                )
             if policy_is_cloud_brain(policy):
-                if policy_allows_cloud_fallback(
-                    policy
-                ) and session_failure_is_connectivity(result):
+                cloud_fallback_allowed = policy_allows_cloud_fallback(policy)
+                if cloud_fallback_allowed and (
+                    session_failure_is_connectivity(result)
+                    or session_failure_is_session_create_400(result)
+                ):
                     self._fallback_reason = fallback_reason
                     mark_local_fallback(self._traigent_config, fallback_reason)
                     logger.warning(
@@ -719,7 +729,10 @@ class BackendSessionManager:
                 tvl_governance=tvl_governance,
             )
             result = self.normalize_session_creation_result(raw_result)
-            session_id = self.handle_session_creation_result(result)
+            session_id = self.handle_session_creation_result(
+                result,
+                governed_session=bool(promotion_policy or tvl_governance),
+            )
             if result.backend_connected:
                 owning_context = {
                     key: normalized

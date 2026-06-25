@@ -20,6 +20,7 @@ from traigent.cloud.api_operations import ApiOperations
 from traigent.cloud.client import CloudServiceError
 from traigent.cloud.governance import build_tvl_governance, promotion_policy_to_wire
 from traigent.cloud.models import SessionCreationRequest
+from traigent.core.session_types import SessionCreationFailureDetail
 
 STRICT_POLICY = {
     "dominance": "epsilon_pareto",
@@ -143,6 +144,33 @@ class TestAutoFallback:
                 _request(promotion_policy=STRICT_POLICY)
             )
         assert len(attempts) == 1  # NO legacy retry for governed sessions
+
+    @pytest.mark.asyncio
+    async def test_typed_and_legacy_400_marks_auto_retry_failure(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        ops = _ops()
+        ops.client.auth_manager.augment_headers = AsyncMock(return_value={})
+        statuses = [400, 400]
+
+        async def fake_post(payload, headers, connector):
+            status = statuses.pop(0)
+            exc = CloudServiceError(f"session create rejected {status}")
+            exc.session_creation_failure = (
+                SessionCreationFailureDetail.from_http_response(
+                    status, "Bad request from session endpoint"
+                )
+            )
+            raise exc
+
+        monkeypatch.setattr(ops, "_post_session_creation", fake_post)
+        monkeypatch.setattr(ops, "_build_connector", lambda: None)
+
+        with pytest.raises(CloudServiceError) as exc_info:
+            await ops.create_traigent_session_via_api(_request())
+
+        assert getattr(exc_info.value, "typed_legacy_session_create_400", False) is True
+        assert statuses == []
 
 
 class TestPayloadChokePoint:

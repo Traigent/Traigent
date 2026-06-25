@@ -19,7 +19,7 @@ from traigent.config.parallel import (
     coerce_parallel_config,
     merge_parallel_configs,
 )
-from traigent.config.types import TraigentConfig
+from traigent.config.types import TraigentConfig, validate_execution_mode
 from traigent.optimizers import list_optimizers
 from traigent.optimizers.registry import _is_smart_algorithm
 from traigent.utils.exceptions import (
@@ -283,6 +283,8 @@ def _apply_additional_overrides(overrides: dict[str, Any]) -> None:
     """Merge arbitrary keyword overrides into the global configuration."""
 
     for key, value in overrides.items():
+        if key == "execution_mode" and value is not None:
+            value = validate_execution_mode(value).value
         _GLOBAL_CONFIG[key] = value
 
 

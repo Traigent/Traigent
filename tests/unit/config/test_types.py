@@ -370,14 +370,14 @@ class TestValidateExecutionMode:
                 ExecutionMode.HYBRID_API,
             }
 
-    def test_deprecated_cloud_mode_warns_and_resolves_to_edge_analytics(self) -> None:
-        """The removed cloud mode emits DeprecationWarning and maps to edge_analytics."""
+    def test_deprecated_cloud_mode_warns_and_resolves_to_hybrid(self) -> None:
+        """The deprecated cloud mode emits DeprecationWarning and maps to hybrid."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = validate_execution_mode("cloud")
-        assert result is ExecutionMode.EDGE_ANALYTICS
+        assert result is ExecutionMode.HYBRID
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_config_privacy_alias_normalizes_to_hybrid(self) -> None:
@@ -401,5 +401,5 @@ class TestValidateExecutionMode:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             config = TraigentConfig(execution_mode="cloud")
-        assert config.execution_mode == "edge_analytics"
+        assert config.execution_mode == "hybrid"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
