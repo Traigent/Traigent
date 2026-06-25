@@ -95,9 +95,10 @@ class TestInit:
 
     def test_api_key_uses_x_api_key_header(self) -> None:
         """An API key (no dots) must go in X-API-Key, never as a bearer token."""
-        client = _make_client(api_key="uk_abcdef")
+        fake_key = "uk_abcdef"
+        client = _make_client(api_key=fake_key)
         headers = client._auth_headers()
-        assert headers == {"X-API-Key": "uk_abcdef"}
+        assert headers == {"X-API-Key": fake_key}
 
     def test_dotted_api_key_uses_x_api_key_header(self) -> None:
         """Regression: a three-segment API key is still an API key, not a JWT."""
@@ -113,14 +114,15 @@ class TestInit:
 
     def test_api_key_wins_when_api_key_and_jwt_are_both_set(self) -> None:
         """Match JS buildTraigentHeaders: apiKey wins over jwtToken."""
+        fake_key = "uk_abcdef"
         client = _make_client(
-            api_key="uk_abcdef",
+            api_key=fake_key,
             jwt_token="aaa.bbb.ccc",
         )
 
         headers = client._auth_headers()
 
-        assert headers == {"X-API-Key": "uk_abcdef"}
+        assert headers == {"X-API-Key": fake_key}
         assert "Authorization" not in headers
 
 
@@ -140,6 +142,27 @@ class TestGetClientOffline:
         client = _make_client()
         with pytest.raises(OfflineModeError):
             client._get_client()
+
+
+class TestGetClientHeaders:
+    def test_default_headers_include_versioned_user_agent(self, monkeypatch) -> None:
+        from traigent.cloud import analytics_client as analytics_client_mod
+
+        captured: dict[str, object] = {}
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs) -> None:
+                captured["headers"] = kwargs["headers"]
+
+        monkeypatch.setattr(analytics_client_mod.httpx, "AsyncClient", _FakeAsyncClient)
+
+        fake_key = "uk_abcdef"
+        client = _make_client(api_key=fake_key)
+        client._get_client()
+
+        headers = captured["headers"]
+        assert headers["X-API-Key"] == fake_key
+        assert headers["User-Agent"].startswith("traigent-sdk/")
 
 
 class TestGetRunReport:

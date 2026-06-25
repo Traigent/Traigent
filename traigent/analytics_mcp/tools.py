@@ -28,6 +28,15 @@ from typing import Any, cast
 from traigent.cloud.analytics_client import normalize_decision_intent
 from traigent.utils.logging import get_logger
 
+try:
+    import httpx
+except ImportError:  # pragma: no cover - BackendAnalyticsClient reports this first
+    _HTTP_STATUS_ERRORS: tuple[type[BaseException], ...] = ()
+    _HTTP_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = ()
+else:
+    _HTTP_STATUS_ERRORS = (httpx.HTTPStatusError,)
+    _HTTP_TRANSPORT_ERRORS = (httpx.TransportError,)
+
 logger = get_logger(__name__)
 
 ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
@@ -48,14 +57,29 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
 _SUPPORTED_CHART_KINDS: tuple[str, ...] = ("run_pareto", "run_correlations")
 
 
-def _failure(message: str, *, code: str = "invalid_input") -> dict[str, Any]:
-    return {"ok": False, "code": code, "message": message}
+def _failure(
+    message: str,
+    *,
+    code: str = "invalid_input",
+    http_status: int | None = None,
+    backend_url: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "code": code,
+        "message": message,
+        "http_status": http_status,
+        "backend_url": (
+            backend_url if backend_url is not None else _resolved_backend_url()
+        ),
+    }
 
 
-def _auth_failure() -> dict[str, Any]:
+def _auth_failure(*, backend_url: str | None = None) -> dict[str, Any]:
     return _failure(
         "Analytics authentication failed; configure valid Traigent credentials.",
         code="authentication_failed",
+        backend_url=backend_url,
     )
 
 
@@ -80,7 +104,106 @@ async def _new_analytics_client() -> Any:
     from traigent.cloud.analytics_client import BackendAnalyticsClient
 
     credential_kwargs = await resolve_analytics_read_client_credentials()
-    return BackendAnalyticsClient(**credential_kwargs)
+    return BackendAnalyticsClient(
+        api_key=credential_kwargs.get("api_key"),
+        jwt_token=credential_kwargs.get("jwt_token"),
+    )
+
+
+def _resolved_backend_url(client: Any | None = None) -> str | None:
+    candidate = getattr(client, "backend_url", None)
+    if not candidate:
+        try:
+            from traigent.config.backend_config import BackendConfig
+
+            candidate = BackendConfig.get_backend_url()
+        except Exception:  # pragma: no cover - defensive structured fallback
+            return None
+    return _sanitize_url(str(candidate))
+
+
+def _response_payload(response: Any | None) -> Any:
+    if response is None:
+        return None
+    try:
+        return response.json()
+    except Exception:
+        return None
+
+
+def _iter_payload_text(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        for value in payload.values():
+            yield from _iter_payload_text(value)
+    elif isinstance(payload, list):
+        for value in payload:
+            yield from _iter_payload_text(value)
+    elif isinstance(payload, str):
+        yield payload
+
+
+def _signals_not_ready(response: Any | None) -> bool:
+    payload = _response_payload(response)
+    for text in _iter_payload_text(payload):
+        normalized = text.lower().replace("_", " ").replace("-", " ")
+        if (
+            "not ready" in normalized
+            or "not yet computed" in normalized
+            or "not computed" in normalized
+            or "not yet available" in normalized
+            or "compute to trigger" in normalized
+            or "analytics pending" in normalized
+        ):
+            return True
+    return False
+
+
+def _http_status_failure(
+    exc: BaseException,
+    *,
+    what: str,
+    backend_url: str | None,
+) -> dict[str, Any]:
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    status = int(status) if isinstance(status, int) else None
+
+    if status == 401:
+        return _failure(
+            "Analytics authentication failed; configure valid Traigent credentials.",
+            code="authentication_failed",
+            http_status=status,
+            backend_url=backend_url,
+        )
+    if status == 403:
+        return _failure(
+            "Analytics request was forbidden by the backend; check project permissions "
+            "or whether a WAF/Cloudflare rule is blocking the request.",
+            code="forbidden",
+            http_status=status,
+            backend_url=backend_url,
+        )
+    if status == 404:
+        if _signals_not_ready(response):
+            return _failure(
+                f"The backend found the run, but {what} analytics are not ready yet.",
+                code="not_ready",
+                http_status=status,
+                backend_url=backend_url,
+            )
+        return _failure(
+            f"The requested {what} was not found on the configured backend.",
+            code="not_found",
+            http_status=status,
+            backend_url=backend_url,
+        )
+
+    return _failure(
+        f"Could not retrieve {what} from the backend.",
+        code="backend_unavailable",
+        http_status=status,
+        backend_url=backend_url,
+    )
 
 
 async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
@@ -94,6 +217,7 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
     from traigent.cloud.analytics_client import AnalyticsClientError
     from traigent.cloud.auth import InvalidCredentialsError
 
+    client = None
     try:
         client = await _new_analytics_client()
     except ImportError as exc:
@@ -102,6 +226,7 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
         logger.debug("Analytics %s authentication failed: %s", what, exc)
         return _auth_failure()
 
+    backend_url = _resolved_backend_url(client)
     try:
         async with client as reader:
             data = await coro_factory(reader)
@@ -109,10 +234,21 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
         return _failure(
             f"The backend returned a malformed {what} response.",
             code="malformed_response",
+            backend_url=backend_url,
         )
     except InvalidCredentialsError as exc:
         logger.debug("Analytics %s authentication failed: %s", what, exc)
-        return _auth_failure()
+        return _auth_failure(backend_url=backend_url)
+    except _HTTP_STATUS_ERRORS as exc:
+        logger.debug("Analytics %s request returned HTTP status", what, exc_info=True)
+        return _http_status_failure(exc, what=what, backend_url=backend_url)
+    except _HTTP_TRANSPORT_ERRORS as exc:
+        logger.debug("Analytics %s transport failed: %s", what, exc)
+        return _failure(
+            f"Could not retrieve {what} from the backend.",
+            code="backend_unavailable",
+            backend_url=backend_url,
+        )
     except Exception as exc:  # noqa: BLE001 - normalize all transport failures
         # Do not surface raw exception text: it can contain the backend URL,
         # auth header echoes, or response bodies. Log at debug for operators.
@@ -120,6 +256,7 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
         return _failure(
             f"Could not retrieve {what} from the backend.",
             code="backend_unavailable",
+            backend_url=backend_url,
         )
 
     return {"ok": True, what.replace(" ", "_"): data}
@@ -161,7 +298,7 @@ async def health_check_tool() -> dict[str, Any]:
 
 
 def _sanitize_url(url: str | None) -> str | None:
-    """Strip any userinfo (``user:pass@``) from a URL before returning it."""
+    """Strip userinfo and query material from a URL before returning it."""
     if not url:
         return url
     from urllib.parse import urlsplit, urlunsplit
@@ -175,7 +312,7 @@ def _sanitize_url(url: str | None) -> str | None:
         if parts.port is not None:
             host = f"{host}:{parts.port}"
         parts = parts._replace(netloc=host)
-    return urlunsplit(parts)
+    return urlunsplit(parts._replace(query="", fragment=""))
 
 
 def _mask_api_key(api_key: str | None) -> dict[str, Any]:

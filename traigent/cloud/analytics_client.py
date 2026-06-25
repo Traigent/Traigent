@@ -39,6 +39,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from urllib.parse import quote
 
+from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -284,9 +285,11 @@ class BackendAnalyticsClient:
 
         raise_if_backend_offline("BackendAnalyticsClient request")
         if self._client is None:
+            headers = self._auth_headers()
+            headers.setdefault("User-Agent", get_sdk_user_agent())
             self._client = httpx.AsyncClient(
                 base_url=self.backend_url,
-                headers=self._auth_headers(),
+                headers=headers,
                 timeout=self.timeout,
             )
         return self._client
