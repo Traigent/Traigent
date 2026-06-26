@@ -10,10 +10,17 @@ Purpose:
 
 Dimensions Covered:
     - InjectionMode: context, parameter, seamless
-    - ExecutionMode: edge_analytics, privacy, hybrid, cloud, standard
+    - ExecutionMode: edge_analytics, hybrid, standard (public supported surface)
+
+Note:
+    execution_mode='privacy' and execution_mode='cloud' are legacy selectors that
+    now fail closed at the public API boundary (raise ConfigurationError) because
+    compatibility normalization can silently route to cloud egress. They are NOT
+    included in the success matrix. See test_legacy_egress_modes_fail_closed below.
 
 Coverage Goal:
-    Full pairwise coverage = 3 injection modes × 5 execution modes = 15 combinations
+    Full pairwise coverage = 3 injection modes × 3 execution modes = 9 combinations
+    + 2 dedicated fail-closed assertions for the removed legacy selectors.
 
 Validation Approach:
     Tests verify that optimization completes successfully with correct results
@@ -25,12 +32,16 @@ from __future__ import annotations
 import pytest
 
 from tests.optimizer_validation.specs import TestScenario, basic_scenario
+from traigent.utils.exceptions import ConfigurationError
 
 # All injection modes (attribute was removed in v2.x)
 INJECTION_MODES = ["context", "parameter", "seamless"]
 
-# All execution modes
-EXECUTION_MODES = ["edge_analytics", "privacy", "hybrid", "cloud", "standard"]
+# Supported public execution modes (privacy/cloud removed — they fail closed)
+EXECUTION_MODES = ["edge_analytics", "hybrid", "standard"]
+
+# Legacy selectors that now fail closed — kept for explicit regression coverage
+_FAIL_CLOSED_LEGACY_MODES = ["privacy", "cloud"]
 
 
 class TestInjectionExecutionPairwise:
@@ -117,7 +128,7 @@ class TestInjectionExecutionWithConstraints:
     """
 
     @pytest.mark.parametrize("injection_mode", INJECTION_MODES)
-    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "cloud"])
+    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_constraint_with_mode_combination(
@@ -192,7 +203,7 @@ class TestInjectionExecutionWithMultiObjective:
     """
 
     @pytest.mark.parametrize("injection_mode", ["context", "parameter"])
-    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "privacy", "hybrid"])
+    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_multi_objective_with_mode_combination(
@@ -263,7 +274,7 @@ class TestInjectionExecutionWithContinuousSpace:
     """
 
     @pytest.mark.parametrize("injection_mode", INJECTION_MODES)
-    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "cloud"])
+    @pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_continuous_space_with_mode_combination(
@@ -338,3 +349,43 @@ class TestInjectionExecutionWithContinuousSpace:
             top_p = config.get("top_p")
             if top_p is not None:
                 assert 0.1 <= top_p <= 1.0, f"top_p {top_p} out of range"
+
+
+class TestLegacyEgressModeFailClosed:
+    """Regression: legacy egress selectors must fail closed at the public API boundary.
+
+    Purpose:
+        execution_mode='privacy' and execution_mode='cloud' were formerly accepted
+        with silent normalization that could route to cloud egress. They now raise
+        ConfigurationError immediately at the public API boundary so callers cannot
+        accidentally enable egress through a deprecated path.
+
+    Why This Matters:
+        A fail-open regression here would silently restore the egress-enabling
+        normalization and bypass the no-egress guarantee for callers expecting
+        local-only execution.
+    """
+
+    @pytest.mark.parametrize("legacy_mode", _FAIL_CLOSED_LEGACY_MODES)
+    @pytest.mark.unit
+    def test_legacy_egress_modes_fail_closed(self, legacy_mode: str) -> None:
+        """Verify legacy egress selectors raise ConfigurationError, not silently normalize.
+
+        Purpose:
+            Assert that passing execution_mode='privacy' or execution_mode='cloud'
+            raises ConfigurationError so no silent egress normalization occurs.
+
+        Expectations:
+            - ConfigurationError is raised immediately
+            - No optimization run is started
+            - Error message references the fail-closed policy
+
+        Regression:
+            Without this guard, execution_mode='privacy' was normalized to HYBRID
+            with privacy_enabled=True, which could still route to cloud egress.
+            execution_mode='cloud' was normalized to HYBRID unconditionally.
+        """
+        from traigent.config.types import TraigentConfig
+
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentConfig(execution_mode=legacy_mode)
