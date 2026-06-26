@@ -12,6 +12,7 @@ import pytest
 
 from traigent.api.strategy_presets import QUALITY_FLOOR_MIN_COST
 from traigent.api.types import (
+    ExampleResult,
     OptimizationResult,
     OptimizationStatus,
     TrialResult,
@@ -19,6 +20,7 @@ from traigent.api.types import (
 )
 from traigent.core.objectives import create_default_objectives
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.spec_loader import TVLBudget, TVLSpecArtifact
 from traigent.utils.callbacks import ResultsTableCallback
 from traigent.utils.exceptions import OptimizationError
@@ -116,6 +118,53 @@ class TestOptimization:
 
             require(result == mock_result)
             require(result.best_config["temperature"] == pytest.approx(0.7))
+
+    def test_optimize_sync_returns_partial_result_after_keyboard_interrupt(self):
+        """optimize_sync returns partial trials when Ctrl-C interrupts a trial."""
+        calls = 0
+        dataset = Dataset([EvaluationExample({"text": "hello"}, "ok")])
+
+        def target_function(text: str, **_config) -> str:
+            return f"ok:{text}"
+
+        def interrupting_evaluator(func, config, example):
+            nonlocal calls
+            calls += 1
+            if calls > 1:
+                raise KeyboardInterrupt
+            output = func(example.input_data["text"], **config)
+            return ExampleResult(
+                example_id=f"example-{calls}",
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=output,
+                metrics={"accuracy": 1.0},
+                execution_time=0.0,
+                success=True,
+                error_message=None,
+            )
+
+        opt_func = OptimizedFunction(
+            func=target_function,
+            configuration_space={"temperature": [0.0, 0.5, 1.0]},
+            objectives=["accuracy"],
+            eval_dataset=dataset,
+            custom_evaluator=interrupting_evaluator,
+            max_trials=5,
+        )
+
+        result = opt_func.optimize_sync(
+            algorithm="grid",
+            max_trials=5,
+            progress_bar=False,
+        )
+
+        require(isinstance(result, OptimizationResult))
+        require(result.stop_reason == "user_cancelled")
+        require(result.status == OptimizationStatus.CANCELLED)
+        require(len(result.trials) == 1)
+        require(result.trials[0].status == TrialStatus.COMPLETED)
+        require(calls == 2)
 
     @pytest.mark.asyncio
     async def test_runtime_optimize_accepts_strategy_preset(

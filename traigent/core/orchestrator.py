@@ -2882,6 +2882,40 @@ class OptimizationOrchestrator:
             f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
         )
 
+    async def _finalize_user_cancelled_optimization(
+        self,
+        session_id: str | None,
+        session_span: Any,
+        interrupt: BaseException,
+    ) -> OptimizationResult:
+        """Finalize completed trials after a user interrupt."""
+        self._stop_reason = "user_cancelled"
+        self._status = OptimizationStatus.CANCELLED
+        logger.warning(
+            "Optimization %s interrupted by user (%s); stopping and finalizing "
+            "with %d completed trial(s).",
+            self._optimization_id,
+            type(interrupt).__name__,
+            len(self._trials),
+        )
+        result = self._create_optimization_result()
+        try:
+            await self._finalize_optimization(result, session_id, session_span)
+        except Exception as finalize_error:
+            logger.warning(
+                "Finalization failed after user interrupt; returning partial "
+                "optimization result with %d completed trial(s): %s",
+                len(self._trials),
+                finalize_error,
+                exc_info=True,
+            )
+        # asyncio.run() delivers Ctrl-C to the running coroutine as
+        # CancelledError before it can re-raise KeyboardInterrupt. This public
+        # optimize() boundary intentionally returns the same cancelled partial
+        # result as the direct KeyboardInterrupt path; a second cancellation
+        # during finalization is not caught above and still propagates.
+        return result
+
     async def _run_optimization_with_tracing(
         self,
         func: Callable[..., Any],
@@ -2947,6 +2981,11 @@ class OptimizationOrchestrator:
             result = self._create_optimization_result()
             await self._finalize_optimization(result, session_id, session_span)
             return result
+
+        except (KeyboardInterrupt, asyncio.CancelledError) as interrupt:
+            return await self._finalize_user_cancelled_optimization(
+                session_id, session_span, interrupt
+            )
 
         except OptimizationError:
             self._status = OptimizationStatus.FAILED
