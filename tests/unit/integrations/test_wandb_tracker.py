@@ -45,14 +45,26 @@ def stubbed_wandb(monkeypatch, tmp_path) -> DummyWandB:
     return dummy
 
 
-def test_log_trial_skips_payload_missing_status(stubbed_wandb: DummyWandB) -> None:
+def test_log_trial_missing_status_raises_not_skipped(
+    stubbed_wandb: DummyWandB,
+) -> None:
+    """A trial missing the contract-guaranteed ``status`` field must fail loud.
+
+    Regression (#1491): the old guard silently skipped logging (asserted
+    ``logged == []``) when ``status`` was absent. ``TrialResult.status`` is a
+    required field (``traigent/api/types.py:364``), so ``log_trial`` now reads
+    ``trial.status.value`` directly — a genuinely missing status is a contract
+    break that must raise (AttributeError), not be masked as a silent no-op.
+    """
     tracker = wandb_module.TraigentWandBTracker()
     tracker.current_run = DummyRun()
 
     invalid_trial = types.SimpleNamespace(trial_id="trial-1", duration=2.5)
 
-    tracker.log_trial(invalid_trial, trial_number=1)
+    with pytest.raises(AttributeError):
+        tracker.log_trial(invalid_trial, trial_number=1)
 
+    # Nothing was logged or saved (fail loud, not fake-success).
     assert stubbed_wandb.logged == []
     assert stubbed_wandb.saved == []
 

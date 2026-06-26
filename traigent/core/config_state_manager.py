@@ -997,9 +997,9 @@ class ConfigStateManager:
                     "trial_id": t.trial_id,
                     "config": t.config,
                     "metrics": t.metrics,
-                    "status": t.status if hasattr(t, "status") else "completed",
+                    "status": t.status,
                 }
-                for t in (self._optimization_results.trials or [])
+                for t in self._optimization_results.trials
             ]
 
             export["optimization"] = {

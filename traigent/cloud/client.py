@@ -950,8 +950,8 @@ class TraigentCloudClient(BaseTraigentClient):
                     best_metrics = {objectives[0]: float(best_score_raw)}
                 except (TypeError, ValueError):
                     best_metrics = {}
-        trials = getattr(optimization_result, "trials", [])
-        trials_count = len(trials) if isinstance(trials, list) else 0
+        trials = optimization_result.trials
+        trials_count = len(trials)
 
         return CloudOptimizationResult(
             best_config=best_config,

@@ -368,52 +368,57 @@ class TestTraigentWandBTrackerLogTrial:
         # Should not log anything
         assert len(mock_wandb_available.logged_data) == 0
 
-    def test_log_trial_missing_trial_id(self, mock_wandb_available: MockWandB) -> None:
-        """Test logging trial without trial_id."""
+    def test_log_trial_contract_fields_read_directly(
+        self, mock_wandb_available: MockWandB
+    ) -> None:
+        """trial_id, status, and duration are read directly from TrialResult —
+        no getattr defaults, no fallback values.
+
+        Pins the direct-access contract: the values logged must be exactly
+        what the TrialResult carries, not a substituted default.
+        """
+        trial = TrialResult(
+            trial_id="direct_id",
+            config={"k": "v"},
+            metrics={"accuracy": 0.9},
+            status=TrialStatus.FAILED,
+            duration=3.14,
+            timestamp=datetime(2025, 6, 1, tzinfo=UTC),
+        )
         tracker = wandb_module.TraigentWandBTracker()
         tracker.current_run = MockWandBRun()
 
-        # Create trial without trial_id
-        trial = Mock(spec=[])
-        trial.trial_id = None
+        tracker.log_trial(trial, trial_number=2)
 
-        tracker.log_trial(trial, trial_number=1)
+        assert len(mock_wandb_available.logged_data) == 1
+        logged_data, _ = mock_wandb_available.logged_data[0]
+        # status is read from trial.status.value — must be "failed", not a
+        # fallback like "completed"
+        assert logged_data["trial_2/status"] == "failed"
+        # duration is read directly as float — must be 3.14, not 0.0
+        assert logged_data["trial_2/duration"] == 3.14
 
-        # Should not log
-        assert len(mock_wandb_available.logged_data) == 0
+    def test_log_trial_none_duration_raises_not_defaults_to_zero(
+        self, mock_wandb_available: MockWandB
+    ) -> None:
+        """When duration is None (contract violation), float() raises TypeError.
 
-    def test_log_trial_missing_status(self, mock_wandb_available: MockWandB) -> None:
-        """Test logging trial without status."""
-        tracker = wandb_module.TraigentWandBTracker()
-        tracker.current_run = MockWandBRun()
-
-        trial = Mock()
-        trial.trial_id = "test_001"
-        trial.status = None
-
-        tracker.log_trial(trial, trial_number=1)
-
-        # Should not log
-        assert len(mock_wandb_available.logged_data) == 0
-
-    def test_log_trial_missing_duration(self, mock_wandb_available: MockWandB) -> None:
-        """Test logging trial with missing duration defaults to 0."""
+        The old code silently logged 0.0; the new code fails loud so a real
+        upstream defect surfaces instead of being masked as a plausible value.
+        """
         tracker = wandb_module.TraigentWandBTracker()
         tracker.current_run = MockWandBRun()
 
         trial = Mock()
         trial.trial_id = "test_001"
         trial.status = TrialStatus.COMPLETED
-        trial.duration = None
-        trial.config = {}
-        trial.metrics = {}
-        trial.timestamp = None
+        trial.duration = None  # contract violation — should never happen in prod
 
-        tracker.log_trial(trial, trial_number=1)
+        with pytest.raises(TypeError):
+            tracker.log_trial(trial, trial_number=1)
 
-        assert len(mock_wandb_available.logged_data) == 1
-        logged_data, _ = mock_wandb_available.logged_data[0]
-        assert logged_data["trial_1/duration"] == 0.0
+        # Nothing was logged (fail loud, not fake-success)
+        assert len(mock_wandb_available.logged_data) == 0
 
     def test_log_trial_non_mapping_config(
         self, mock_wandb_available: MockWandB

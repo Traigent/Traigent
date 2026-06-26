@@ -166,33 +166,9 @@ class TraigentWandBTracker:
         if step is None:
             step = trial_number
 
-        trial_id_raw = getattr(trial, "trial_id", None)
-        if trial_id_raw is None:
-            logger.warning(
-                "Skipping W&B logging for trial %s: missing 'trial_id'", trial_number
-            )
-            return
-        trial_id = trial_id_raw if isinstance(trial_id_raw, str) else str(trial_id_raw)
-
-        status_obj = getattr(trial, "status", None)
-        if status_obj is None:
-            logger.warning(
-                "Skipping W&B logging for trial %s: missing 'status'", trial_id
-            )
-            return
-        status_value = (
-            status_obj.value if hasattr(status_obj, "value") else str(status_obj)
-        )
-
-        duration_raw = getattr(trial, "duration", None)
-        if isinstance(duration_raw, Number):
-            duration_value = float(duration_raw)
-        else:
-            logger.warning(
-                "Trial %s duration missing or non-numeric; defaulting to 0.0",
-                trial_id,
-            )
-            duration_value = 0.0
+        trial_id = trial.trial_id
+        status_value = trial.status.value
+        duration_value = float(trial.duration)
 
         config_values: dict[str, Any] = {}
         raw_config = getattr(trial, "config", None)
