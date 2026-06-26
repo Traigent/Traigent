@@ -108,6 +108,11 @@ async def test_local_adapter_unknown_evaluation_type_fails_closed():
     dataset = {
         "examples": [
             {
+                "input": {"text": "valid"},
+                "expected_output": "OK",
+                "metadata": {"evaluation_type": "exact_match"},
+            },
+            {
                 "input": {"text": "a"},
                 "expected_output": "OK",
                 "metadata": {"evaluation_type": "bogus"},
@@ -119,9 +124,11 @@ async def test_local_adapter_unknown_evaluation_type_fails_closed():
         agent_spec={}, dataset=dataset, trial_id="unknown-eval"
     )
 
-    assert result["metrics"]["accuracy"] == 0.0
-    assert result["metrics"]["success_rate"] == 0.0
-    assert result["metrics"]["accuracy_bogus"] == 0.0
+    assert result["metrics"]["accuracy"] == 1.0
+    assert result["metrics"]["success_rate"] == 0.5
+    assert result["metrics"]["examples_with_ground_truth"] == 1.0
+    assert result["metrics"]["accuracy_exact_match"] == 1.0
+    assert "accuracy_bogus" not in result["metrics"]
     assert result["metadata"]["failures"] == 1
 
 

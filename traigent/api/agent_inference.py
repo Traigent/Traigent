@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+__all__ = [
+    "build_agent_configuration",
+    "extract_parameter_agents",
+]
+
+
 def build_agent_configuration(
     configuration_space: dict[str, Any],
     explicit_agents: dict[str, AgentDefinition] | None = None,
