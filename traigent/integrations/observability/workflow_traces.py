@@ -45,6 +45,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from traigent._version import get_version
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.logging import get_logger
 
@@ -751,7 +752,10 @@ class WorkflowTracesClient:
             auth_token: Bearer token for authentication
             timeout: Request timeout in seconds
         """
-        self.backend_url = backend_url.rstrip("/")
+        backend_url = backend_url.rstrip("/")
+        self.backend_url = validate_cloud_base_url(
+            backend_url, purpose="workflow traces request"
+        )
         self.auth_token = (
             auth_token
             or os.environ.get("TRAIGENT_API_KEY")
@@ -1154,7 +1158,7 @@ class WorkflowTracesTracker:
             auto_send: Automatically send spans at end of trial context
             batch_size: Number of spans to batch before sending
         """
-        self.backend_url = (
+        backend_url = (
             backend_url
             or os.environ.get("TRAIGENT_BACKEND_URL")
             or BackendConfig.get_cloud_backend_url()
@@ -1168,9 +1172,10 @@ class WorkflowTracesTracker:
         self.batch_size = batch_size
 
         self.client = WorkflowTracesClient(
-            self.backend_url,
+            backend_url,
             self.auth_token,  # type: ignore[arg-type]
         )
+        self.backend_url = self.client.backend_url
 
         # ContextVar-based storage for trial context.
         # contextvars.ContextVar is safe for concurrent async coroutines on the

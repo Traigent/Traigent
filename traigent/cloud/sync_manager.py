@@ -17,6 +17,7 @@ from urllib.parse import quote, urlencode
 import requests  # Always needed for synchronous operations
 
 from traigent.cloud.client import raise_if_cloud_egress_disabled
+from traigent.cloud.url_security import validate_cloud_base_url
 
 try:
     import aiohttp  # noqa: F401 - Import check only
@@ -110,7 +111,8 @@ class SyncManager:
         self.storage = LocalStorageManager(config.get_local_storage_path())
         self.api_key = api_key
         self.no_egress = bool(no_egress)
-        self.base_url = BackendConfig.get_cloud_api_url().rstrip("/")
+        backend_api_url = BackendConfig.get_cloud_api_url().rstrip("/")
+        self.base_url = validate_cloud_base_url(backend_api_url, purpose="sync request")
 
         # Setup HTTP client - always create a requests session for sync operations
         # X-API-Key only — Authorization: Bearer is reserved for JWTs.
