@@ -1,18 +1,18 @@
 """Tests for the quickstart env-configuration helper.
 
-Guards the current quickstart contract: the demo "just works" — when a
+Guards the current quickstart contract: the demo "just works" - when a
 ``TRAIGENT_API_KEY`` is set results sync to the portal (with LLM calls
 still mocked for the packaged demo), and without a key the demo still
-runs but prints results locally instead of syncing. The helper must NOT
-teach or force the legacy ``offline`` vocabulary:
+runs but prints results locally instead of syncing.
 
 * When the quickstart runs without a ``TRAIGENT_API_KEY``, the user must
   receive an explicit notice that results print locally and that setting
-  ``TRAIGENT_API_KEY`` syncs them to the portal — without forcing or
-  mentioning ``TRAIGENT_OFFLINE_MODE``.
-* The helper must never write ``TRAIGENT_OFFLINE_MODE``: it neither
-  forces offline when a key is absent nor overrides a caller's explicit
-  choice when a key is present.
+  ``TRAIGENT_API_KEY`` with ``experiments:write`` and running the positive
+  publish-and-verify example syncs a mock run to the portal.
+* The helper must force ``TRAIGENT_OFFLINE_MODE=true`` when a portal key is
+  absent so stored credentials cannot leak a keyless quickstart run to the
+  backend. When a key is present, it must not override the caller's explicit
+  offline-mode choice.
 * The helper no longer touches ``TRAIGENT_MOCK_LLM`` — mock mode is
   activated in code via :func:`traigent.testing.enable_mock_mode_for_quickstart`.
 """
@@ -33,9 +33,8 @@ def test_warns_when_no_api_key(
     empty_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Without a portal key the notice must tell the user the demo still
-    runs (results print locally) and that setting ``TRAIGENT_API_KEY``
-    syncs results to the portal — and must NOT teach the legacy
-    ``offline`` vocabulary or force ``TRAIGENT_OFFLINE_MODE``."""
+    runs (results print locally) and point to the positive portal-sync
+    example."""
     configure_quickstart_env(empty_env)
 
     stderr = capsys.readouterr().err
@@ -44,9 +43,9 @@ def test_warns_when_no_api_key(
     # opt-in via a portal key; the legacy "offline" wording is gone.
     assert "locally" in stderr.lower()
     assert "sync" in stderr.lower()
+    assert "publish_and_verify" in stderr
     assert "offline" not in stderr.lower()
-    # The helper must not force the SDK into offline mode anymore.
-    assert "TRAIGENT_OFFLINE_MODE" not in empty_env
+    assert empty_env["TRAIGENT_OFFLINE_MODE"] == "true"
     assert (
         empty_env["OPENAI_API_KEY"] == "mock-key-for-demos"
     )  # pragma: allowlist secret
@@ -72,18 +71,15 @@ def test_does_not_set_legacy_mock_env_var(empty_env: dict[str, str]) -> None:
     assert "TRAIGENT_MOCK_LLM" not in empty_env
 
 
-def test_does_not_force_offline_when_no_api_key(
+def test_forces_offline_when_no_api_key(
     empty_env: dict[str, str],
 ) -> None:
-    """The legacy forced-offline override is gone. Without a portal key
-    the demo simply runs locally; the helper must NOT flip a caller's
-    explicit ``TRAIGENT_OFFLINE_MODE=false`` to ``true`` (that was the
-    old execution-mode behavior this branch removed)."""
+    """Without a portal key, the helper must force offline execution."""
     empty_env["TRAIGENT_OFFLINE_MODE"] = "false"
 
     configure_quickstart_env(empty_env)
 
-    assert empty_env["TRAIGENT_OFFLINE_MODE"] == "false"
+    assert empty_env["TRAIGENT_OFFLINE_MODE"] == "true"
 
 
 def test_does_not_touch_offline_when_api_key_present(
