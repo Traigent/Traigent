@@ -35,7 +35,7 @@ PRIMARY_SCORE_TIE_ABS_TOL = 1e-12
 class SelectionResult:
     """Best-configuration selection output for orchestrator result building."""
 
-    best_config: dict[str, Any]
+    best_config: dict[str, Any] | None
     best_score: float | None
     session_summary: dict[str, Any] | None
     reason_code: str | None = None
@@ -411,7 +411,7 @@ def _select_best_single_trial(
             scored_trials.append((trial, score))
     if not scored_trials:
         return SelectionResult(
-            best_config={},
+            best_config=None,
             best_score=None,
             session_summary={
                 "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
@@ -568,7 +568,7 @@ def _select_best_aggregated(
     """Select best configuration from aggregated results with tie-breaking."""
     if not aggregated:
         return SelectionResult(
-            best_config={},
+            best_config=None,
             best_score=None,
             session_summary={
                 "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
@@ -595,7 +595,7 @@ def _select_best_aggregated(
     all_scores = [s for s in all_scores if math.isfinite(s)]
     if not all_scores:
         return SelectionResult(
-            best_config={},
+            best_config=None,
             best_score=None,
             session_summary={
                 "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
@@ -786,7 +786,7 @@ def select_best_configuration(
         )
     if not successful_trials:
         return SelectionResult(
-            best_config={},
+            best_config=None,
             best_score=None,
             session_summary={
                 "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
@@ -829,7 +829,7 @@ def select_best_configuration(
 
     if not eligible_trials:
         return SelectionResult(
-            best_config={},
+            best_config=None,
             best_score=None,
             session_summary={
                 "reason_code": NO_RANKING_ELIGIBLE_TRIALS,

@@ -809,9 +809,11 @@ class ConfigStateManager:
                 data = json.load(f)
 
             if "config" in data:
-                return dict(data["config"])
+                config = data["config"]
+                return dict(config) if config is not None else None
             elif "best_config" in data:
-                return dict(data["best_config"])
+                best_config = data["best_config"]
+                return dict(best_config) if best_config is not None else None
             elif isinstance(data, dict) and not any(
                 k in data for k in ["trials", "metrics", "metadata"]
             ):

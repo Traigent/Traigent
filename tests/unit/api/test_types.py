@@ -516,6 +516,24 @@ class TestOptimizationResult:
 
         assert result.best_metrics == {}
 
+    def test_best_metrics_none_best_config_no_winner(self):
+        """All-fail results use None best_config and make no best-metrics claim."""
+        result = OptimizationResult(
+            trials=self.trials,
+            best_config=None,
+            best_score=None,
+            optimization_id="opt_001",
+            duration=10.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+        )
+
+        assert result.best_config is None
+        assert result.best_metrics == {}
+
     def test_to_dataframe(self):
         """Test to_dataframe method."""
         result = OptimizationResult(

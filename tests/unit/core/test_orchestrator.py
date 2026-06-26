@@ -759,7 +759,7 @@ class TestOptimizationOrchestrator:
 
         assert result.status == OptimizationStatus.COMPLETED
         assert len(result.trials) == 0
-        assert result.best_config == {}
+        assert result.best_config is None
         assert result.best_metrics == {}
         assert result.best_score is None
 
@@ -796,7 +796,8 @@ class TestOptimizationOrchestrator:
             result.status == OptimizationStatus.COMPLETED
         )  # Optimization completes even if all fail
         assert len(result.trials) == 3  # All trials are recorded, even if failed
-        assert result.best_config == {}  # No successful config
+        assert result.best_config is None  # No successful config
+        assert result.best_score is None
 
         # Check that failed trials are recorded
         failed_trials = [t for t in result.trials if t.status == TrialStatus.FAILED]
