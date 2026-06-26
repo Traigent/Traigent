@@ -21,11 +21,15 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any
 
+from traigent.utils.logging import get_logger
+
 if TYPE_CHECKING:
     from traigent.core.result import OptimizationResult
 
 BEST_METRIC_REL_TOL = 1e-9
 BEST_METRIC_ABS_TOL = 1e-12
+
+logger = get_logger(__name__)
 
 # Characters that cannot be encoded on narrow consoles (e.g. Windows cp1252) and
 # their ASCII fallbacks.  Applied lazily only when an encode error is detected.
@@ -332,8 +336,12 @@ def _find_best_trial_index(
         best_index = _trial_identity_index(trials, best_trial)
         if best_index is not None:
             return best_index
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(
+            "Falling back from weighted to unweighted results-table ranking: %s",
+            exc,
+            exc_info=True,
+        )
 
     best_trial = _find_best_trial(trials, metric_names, metric_info=metric_info)
     best_index = _trial_identity_index(trials, best_trial)

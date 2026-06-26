@@ -14,7 +14,7 @@ python examples/core/prompt-ab-test/run.py
 | Parameter | Values | Purpose |
 |-----------|--------|---------|
 | `prompt_variant` | a, b | Prompt version to test |
-| `model` | claude-3-haiku, claude-3-5-sonnet | Model selection |
+| `model` | claude-haiku-4-5-20251001, claude-sonnet-4-6 | Model selection |
 | `temperature` | 0.0, 0.2 | Response variance |
 
 ## What It Optimizes

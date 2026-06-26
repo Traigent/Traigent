@@ -535,8 +535,8 @@ class TrialOperations:
     def _log_measures_debug(self, trial_id: str, measures: Any) -> None:
         """Log debug information for measures."""
         if measures is not None:
-            logger.info(f"📊 MEASURES DATA for trial {trial_id}:")
-            logger.info(f"  Type: {type(measures)}")
+            logger.debug(f"📊 MEASURES DATA for trial {trial_id}:")
+            logger.debug(f"  Type: {type(measures)}")
             logger.debug(
                 f"  Count: {len(measures) if isinstance(measures, list) else 'N/A'}"
             )
@@ -597,12 +597,12 @@ class TrialOperations:
         continue_optimization = response_data.get("continue_optimization", True)
 
         if not continue_optimization:
-            logger.info(
+            logger.debug(
                 f"✅ Submitted trial result for session {session_id}, trial {trial_id} "
                 f"(session auto-finalized by backend)"
             )
         else:
-            logger.info(
+            logger.debug(
                 f"✅ Submitted trial result for session {session_id}, trial {trial_id}"
             )
 

@@ -762,7 +762,7 @@ def _invoke_model(
         "model": [
             # "anthropic/claude-3-7",
             # "anthropic/claude-3-5-haiku-20241022",
-            # "anthropic/claude-3-haiku-20240307",
+            # "anthropic/claude-haiku-4-5-20251001",
             # "anthropic/claude-sonnet-4",
             # "anthropic/claude-sonnet-4-5",
             # "openai/gpt-3.5-turbo",
@@ -782,7 +782,7 @@ def _invoke_model(
 )
 def answer(
     question: str,
-    model: str = "openai/gpt-4o-nano",
+    model: str = "openai/gpt-4o-mini",
     temperature: float = 0.1,
     max_tokens: int = 128,
 ) -> str:
@@ -820,7 +820,7 @@ if __name__ == "__main__":
         parser.add_argument(
             "--model",
             type=str,
-            default="anthropic/claude-3-7-sonnet-latest",
+            default="anthropic/claude-sonnet-4-6",
             help="Model identifier (include provider prefix for non-default providers)",
         )
         args = parser.parse_args()

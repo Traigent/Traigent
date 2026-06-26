@@ -224,9 +224,9 @@ def generate_sql(question: str) -> str:
     if MOCK:
         return _mock_generate_sql(question)
 
-    assert os.getenv("ANTHROPIC_API_KEY"), (
-        "Set ANTHROPIC_API_KEY or run with TRAIGENT_MOCK_LLM=true"
-    )
+    assert os.getenv(
+        "ANTHROPIC_API_KEY"
+    ), "Set ANTHROPIC_API_KEY or run with TRAIGENT_MOCK_LLM=true"
 
     from langchain_anthropic import ChatAnthropic
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -271,7 +271,7 @@ if __name__ == "__main__":
         print("        billing, network_usage)")
         print("Objective: sql_accuracy (normalize + exact-match scoring)")
         print("Configuration space:")
-        print("  - model: claude-3-haiku, claude-3-5-sonnet")
+        print("  - model: claude-haiku-4-5-20251001, claude-sonnet-4-6")
         print("  - temperature: 0.0, 0.2")
         print("  - include_schema: true, false")
         print(
