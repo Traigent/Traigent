@@ -310,6 +310,14 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TenantSSOConfigDTO": ("traigent.admin", "TenantSSOConfigDTO"),
     # Evaluation DTOs
     "AnnotationQueueDTO": ("traigent.evaluation", "AnnotationQueueDTO"),
+    "AnnotationQueueItemCompleteResultDTO": (
+        "traigent.evaluation",
+        "AnnotationQueueItemCompleteResultDTO",
+    ),
+    "AnnotationQueueItemCreateResultDTO": (
+        "traigent.evaluation",
+        "AnnotationQueueItemCreateResultDTO",
+    ),
     "AnnotationQueueItemDTO": ("traigent.evaluation", "AnnotationQueueItemDTO"),
     "AnnotationQueueItemListResponse": (
         "traigent.evaluation",
@@ -339,6 +347,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ScoreRecordDTO": ("traigent.evaluation", "ScoreRecordDTO"),
     "ScoreRecordListResponse": ("traigent.evaluation", "ScoreRecordListResponse"),
     "ScoreSource": ("traigent.evaluation", "ScoreSource"),
+    "TypedMeasureDTO": ("traigent.evaluation", "TypedMeasureDTO"),
     # Observability DTOs and helpers
     "CorrelationIds": ("traigent.observability", "CorrelationIds"),
     "ObserveContext": ("traigent.observability", "ObserveContext"),
@@ -560,6 +569,8 @@ __all__ = [
     "TenantMembershipStatus",
     "TenantSSOConfigDTO",
     "AnnotationQueueDTO",
+    "AnnotationQueueItemCompleteResultDTO",
+    "AnnotationQueueItemCreateResultDTO",
     "AnnotationQueueItemDTO",
     "AnnotationQueueItemListResponse",
     "AnnotationQueueItemStatus",
@@ -578,6 +589,7 @@ __all__ = [
     "ScoreRecordDTO",
     "ScoreRecordListResponse",
     "ScoreSource",
+    "TypedMeasureDTO",
     "CorrelationIds",
     "ObserveContext",
     "ObservationDTO",

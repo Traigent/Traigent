@@ -13,8 +13,9 @@ import secrets
 import sys
 import time
 import weakref
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -67,7 +68,9 @@ from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
+from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
+from traigent.utils.retry import RetryConfig, RetryHandler
 
 # Type alias for aiohttp session, falling back to Any at runtime if unavailable
 if TYPE_CHECKING:
@@ -111,6 +114,84 @@ logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
+_SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
+
+
+class _SyncBackendTransientError(RetryableError):
+    """Retryable wrapper for transient sync backend transport failures."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message, retry_after=retry_after)
+        self.status_code = status_code
+
+
+_SYNC_BACKEND_RETRY_CONFIG = RetryConfig(
+    max_attempts=3,
+    initial_delay=0.25,
+    max_delay=2.0,
+    jitter=False,
+    retry_on_exception={_SyncBackendTransientError},
+    retry_on_status=set(_SYNC_BACKEND_TRANSIENT_STATUSES),
+    respect_retry_after=True,
+)
+
+
+def _parse_retry_after(headers: Any) -> float | None:
+    if not headers:
+        return None
+    try:
+        value = headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(str(value))
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+def _raise_for_transient_backend_response(response: Any, operation: str) -> None:
+    status_code = getattr(response, "status_code", None)
+    if status_code not in _SYNC_BACKEND_TRANSIENT_STATUSES:
+        return
+
+    response_text = getattr(response, "text", "")
+    raise _SyncBackendTransientError(
+        f"{operation} returned transient HTTP {status_code}: {str(response_text)[:200]}",
+        status_code=status_code,
+        retry_after=_parse_retry_after(getattr(response, "headers", None)),
+    )
+
+
+def _run_sync_backend_request_with_retry(
+    operation: str,
+    request_call: Callable[[], Any],
+) -> Any:
+    retry = RetryHandler(_SYNC_BACKEND_RETRY_CONFIG)
+    result = retry.execute_with_result(request_call)
+    if result.success:
+        return result.result
+
+    error = result.error
+    if isinstance(error, AuthenticationError):
+        raise error
+    raise CloudServiceError(f"{operation} failed: {error}") from error
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -1157,17 +1238,30 @@ class BackendIntegratedClient:
         if environment:
             payload["environment"] = environment
 
-        try:
-            response = requests.post(  # nosec B113 - timeout is provided
-                url,
-                json=payload,
-                headers=headers,
-                timeout=min(self.timeout, 30.0),
-            )
-        except AuthenticationError:
-            raise
-        except Exception as exc:
-            raise CloudServiceError(f"Best-config publish failed: {exc}") from exc
+        def _post_best_config() -> Any:
+            try:
+                response = requests.post(  # nosec B113 - timeout is provided
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Best-config publish transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Best-config publish")
+            return response
+
+        response = _run_sync_backend_request_with_retry(
+            "Best-config publish",
+            _post_best_config,
+        )
 
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -1207,17 +1301,30 @@ class BackendIntegratedClient:
             if value
         }
 
-        try:
-            response = requests.get(  # nosec B113 - timeout is provided
-                url,
-                params=params or None,
-                headers=headers,
-                timeout=min(self.timeout, 30.0),
-            )
-        except AuthenticationError:
-            raise
-        except Exception as exc:
-            raise CloudServiceError(f"Best-config fetch failed: {exc}") from exc
+        def _get_best_config() -> Any:
+            try:
+                response = requests.get(  # nosec B113 - timeout is provided
+                    url,
+                    params=params or None,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Best-config fetch transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Best-config fetch")
+            return response
+
+        response = _run_sync_backend_request_with_retry(
+            "Best-config fetch",
+            _get_best_config,
+        )
 
         if response.status_code in {304, 404}:
             return None
@@ -1280,12 +1387,30 @@ class BackendIntegratedClient:
             return False
         payload = {"feature_kind": feature_kind, "features": features}
 
+        def _post_example_features() -> Any:
+            try:
+                response = requests.post(  # nosec B113 - timeout is provided
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Example feature upload transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Example feature upload")
+            return response
+
         try:
-            response = requests.post(  # nosec B113 — timeout is provided
-                url,
-                json=payload,
-                headers=headers,
-                timeout=min(self.timeout, 30.0),
+            response = _run_sync_backend_request_with_retry(
+                "Example feature upload",
+                _post_example_features,
             )
         except Exception as exc:
             logger.debug(
