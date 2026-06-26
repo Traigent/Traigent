@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from traigent.config.types import is_smart_algorithm as _is_smart_algorithm_canonical
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import OptimizationError, PluginError
 from traigent.utils.logging import get_logger
@@ -49,32 +50,18 @@ def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
     logger.debug(f"Registered optimizer '{name}': {optimizer_class}")
 
 
-_SMART_OPTIMIZER_NAMES: frozenset[str] = frozenset(
-    {
-        "bayesian",
-        "optuna",
-        "tpe",
-        "optuna_tpe",
-        "optuna_random",
-        "optuna_grid",
-        "optuna_cmaes",
-        "optuna_nsga2",
-        "nsga2",
-        "cmaes",
-        "nsgaii",
-        "nsga_ii",
-        "cma_es",
-    }
-)
-
-
 def _is_smart_algorithm(name: str) -> bool:
     """Return True if *name* refers to a cloud-only smart optimizer.
 
-    Normalizes the name by stripping whitespace, lowercasing, and replacing
-    hyphens and spaces with underscores before matching against the known set
-    of smart algorithm identifiers.  Also matches any name with an ``optuna_``
-    prefix (e.g. ``optuna_tpe``, ``optuna_foo``).
+    Delegates to :func:`traigent.config.types.is_smart_algorithm` —
+    the single canonical source of truth for smart-algorithm classification
+    (``config/types.py:_SMART_ALGORITHMS``).  This thin wrapper preserves the
+    existing ``registry`` import surface so callers in ``api/functions.py``,
+    ``optimizers/remote_services.py``, and the public ``optimizers.__all__``
+    re-export do not need to change.
+
+    See also: GitHub issue #1402 (de-dup ``_SMART_OPTIMIZER_NAMES`` →
+    ``config.types._SMART_ALGORITHMS`` single source of truth).
 
     Args:
         name: Algorithm name to test (raw, un-normalized).
@@ -82,12 +69,7 @@ def _is_smart_algorithm(name: str) -> bool:
     Returns:
         True if the name identifies a cloud-only smart algorithm.
     """
-    normalized = name.strip().lower().replace("-", "_").replace(" ", "_")
-    if normalized in _SMART_OPTIMIZER_NAMES:
-        return True
-    if normalized.startswith("optuna_"):
-        return True
-    return False
+    return _is_smart_algorithm_canonical(name)
 
 
 def get_optimizer(
