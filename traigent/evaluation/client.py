@@ -11,6 +11,8 @@ from urllib.parse import quote, urlencode
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
     AnnotationQueueDTO,
+    AnnotationQueueItemCompleteResultDTO,
+    AnnotationQueueItemCreateResultDTO,
     AnnotationQueueItemDTO,
     AnnotationQueueItemListResponse,
     AnnotationQueueItemStatus,
@@ -29,6 +31,7 @@ from traigent.evaluation.dtos import (
     JudgeConfigDTO,
     ScoreRecordDTO,
     ScoreRecordListResponse,
+    TypedMeasureDTO,
 )
 from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
@@ -446,7 +449,7 @@ class EvaluationClient:
         *,
         targets: list[EvaluationTargetRefDTO | dict[str, Any]],
         assigned_user_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> AnnotationQueueItemCreateResultDTO:
         normalized_targets = [
             (
                 item.to_dict()
@@ -455,16 +458,18 @@ class EvaluationClient:
             )
             for item in targets
         ]
-        return self._unwrap_data(
-            self._request_json(
-                "POST",
-                f"/annotation-queues/{queue_id}/items",
-                {
-                    "targets": normalized_targets,
-                    "assigned_user_id": assigned_user_id,
-                },
-            ),
-            "annotation queue item create",
+        return AnnotationQueueItemCreateResultDTO.from_dict(
+            self._unwrap_data(
+                self._request_json(
+                    "POST",
+                    f"/annotation-queues/{queue_id}/items",
+                    {
+                        "targets": normalized_targets,
+                        "assigned_user_id": assigned_user_id,
+                    },
+                ),
+                "annotation queue item create",
+            )
         )
 
     def list_annotation_queue_items(
@@ -529,7 +534,7 @@ class EvaluationClient:
         *,
         scores: list[dict[str, Any]],
         note: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> AnnotationQueueItemCompleteResultDTO:
         response = self._request_json(
             "POST",
             f"/annotation-queues/items/{item_id}/complete",
@@ -538,20 +543,26 @@ class EvaluationClient:
                 "note": note,
             },
         )
-        return self._unwrap_data(response, "annotation queue completion")
+        return AnnotationQueueItemCompleteResultDTO.from_dict(
+            self._unwrap_data(response, "annotation queue completion")
+        )
 
     def create_typed_measure(
         self,
         measure_data: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._request_measure_json("POST", "", measure_data)
+    ) -> TypedMeasureDTO:
+        return TypedMeasureDTO.from_dict(
+            self._request_measure_json("POST", "", measure_data)
+        )
 
     def update_typed_measure(
         self,
         measure_id: str,
         measure_data: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._request_measure_json("PUT", f"/{measure_id}", measure_data)
+    ) -> TypedMeasureDTO:
+        return TypedMeasureDTO.from_dict(
+            self._request_measure_json("PUT", f"/{measure_id}", measure_data)
+        )
 
     def judge_config_from_benchmark_payload(
         self,

@@ -46,7 +46,7 @@ import inspect
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -348,6 +348,9 @@ class MockModeOptions(BaseModel):
 
 
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
+# ParamSpec / TypeVar for the @optimize decorator's generic return type.
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 def _coerce_bundle(
@@ -2050,7 +2053,7 @@ def optimize(  # NOSONAR(S107)
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
-    [Callable[..., Any]], Any
+    [Callable[_P, _R]], OptimizedFunction[_P, _R]
 ]:  # NOSONAR - stable public API intentionally exposes broad options
     """Decorator to make functions optimizable with Traigent.
 
@@ -2303,9 +2306,14 @@ def optimize(  # NOSONAR(S107)
     if is_traigent_disabled():
         logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
 
-        def passthrough_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        def passthrough_decorator(
+            func: Callable[_P, _R],
+        ) -> OptimizedFunction[_P, _R]:
             """No-op decorator that returns the function unchanged when Traigent is disabled."""
-            return func
+            # Cast so the disabled path satisfies the declared return type without
+            # wrapping: the caller only cares that the result is callable with the
+            # same signature and exposes .optimize().
+            return func  # type: ignore[return-value]
 
         return passthrough_decorator
 
@@ -2655,7 +2663,7 @@ def optimize(  # NOSONAR(S107)
         external_service_evaluator,
     )
 
-    def decorator(func: Callable[..., Any]) -> OptimizedFunction:
+    def decorator(func: Callable[_P, _R]) -> OptimizedFunction[_P, _R]:
         """Actual decorator function.
 
         Args:
@@ -2744,7 +2752,7 @@ def optimize(  # NOSONAR(S107)
             config_param,
         )
 
-        optimized_func = OptimizedFunction(
+        optimized_func: OptimizedFunction[_P, _R] = OptimizedFunction(  # type: ignore[assignment]
             func=func,
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
@@ -2820,6 +2828,10 @@ def optimize(  # NOSONAR(S107)
             f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})"
         )
 
-        return optimized_func
+        # cast so mypy sees OptimizedFunction[_P, _R] rather than
+        # OptimizedFunction[Any, Any] (the constructor takes Callable[..., Any]
+        # to stay compatible with diverse callers; the generic parameters are
+        # threaded through the factory, not the __init__ signature).
+        return cast(OptimizedFunction[_P, _R], optimized_func)
 
     return decorator

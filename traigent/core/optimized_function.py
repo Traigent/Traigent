@@ -37,7 +37,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.strategy_presets import (
     NormalizedStrategyPreset,
@@ -125,6 +125,11 @@ from traigent.utils.validation import (
 )
 
 logger = get_logger(__name__)
+
+# Type parameters for the @optimize decorator's generic return type.
+# _P captures the wrapped function's parameter spec; _R captures its return type.
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 def _resolve_callbacks(
@@ -327,11 +332,16 @@ def _emit_cost_warning_once() -> None:
     sys.stderr.flush()
 
 
-class OptimizedFunction:
+class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
     This class provides the optimization interface for decorated functions,
     including methods to run optimization, get results, and analyze performance.
+
+    The class is generic over the wrapped function's parameter spec (*_P*) and
+    return type (*_R*), so static type-checkers can preserve the original
+    function signature through the decorator and still expose the
+    :meth:`optimize` / :meth:`optimize_sync` method surface.
     """
 
     _csm: ConfigStateManager
@@ -970,15 +980,19 @@ class OptimizedFunction:
             self.func, self._current_config, self.config_param
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """Make the optimized function callable."""
+    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        """Make the optimized function callable.
+
+        The signature is typed generically so that a decorated function
+        preserves its original parameter / return types under mypy/pyright.
+        """
         wrapped_func = self._wrapped_func
         # If framework overrides are enabled, use them during function call
         if self.auto_override_frameworks and self.framework_targets:
             with override_context(self.framework_targets):
-                return wrapped_func(*args, **kwargs)
+                return cast(_R, wrapped_func(*args, **kwargs))
         else:
-            return wrapped_func(*args, **kwargs)
+            return cast(_R, wrapped_func(*args, **kwargs))
 
     def _trial_callable_for_config_space(
         self,
