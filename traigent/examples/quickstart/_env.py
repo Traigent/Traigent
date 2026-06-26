@@ -31,18 +31,21 @@ def configure_quickstart_env(env: MutableMapping[str, str]) -> None:
       placeholder is seeded here as a fallback. The real LLM call is
       intercepted by the mock-mode flag set via
       :func:`traigent.testing.enable_mock_mode_for_quickstart`.
-    - If no ``TRAIGENT_API_KEY`` is set, prints a clear stderr notice
-      that the demo will still run but results will not sync to the
-      portal.
+    - If no ``TRAIGENT_API_KEY`` is set, forces ``TRAIGENT_OFFLINE_MODE=true``
+      and prints a clear stderr notice that the demo will still run but results
+      will not sync to the portal.
     - If ``TRAIGENT_API_KEY`` IS set, results can sync to the portal
       while LLM calls stay mocked for the packaged demo.
     """
     env.setdefault("OPENAI_API_KEY", "mock-key-for-demos")  # pragma: allowlist secret
 
     if not env.get("TRAIGENT_API_KEY"):
+        env["TRAIGENT_OFFLINE_MODE"] = "true"
         print(
             "[traigent] No TRAIGENT_API_KEY set - results will print locally. "
-            f"Set TRAIGENT_API_KEY (get one at {_PORTAL_SIGNUP_URL}) to sync "
-            "results to the portal while keeping LLM calls mocked.",
+            f"Set TRAIGENT_API_KEY (get one at {_PORTAL_SIGNUP_URL}) with "
+            "experiments:write, then run "
+            "python -m traigent.examples.quickstart.publish_and_verify to sync "
+            "a mock run to the portal.",
             file=sys.stderr,
         )
