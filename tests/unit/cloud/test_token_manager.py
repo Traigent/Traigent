@@ -28,6 +28,20 @@ from traigent.cloud.auth import (
 from traigent.cloud.token_manager import TokenManager
 
 
+@pytest.fixture(autouse=True)
+def _mock_public_cloud_dns(monkeypatch):
+    """Keep cloud URL validation deterministic for mocked HTTP tests."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    def _resolve_public_backend(_host, _port, *_args, **_kwargs):
+        return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_public_backend,
+    )
+
+
 @pytest.fixture
 def config():
     """Create a test configuration."""
@@ -457,6 +471,44 @@ class TestRefreshSecurity:
         assert result.success is False
         assert result.status == AuthStatus.INVALID
         assert "private or loopback" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_rejects_dns_private_cloud_base_url_before_session(
+        self, token_manager, monkeypatch
+    ):
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="test_refresh_token_12345",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        token_manager.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+        token_manager.config.cloud_base_url = "https://oauth-rebind.example.test"
+
+        def _resolve_to_private(host, _port, *_args, **_kwargs):
+            assert host == "oauth-rebind.example.test"
+            return [(0, 0, 0, "", ("10.0.0.8", 0))]
+
+        monkeypatch.setattr(
+            "traigent.cloud.url_security.socket.getaddrinfo",
+            _resolve_to_private,
+        )
+
+        with (
+            patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True),
+            patch("traigent.cloud.token_manager.aiohttp.ClientSession") as session,
+        ):
+            result = await token_manager.refresh_oauth2()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "private or loopback" in result.error_message
+        session.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_refresh_jwt_secure_rejects_private_backend_url_in_production(

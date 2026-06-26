@@ -14,6 +14,15 @@ from traigent.cloud.password_auth_handler import PasswordAuthHandler
 def _enable_backend_auth(monkeypatch):
     """Most password-auth tests mock backend calls and must bypass CI offline mode."""
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    def _resolve_public_backend(_host, _port, *_args, **_kwargs):
+        return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_public_backend,
+    )
 
 
 def test_default_backend_no_longer_implies_dev_mode():
@@ -214,6 +223,41 @@ async def test_password_auth_rejects_private_backend_url_outside_dev():
         token_data = await handler._perform_authentication(credentials)
 
     assert token_data is None
+
+
+@pytest.mark.asyncio
+async def test_password_auth_rejects_dns_private_backend_before_post(monkeypatch):
+    """Password credentials must not POST to a hostname resolving to private IPs."""
+    handler = PasswordAuthHandler()
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",  # pragma: allowlist secret
+    }
+
+    def _resolve_to_private(host, _port, *_args, **_kwargs):
+        assert host == "login-rebind.example.test"
+        return [(0, 0, 0, "", ("10.0.0.5", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_to_private,
+    )
+    execute = AsyncMock(return_value={"access_token": "should-not-be-used"})
+
+    with (
+        patch(
+            "traigent.config.backend_config.BackendConfig.get_cloud_api_url",
+            return_value="https://login-rebind.example.test/api/v1",
+        ),
+        patch(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            new=execute,
+        ),
+    ):
+        token_data = await handler._perform_authentication(credentials)
+
+    assert token_data is None
+    execute.assert_not_called()
 
 
 @pytest.mark.asyncio
