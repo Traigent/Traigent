@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import socket
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -13,18 +13,22 @@ from traigent.cloud.url_security import (
 )
 
 
+def _addr_info(ip_address: str) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+    return [
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            (ip_address, 443),
+        )
+    ]
+
+
 def test_validate_cloud_base_url_normalizes_safe_public_url() -> None:
     with patch(
         "socket.getaddrinfo",
-        return_value=[
-            (
-                socket.AF_INET,
-                socket.SOCK_STREAM,
-                6,
-                "",
-                ("93.184.216.34", 443),
-            )
-        ],
+        return_value=_addr_info("93.184.216.34"),
     ):
         assert (
             validate_cloud_base_url("https://auth.example.com/base/")
@@ -79,6 +83,34 @@ def test_validate_cloud_base_url_rejects_metadata_and_nonstandard_ip_hosts(
     with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
         with pytest.raises(ValueError, match=message):
             validate_cloud_base_url(url)
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://metadata", "metadata service"),
+        ("https://metadata.", "metadata service"),
+        ("https://metadata.google.internal", "metadata service"),
+        ("https://metadata.google.internal.", "metadata service"),
+        ("https://0x7f.0.0.1", "non-standard IP address notation"),
+        ("https://2130706433", "non-standard IP address notation"),
+        ("https://0177.0.0.1", "non-standard IP address notation"),
+    ],
+)
+def test_validate_cloud_base_url_rejects_metadata_and_numeric_hosts_before_dns(
+    url: str,
+    message: str,
+) -> None:
+    mock_getaddrinfo = Mock(return_value=_addr_info("93.184.216.34"))
+
+    with (
+        patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True),
+        patch("traigent.cloud.url_security.socket.getaddrinfo", mock_getaddrinfo),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_cloud_base_url(url)
+
+    mock_getaddrinfo.assert_not_called()
 
 
 def test_validate_cloud_base_url_fails_closed_on_dns_failure() -> None:

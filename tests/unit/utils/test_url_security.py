@@ -1,6 +1,7 @@
 """Tests for outbound URL safety validation."""
 
 import socket
+from unittest.mock import Mock
 
 import pytest
 
@@ -58,6 +59,32 @@ def test_validate_outbound_url_normalizes_trailing_slash(
 def test_validate_outbound_url_rejects_unsafe_urls(url: str, message: str) -> None:
     with pytest.raises(UnsafeUrlError, match=message):
         validate_outbound_url(url)
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://metadata", "metadata service"),
+        ("https://metadata.", "metadata service"),
+        ("https://metadata.google.internal", "metadata service"),
+        ("https://metadata.google.internal.", "metadata service"),
+        ("https://0x7f.0.0.1", "non-standard IP"),
+        ("https://2130706433", "non-standard IP"),
+        ("https://0177.0.0.1", "non-standard IP"),
+    ],
+)
+def test_validate_outbound_url_rejects_metadata_and_numeric_hosts_before_dns(
+    url: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_getaddrinfo = Mock(return_value=_addr_info("93.184.216.34"))
+    monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
+
+    with pytest.raises(UnsafeUrlError, match=message):
+        validate_outbound_url(url)
+
+    mock_getaddrinfo.assert_not_called()
 
 
 def test_validate_outbound_url_allows_private_hosts_when_requested() -> None:
