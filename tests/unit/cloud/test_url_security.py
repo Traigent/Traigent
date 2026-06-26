@@ -49,6 +49,9 @@ def test_validate_cloud_base_url_rejects_malformed_urls(url: str) -> None:
 
 
 def test_validate_cloud_base_url_fails_closed_when_env_is_unset() -> None:
+    # Unset / unrecognized environment must be treated as production (strict):
+    # a deployment that never set an env marker must not silently allow
+    # credential egress to localhost / private / metadata hosts.
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(ValueError, match="private or loopback"):
             validate_cloud_base_url("https://127.0.0.1:5000")
@@ -58,6 +61,24 @@ def test_validate_cloud_base_url_rejects_private_ip_in_production() -> None:
     with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
         with pytest.raises(ValueError, match="private or loopback"):
             validate_cloud_base_url("https://127.0.0.1:5000")
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("http://metadata.google.internal", "metadata service"),
+        ("http://metadata.google.internal.", "metadata service"),
+        ("http://0x7f.0.0.1", "non-standard IP address notation"),
+        ("http://2130706433", "non-standard IP address notation"),
+    ],
+)
+def test_validate_cloud_base_url_rejects_metadata_and_nonstandard_ip_hosts(
+    url: str,
+    message: str,
+) -> None:
+    with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
+        with pytest.raises(ValueError, match=message):
+            validate_cloud_base_url(url)
 
 
 def test_validate_cloud_base_url_fails_closed_on_dns_failure() -> None:
