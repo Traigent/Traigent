@@ -192,7 +192,7 @@ class TestOptimizeDecorator:
         """Regression: max_trials from decorator must reach OptimizedFunction.
 
         Bug: max_trials went into combined_settings via record_option but was
-        never extracted, so OptimizedFunction always got the default of 50.
+        never extracted, so OptimizedFunction always got the SDK default.
         """
 
         @optimize(
@@ -206,6 +206,18 @@ class TestOptimizeDecorator:
         assert sample_function.max_trials == 10, (
             f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
         )
+
+    def test_decorator_omitted_max_trials_uses_sdk_default(self):
+        """Omitting max_trials on the decorator should use the shared default."""
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.max_trials == 10
 
     def test_decorator_accepts_algorithm_runtime_default(self):
         """Decorator-level algorithm should become the optimize() default."""

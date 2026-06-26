@@ -20,6 +20,7 @@ import pytest
 import traigent
 from traigent.api.types import ExampleResult, OptimizationResult, OptimizationStatus
 from traigent.core.optimized_function import OptimizationState, OptimizedFunction
+from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import (
     ConfigurationError,
@@ -139,7 +140,7 @@ class TestOptimizedFunction:
         assert opt_func.configuration_space == sample_config_space
         assert opt_func.objectives == sample_objectives
         assert opt_func.algorithm == "random"  # default
-        assert opt_func.max_trials == 50  # default
+        assert opt_func.max_trials == 10  # owner-decided default
         assert opt_func.custom_evaluator is None
 
     def test_optimized_function_creation_with_all_params(
@@ -585,6 +586,158 @@ class TestOptimizedFunction:
 
         with pytest.raises(ValueError, match="max_trials must be a positive integer"):
             await opt_func.optimize(max_trials=0)
+
+    @pytest.mark.asyncio
+    async def test_optimize_logs_implicit_default_max_trials_once(
+        self,
+        caplog,
+        mock_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+    ):
+        """Omitted max_trials should resolve to 10 and emit one informational notice."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        from datetime import datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        mock_result = OptimizationResult(
+            trials=[
+                TrialResult(
+                    trial_id="trial_default_notice",
+                    config={"temperature": 0.5},
+                    metrics={"accuracy": 0.8},
+                    status=TrialStatus.COMPLETED,
+                    duration=1.0,
+                    timestamp=datetime.now(),
+                    metadata={},
+                )
+            ],
+            best_config={"temperature": 0.5},
+            best_score=0.8,
+            optimization_id="opt_default_notice",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=sample_objectives,
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+        with (
+            patch(
+                "traigent.core.optimized_function.get_optimizer"
+            ) as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+            caplog.at_level("INFO", logger="traigent.core.optimized_function"),
+        ):
+            mock_get_optimizer.return_value = Mock()
+            mock_orchestrator = Mock()
+            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
+            mock_orchestrator_class.return_value = mock_orchestrator
+
+            result = await opt_func.optimize(algorithm="random")
+            second_result = await opt_func.optimize(algorithm="random")
+
+        assert result is mock_result
+        assert second_result is mock_result
+        assert mock_get_optimizer.call_count == 2
+        mock_get_optimizer.assert_any_call(
+            "random",
+            sample_config_space,
+            sample_objectives,
+            max_trials=DEFAULT_MAX_TRIALS,
+        )
+        notices = [
+            record.message
+            for record in caplog.records
+            if "Using default max_trials=" in record.message
+        ]
+        assert notices == [
+            f"Using default max_trials={DEFAULT_MAX_TRIALS}; pass max_trials=... to change."
+        ]
+
+    @pytest.mark.asyncio
+    async def test_optimize_skips_default_notice_for_explicit_max_trials(
+        self,
+        caplog,
+        mock_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+    ):
+        """Explicit max_trials should be honored unchanged without the default notice."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        from datetime import datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        mock_result = OptimizationResult(
+            trials=[
+                TrialResult(
+                    trial_id="trial_explicit_notice",
+                    config={"temperature": 0.6},
+                    metrics={"accuracy": 0.9},
+                    status=TrialStatus.COMPLETED,
+                    duration=1.0,
+                    timestamp=datetime.now(),
+                    metadata={},
+                )
+            ],
+            best_config={"temperature": 0.6},
+            best_score=0.9,
+            optimization_id="opt_explicit_notice",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=sample_objectives,
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+        with (
+            patch(
+                "traigent.core.optimized_function.get_optimizer"
+            ) as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+            caplog.at_level("INFO", logger="traigent.core.optimized_function"),
+        ):
+            mock_get_optimizer.return_value = Mock()
+            mock_orchestrator = Mock()
+            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
+            mock_orchestrator_class.return_value = mock_orchestrator
+
+            result = await opt_func.optimize(algorithm="random", max_trials=17)
+
+        assert result is mock_result
+        mock_get_optimizer.assert_called_with(
+            "random",
+            sample_config_space,
+            sample_objectives,
+            max_trials=17,
+        )
+        assert not any(
+            "Using default max_trials=" in record.message for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_optimize_with_custom_evaluator(

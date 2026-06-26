@@ -255,7 +255,7 @@ Unknown keys are forwarded to the optimizer and may raise errors when unsupporte
 **Example:**
 ```python
 # Run optimization with the default smart optimizer
-result = await my_agent.optimize(max_trials=50)
+result = await my_agent.optimize()
 
 # Save results
 await my_agent.save_optimization_results("results.json")
