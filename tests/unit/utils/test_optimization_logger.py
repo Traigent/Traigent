@@ -464,14 +464,9 @@ class TestLogTrialResult:
         # Buffer flushed → empty
         assert len(log._trial_buffer) == 0
 
-    def test_deprecated_cloud_mode_still_buffers(self, tmp_path: Path) -> None:
-        """Deprecated cloud mode resolves to a supported runtime and buffers trials normally."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            log = _make_logger(tmp_path, execution_mode="cloud")
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_hybrid_mode_still_buffers(self, tmp_path: Path) -> None:
+        """Hybrid mode resolves to a supported runtime and buffers trials normally."""
+        log = _make_logger(tmp_path, execution_mode="hybrid")
         log.log_trial_result(_make_trial())
         assert len(log._trial_buffer) == 1
 

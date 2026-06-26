@@ -11,6 +11,7 @@ from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.random import RandomSearchOptimizer
+from traigent.utils.exceptions import ConfigurationError
 
 
 class TestSummaryStatsIntegration:
@@ -58,10 +59,11 @@ class TestSummaryStatsIntegration:
             assert "max" in stats
 
     @pytest.mark.asyncio
-    async def test_private_mode_uses_summary_stats(self):
-        """Test that privacy mode correctly generates and uses summary_stats."""
-        # Create evaluator with private execution mode
-        evaluator = LocalEvaluator(metrics=["accuracy"], execution_mode="privacy")
+    async def test_local_no_egress_mode_uses_summary_stats(self):
+        """Test that local no-egress mode correctly generates and uses summary_stats."""
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"], execution_mode="edge_analytics"
+        )
 
         # Create a simple test function
         async def test_function(**kwargs):
@@ -287,23 +289,17 @@ class TestExecutionModeHandling:
             config = TraigentConfig(execution_mode=mode)
             assert config.execution_mode == mode
 
-        config = TraigentConfig(execution_mode="privacy")
-        assert config.execution_mode == "hybrid"
-        assert config.privacy_enabled is True
-
         import warnings
 
         from traigent.config.types import validate_execution_mode
 
-        # Deprecated aliases emit DeprecationWarning and resolve to canonical modes.
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = validate_execution_mode("cloud")
-        assert result.value == "hybrid"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
-
         assert validate_execution_mode("hybrid").value == "hybrid"
-        assert validate_execution_mode("privacy").value == "hybrid"
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentConfig(execution_mode="privacy")
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            validate_execution_mode("privacy")
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            validate_execution_mode("cloud")
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -314,7 +310,9 @@ class TestExecutionModeHandling:
     def test_traigent_config_invalid_execution_mode(self):
         """Test that TraigentConfig rejects truly invalid execution mode strings."""
         for invalid_mode in ["invalid_mode"]:
-            with pytest.raises(ValueError, match="Unsupported execution selector"):
+            with pytest.raises(
+                ConfigurationError, match="Unsupported execution selector"
+            ):
                 TraigentConfig(execution_mode=invalid_mode)
 
         # "local" is a valid alias for edge_analytics
