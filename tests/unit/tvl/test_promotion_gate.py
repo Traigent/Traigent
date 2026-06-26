@@ -1,5 +1,7 @@
 """Unit tests for TVL promotion gate."""
 
+import pytest
+
 from traigent.tvl.models import BandTarget, ChanceConstraint, PromotionPolicy
 from traigent.tvl.promotion_gate import (
     ObjectiveSpec,
@@ -174,6 +176,54 @@ class TestPromotionGate:
 
         # Should have adjusted p-values
         assert len(decision.adjusted_p_values) > 0
+
+    def test_holm_adjustment_blocks_raw_p_value_promotion(self) -> None:
+        """Holm adjustment prevents promotion that raw p-values would allow."""
+        incumbent_metrics = {
+            "a": [0.0] * 10,
+            "b": [0.0] * 10,
+        }
+        candidate_metrics = {
+            "a": [-0.9, -0.4, 0.1, 0.6, 1.1, 1.6, 2.1, -0.15, 0.85, 1.1],
+            "b": [0.0] * 10,
+        }
+        objectives = [
+            ObjectiveSpec("a", "maximize"),
+            ObjectiveSpec("b", "maximize"),
+        ]
+
+        raw_gate = PromotionGate(
+            PromotionPolicy(alpha=0.05, min_effect={"a": 0.0, "b": 0.0}),
+            objectives,
+        )
+        raw_decision = raw_gate.evaluate(incumbent_metrics, candidate_metrics)
+        assert raw_decision.decision == "promote"
+        assert raw_decision.adjusted_p_values["a"] < raw_gate.policy.alpha
+
+        holm_gate = PromotionGate(
+            PromotionPolicy(
+                alpha=0.05,
+                min_effect={"a": 0.0, "b": 0.0},
+                adjust="holm",
+            ),
+            objectives,
+        )
+        holm_decision = holm_gate.evaluate(incumbent_metrics, candidate_metrics)
+        assert holm_decision.adjusted_p_values["a"] > holm_gate.policy.alpha
+        assert holm_decision.decision == "no_decision"
+        assert holm_decision.dominance_satisfied is False
+
+    def test_unsupported_adjust_value_reaching_gate_raises(self) -> None:
+        """The gate fails closed if an unsupported adjust value reaches it."""
+        policy = PromotionPolicy(alpha=0.05, adjust="none")
+        policy.adjust = "sidak"  # type: ignore[assignment]
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+
+        with pytest.raises(ValueError, match="Unsupported promotion_policy.adjust"):
+            gate.evaluate(
+                incumbent_metrics={"accuracy": [0.0] * 5},
+                candidate_metrics={"accuracy": [1.0] * 5},
+            )
 
     def test_missing_objectives_no_decision(self) -> None:
         """No decision when objective data is missing."""

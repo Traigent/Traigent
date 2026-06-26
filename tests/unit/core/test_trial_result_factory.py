@@ -65,6 +65,7 @@ def progress_state():
         "total_examples": 20,
         "correct_sum": 8.5,
         "total_cost": 0.15,
+        "total_tokens": 321,
     }
 
 
@@ -518,6 +519,7 @@ class TestBuildPrunedResult:
         assert "cost" in result.metrics
         assert result.metrics["cost"] == 0.15
         assert result.metadata["total_example_cost"] == 0.15
+        assert result.metrics["total_tokens"] == 321
 
     def test_pruned_with_optuna_id(self, eval_config, prune_error):
         """Test pruned result includes optuna trial ID."""
@@ -699,6 +701,7 @@ class TestBuildFailedResult:
         assert "total_cost" in result.metrics
         assert result.metrics["total_cost"] == 0.15
         assert result.metadata["total_example_cost"] == 0.15
+        assert result.metrics["total_tokens"] == 321
 
     def test_failed_with_optuna_id(self, eval_config):
         """Test failed result includes optuna trial ID."""

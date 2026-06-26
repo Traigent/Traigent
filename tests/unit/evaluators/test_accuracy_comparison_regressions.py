@@ -64,3 +64,58 @@ def test_numeric_accuracy_uses_float_tolerance_across_paths() -> None:
         [expected],
     )
     assert metrics_result.metrics["accuracy"] == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_issue_1464_numeric_accuracy_tolerance_keeps_real_mismatches() -> None:
+    """Numeric exact-match accuracy tolerates float noise but not real mismatches."""
+    evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
+    dataset = Dataset(
+        [
+            EvaluationExample({"case": "float_noise"}, 0.3),
+            EvaluationExample({"case": "different"}, 2.0),
+        ],
+        name="numeric_tolerance_regression",
+    )
+
+    def numeric_outputs(input_data: dict[str, str]) -> float:
+        if input_data["case"] == "float_noise":
+            return 0.1 + 0.2
+        return 1.0
+
+    result = await evaluator.evaluate(numeric_outputs, {}, dataset)
+
+    assert result.metrics["accuracy"] == pytest.approx(0.5)
+    assert result.example_results[0].metrics["accuracy"] == pytest.approx(1.0)
+    assert result.example_results[1].metrics["accuracy"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_issue_1463_string_outputs_match_typed_expected_values(caplog) -> None:
+    """Exact-match accuracy compares string model outputs to typed expected values."""
+    caplog.set_level("WARNING", logger="traigent.evaluators.base")
+    evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
+    dataset = Dataset(
+        [
+            EvaluationExample({"case": "int"}, 42),
+            EvaluationExample({"case": "float"}, 3.0),
+            EvaluationExample({"case": "mismatch"}, 42),
+        ],
+        name="typed_expected_regression",
+    )
+
+    def string_outputs(input_data: dict[str, str]) -> str:
+        outputs = {
+            "int": "42",
+            "float": "3.0",
+            "mismatch": "43",
+        }
+        return outputs[input_data["case"]]
+
+    result = await evaluator.evaluate(string_outputs, {}, dataset)
+
+    assert result.metrics["accuracy"] == pytest.approx(2 / 3)
+    assert result.example_results[0].metrics["accuracy"] == pytest.approx(1.0)
+    assert result.example_results[1].metrics["accuracy"] == pytest.approx(1.0)
+    assert result.example_results[2].metrics["accuracy"] == pytest.approx(0.0)
+    assert "Coercing string output" in caplog.text

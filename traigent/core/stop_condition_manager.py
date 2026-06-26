@@ -156,7 +156,7 @@ class StopConditionManager:
             The registered CostLimitStopCondition for reference.
         """
         condition = CostLimitStopCondition(cost_enforcer)
-        self._conditions.append(condition)
+        self._conditions.insert(0, condition)
         return condition
 
     def add_condition(self, condition: StopCondition) -> None:

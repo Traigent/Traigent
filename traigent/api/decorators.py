@@ -102,6 +102,17 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+__all__ = [
+    "EvaluationOptions",
+    "InjectionOptions",
+    "HybridAPIOptions",
+    "ExternalServiceEvaluator",
+    "ExecutionOptions",
+    "MockModeOptions",
+    "optimize",
+]
+
+
 class EvaluationOptions(BaseModel):
     """Grouped evaluation settings used by the optimize decorator."""
 
@@ -435,6 +446,80 @@ def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
             "Did you mean to use metric_functions instead?",
             found_suspicious,
         )
+
+
+def _warn_context_mode_param_shadowing(
+    func: Callable[..., Any],
+    configuration_space: Any,
+    injection_mode: Any,
+    config_param: str | None,
+) -> None:
+    """Warn when CONTEXT-mode tuned knobs shadow the wrapped function's params.
+
+    In the default ``injection_mode=InjectionMode.CONTEXT`` the optimizer does
+    **not** override function parameters — the per-trial config lives in
+    contextvars and must be read via ``traigent.get_config()``. If a function
+    already declares the tuned knobs as parameters (the common "wrap a pre-existing
+    agent function" shape) and never reads ``get_config()``, every trial silently
+    receives the signature defaults, so the optimizer reports a "best config" for a
+    sweep that never actually varied those parameters (see issue #1372). This emits
+    a loud warning so the no-op is not silent. It is advisory (never raises): a
+    function that intentionally reads ``get_config()`` is detected and skipped.
+    """
+    # Only CONTEXT mode shadows parameters; PARAMETER/SEAMLESS inject explicitly.
+    if injection_mode not in (InjectionMode.CONTEXT, "context"):
+        return
+    if not configuration_space:
+        return
+    try:
+        config_keys = set(configuration_space.keys())
+    except AttributeError:
+        return
+    if not config_keys:
+        return
+
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):  # pragma: no cover - unintrospectable callable
+        return
+
+    param_names = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    }
+    if config_param:
+        param_names.discard(config_param)
+
+    shadowed = sorted(config_keys & param_names)
+    if not shadowed:
+        return
+
+    # Best-effort: if the body already reads the per-trial config, the knobs are
+    # honored and the overlap is intentional — do not warn.
+    try:
+        source = inspect.getsource(func)
+        if "get_config" in source or "current_config" in source:
+            return
+    except (OSError, TypeError):  # pragma: no cover - source unavailable
+        pass
+
+    import warnings
+
+    func_name = getattr(func, "__name__", repr(func))
+    message = (
+        f"@traigent.optimize: the tuned variable(s) {shadowed} are declared as "
+        f"parameters of '{func_name}', but injection_mode is CONTEXT (the default), "
+        f"which does NOT override function parameters. Unless the body reads "
+        f"traigent.get_config(), every trial will run with the signature defaults "
+        f"and the optimization will silently sweep nothing (a false-positive 'best "
+        f"config'). To actually vary {shadowed}: read them via traigent.get_config() "
+        f'inside the function, or use injection_mode="seamless" (zero code change) / '
+        f'injection_mode="parameter".'
+    )
+    warnings.warn(message, UserWarning, stacklevel=3)
+    logger.warning("%s", message)
 
 
 _DEFAULT_SENTINEL = object()
@@ -2649,6 +2734,15 @@ def optimize(  # NOSONAR(S107)
                         **detected_defaults,
                         **(resolved_default_config or {}),
                     }
+
+        # #1372: loudly warn if CONTEXT-mode tuned knobs shadow the wrapped
+        # function's own parameters (silent no-op sweep otherwise).
+        _warn_context_mode_param_shadowing(
+            func,
+            resolved_configuration_space,
+            actual_injection_mode,
+            config_param,
+        )
 
         optimized_func = OptimizedFunction(
             func=func,

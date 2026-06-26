@@ -382,8 +382,12 @@ async def test_local_adapter_unknown_evaluation_type():
         agent_spec={}, dataset=dataset, trial_id="unknown-type-1"
     )
 
-    # Unknown evaluation type should still complete
+    # Unknown evaluation type should still complete, but it is an errored
+    # example and must not contribute a bogus 0% accuracy bucket.
     assert result["metrics"]["total_examples"] == 1.0
+    assert result["metrics"]["success_rate"] == 0.0
+    assert result["metrics"]["examples_with_ground_truth"] == 0.0
+    assert "accuracy_unknown_custom_type" not in result["metrics"]
 
 
 @pytest.mark.asyncio

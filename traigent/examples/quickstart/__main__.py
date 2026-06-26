@@ -45,7 +45,7 @@ except ModuleNotFoundError as exc:
     missing = exc.name or "litellm"
     print(
         f"[traigent] Missing required quickstart dependency '{missing}'. "
-        f'Run: {sys.executable} -m pip install "litellm==1.87.1"',
+        f'Run: {sys.executable} -m pip install "litellm>=1.87.1,<2"',
         file=sys.stderr,
     )
     raise SystemExit(1) from None

@@ -15,11 +15,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import BandTarget, PromotionPolicy
+from .models import BandTarget, PromotionPolicy, validate_adjust_method
 from .objectives import tost_equivalence_test
 from .statistics import (
     benjamini_hochberg_adjust,
+    bonferroni_adjust,
     clopper_pearson_lower_bound,
+    holm_bonferroni_adjust,
     paired_comparison_test,
 )
 
@@ -79,7 +81,7 @@ class PromotionDecision:
         reason: Human-readable explanation of the decision.
         objective_results: Per-objective comparison results.
         chance_results: Per-constraint evaluation results.
-        adjusted_p_values: P-values after BH adjustment (if applied).
+        adjusted_p_values: P-values after multiple-testing adjustment (if applied).
         dominance_satisfied: Whether epsilon-Pareto dominance holds.
     """
 
@@ -176,11 +178,23 @@ class PromotionGate:
         self, raw_p_values: dict[str, float]
     ) -> dict[str, float]:
         """Apply multiple testing adjustment if configured."""
-        if self.policy.adjust == "BH" and len(raw_p_values) > 1:
-            p_list = list(raw_p_values.values())
+        adjust = validate_adjust_method(self.policy.adjust)
+        if adjust == "none" or len(raw_p_values) <= 1:
+            return raw_p_values.copy()
+
+        p_list = list(raw_p_values.values())
+        if adjust == "BH":
             adjusted_list = benjamini_hochberg_adjust(p_list)
-            return dict(zip(raw_p_values.keys(), adjusted_list, strict=True))
-        return raw_p_values.copy()
+        elif adjust == "holm":
+            adjusted_list = holm_bonferroni_adjust(p_list)
+        elif adjust == "bonferroni":
+            adjusted_list = bonferroni_adjust(p_list)
+        else:
+            # validate_adjust_method is the primary fail-closed path; keep this
+            # branch as a defensive guard against future enum drift.
+            raise ValueError(f"Unsupported promotion_policy.adjust {adjust!r}")
+
+        return dict(zip(raw_p_values.keys(), adjusted_list, strict=True))
 
     def _check_dominance(
         self,
