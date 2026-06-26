@@ -18,8 +18,8 @@ Exception
   |     +-- InvocationError
   |     +-- EvaluationError
   |     +-- OptimizationError
+  |     |     +-- CostLimitExceeded
   |     +-- OptimizationStateError
-  |     +-- CostLimitExceeded
   |     +-- FeatureNotAvailableError
   |     +-- DataIntegrityError
   |     |     +-- MetricExtractionError
@@ -110,7 +110,9 @@ Raised before optimization starts when provider API keys are invalid or missing.
 
 ### CostLimitExceeded
 
-**Budget exceeded during optimization.**
+**Pre-run cost approval declined before the first trial.** `CostLimitExceeded` is a subclass of `OptimizationError`.
+
+> **Note:** A mid-run budget overrun does **not** raise this exception. When accumulated spend reaches the limit during a run, the run stops gracefully and returns a partial `OptimizationResult` with `result.stop_reason == "cost_limit"`. See [Mid-run cost stop](#mid-run-cost-stop) below.
 
 | Attribute | Type | Description |
 |---|---|---|
@@ -123,10 +125,22 @@ from traigent.utils.exceptions import CostLimitExceeded
 try:
     results = func.optimize()
 except CostLimitExceeded as e:
-    print(f"Spent ${e.accumulated:.2f} of ${e.limit:.2f} budget")
+    # Raised only for pre-run approval failures, not mid-run budget overruns
+    print(f"Cost approval declined: ${e.accumulated:.2f} of ${e.limit:.2f} limit")
 ```
 
-**Resolution**: Increase `cost_limit`, use cheaper models, or reduce `max_trials`.
+**Resolution**: Pre-approve costs with `TRAIGENT_COST_APPROVED=true` or `cost_approved=True`, increase `cost_limit`, use cheaper models, or reduce `max_trials`.
+
+#### Mid-run cost stop
+
+When accumulated spend reaches the budget limit *during* a run, Traigent stops gracefully after the current trial and **returns** a partial result — no exception is raised:
+
+```python
+results = func.optimize()
+if results.stop_reason == "cost_limit":
+    print(f"Run stopped at cost limit: ${results.total_cost:.2f} spent")
+    # results.best_config and results.trials hold what was collected
+```
 
 ### OptimizationStateError
 
@@ -251,7 +265,8 @@ from traigent.utils.exceptions import (
 try:
     results = func.optimize()
 except CostLimitExceeded as e:
-    print(f"Over budget: ${e.accumulated:.2f}")
+    # Raised for pre-run cost approval failures; mid-run budget overruns stop gracefully (check result.stop_reason)
+    print(f"Cost approval declined: ${e.accumulated:.2f}")
 except ProviderValidationError as e:
     print(f"Bad API keys: {e.failed_providers}")
 except ConfigurationError as e:

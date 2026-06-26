@@ -79,7 +79,9 @@ Set `TRAIGENT_DEBUG=1` to see the full traceback instead of the clean error mess
 
 ### CostLimitExceeded
 
-**When raised**: Accumulated API cost exceeds the configured budget. Has `accumulated` and `limit` attributes.
+**When raised**: Cost approval is declined before the first trial (pre-run only). Has `accumulated` and `limit` attributes. `CostLimitExceeded` is a subclass of `OptimizationError`.
+
+> **Mid-run budget overruns do not raise this exception.** When accumulated spend hits the limit during a run, the run stops gracefully and returns a partial `OptimizationResult` — check `result.stop_reason == "cost_limit"`.
 
 ```
 traigent.utils.exceptions.CostLimitExceeded: Cost limit exceeded: $0.52 >= $0.50 USD
@@ -104,9 +106,12 @@ traigent.utils.exceptions.CostLimitExceeded: Cost limit exceeded: $0.52 >= $0.50
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
     max_trials=5,  # Fewer trials = lower cost
 )
+
+# Option 4: Pre-approve costs (suppresses the pre-run prompt)
+# export TRAIGENT_COST_APPROVED=true  or  cost_approved=True in code
 ```
 
-**Handling programmatically**:
+**Handling the pre-run exception**:
 
 ```python
 from traigent.utils.exceptions import CostLimitExceeded
@@ -114,8 +119,17 @@ from traigent.utils.exceptions import CostLimitExceeded
 try:
     results = await func.optimize()
 except CostLimitExceeded as e:
-    print(f"Budget exceeded: spent ${e.accumulated:.2f} of ${e.limit:.2f} limit")
-    # Check if partial results are available
+    # Raised only when approval is declined before the run starts
+    print(f"Cost approval declined: ${e.accumulated:.2f} of ${e.limit:.2f} limit")
+```
+
+**Handling a mid-run budget stop** (no exception — check `stop_reason`):
+
+```python
+results = await func.optimize()
+if results.stop_reason == "cost_limit":
+    print(f"Run stopped at cost limit: ${results.total_cost:.2f} spent")
+    # results.best_config and results.trials hold what was collected
 ```
 
 ### OptimizationStateError
