@@ -15,7 +15,6 @@ from traigent.api.strategy_presets import (
 )
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
-from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ConfigurationError
 
@@ -216,7 +215,7 @@ class TestOptimizeDecorator:
             return x
 
         assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.max_trials == DEFAULT_MAX_TRIALS
+        assert sample_function.max_trials == 10
 
     def test_decorator_accepts_algorithm_runtime_default(self):
         """Decorator-level algorithm should become the optimize() default."""

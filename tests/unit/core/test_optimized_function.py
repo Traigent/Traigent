@@ -140,7 +140,7 @@ class TestOptimizedFunction:
         assert opt_func.configuration_space == sample_config_space
         assert opt_func.objectives == sample_objectives
         assert opt_func.algorithm == "random"  # default
-        assert opt_func.max_trials == DEFAULT_MAX_TRIALS  # default
+        assert opt_func.max_trials == 10  # owner-decided default
         assert opt_func.custom_evaluator is None
 
     def test_optimized_function_creation_with_all_params(
