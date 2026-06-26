@@ -398,7 +398,12 @@ class BaseInvoker(ABC):
         config: dict[str, Any],
         input_data: dict[str, Any],
     ) -> InvocationResult:
-        """Invoke function with retry logic.
+        """Invoke function with retry logic for callers that opt into it.
+
+        This helper is part of the BaseInvoker surface, but the optimizer's
+        default evaluation path calls ``invoke()`` directly today. As a result,
+        ``max_retries`` here is not automatically wired into per-example eval
+        retries unless a caller explicitly routes execution through this helper.
 
         Args:
             func: Function to invoke
