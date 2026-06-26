@@ -570,7 +570,7 @@ class SessionOperations:
                 await self._reset_client_session("create_session auth_failure")
                 if _must_fail_loud(e):
                     raise
-                logger.debug("Backend auth failed for '%s': %s", function_name, e)
+                logger.warning("Backend auth failed for '%s': %s", function_name, e)
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
