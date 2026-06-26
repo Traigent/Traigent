@@ -30,14 +30,14 @@ try:  # pragma: no cover - import guard
         NonLLMContextRecall,
         NonLLMStringSimilarity,
     )
-    from ragas.metrics.base import Metric, MetricWithEmbeddings, MetricWithLLM
+    from ragas.metrics.base import Metric
 
     RAGAS_AVAILABLE = True
     RAGAS_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - executed only when ragas missing
     RAGAS_AVAILABLE = False
     RAGAS_IMPORT_ERROR = exc
-    Metric = MetricWithEmbeddings = MetricWithLLM = object
+    Metric = object
     ragas_evaluate = EvaluationDataset = SingleTurnSample = None
 
 from traigent.api.types import ExampleResult
