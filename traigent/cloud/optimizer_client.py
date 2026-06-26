@@ -11,6 +11,7 @@ import backoff
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
+from traigent.cloud.url_security import validate_cloud_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,10 @@ class OptimizerDirectClient:
         if not isinstance(token, str) or not token.strip():
             raise ValueError("Optimizer token must be a non-empty string")
 
-        self.endpoint = endpoint.strip().rstrip("/")
+        self.endpoint = validate_cloud_base_url(
+            endpoint.strip(),
+            purpose="optimizer direct client",
+        )
         self.token = token.strip()
         self.no_egress = bool(no_egress)
         self.session: aiohttp.ClientSession | None = None

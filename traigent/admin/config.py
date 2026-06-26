@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import BackendConfig
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 
@@ -22,7 +23,10 @@ class EnterpriseAdminConfig:
     extra_headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.backend_origin = self.backend_origin.rstrip("/")
+        backend_origin = self.backend_origin.rstrip("/")
+        self.backend_origin = validate_cloud_base_url(
+            backend_origin, purpose="enterprise admin request"
+        )
         self.tenant_id = (
             self.tenant_id.strip() or None if self.tenant_id is not None else None
         )

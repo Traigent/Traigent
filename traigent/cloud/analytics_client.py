@@ -39,6 +39,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from urllib.parse import quote
 
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.utils.logging import get_logger
 
@@ -237,7 +238,10 @@ class BackendAnalyticsClient:
         )
 
         resolved_url = backend_url or BackendConfig.get_backend_url()
-        self.backend_url = resolved_url.rstrip("/")
+        resolved_url = resolved_url.rstrip("/")
+        self.backend_url = validate_cloud_base_url(
+            resolved_url, purpose="analytics request"
+        )
         self.timeout = timeout
 
         self.api_key = api_key if api_key is not None else None

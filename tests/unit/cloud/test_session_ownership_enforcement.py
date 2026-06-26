@@ -12,6 +12,20 @@ from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.trial_operations import TrialOperations
 
 
+@pytest.fixture(autouse=True)
+def _mock_public_cloud_dns(monkeypatch):
+    """Keep URL validation deterministic for ownership tests."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    def _resolve_public_backend(_host, _port, *_args, **_kwargs):
+        return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_public_backend,
+    )
+
+
 @pytest.mark.asyncio
 async def test_trial_operations_register_forbidden_logs(caplog, monkeypatch):
     """403 responses should emit remediation guidance and return False."""

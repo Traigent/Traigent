@@ -59,6 +59,7 @@ from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import TrialOperations
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
@@ -365,11 +366,17 @@ class BackendIntegratedClient:
             effective_base_url = BackendConfig.get_backend_url()
 
         # Validate and sanitize URLs
+        effective_base_url = validate_cloud_base_url(
+            effective_base_url, purpose="backend client"
+        )
         self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
 
         backend_base_url = self.base_url
         if not explicit_base_origin:
             backend_base_url = self.backend_config.backend_base_url or self.base_url
+        backend_base_url = validate_cloud_base_url(
+            backend_base_url, purpose="backend client"
+        )
         self.backend_config.backend_base_url = self._api_ops.validate_and_sanitize_url(
             backend_base_url
         )
@@ -383,6 +390,13 @@ class BackendIntegratedClient:
                 self.backend_config.api_base_url
                 or BackendConfig.build_api_base(self.backend_config.backend_base_url)
             )
+        api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
+        if api_origin is None:
+            raise ValueError("backend client API base URL must include an origin")
+        api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
+        api_base_candidate = (
+            f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
+        )
         self.api_base_url = self._api_ops.validate_and_sanitize_url(api_base_candidate)
         self.backend_config.api_base_url = self.api_base_url
 

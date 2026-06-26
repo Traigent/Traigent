@@ -47,6 +47,7 @@ from .models import (
     TrialSuggestion,
 )
 from .subset_selection import SmartSubsetSelector
+from .url_security import validate_cloud_base_url
 
 logger = get_logger(__name__)
 
@@ -455,8 +456,13 @@ class TraigentCloudClient(BaseTraigentClient):
             resolved_origin = BackendConfig.get_cloud_backend_url()
             api_base_candidate = BackendConfig.get_cloud_api_url()
 
-        self.base_url = resolved_origin.rstrip("/")
-        self.api_base_url = api_base_candidate.rstrip("/")
+        self.base_url = validate_cloud_base_url(
+            resolved_origin.rstrip("/"), purpose="cloud client"
+        )
+        _api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
+        self.api_base_url = (
+            f"{self.base_url}{api_path or BackendConfig.get_default_api_path()}"
+        ).rstrip("/")
         self.enable_fallback = enable_fallback
         self.max_retries = max_retries
         self.timeout = timeout

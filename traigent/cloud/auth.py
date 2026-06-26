@@ -13,19 +13,16 @@ import concurrent.futures
 import hashlib
 import hmac
 import inspect
-import ipaddress
 import json
 import logging
 import os
 import time
 import uuid
-import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_key_manager import APIKeyManager
@@ -34,7 +31,6 @@ from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.security.redaction import redact_sensitive_data
-from traigent.utils.env_config import is_truthy, treat_as_production
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 from traigent.utils.url_security import UnsafeUrlError
 
@@ -46,11 +42,6 @@ MAX_TOKEN_AGE = 86400  # Maximum token age in seconds (24 hours)
 MIN_TOKEN_LENGTH = 20  # Minimum acceptable token length
 API_KEY_TOKEN_TTL = 31536000  # 365 days
 SAFE_CREDENTIAL_METADATA_KEYS = {"mode", "auth_source", "expires_at", "scopes"}
-_LOOPBACK_BACKEND_DEV_HINT = (
-    "backend validation URL host is not allowed for loopback HTTP. "
-    "For local backend development, set ENVIRONMENT=development and "
-    "TRAIGENT_ALLOW_INSECURE_BACKEND=true."
-)
 
 
 def _build_api_key_auth_headers(api_key_value: str | None) -> dict[str, str]:
@@ -62,28 +53,6 @@ def _build_api_key_auth_headers(api_key_value: str | None) -> dict[str, str]:
     if api_key_value:
         return {"X-API-Key": api_key_value}
     return {}
-
-
-def _is_loopback_backend_host(normalized_host: str) -> bool:
-    """Return True for localhost names and loopback IP literals only."""
-    host_for_match = normalized_host.rstrip(".")
-    if host_for_match == "localhost" or host_for_match.endswith(".localhost"):
-        return True
-    try:
-        host_ip = ipaddress.ip_address(host_for_match)
-    except ValueError:
-        return False
-    return host_ip.is_loopback
-
-
-def _allow_insecure_loopback_backend_validation() -> bool:
-    """Permit loopback backend validation only for explicit non-prod dev opt-in."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        non_production = not treat_as_production()
-    return non_production and is_truthy(
-        os.environ.get("TRAIGENT_ALLOW_INSECURE_BACKEND")
-    )
 
 
 def _sanitize_credentials_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
@@ -1451,6 +1420,9 @@ class AuthManager:
         Never logs the key value. Network/transport errors are treated as
         validation failures (fail-closed) so a missing backend cannot be used
         to bypass authentication.
+
+        Unsafe backend URL configuration raises before the request payload or
+        ``X-API-Key`` header is constructed.
         """
         from traigent.cloud.client import cloud_backend_egress_disabled
         from traigent.config.backend_config import BackendConfig
@@ -1471,10 +1443,11 @@ class AuthManager:
         if not backend_api_url:
             return "backend URL not configured"
 
+        backend_api_url = await validate_cloud_base_url_async(
+            backend_api_url,
+            purpose="backend key validation",
+        )
         url = f"{backend_api_url.rstrip('/')}/keys/validate"
-        unsafe_url_reason = self._validate_backend_validation_url(url)
-        if unsafe_url_reason:
-            return unsafe_url_reason
 
         validation_payload = {"api_key": api_key}
         headers = {
@@ -1550,36 +1523,6 @@ class AuthManager:
         if status == 429:
             return "rate limited"
         return f"backend returned status {status}"
-
-    @staticmethod
-    def _validate_backend_validation_url(url: str) -> str | None:
-        """Validate the configured backend URL before sending credentials to it."""
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return "backend validation URL is invalid"
-        if parsed.username or parsed.password:
-            return "backend validation URL must not include credentials"
-        hostname = parsed.hostname
-        if not hostname:
-            return "backend validation URL is invalid"
-        normalized_host = hostname.strip("[]").lower()
-        if _is_loopback_backend_host(normalized_host):
-            if _allow_insecure_loopback_backend_validation():
-                return None
-            return _LOOPBACK_BACKEND_DEV_HINT
-        try:
-            host_ip = ipaddress.ip_address(normalized_host)
-        except ValueError:
-            # Hostname resolves to a DNS name (not an IP). HTTPS still required.
-            if parsed.scheme != "https":
-                return "backend validation URL must use HTTPS"
-            return None
-        if not host_ip.is_global:
-            return "backend validation URL host is not allowed"
-        # IP-literal global host: HTTPS still required.
-        if parsed.scheme != "https":
-            return "backend validation URL must use HTTPS"
-        return None
 
     def _validate_api_key_with_backend_sync(
         self,

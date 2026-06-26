@@ -189,6 +189,7 @@ class TestExecutionModes:
         """Test metric submission batching in optimizer client."""
         monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
         monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        monkeypatch.setenv("ENVIRONMENT", "development")
         with patch("aiohttp.ClientSession") as MockSession:
             # Setup mock session
             mock_session = AsyncMock()
