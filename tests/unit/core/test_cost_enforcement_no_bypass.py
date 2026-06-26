@@ -149,12 +149,12 @@ class TestCostEnforcerNoMockBypass:
             # Now budget is exhausted; the bypass would have granted id=0,
             # but the real path must deny.
             second = enforcer.acquire_permit()
-            assert (
-                not second.is_granted
-            ), "Mock-mode must not override real cost limits after exhaustion"
-            assert (
-                second.id == -1
-            ), "Denied permit must use sentinel id=-1, not bypass id=0"
+            assert not second.is_granted, (
+                "Mock-mode must not override real cost limits after exhaustion"
+            )
+            assert second.id == -1, (
+                "Denied permit must use sentinel id=-1, not bypass id=0"
+            )
 
     def test_release_permit_uses_real_locked_path_under_mock_env(
         self, mock_env: dict[str, str]
@@ -206,8 +206,8 @@ class TestCostEstimatorMockPreflight:
     def test_raw_mock_env_does_not_bypass_when_mock_sot_false(
         self, mock_env: dict[str, str]
     ) -> None:
-        from traigent.core.cost_enforcement import OptimizationAborted
         from traigent.core.cost_estimator import CostEstimator
+        from traigent.utils.exceptions import CostLimitExceeded
 
         with patch.dict(os.environ, mock_env, clear=False):
             enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, approved=False))
@@ -226,5 +226,5 @@ class TestCostEstimatorMockPreflight:
                     return_value=False,
                 ),
             ):
-                with pytest.raises(OptimizationAborted):
+                with pytest.raises(CostLimitExceeded):
                     estimator.check_cost_approval(dataset=None)

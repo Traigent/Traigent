@@ -212,6 +212,8 @@ class TrialLifecycle:
                     "Sequential trial cancelled due to cost limit reached (config=%s)",
                     config_for_run,
                 )
+                # Mid-run cost limits are graceful by contract: return a partial
+                # result and surface result.stop_reason == "cost_limit".
                 orchestrator._stop_reason = "cost_limit"
                 return trial_count, "break"
 

@@ -2425,7 +2425,13 @@ class OptimizationOrchestrator:
             )
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
-        """Check cost approval before optimization. Delegates to CostEstimator."""
+        """Check pre-run cost approval before optimization.
+
+        Delegates to CostEstimator, which raises CostLimitExceeded (an
+        OptimizationError subclass) when cost approval is declined. Mid-run
+        cost limits are handled separately as graceful ``stop_reason="cost_limit"``
+        results.
+        """
         self._cost_estimator.check_cost_approval(dataset)
 
     def _is_cost_limit_reached(self) -> bool:

@@ -11,6 +11,7 @@ from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
 from traigent.utils.env_config import is_mock_llm
+from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -192,13 +193,16 @@ class CostEstimator:
         """Check cost approval before optimization.
 
         Estimates the total optimization cost and checks against the cost
-        enforcer's configured limit. Raises OptimizationAborted if declined.
+        enforcer's configured limit. If the pre-run approval is declined,
+        raises ``CostLimitExceeded`` (an ``OptimizationError`` subclass) with
+        the limit, spent amount, and estimate. Mid-run cost limits remain a
+        graceful stop: inspect ``OptimizationResult.stop_reason == "cost_limit"``.
 
         Args:
             dataset: The evaluation dataset for cost estimation
 
         Raises:
-            OptimizationAborted: If cost approval is declined
+            CostLimitExceeded: If pre-run cost approval is declined.
         """
         if is_mock_llm():
             logger.info(
@@ -209,19 +213,23 @@ class CostEstimator:
 
         estimated_cost = self.estimate_optimization_cost(dataset)
         if not self._cost_enforcer.check_and_approve(estimated_cost):
-            from traigent.core.cost_enforcement import OptimizationAborted
-
-            raise OptimizationAborted(
-                "Cost approval declined. Rough conservative upper-bound "
-                f"estimate: ${estimated_cost:.2f}, limit: "
-                f"${self._cost_enforcer.config.limit:.2f}. "
-                "Pre-run estimates use fixed token assumptions and conservative "
-                "fallback pricing when model pricing is unavailable. To proceed, "
-                "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
-                "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
-                "private/unpriced model rates with "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+            limit = self._cost_enforcer.config.limit
+            raise CostLimitExceeded(
+                accumulated=0.0,
+                limit=limit,
+                estimated=estimated_cost,
+                message=(
+                    "Cost approval declined. Rough conservative upper-bound "
+                    f"estimate: ${estimated_cost:.2f}, limit: "
+                    f"${limit:.2f}. "
+                    "Pre-run estimates use fixed token assumptions and conservative "
+                    "fallback pricing when model pricing is unavailable. To proceed, "
+                    "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
+                    "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
+                    "private/unpriced model rates with "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+                ),
             )
 
     def estimate_optimization_cost(self, dataset: Dataset) -> float:

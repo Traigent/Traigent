@@ -252,19 +252,31 @@ class CostEnforcer:
     - Fallback to trial count limit when cost is unknown
     - XDG-compliant approval token support for CI/CD
 
+    Cost-limit surfacing contract:
+        - Pre-run approval-declined cost limits raise ``CostLimitExceeded``,
+          which is an ``OptimizationError`` subclass.
+        - Mid-run cost limits do not raise; orchestration stops gracefully and
+          returns a partial result with ``stop_reason == "cost_limit"``.
+
     Usage:
         enforcer = CostEnforcer()
 
         # Pre-optimization check
-        if not enforcer.check_and_approve(estimated_cost=5.0):
-            raise OptimizationAborted("User declined")
+        estimated_cost = 5.0
+        if not enforcer.check_and_approve(estimated_cost=estimated_cost):
+            raise CostLimitExceeded(
+                accumulated=0.0,
+                limit=enforcer.config.limit,
+                estimated=estimated_cost,
+            )
 
         # During optimization - acquire permit before each LLM call
         if enforcer.acquire_permit():
             result = await make_llm_call()
             enforcer.track_cost(result.cost)
         else:
-            # Cancel this request - limit reached
+            # Cancel this request - mid-run limit reached; return partial result
+            # with stop_reason="cost_limit".
             pass
 
     Attributes:
