@@ -414,7 +414,38 @@ class FrameworkOverrideManager(BaseOverrideManager):
         resolved = self._resolve_annotation_name(annotation_name, globalns)
         if isinstance(resolved, type):
             return cast(type, resolved)
+        for module_name in self._annotation_candidate_modules(func):
+            try:
+                module = importlib.import_module(module_name)
+            except (ImportError, ValueError):
+                continue
+            module_globals = vars(module)
+            if module_globals is globalns:
+                continue
+            resolved = self._resolve_annotation_name(annotation_name, module_globals)
+            if isinstance(resolved, type):
+                return cast(type, resolved)
         return None
+
+    def _annotation_candidate_modules(self, func: Callable[..., Any]) -> list[str]:
+        """Return modules that commonly expose SDK resource annotation names."""
+
+        module_name = getattr(func, "__module__", "")
+        if not module_name:
+            return []
+
+        candidate_names = [module_name]
+        package_name = module_name.split(".", 1)[0]
+        if package_name:
+            candidate_names.append(f"{package_name}.resources")
+
+        seen: set[str] = set()
+        unique_candidate_names = []
+        for candidate_name in candidate_names:
+            if candidate_name and candidate_name not in seen:
+                seen.add(candidate_name)
+                unique_candidate_names.append(candidate_name)
+        return unique_candidate_names
 
     def _normalize_annotation_string(self, annotation: str) -> str:
         """Normalize quoted forward-reference annotation strings."""
