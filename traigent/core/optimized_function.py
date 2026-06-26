@@ -94,6 +94,7 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator
+from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
@@ -392,6 +393,13 @@ class OptimizedFunction(Generic[_P, _R]):
             **kwargs: Additional configuration
         """
         # Extract decorator-provided metadata before core storage
+        max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
+        self._max_trials_uses_sdk_default = (
+            "max_trials" not in kwargs
+            if max_trials_explicit is None
+            else not bool(max_trials_explicit)
+        )
+        self._max_trials_default_notice_logged = False
         self._requested_execution_mode = kwargs.pop("requested_execution_mode", None)
         provided_execution_policy = kwargs.pop("execution_policy", None)
         self.execution_policy = (
@@ -603,7 +611,7 @@ class OptimizedFunction(Generic[_P, _R]):
         self.algorithm = kwargs.pop("algorithm", "random")
         kwargs["algorithm"] = self.algorithm
 
-        self.max_trials = kwargs.pop("max_trials", 50)
+        self.max_trials = kwargs.pop("max_trials", DEFAULT_MAX_TRIALS)
         kwargs["max_trials"] = self.max_trials
 
         # Experiment display name: decorator param > TRAIGENT_EXPERIMENT_NAME > func.__name__
@@ -2327,6 +2335,7 @@ Remediation:
             configuration_space = discovered_config_space
 
         # Phase 1: Resolve and validate parameters
+        requested_max_trials = max_trials
         algorithm, max_trials, effective_config_space = resolve_execution_parameters(
             algorithm,
             max_trials,
@@ -2335,6 +2344,20 @@ Remediation:
             fallback_algorithm=cast(str, getattr(self, "algorithm", "grid")),
             fallback_max_trials=getattr(self, "max_trials", None),
         )
+        used_implicit_default_max_trials = (
+            requested_max_trials is None
+            and getattr(self, "_max_trials_uses_sdk_default", False)
+            and max_trials == DEFAULT_MAX_TRIALS
+        )
+        if (
+            used_implicit_default_max_trials
+            and not self._max_trials_default_notice_logged
+        ):
+            logger.info(
+                "Using default max_trials=%d; pass max_trials=... to change.",
+                max_trials,
+            )
+            self._max_trials_default_notice_logged = True
 
         stored_policy = getattr(self, "execution_policy", None)
         if not isinstance(stored_policy, ResolvedExecutionPolicy):
@@ -2584,7 +2607,7 @@ Remediation:
                 dataset=dataset,
                 configuration_space=effective_config_space,
                 objectives=self.objectives,
-                max_trials=max_trials if max_trials is not None else 50,
+                max_trials=max_trials if max_trials is not None else DEFAULT_MAX_TRIALS,
                 local_function=self.func,
             )
             return await self._resolve_awaitable_value(cloud_candidate)

@@ -88,6 +88,7 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
@@ -560,7 +561,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
-    "max_trials": 50,
+    "max_trials": DEFAULT_MAX_TRIALS,
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
     "plateau_epsilon": None,  # Improvement threshold for plateau detection
@@ -2318,6 +2319,9 @@ def optimize(  # NOSONAR(S107)
         return passthrough_decorator
 
     legacy_args = _parse_legacy_args(legacy)
+    max_trials_explicit = runtime_overrides.get("max_trials") is not None
+    if legacy_args is not None and legacy_args.max_trials is not None:
+        max_trials_explicit = True
 
     combined_settings = dict(_OPTIMIZE_DEFAULTS)
     if "execution_mode" in _GLOBAL_CONFIG:
@@ -2810,6 +2814,7 @@ def optimize(  # NOSONAR(S107)
             strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
+            _max_trials_explicit=max_trials_explicit,
             # Experiment display name (overrides func.__name__ in portal/storage)
             experiment_name=experiment_name_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
