@@ -41,6 +41,20 @@ logger = get_logger(__name__)
 
 # Constant for metrics reference detection in constraint expressions
 _METRICS_PREFIX = "metrics."
+_MISSING = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _TVLSchemaIssue:
+    message: str
+    severity: Literal["error", "warning"] = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class _AssignmentDomain:
+    raw_type: str | None
+    domain: Any
+    legacy_parameter: bool = False
 
 
 @dataclass(slots=True)
@@ -231,6 +245,13 @@ _KNOWN_TVL_SECTIONS = frozenset(
         "policies",  # TVL 1.1 (RFC 0001): operational policy declarations
         "datasets",  # Dataset references for evaluation
         "evaluators",  # Evaluator definitions
+        # Extension/metadata sections tolerated by existing SDK TVL fixtures.
+        "spec",
+        "units",
+        "evaluation",
+        "promotion",
+        "triagent",
+        "dvl",
         # Legacy sections (deprecated but still valid)
         "configuration_space",
         "optimization",
@@ -256,6 +277,12 @@ _SECTION_TYPES: dict[str, type | tuple[type, ...]] = {
     "safety_constraints": list,  # Safety constraint definitions
     "datasets": dict,  # Dataset references for evaluation
     "evaluators": dict,  # Evaluator definitions
+    "spec": dict,
+    "units": dict,
+    "evaluation": dict,
+    "promotion": dict,
+    "triagent": dict,
+    "dvl": dict,
     "configuration_space": dict,
     "optimization": dict,
     "cvars": list,
@@ -283,10 +310,401 @@ def _check_section_types(data: dict[str, Any]) -> list[str]:
     return issues
 
 
+def _schema_messages(
+    issues: list[_TVLSchemaIssue], severity: Literal["error", "warning"]
+) -> list[str]:
+    return [issue.message for issue in issues if issue.severity == severity]
+
+
+def _format_schema_validation_error(
+    errors: list[str], *, path_name: str | None = None
+) -> str:
+    location = f" in {path_name}" if path_name else ""
+    return "TVL schema validation failed" + location + ":\n  - " + "\n  - ".join(errors)
+
+
+def _is_numeric(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_int_like(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and value.is_integer()
+
+
+def _default_type_issues(name: str, raw_type: str | None, default: Any) -> list[str]:
+    if raw_type is None:
+        return []
+    normalized_type = normalize_tvar_type(raw_type)
+    if normalized_type == "bool" and not isinstance(default, bool):
+        return [f"TVAR '{name}' default {default!r} must be boolean"]
+    if normalized_type == "int" and not _is_int_like(default):
+        return [f"TVAR '{name}' default {default!r} must be an integer"]
+    if normalized_type == "float" and not _is_numeric(default):
+        return [f"TVAR '{name}' default {default!r} must be numeric"]
+    return []
+
+
+def _validate_choice_membership(
+    name: str,
+    values: Any,
+    default: Any,
+    raw_type: str | None,
+) -> list[str]:
+    issues: list[str] = []
+    if not isinstance(values, (list, tuple)):
+        return [
+            f"TVAR '{name}' declared domain values must be a list, "
+            f"got {type(values).__name__}"
+        ]
+
+    normalized_type = normalize_tvar_type(raw_type) if raw_type else None
+    if not values and normalized_type != "callable":
+        issues.append(f"TVAR '{name}' declared domain values must be non-empty")
+
+    if default is not _MISSING:
+        issues.extend(_default_type_issues(name, raw_type, default))
+    if default is not _MISSING and default not in values:
+        issues.append(
+            f"TVAR '{name}' default {default!r} is outside declared domain "
+            f"{list(values)!r}"
+        )
+
+    return issues
+
+
+def _range_bounds_from_domain(domain: dict[str, Any]) -> tuple[Any, Any] | None:
+    if "range" in domain:
+        range_value = domain["range"]
+        if isinstance(range_value, (list, tuple)) and len(range_value) == 2:
+            return range_value[0], range_value[1]
+        return None
+    if "low" in domain and "high" in domain:
+        return domain["low"], domain["high"]
+    if "min" in domain and "max" in domain:
+        return domain["min"], domain["max"]
+    if "start" in domain and "end" in domain:
+        return domain["start"], domain["end"]
+    return None
+
+
+def _validate_range_membership(
+    name: str,
+    domain: dict[str, Any],
+    default: Any,
+    raw_type: str | None,
+) -> list[str]:
+    issues: list[str] = []
+    bounds = _range_bounds_from_domain(domain)
+    if bounds is None:
+        return [f"TVAR '{name}' range domain must define two bounds"]
+
+    lower, upper = bounds
+    if not _is_numeric(lower) or not _is_numeric(upper):
+        return [
+            f"TVAR '{name}' range bounds must be numeric, got {lower!r} and {upper!r}"
+        ]
+
+    if lower > upper:
+        issues.append(
+            f"TVAR '{name}' range lower bound {lower!r} must be <= "
+            f"upper bound {upper!r}"
+        )
+
+    resolution = domain.get("resolution")
+    if resolution is not None and (
+        not _is_numeric(resolution) or cast(float, resolution) <= 0
+    ):
+        issues.append(f"TVAR '{name}' range resolution must be a positive number")
+
+    if default is _MISSING:
+        return issues
+
+    issues.extend(_default_type_issues(name, raw_type, default))
+    if not _is_numeric(default):
+        issues.append(
+            f"TVAR '{name}' default {default!r} must be numeric for range domain"
+        )
+        return issues
+    if default < lower or default > upper:
+        issues.append(
+            f"TVAR '{name}' default {default!r} is outside declared domain "
+            f"[{lower!r}, {upper!r}]"
+        )
+
+    return issues
+
+
+def _validate_domain_structure(
+    name: str,
+    domain: Any,
+    *,
+    raw_type: str | None = None,
+    default: Any = _MISSING,
+) -> list[str]:
+    """Validate a domain spec structure and optional default membership."""
+    normalized_type = normalize_tvar_type(raw_type) if raw_type else None
+    if domain is None:
+        if normalized_type == "bool":
+            if default is _MISSING:
+                return []
+            return _default_type_issues(name, raw_type, default)
+        return [f"TVAR '{name}' missing required 'domain' field"]
+
+    issues: list[str] = []
+    if isinstance(domain, (list, tuple)):
+        issues.extend(_validate_choice_membership(name, domain, default, raw_type))
+        return issues
+
+    if isinstance(domain, dict):
+        valid_types = {"range", "choices", "registry"}
+        domain_type = domain.get("type")
+        if domain_type is not None and domain_type not in valid_types:
+            issues.append(
+                f"TVAR '{name}' has invalid domain type '{domain_type}'. "
+                f"Valid: {valid_types}"
+            )
+
+        if "range" in domain or domain_type == "range":
+            issues.extend(_validate_range_membership(name, domain, default, raw_type))
+            return issues
+        if "set" in domain:
+            issues.extend(
+                _validate_choice_membership(name, domain["set"], default, raw_type)
+            )
+            return issues
+        if "values" in domain or domain_type == "choices":
+            issues.extend(
+                _validate_choice_membership(
+                    name, domain.get("values"), default, raw_type
+                )
+            )
+            return issues
+        if "registry" in domain or domain_type == "registry":
+            return issues
+
+        issues.append(
+            f"TVAR '{name}' domain must define one of range, set, values, or registry"
+        )
+        return issues
+
+    return [
+        f"TVAR '{name}' domain should be dict, list, or tuple, "
+        f"got {type(domain).__name__}"
+    ]
+
+
+def _legacy_parameter_type(definition: dict[str, Any]) -> str | None:
+    parameter_type = definition.get("type")
+    if isinstance(parameter_type, str) and parameter_type:
+        return parameter_type.lower()
+    if "values" in definition:
+        return "categorical"
+    if "range" in definition:
+        return "continuous"
+    return None
+
+
+def _validate_legacy_parameter_default(
+    name: str, definition: dict[str, Any], default: Any
+) -> list[str]:
+    parameter_type = _legacy_parameter_type(definition)
+    if parameter_type in {"categorical", "discrete"}:
+        return _validate_choice_membership(
+            name, definition.get("values"), default, "enum"
+        )
+    if parameter_type in {"continuous", "float"}:
+        return _validate_range_membership(name, definition, default, "float")
+    if parameter_type in {"integer", "int"}:
+        return _validate_range_membership(name, definition, default, "int")
+    if parameter_type in {"boolean", "bool"}:
+        return _default_type_issues(name, "bool", default)
+    return []
+
+
+def _validate_configuration_space_domains(
+    config_space: dict[str, Any],
+) -> list[str]:
+    issues: list[str] = []
+    for name, definition in config_space.items():
+        if not isinstance(name, str):
+            issues.append(
+                f"Configuration parameter name must be string, got {type(name).__name__}"
+            )
+            continue
+        if not isinstance(definition, dict):
+            issues.append(f"Parameter '{name}' must be defined as a mapping")
+            continue
+
+        parameter_type = _legacy_parameter_type(definition)
+        if parameter_type is None:
+            issues.append(
+                f"Parameter '{name}' must define 'type', 'values', or 'range'"
+            )
+            continue
+        if parameter_type in {"categorical", "discrete"}:
+            issues.extend(
+                _validate_choice_membership(
+                    name,
+                    definition.get("values"),
+                    definition.get("default", _MISSING),
+                    "enum",
+                )
+            )
+            continue
+        if parameter_type in {"continuous", "float"}:
+            issues.extend(
+                _validate_range_membership(
+                    name, definition, definition.get("default", _MISSING), "float"
+                )
+            )
+            continue
+        if parameter_type in {"integer", "int"}:
+            issues.extend(
+                _validate_range_membership(
+                    name, definition, definition.get("default", _MISSING), "int"
+                )
+            )
+            continue
+        if parameter_type in {"boolean", "bool"}:
+            if "default" in definition:
+                issues.extend(_default_type_issues(name, "bool", definition["default"]))
+            continue
+        issues.append(f"Unsupported parameter type '{parameter_type}' for '{name}'")
+    return issues
+
+
+def _collect_assignment_domains(data: dict[str, Any]) -> dict[str, _AssignmentDomain]:
+    domains: dict[str, _AssignmentDomain] = {}
+
+    tvars = data.get("tvars")
+    if isinstance(tvars, dict):
+        for name, tvar_def in tvars.items():
+            if isinstance(name, str) and isinstance(tvar_def, dict):
+                raw_type = tvar_def.get("type")
+                domains[name] = _AssignmentDomain(
+                    raw_type=raw_type if isinstance(raw_type, str) else None,
+                    domain=tvar_def.get("domain"),
+                )
+    elif isinstance(tvars, list):
+        for tvar_def in tvars:
+            if not isinstance(tvar_def, dict):
+                continue
+            name = tvar_def.get("name")
+            raw_type = tvar_def.get("type")
+            if isinstance(name, str) and name:
+                domains[name] = _AssignmentDomain(
+                    raw_type=raw_type if isinstance(raw_type, str) else None,
+                    domain=tvar_def.get("domain"),
+                )
+
+    config_space = data.get("configuration_space")
+    if isinstance(config_space, dict):
+        for name, definition in config_space.items():
+            if isinstance(name, str) and isinstance(definition, dict):
+                raw_type = _legacy_parameter_type(definition)
+                domains[name] = _AssignmentDomain(
+                    raw_type=raw_type,
+                    domain=definition,
+                    legacy_parameter=True,
+                )
+
+    return domains
+
+
+def _validate_assignment_against_domain(
+    name: str,
+    value: Any,
+    domain: _AssignmentDomain,
+) -> list[str]:
+    if domain.legacy_parameter:
+        return _validate_legacy_parameter_default(
+            name, cast(dict[str, Any], domain.domain), value
+        )
+    return _validate_domain_structure(
+        name,
+        domain.domain,
+        raw_type=domain.raw_type,
+        default=value,
+    )
+
+
+def _validate_defaults_section(
+    defaults: Any, domains: dict[str, _AssignmentDomain]
+) -> list[str]:
+    if defaults is None:
+        return []
+    if not isinstance(defaults, dict):
+        return [f"defaults should be dict, got {type(defaults).__name__}"]
+    if not domains:
+        return []
+
+    issues: list[str] = []
+    for name, value in defaults.items():
+        if not isinstance(name, str):
+            issues.append(f"default key must be string, got {type(name).__name__}")
+            continue
+        domain = domains.get(name)
+        if domain is None:
+            issues.append(f"defaults contains unknown TVAR '{name}'")
+            continue
+        issues.extend(_validate_assignment_against_domain(name, value, domain))
+    return issues
+
+
+def _collect_tvl_schema_issues(data: dict[str, Any]) -> list[_TVLSchemaIssue]:
+    errors: list[str] = []
+
+    # Check for unknown top-level sections
+    unknown_sections = set(data.keys()) - _KNOWN_TVL_SECTIONS
+    if unknown_sections:
+        errors.append(
+            f"Unknown top-level sections: {sorted(unknown_sections)}. "
+            f"Valid sections: {sorted(_KNOWN_TVL_SECTIONS)}"
+        )
+
+    errors.extend(_check_section_types(data))
+
+    # Validate tvars structure if present
+    if "tvars" in data:
+        tvars = data["tvars"]
+        if isinstance(tvars, dict):
+            errors.extend(_validate_tvars_structure(tvars))
+        elif isinstance(tvars, list):
+            errors.extend(_validate_tvars_list_structure(tvars))
+
+    if "configuration_space" in data and isinstance(data["configuration_space"], dict):
+        errors.extend(
+            _validate_configuration_space_domains(data["configuration_space"])
+        )
+
+    assignment_domains = _collect_assignment_domains(data)
+    if "defaults" in data:
+        errors.extend(_validate_defaults_section(data["defaults"], assignment_domains))
+
+    # Validate objectives structure if present
+    if "objectives" in data:
+        errors.extend(_validate_objectives_structure(data["objectives"]))
+
+    # Validate constraints structure if present
+    if "constraints" in data:
+        errors.extend(_validate_constraints_structure(data["constraints"]))
+
+    # Validate exploration section if present
+    if "exploration" in data and isinstance(data["exploration"], dict):
+        errors.extend(_validate_exploration_structure(data["exploration"]))
+
+    return [_TVLSchemaIssue(message=message, severity="error") for message in errors]
+
+
 def validate_tvl_schema(
     data: dict[str, Any],
     *,
     strict: bool = False,
+    include_warnings: bool = False,
 ) -> list[str]:
     """Validate TVL spec structure before detailed parsing (T-5).
 
@@ -296,14 +714,16 @@ def validate_tvl_schema(
 
     Args:
         data: Parsed YAML data (raw dictionary).
-        strict: If True, raise TVLValidationError on any issue.
-                If False, return list of warnings but don't raise.
+        strict: If True, raise TVLValidationError on error-severity issues.
+                If False, return validation messages but don't raise.
+        include_warnings: If True, include warning-severity schema messages in
+            the returned list. Strict mode still raises only on errors.
 
     Returns:
-        List of validation warnings/errors found.
+        List of validation error messages found.
 
     Raises:
-        TVLValidationError: If strict=True and validation fails.
+        TVLValidationError: If strict=True and validation errors are found.
 
     Example::
 
@@ -312,64 +732,15 @@ def validate_tvl_schema(
         if issues:
             print("Warnings:", issues)
     """
-    issues: list[str] = []
+    schema_issues = _collect_tvl_schema_issues(data)
+    errors = _schema_messages(schema_issues, "error")
+    if strict and errors:
+        raise TVLValidationError(_format_schema_validation_error(errors))
 
-    # Check for unknown top-level sections
-    unknown_sections = set(data.keys()) - _KNOWN_TVL_SECTIONS
-    if unknown_sections:
-        issues.append(
-            f"Unknown top-level sections: {sorted(unknown_sections)}. "
-            f"Valid sections: {sorted(_KNOWN_TVL_SECTIONS)}"
-        )
-
-    issues.extend(_check_section_types(data))
-
-    # Validate tvars structure if present
-    if "tvars" in data:
-        tvars = data["tvars"]
-        if isinstance(tvars, dict):
-            issues.extend(_validate_tvars_structure(tvars))
-        elif isinstance(tvars, list):
-            issues.extend(_validate_tvars_list_structure(tvars))
-
-    # Validate objectives structure if present
-    if "objectives" in data:
-        issues.extend(_validate_objectives_structure(data["objectives"]))
-
-    # Validate constraints structure if present
-    if "constraints" in data:
-        issues.extend(_validate_constraints_structure(data["constraints"]))
-
-    # Validate exploration section if present
-    if "exploration" in data and isinstance(data["exploration"], dict):
-        issues.extend(_validate_exploration_structure(data["exploration"]))
-
-    if strict and issues:
-        raise TVLValidationError(
-            "TVL schema validation failed:\n  - " + "\n  - ".join(issues)
-        )
-
-    return issues
-
-
-def _validate_domain_structure(name: str, domain: Any) -> list[str]:
-    """Validate a domain spec structure for schema validation."""
-    if domain is None:
-        return []
-    if isinstance(domain, (list, tuple)):
-        return []
-    if isinstance(domain, dict):
-        valid_types = {"range", "choices", "registry"}
-        if "type" in domain and domain["type"] not in valid_types:
-            return [
-                f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
-                f"Valid: {valid_types}"
-            ]
-        return []
-    return [
-        f"TVAR '{name}' domain should be dict, list, or tuple, "
-        f"got {type(domain).__name__}"
-    ]
+    messages = errors
+    if include_warnings:
+        messages = messages + _schema_messages(schema_issues, "warning")
+    return messages
 
 
 def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
@@ -385,10 +756,15 @@ def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
             issues.append(f"TVAR '{name}' definition must be a dict")
             continue
 
-        if "domain" not in tvar_def:
-            issues.append(f"TVAR '{name}' missing required 'domain' field")
-
-        issues.extend(_validate_domain_structure(name, tvar_def.get("domain")))
+        raw_type = tvar_def.get("type")
+        issues.extend(
+            _validate_domain_structure(
+                name,
+                tvar_def.get("domain"),
+                raw_type=raw_type if isinstance(raw_type, str) else None,
+                default=tvar_def.get("default", _MISSING),
+            )
+        )
 
     return issues
 
@@ -426,7 +802,15 @@ def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
             name = f"<index {idx}>"
 
         issues.extend(_validate_tvar_type_field(name, tvar_def))
-        issues.extend(_validate_domain_structure(name, tvar_def.get("domain")))
+        raw_type = tvar_def.get("type")
+        issues.extend(
+            _validate_domain_structure(
+                name,
+                tvar_def.get("domain"),
+                raw_type=raw_type if isinstance(raw_type, str) else None,
+                default=tvar_def.get("default", _MISSING),
+            )
+        )
 
     return issues
 
@@ -472,7 +856,9 @@ def _validate_objectives_structure(objectives: Any) -> list[str]:
     return []
 
 
-_VALID_CONSTRAINT_TYPES = frozenset({"structural", "derived"})
+_VALID_CONSTRAINT_TYPES = frozenset(
+    {"structural", "derived", "expression", "conditional", "forbidden"}
+)
 
 
 def _validate_constraint_list_entry(i: int, constraint: Any) -> list[str]:
@@ -655,9 +1041,15 @@ def load_tvl_spec(
 
     # T-5: Early schema validation before detailed parsing
     if validate_schema:
-        schema_issues = validate_tvl_schema(raw_data, strict=False)
-        for issue in schema_issues:
-            logger.warning("TVL schema issue in %s: %s", path.name, issue)
+        schema_issues = _collect_tvl_schema_issues(raw_data)
+        schema_errors = _schema_messages(schema_issues, "error")
+        schema_warnings = _schema_messages(schema_issues, "warning")
+        for warning in schema_warnings:
+            logger.warning("TVL schema warning in %s: %s", path.name, warning)
+        if schema_errors:
+            raise TVLValidationError(
+                _format_schema_validation_error(schema_errors, path_name=path.name)
+            )
 
     resolved = _apply_environment(raw_data, environment)
 
