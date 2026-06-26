@@ -8,7 +8,11 @@ import warnings
 import pytest
 
 from traigent.api.decorators import ExecutionOptions, HybridAPIOptions, optimize
-from traigent.config.types import ExecutionIntent, resolve_execution_policy
+from traigent.config.types import (
+    ExecutionIntent,
+    accepted_algorithm_values,
+    resolve_execution_policy,
+)
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.utils.exceptions import ConfigurationError
 
@@ -298,11 +302,19 @@ def test_offline_smart_algorithm_hard_errors() -> None:
 def test_unknown_algorithm_name_rejected() -> None:
     # Defect #3 regression: unknown ``optuna_*`` (and any unknown) name must be
     # rejected at the public boundary, not accepted-then-failed later.
-    with pytest.raises(ValueError, match="known smart optimizer name"):
+    with pytest.raises(ValueError) as exc_info:
 
         @optimize(configuration_space={"x": [1, 2]}, algorithm="optuna_foo")
         def sample(x: int) -> int:
             return x
+
+    message = str(exc_info.value)
+    assert message.startswith("algorithm must be one of: ")
+    for algorithm_name in accepted_algorithm_values():
+        assert algorithm_name in message
+    assert "optuna_tpe" in message
+    assert "bayesian" in message
+    assert "got 'optuna_foo'" in message
 
 
 def test_known_smart_algorithm_names_accepted() -> None:

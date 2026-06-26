@@ -64,6 +64,7 @@ from traigent.api.parameter_ranges import (
 )
 from traigent.api.strategy_presets import (
     NormalizedStrategyPreset,
+    UnknownStrategyPresetError,
     is_strategy_preset_name,
     normalize_strategy_preset,
 )
@@ -1057,11 +1058,7 @@ def _resolve_strategy_argument(
     if is_strategy_preset_name(strategy) or strategy_params is not None:
         return strategy, runtime_overrides
 
-    raise ValueError(
-        f"Unknown strategy preset: {strategy!r}. "
-        "Use 'algorithm' to select an optimizer by name, or provide a valid "
-        "strategy preset name."
-    )
+    raise UnknownStrategyPresetError(strategy)
 
 
 def _apply_strategy_preset_to_options(

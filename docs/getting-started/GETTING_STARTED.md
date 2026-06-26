@@ -47,6 +47,7 @@ import asyncio
 from langchain_openai import ChatOpenAI
 import traigent
 
+
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
@@ -59,6 +60,7 @@ def answer(question: str) -> str:
     cfg = traigent.get_config()
     llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
     return llm.invoke(question).content
+
 
 # Run optimization
 result = asyncio.run(answer.optimize(max_trials=6))
@@ -78,6 +80,10 @@ print(f"Best score:  {result.best_score:.2%}")
 ## 🧪 Datasets
 
 - Format: JSONL with `input` and optional `output`/`expected_output`
+- Beginner examples use the flat `eval_dataset=` keyword. The bundled
+  `evaluation=EvaluationOptions(...)` form is also supported when you want to
+  group evaluation settings, but `eval_dataset=` is the recommended minimal-call
+  shape in this guide.
 - Minimal example:
 
 ```jsonl
@@ -88,15 +94,12 @@ print(f"Best score:  {result.best_score:.2%}")
 ## 🎛️ Multiple Objectives
 
 ```python
-from traigent.api.decorators import EvaluationOptions
-
 @traigent.optimize(
     objectives=["accuracy", "cost", "latency"],
-    evaluation=EvaluationOptions(eval_dataset="data.jsonl"),
+    eval_dataset="data.jsonl",
     configuration_space={"temperature": (0.0, 1.0), "model": ["gpt-4o-mini", "gpt-4o"]},
 )
-def classify(text: str) -> str:
-    ...
+def classify(text: str) -> str: ...
 ```
 
 ## 🧪 Examples
@@ -129,6 +132,7 @@ pip install litellm
 ```python
 from litellm import completion
 
+
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
@@ -138,7 +142,9 @@ from litellm import completion
 )
 def my_agent(query: str) -> str:
     config = traigent.get_config()
-    response = completion(model=config.get("model"), messages=[{"role": "user", "content": query}])
+    response = completion(
+        model=config.get("model"), messages=[{"role": "user", "content": query}]
+    )
     return str(response.choices[0].message.content)
 ```
 

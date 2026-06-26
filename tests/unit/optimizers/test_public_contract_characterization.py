@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 import traigent.optimizers as optimizer_exports
-from traigent.config.types import resolve_execution_policy, validate_algorithm_name
+from traigent.config.types import (
+    accepted_algorithm_values,
+    resolve_execution_policy,
+    validate_algorithm_name,
+)
 from traigent.core.stop_conditions import (
     CostLimitStopCondition,
     HypervolumeConvergenceStopCondition,
@@ -82,8 +86,13 @@ def test_validate_algorithm_name_accepts_public_names(name: str) -> None:
 
 
 def test_validate_algorithm_name_rejects_unknown_optuna_variant() -> None:
-    with pytest.raises(ValueError, match="known smart optimizer"):
+    with pytest.raises(ValueError) as exc_info:
         validate_algorithm_name("optuna_foo")
+
+    message = str(exc_info.value)
+    for algorithm_name in accepted_algorithm_values():
+        assert algorithm_name in message
+    assert "optuna_foo" in message
 
 
 @pytest.mark.parametrize("name", SMART_OPTIMIZER_NAMES)

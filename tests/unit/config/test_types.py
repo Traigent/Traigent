@@ -7,8 +7,10 @@ import pytest
 from traigent.config.types import (
     ExecutionMode,
     TraigentConfig,
+    accepted_algorithm_values,
     accepted_execution_mode_values,
     resolve_execution_mode,
+    validate_algorithm_name,
     validate_execution_mode,
 )
 from traigent.utils.exceptions import ConfigurationError, ValidationError
@@ -249,6 +251,20 @@ class TestTraigentConfig:
         assert result["custom_setting"] is True
         assert result["api_version"] == "2023-07-01"
         assert result["model"] == "GPT-4o"
+
+
+class TestValidateAlgorithmName:
+    """Tests for validate_algorithm_name function."""
+
+    def test_unknown_algorithm_message_lists_canonical_names(self) -> None:
+        """Unknown algorithm errors should enumerate the accepted public names."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_algorithm_name("optuna_foo")
+
+        message = str(exc_info.value)
+        for algorithm_name in accepted_algorithm_values():
+            assert algorithm_name in message
+        assert "optuna_foo" in message
 
 
 class TestValidateExecutionMode:

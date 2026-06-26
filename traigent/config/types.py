@@ -166,10 +166,8 @@ def validate_algorithm_name(algorithm: str | None) -> str:
         or normalized in _SMART_ALGORITHMS
     ):
         return normalized
-    raise ValueError(
-        "algorithm must be 'auto', 'grid', 'random', or a known smart optimizer "
-        f"name, got {algorithm!r}"
-    )
+    valid = ", ".join(accepted_algorithm_values())
+    raise ValueError(f"algorithm must be one of: {valid}; got {algorithm!r}")
 
 
 def accepted_execution_mode_values() -> tuple[str, ...]:
