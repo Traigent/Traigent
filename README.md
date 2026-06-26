@@ -140,7 +140,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
 | **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
 | **Tunable Variable Language** | [TVL Guide](docs/user-guide/tuned_variables.md) |
-| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) |
+| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) |
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
 
 </details>
