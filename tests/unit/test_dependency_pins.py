@@ -15,7 +15,6 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-import pytest
 from packaging.specifiers import SpecifierSet
 
 # File is at tests/unit/test_dependency_pins.py
