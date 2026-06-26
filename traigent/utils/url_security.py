@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
 from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
 
@@ -78,6 +79,35 @@ def _validate_hostname(
         raise UnsafeUrlError(f"{purpose} points at localhost")
 
 
+def _validate_hostname_resolution(
+    hostname: str,
+    *,
+    purpose: str,
+    allow_private_hosts: bool,
+) -> None:
+    if allow_private_hosts:
+        return
+
+    normalized_hostname = hostname.rstrip(".").lower()
+    if _parse_ip_literal(normalized_hostname) is not None:
+        return
+
+    try:
+        addr_infos = socket.getaddrinfo(normalized_hostname, None)
+    except socket.gaierror:
+        raise UnsafeUrlError(f"{purpose} host could not be resolved") from None
+
+    for _family, _socktype, _proto, _canonname, sockaddr in addr_infos:
+        try:
+            resolved_ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            continue
+        if not resolved_ip.is_global:
+            raise UnsafeUrlError(
+                f"{purpose} must not resolve to private or loopback IPs"
+            ) from None
+
+
 def _normalize_path(path: str, purpose: str) -> str:
     decoded_path = unquote(path)
     if any(segment in {".", ".."} for segment in decoded_path.split("/")):
@@ -122,4 +152,9 @@ def validate_outbound_url(
     )
 
     normalized_path = _normalize_path(parsed.path, purpose)
+    _validate_hostname_resolution(
+        parsed.hostname or "",
+        purpose=purpose,
+        allow_private_hosts=allow_private_hosts,
+    )
     return urlunparse((parsed.scheme, parsed.netloc, normalized_path, "", "", ""))
