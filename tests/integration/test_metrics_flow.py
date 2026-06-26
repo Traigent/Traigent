@@ -163,8 +163,16 @@ class TestEndToEndMetricsFlow:
                 else:
                     return "neutral"
 
-        # Test with different execution modes
-        for execution_mode in ["edge_analytics", "privacy"]:
+        # Legacy egress selectors fail closed at the public API boundary: they
+        # must not silently construct an evaluator (no silent cloud-egress path).
+        for legacy_mode in ["privacy", "cloud"]:
+            with pytest.raises(ValueError, match="fails closed"):
+                LocalEvaluator(
+                    metrics=["accuracy"], detailed=True, execution_mode=legacy_mode
+                )
+
+        # Test with different supported (non-legacy) execution modes
+        for execution_mode in ["edge_analytics", "hybrid"]:
             evaluator = LocalEvaluator(
                 metrics=["accuracy"], detailed=True, execution_mode=execution_mode
             )
@@ -389,9 +397,9 @@ class TestEndToEndMetricsFlow:
                     measures = eval_result.example_results
 
             # Should have some form of results
-            assert (
-                len(measures) > 0
-            ), f"No measures found in trial. Trial attributes: {dir(trial)}"
+            assert len(measures) > 0, (
+                f"No measures found in trial. Trial attributes: {dir(trial)}"
+            )
 
             for measure in measures:
                 # Handle both dict format and object format
