@@ -5,7 +5,9 @@ import pytest
 from traigent.tvl.statistics import (
     PairedComparisonResult,
     benjamini_hochberg_adjust,
+    bonferroni_adjust,
     clopper_pearson_lower_bound,
+    holm_bonferroni_adjust,
     hypervolume_improvement,
     paired_comparison_test,
 )
@@ -60,6 +62,38 @@ class TestBenjaminiHochbergAdjust:
         # For rank 3: 0.03 * 4 / 3 = 0.04
         # For rank 4: 0.04 * 4 / 4 = 0.04
         assert all(abs(p - 0.04) < 1e-10 for p in adjusted)
+
+
+class TestBonferroniAdjust:
+    """Tests for Bonferroni adjustment."""
+
+    def test_empty_list(self) -> None:
+        """Empty list returns empty list."""
+        assert bonferroni_adjust([]) == []
+
+    def test_known_example_and_clipping(self) -> None:
+        """Bonferroni multiplies by the number of tests and caps at one."""
+        assert bonferroni_adjust([0.01, 0.20, 0.60]) == pytest.approx([0.03, 0.60, 1.0])
+
+
+class TestHolmBonferroniAdjust:
+    """Tests for Holm-Bonferroni adjustment."""
+
+    def test_empty_list(self) -> None:
+        """Empty list returns empty list."""
+        assert holm_bonferroni_adjust([]) == []
+
+    def test_single_value_is_capped(self) -> None:
+        """Single p-value is returned as-is, capped at one."""
+        assert holm_bonferroni_adjust([0.05]) == [0.05]
+        assert holm_bonferroni_adjust([1.5]) == [1.0]
+
+    def test_known_step_down_example_preserves_input_order(self) -> None:
+        """Holm adjustment applies step-down monotonic adjusted p-values."""
+        p_vals = [0.01, 0.04, 0.03, 0.20]
+        adjusted = holm_bonferroni_adjust(p_vals)
+
+        assert adjusted == pytest.approx([0.04, 0.09, 0.09, 0.20])
 
 
 class TestClopperPearsonLowerBound:

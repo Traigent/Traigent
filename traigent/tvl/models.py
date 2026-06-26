@@ -12,13 +12,30 @@ Sync: SYNC-OptimizationFlow
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 # Type aliases for TVL type system
 TVarType = Literal["bool", "int", "float", "enum", "tuple", "callable"]
 DomainKind = Literal["enum", "range", "set", "registry"]
-AdjustMethod = Literal["none", "BH"]
+AdjustMethod = Literal["none", "BH", "holm", "bonferroni"]
+SUPPORTED_ADJUST_METHODS: tuple[AdjustMethod, ...] = (
+    "none",
+    "BH",
+    "holm",
+    "bonferroni",
+)
 TieBreaker = Literal["min_abs_deviation", "custom"]
+
+
+def validate_adjust_method(adjust: Any) -> AdjustMethod:
+    """Validate and normalize a promotion-policy adjustment method."""
+    if not isinstance(adjust, str) or adjust not in SUPPORTED_ADJUST_METHODS:
+        allowed = ", ".join(SUPPORTED_ADJUST_METHODS)
+        raise ValueError(
+            f"Unsupported promotion_policy.adjust {adjust!r}; "
+            f"expected one of: {allowed}"
+        )
+    return cast(AdjustMethod, adjust)
 
 
 @dataclass(slots=True)
@@ -294,7 +311,8 @@ class PromotionPolicy:
         dominance: Dominance relation (TVL 0.9 mandates "epsilon_pareto").
         alpha: Family-wise error rate budget (0 < alpha < 1, default 0.05).
         min_effect: Per-objective epsilon tolerances for dominance comparison.
-        adjust: Multiple testing adjustment ("none" or "BH" for Benjamini-Hochberg).
+        adjust: Multiple testing adjustment ("none", "BH", "holm", or
+            "bonferroni").
         chance_constraints: Hard constraints with confidence thresholds.
         tie_breakers: Secondary ordering rules for ties.
     """
@@ -311,6 +329,8 @@ class PromotionPolicy:
         """Validate promotion policy."""
         if not 0 < self.alpha < 1:
             raise ValueError(f"Alpha must be in (0, 1), got {self.alpha}")
+
+        self.adjust = validate_adjust_method(self.adjust)
 
         for name, epsilon in self.min_effect.items():
             if epsilon < 0:
