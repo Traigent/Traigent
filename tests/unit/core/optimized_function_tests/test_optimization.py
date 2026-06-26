@@ -21,7 +21,7 @@ from traigent.core.objectives import create_default_objectives
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.tvl.spec_loader import TVLBudget, TVLSpecArtifact
 from traigent.utils.callbacks import ResultsTableCallback
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import ConfigurationError, OptimizationError
 
 from .test_fixtures import create_simple_evaluator
 
@@ -828,7 +828,7 @@ class TestOptimization:
             opt_func.apply_best_config()
 
     @pytest.mark.asyncio
-    async def test_optimization_with_deprecated_cloud_resolves_to_hybrid(
+    async def test_optimization_with_deprecated_cloud_fails_closed(
         self,
         simple_function,
         sample_config_space,
@@ -836,23 +836,17 @@ class TestOptimization:
         sample_dataset,
         monkeypatch,
     ):
-        """Deprecated cloud mode resolves to cloud-first hybrid when opted in."""
-        import warnings
-
+        """Deprecated cloud mode raises before optimization setup."""
         monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            opt_func = OptimizedFunction(
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == "hybrid"
-        assert opt_func.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_get_optimization_results(
         self, simple_function, sample_config_space, sample_objectives

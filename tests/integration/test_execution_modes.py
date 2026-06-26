@@ -133,15 +133,10 @@ class TestExecutionModes:
 
         assert client.execution_mode == ExecutionMode.HYBRID
 
-    def test_cloud_mode_deprecated_resolves_to_hybrid(self):
-        """Test that 'cloud' mode emits DeprecationWarning and resolves to hybrid."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            client = TraigentClient(execution_mode="cloud", api_key="test_key")
-        assert client.execution_mode == ExecutionMode.HYBRID
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_cloud_mode_deprecated_fails_closed(self):
+        """Test that 'cloud' mode raises before backend initialization."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentClient(execution_mode="cloud", api_key="test_key")
 
     def test_execution_mode_auto_detection(self):
         """Test automatic execution mode detection.

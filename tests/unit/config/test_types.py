@@ -326,10 +326,10 @@ class TestValidateExecutionMode:
         assert "edge_analytics" not in message
         assert "hybrid" not in message
 
-    def test_privacy_alias_validates_as_hybrid(self) -> None:
-        """Privacy remains a legacy alias for hybrid."""
-        with pytest.warns(DeprecationWarning):
-            assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
+    def test_privacy_alias_fails_closed(self) -> None:
+        """The legacy privacy alias no longer normalizes to hybrid."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            validate_execution_mode("privacy")
 
     def test_local_alias_validates_as_edge_analytics(self) -> None:
         """Local is accepted as a public alias for edge_analytics."""
@@ -370,26 +370,18 @@ class TestValidateExecutionMode:
                 ExecutionMode.HYBRID_API,
             }
 
-    def test_deprecated_cloud_mode_warns_and_resolves_to_hybrid(self) -> None:
-        """The deprecated cloud mode emits DeprecationWarning and maps to hybrid."""
-        import warnings
+    def test_deprecated_cloud_mode_fails_closed(self) -> None:
+        """The deprecated cloud mode no longer normalizes to hybrid."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            validate_execution_mode("cloud")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = validate_execution_mode("cloud")
-        assert result is ExecutionMode.HYBRID
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_config_privacy_alias_fails_closed(self) -> None:
+        """TraigentConfig rejects the privacy alias before normalization."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentConfig(execution_mode="privacy")
 
-    def test_config_privacy_alias_normalizes_to_hybrid(self) -> None:
-        """TraigentConfig normalizes the privacy alias and enables privacy."""
-        with pytest.warns(DeprecationWarning):
-            config = TraigentConfig(execution_mode="privacy")
-
-        assert config.execution_mode == ExecutionMode.HYBRID.value
-        assert config.privacy_enabled is True
-
-    def test_config_accepts_deprecated_modes_with_warning(self) -> None:
-        """TraigentConfig accepts deprecated mode strings (standard/cloud) with DeprecationWarning."""
+    def test_config_accepts_deprecated_standard_mode_with_warning(self) -> None:
+        """TraigentConfig still accepts standard with DeprecationWarning."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -398,8 +390,7 @@ class TestValidateExecutionMode:
         assert config.execution_mode == "hybrid"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            config = TraigentConfig(execution_mode="cloud")
-        assert config.execution_mode == "hybrid"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_config_cloud_mode_fails_closed(self) -> None:
+        """TraigentConfig rejects cloud before it can normalize to hybrid."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentConfig(execution_mode="cloud")

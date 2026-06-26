@@ -290,11 +290,12 @@ class TestBuildBackendMetadataPrivacy:
         # Privacy mode should sanitize measures
         assert len(metadata["measures"]) == 1
 
-    def test_privacy_execution_mode(
+    def test_privacy_enabled_with_local_execution_mode(
         self, mock_trial_result, mock_config, example_result
     ):
-        """Test privacy execution mode triggers privacy measures."""
-        mock_config.execution_mode = "privacy"
+        """Test explicit privacy flag triggers privacy measures."""
+        mock_config.privacy_enabled = True
+        mock_config.execution_mode = "edge_analytics"
         mock_trial_result.metadata = {"example_results": [example_result]}
 
         metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)

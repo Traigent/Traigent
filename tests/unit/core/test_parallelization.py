@@ -5,6 +5,7 @@ import pytest
 import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
+from traigent.utils.exceptions import ConfigurationError
 
 
 def _make_dataset(n: int) -> Dataset:
@@ -128,10 +129,10 @@ async def test_orchestrator_parallel_trials(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_privacy_alias_maps_to_cloud_brain_policy():
+async def test_privacy_alias_fails_closed():
     ds_small = _make_dataset(1)
 
-    with pytest.warns(DeprecationWarning):
+    with pytest.raises(ConfigurationError, match="fails closed"):
 
         @traigent.optimize(
             eval_dataset=ds_small,
@@ -141,18 +142,3 @@ async def test_privacy_alias_maps_to_cloud_brain_policy():
         )
         def fn_priv(x: int) -> str:
             return f"val-{x}"
-
-    # Run a minimal optimization to build TraigentConfig
-    await fn_priv.optimize(
-        max_trials=1,
-        parallel_config={"example_concurrency": 1},
-        timeout=5.0,
-    )
-
-    # Access the attached config
-    cfg = getattr(fn_priv, "traigent_config", None)
-    assert cfg is not None
-    assert fn_priv.execution_policy.intent.value == "cloud_brain"
-    assert fn_priv.execution_policy.offline is False
-    assert cfg.execution_mode == "hybrid"
-    assert cfg.privacy_enabled is False

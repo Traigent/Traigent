@@ -16,6 +16,7 @@ from traigent.api.strategy_presets import (
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
+from traigent.utils.exceptions import ConfigurationError
 
 
 def _write_environment_tvl_spec(tmp_path: Path) -> Path:
@@ -113,18 +114,15 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_deprecated_cloud_resolves_to_hybrid_mode(
+    def test_execution_bundle_deprecated_cloud_fails_closed(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """Deprecated cloud keeps cloud-first policy only with explicit opt-in."""
-        import warnings
-
+        """Deprecated cloud fails closed even when the old env override is set."""
         from traigent.api.decorators import ExecutionOptions
 
         monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -135,11 +133,6 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
-
-        assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.execution_mode == "hybrid"
-        assert sample_function.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
         """Direct runtime options should accept hybrid_api_transport."""
@@ -446,16 +439,13 @@ class TestOptimizeDecorator:
         result = complex_function("test", 10, "extra", key="value")
         assert "test-10-1-1" in result
 
-    def test_decorator_with_cloud_execution_mode_deprecated(
+    def test_decorator_with_cloud_execution_mode_fails_closed(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """Deprecated cloud mode warns and keeps hybrid compat mode when opted in."""
-        import warnings
-
+        """Deprecated cloud mode raises before decorator construction."""
         monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 configuration_space={"model": ["claude", "gpt-4"]},
@@ -463,11 +453,6 @@ class TestOptimizeDecorator:
             )
             def ai_function(model: str) -> str:
                 return f"Using {model}"
-
-        assert isinstance(ai_function, OptimizedFunction)
-        assert ai_function.execution_mode == "hybrid"
-        assert ai_function.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_decorator_accepts_cost_limit_runtime_override(self):
         """cost_limit should be accepted as a runtime override key."""

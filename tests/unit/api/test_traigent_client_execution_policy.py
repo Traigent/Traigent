@@ -10,6 +10,7 @@ import traigent.traigent_client as client_module
 from traigent.config import backend_config
 from traigent.config.types import ExecutionIntent, ExecutionMode
 from traigent.traigent_client import TraigentClient
+from traigent.utils.exceptions import ConfigurationError
 
 
 class _FakeBackendConfig:
@@ -77,19 +78,16 @@ def test_traigent_client_deprecated_execution_mode_warns_and_maps_local(
     backend_client_factory.assert_not_called()
 
 
-def test_traigent_client_deprecated_cloud_warns_and_maps_hybrid_mode(
+def test_traigent_client_deprecated_cloud_fails_closed(
     backend_client_factory: Mock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-    with pytest.warns(DeprecationWarning, match="semantic flip"):
-        client = TraigentClient(execution_mode="cloud")
+    with pytest.raises(ConfigurationError, match="fails closed"):
+        TraigentClient(execution_mode="cloud")
 
-    assert client.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
-    assert client.execution_policy.offline is False
-    assert client.execution_mode is ExecutionMode.HYBRID
-    backend_client_factory.assert_called_once()
+    backend_client_factory.assert_not_called()
 
 
 def test_traigent_client_deprecated_execution_mode_auto_maps_edge_analytics(

@@ -799,8 +799,10 @@ def comprehensive_evaluator():
 
 @pytest.fixture
 def privacy_evaluator():
-    """LocalEvaluator configured for privacy mode."""
-    return LocalEvaluator(metrics=["accuracy"], detailed=True, execution_mode="privacy")
+    """LocalEvaluator configured for local no-egress mode."""
+    return LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+    )
 
 
 @pytest.fixture
@@ -871,8 +873,8 @@ def traigent_config():
 
 @pytest.fixture
 def privacy_config():
-    """Traigent configuration for privacy mode testing."""
-    return TraigentConfig(execution_mode="privacy", detailed_metrics=False)
+    """Traigent configuration for local no-egress testing."""
+    return TraigentConfig(execution_mode="edge_analytics", detailed_metrics=False)
 
 
 # Original fixtures for backward compatibility

@@ -14,7 +14,7 @@ import pytest
 
 from traigent.config.types import ExecutionMode
 from traigent.traigent_client import TraigentClient
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import ConfigurationError, OptimizationError
 
 
 class TestTraigentClientInitialization:
@@ -108,15 +108,10 @@ class TestDetermineExecutionMode:
         assert client.execution_mode == ExecutionMode.HYBRID
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_explicit_cloud_mode_deprecated_resolves_to_hybrid(self) -> None:
-        """Deprecated cloud mode warns and resolves to hybrid."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            client = TraigentClient(execution_mode="cloud")
-        assert client.execution_mode == ExecutionMode.HYBRID
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_explicit_cloud_mode_deprecated_fails_closed(self) -> None:
+        """Deprecated cloud mode raises before backend initialization."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentClient(execution_mode="cloud")
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -675,7 +670,7 @@ class TestOptimizeSaaS:
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
-                return TraigentClient(execution_mode="cloud")
+                return TraigentClient(execution_mode="hybrid")
 
     @pytest.mark.asyncio
     async def test_optimize_saas_success(self, mock_client: TraigentClient) -> None:

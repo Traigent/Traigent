@@ -5,6 +5,7 @@ import pytest
 import traigent
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.utils.exceptions import ConfigurationError
 
 
 @pytest.fixture
@@ -22,14 +23,11 @@ def sample_dataset():
 
 
 class TestDeprecatedCloudMode:
-    """Public cloud mode is deprecated and emits DeprecationWarning, resolving to hybrid."""
+    """Public cloud mode is deprecated and fails closed."""
 
-    def test_decorator_with_cloud_execution_deprecated(self):
-        """The deprecated cloud mode emits DeprecationWarning and resolves to hybrid."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+    def test_decorator_with_cloud_execution_fails_closed(self):
+        """The deprecated cloud mode raises before decorator construction."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @traigent.optimize(
                 eval_dataset=None,
@@ -39,8 +37,6 @@ class TestDeprecatedCloudMode:
             )
             def test_function(input_text: str) -> str:
                 return f"processed: {input_text}"
-
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_decorator_cloud_execution_with_fallback_policy_deprecated(self):
         """cloud_fallback_policy is deprecated but accepted with DeprecationWarning."""
@@ -61,26 +57,20 @@ class TestDeprecatedCloudMode:
 
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_optimized_function_cloud_deprecated_resolves_to_hybrid(
-        self, sample_dataset
-    ):
-        """Direct OptimizedFunction with cloud mode resolves to hybrid."""
-        import warnings
+    def test_optimized_function_cloud_deprecated_fails_closed(self, sample_dataset):
+        """Direct OptimizedFunction with cloud mode raises before normalization."""
 
         def test_func(x: str) -> str:
             return x.upper()
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            opt_func = OptimizedFunction(
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            OptimizedFunction(
                 func=test_func,
                 eval_dataset=sample_dataset,
                 objectives=["accuracy"],
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == "hybrid"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 class TestSupportedExecutionModes:
