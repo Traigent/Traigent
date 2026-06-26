@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import os
 import time
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -109,6 +110,29 @@ def _session_is_closed(session: Any) -> bool:
     if isinstance(closed_flag, bool):
         return closed_flag
     return False
+
+
+def _finalize_aiohttp_session(session: Any, owner: str) -> None:
+    """Synchronously close an aiohttp session from a weakref finalizer."""
+
+    try:
+        if session is None or _session_is_closed(session):
+            return
+
+        connector = getattr(session, "_connector", None)
+        owns_connector = bool(getattr(session, "_connector_owner", True))
+        if connector is not None and owns_connector:
+            close_now = getattr(connector, "_close", None)
+            if callable(close_now):
+                try:
+                    close_now(abort_ssl=True)
+                except TypeError:
+                    close_now()
+
+        if hasattr(session, "_connector"):
+            session._connector = None
+    except Exception as exc:  # pragma: no cover - defensive finalizer
+        logger.debug("Error finalizing %s aiohttp session: %s", owner, exc)
 
 
 def _coerce_enum(enum_cls: Any, raw: Any, *, fallback: Any) -> Any:
@@ -480,6 +504,7 @@ class TraigentCloudClient(BaseTraigentClient):
         # Session management
         self._aio_session: aiohttp.ClientSession | None = None
         self._session_lock: asyncio.Lock = asyncio.Lock()
+        self._session_finalizer: weakref.finalize | None = None
         # Track session ownership fingerprints for clearer error reporting
         self._session_owners: dict[str, dict[str, Any]] = {}
 
@@ -505,6 +530,7 @@ class TraigentCloudClient(BaseTraigentClient):
             timeout=aiohttp.ClientTimeout(total=self.timeout),
             headers=await self.auth.get_headers(),
         )
+        self._register_session_finalizer(self._aio_session)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -553,6 +579,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
             )
+            self._register_session_finalizer(self._aio_session)
             return self._aio_session
 
     async def _get_headers(self) -> dict[str, str]:
@@ -571,6 +598,21 @@ class TraigentCloudClient(BaseTraigentClient):
         """Close and discard the shared aiohttp session after failures."""
         await self._close_http_session(reason=reason)
 
+    def _register_session_finalizer(self, session: aiohttp.ClientSession) -> None:
+        self._detach_session_finalizer()
+        self._session_finalizer = weakref.finalize(
+            self,
+            _finalize_aiohttp_session,
+            session,
+            self.__class__.__name__,
+        )
+
+    def _detach_session_finalizer(self) -> None:
+        finalizer = getattr(self, "_session_finalizer", None)
+        if finalizer is not None:
+            finalizer.detach()
+            self._session_finalizer = None
+
     async def _close_http_session(self, reason: str | None = None) -> None:
         """Best-effort close for the shared HTTP session."""
         if not self._aio_session:
@@ -580,6 +622,7 @@ class TraigentCloudClient(BaseTraigentClient):
         if session is None:
             return
         self._aio_session = None
+        self._detach_session_finalizer()
 
         close_method = getattr(session, "close", None)
         if not callable(close_method):

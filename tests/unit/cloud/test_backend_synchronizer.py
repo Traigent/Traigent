@@ -157,5 +157,67 @@ async def test_background_sync_loop_reraises_cancellation(monkeypatch):
 
     monkeypatch.setattr(asyncio, "sleep", raise_cancelled)
 
-    with pytest.raises(asyncio.CancelledError):
-        await sync._background_sync_loop()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await sync._background_sync_loop()
+    finally:
+        await sync.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_stop_background_sync_awaits_cancelled_background_task():
+    sync = BackendSynchronizer(enable_auto_sync=False, sync_interval=0.1)
+    cancelled = asyncio.Event()
+
+    async def pending_background_loop():
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    task = asyncio.create_task(pending_background_loop(), name="background_sync")
+    sync._background_sync_task = task
+    await asyncio.sleep(0)
+
+    await sync.stop_background_sync()
+
+    assert cancelled.is_set()
+    assert task.done()
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_awaits_cancelled_sync_tasks_before_clearing():
+    sync = BackendSynchronizer(enable_auto_sync=False, sync_interval=0.1)
+    cancelled = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    exception_contexts = []
+    previous_handler = loop.get_exception_handler()
+
+    def capture_exception_context(_loop, context):
+        exception_contexts.append(context)
+
+    async def pending_sync():
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    task = asyncio.create_task(pending_sync(), name="queued_sync_session-1")
+    sync._sync_tasks["session-1"] = task
+    await asyncio.sleep(0)
+
+    loop.set_exception_handler(capture_exception_context)
+    try:
+        await sync.cleanup()
+        del task
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert cancelled.is_set()
+    assert sync._sync_tasks == {}
+    assert not any(
+        context.get("message") == "Task was destroyed but it is pending!"
+        for context in exception_contexts
+    )

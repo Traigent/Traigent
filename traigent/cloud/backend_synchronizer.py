@@ -638,12 +638,13 @@ class BackendSynchronizer:
         except asyncio.QueueFull:
             logger.warning(f"Sync queue full, dropping session {session_id}")
 
-    def stop_background_sync(self) -> None:
+    async def stop_background_sync(self) -> None:
         """Stop background synchronization."""
         self.enable_auto_sync = False
 
         if self._background_sync_task and not self._background_sync_task.done():
             self._background_sync_task.cancel()
+            await asyncio.gather(self._background_sync_task, return_exceptions=True)
             logger.info("Stopped background synchronization")
 
     async def wait_for_pending_syncs(self, timeout: float = 30.0) -> bool:
@@ -701,14 +702,18 @@ class BackendSynchronizer:
             },
         }
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         """Clean up synchronizer resources."""
-        self.stop_background_sync()
+        await self.stop_background_sync()
 
         # Cancel all pending sync tasks
-        for task in self._sync_tasks.values():
+        tasks = list(self._sync_tasks.values())
+        for task in tasks:
             if not task.done():
                 task.cancel()
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         self._sync_tasks.clear()
         self._pending_syncs.clear()

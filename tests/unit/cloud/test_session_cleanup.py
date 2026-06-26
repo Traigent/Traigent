@@ -8,11 +8,21 @@ drain the event loop after session.close(), preventing the
 from __future__ import annotations
 
 import asyncio
+import gc
 import subprocess
 import sys
+import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+def _resource_warning_messages(caught: list[warnings.WarningMessage]) -> list[str]:
+    return [
+        str(warning.message)
+        for warning in caught
+        if issubclass(warning.category, ResourceWarning)
+    ]
 
 
 class TestBackendClientSessionCleanup:
@@ -48,12 +58,45 @@ asyncio.run(main())
             text=True,
             timeout=60,
         )
-        assert (
-            result.returncode == 0
-        ), f"Subprocess crashed (rc={result.returncode}):\n{result.stderr}"
-        assert (
-            "Unclosed client session" not in result.stderr
-        ), f"Got unclosed session warning:\n{result.stderr}"
+        assert result.returncode == 0, (
+            f"Subprocess crashed (rc={result.returncode}):\n{result.stderr}"
+        )
+        assert "Unclosed client session" not in result.stderr, (
+            f"Got unclosed session warning:\n{result.stderr}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_finalizer_closes_lazy_session_without_explicit_close(self):
+        """GC finalizer should close a lazily-created session if close() is skipped."""
+        from traigent.cloud.backend_client import (
+            BackendClientConfig,
+            BackendIntegratedClient,
+        )
+
+        client = BackendIntegratedClient(
+            api_key="tg_test_" + "x" * 56,
+            base_url="http://localhost:8000",
+            backend_config=BackendClientConfig(
+                backend_base_url="http://localhost:8000"
+            ),
+            enable_fallback=False,
+        )
+        client.auth_manager.auth.get_headers = AsyncMock(
+            return_value={"X-API-Key": "tg_test_" + "x" * 56}
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            await client._ensure_session()
+            assert client._session is not None
+            del client
+            gc.collect()
+            await asyncio.sleep(0)
+            gc.collect()
+
+        assert "Unclosed client session" not in "\n".join(
+            _resource_warning_messages(caught)
+        )
 
     @pytest.mark.asyncio
     async def test_aexit_delegates_to_close(self):
@@ -122,6 +165,32 @@ class TestCloudClientSessionCleanup:
             await client.close()
 
         mock_close.assert_awaited_once_with(reason="shutdown")
+
+    @pytest.mark.asyncio
+    async def test_finalizer_closes_lazy_session_without_explicit_close(self):
+        """GC finalizer should close a lazily-created session if close() is skipped."""
+        from traigent.cloud.client import TraigentCloudClient
+
+        client = TraigentCloudClient(
+            api_key="tg_test_" + "x" * 56,
+            base_url="http://localhost:8000",
+        )
+        client.auth.get_headers = AsyncMock(
+            return_value={"X-API-Key": "tg_test_" + "x" * 56}
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            await client._ensure_session()
+            assert client._session is not None
+            del client
+            gc.collect()
+            await asyncio.sleep(0)
+            gc.collect()
+
+        assert "Unclosed client session" not in "\n".join(
+            _resource_warning_messages(caught)
+        )
 
     @pytest.mark.asyncio
     async def test_aexit_delegates_to_close(self):
