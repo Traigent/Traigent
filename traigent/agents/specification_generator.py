@@ -443,8 +443,8 @@ class SpecificationGenerator:
         )
 
         # Update model parameters with best configuration
-        if "best_config" in optimization_results:
-            best_config = optimization_results["best_config"]
+        best_config = optimization_results.get("best_config")
+        if isinstance(best_config, dict):
             updated_params = (agent_spec.model_parameters or {}).copy()
 
             # Update with optimized parameters

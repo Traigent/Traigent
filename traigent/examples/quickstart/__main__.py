@@ -159,7 +159,7 @@ def main() -> None:
 
     # Fail closed on an all-failed run. If every trial errors (or the run is
     # otherwise misconfigured), optimize() returns NORMALLY with best_score=None
-    # / best_config={} — it does not raise — so without this guard the quickstart
+    # / best_config=None — it does not raise — so without this guard the quickstart
     # would exit 0 on a run that produced no winner, i.e. a silent all-failed run
     # that looks like success (CLAUDE.md Rule 2: no fake completion). The import
     # guard above only covers the missing-litellm case.

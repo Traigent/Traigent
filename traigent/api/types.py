@@ -667,7 +667,8 @@ class OptimizationResult:
 
     Attributes:
         trials: List of all trial results from the optimization.
-        best_config: The configuration that achieved the best score.
+        best_config: The configuration that achieved the best score, or None
+            when no eligible trial produced a winner.
         best_score: The best objective score achieved (None when no eligible trial).
         optimization_id: Unique identifier for this optimization run.
         duration: Total wall-clock time in seconds.
@@ -703,7 +704,7 @@ class OptimizationResult:
     """
 
     trials: list[TrialResult]
-    best_config: dict[str, Any]
+    best_config: dict[str, Any] | None
     best_score: float | None
     optimization_id: str
     duration: float
@@ -777,10 +778,10 @@ class OptimizationResult:
     def best_metrics(self) -> dict[str, float]:
         """Get best metrics from the best trial.
 
-        A result with NO WINNER — empty ``best_config`` AND ``best_score``
-        of ``None``, the NO_CERTIFIED_SELECTION shape from strict evidence
-        runs — makes no winner-metric claims. A valid winner whose config
-        happens to be empty still carries a score and keeps its metrics.
+        A result with NO WINNER — ``best_config`` missing/empty AND
+        ``best_score`` of ``None`` — makes no winner-metric claims. A valid
+        winner whose config happens to be empty still carries a score and
+        keeps its metrics.
         """
         if not self.best_config and self.best_score is None:
             return {}
@@ -1372,7 +1373,7 @@ class OptimizationResult:
 
     def _select_best_weighted_result(
         self, weighted_scores: list[tuple[TrialResult, float]]
-    ) -> tuple[dict[str, Any], float]:
+    ) -> tuple[dict[str, Any] | None, float]:
         """Select the best configuration from computed weighted scores."""
 
         if not weighted_scores:
@@ -1459,7 +1460,7 @@ class OptimizationResult:
         Winner-claim note (FR-SDK-FAIL-CLOSED-PROMOTION-V1): the per-trial
         weighted scores are DESCRIPTIVE statistics and always computed; the
         ``best_weighted_config`` key is a winner claim and is omitted when the
-        result carries no certified winner (empty ``best_config``).
+        result carries no certified winner (missing/empty ``best_config``).
 
         Args:
             objective_weights: Dictionary of objective weights (defaults to equal weights)

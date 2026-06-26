@@ -61,7 +61,7 @@ def test_returns_default_when_no_successful_trials():
         aggregate_configs=False,
     )
     assert result == SelectionResult(
-        best_config={},
+        best_config=None,
         best_score=None,
         session_summary={
             "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
@@ -82,7 +82,7 @@ def test_returns_default_when_no_successful_trials():
 def test_trial_completed_with_zero_successful_examples_yields_no_winner():
     """Regression: a trial that completes but had 0 successful examples
     (e.g. every provider call inside it 404'd on a deprecated model) is not
-    a valid winner. best_score must be None, best_config must be {}."""
+    a valid winner. best_score must be None, best_config must be None."""
     trials = [
         FakeTrial(metrics={"accuracy": 0.0}, config={"model": "deprecated-a"}),
         FakeTrial(metrics={"accuracy": 0.0}, config={"model": "deprecated-b"}),
@@ -100,7 +100,7 @@ def test_trial_completed_with_zero_successful_examples_yields_no_winner():
     )
 
     assert result.best_score is None
-    assert result.best_config == {}
+    assert result.best_config is None
     assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
 
 
@@ -311,7 +311,7 @@ def test_aggregated_selection_all_nan_returns_no_eligible_reason():
         comparability_mode="legacy",
     )
 
-    assert result.best_config == {}
+    assert result.best_config is None
     assert result.best_score is None
     assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
 
@@ -770,7 +770,7 @@ def test_execute_only_quality_objective_is_ineligible():
         aggregate_configs=False,
     )
 
-    assert result.best_config == {}
+    assert result.best_config is None
     assert result.best_score is None
     assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
 
@@ -786,7 +786,7 @@ def test_unknown_comparability_is_excluded_by_default():
         aggregate_configs=False,
     )
 
-    assert result.best_config == {}
+    assert result.best_config is None
     assert result.best_score is None
     assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
     assert result.session_summary is not None

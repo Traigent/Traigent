@@ -1962,6 +1962,32 @@ class TestConfigPersistence:
             assert loaded is not None
             assert loaded["temperature"] == pytest.approx(0.3)
 
+    def test_load_config_from_path_null_best_config(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """All-fail best_config artifacts should load as no config, not crash."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "best_config.json"
+            config_data = {
+                "best_config": None,
+                "best_score": None,
+            }
+            with open(config_path, "w") as f:
+                json.dump(config_data, f)
+
+            loaded = opt_func._load_config_from_path(str(config_path))
+
+            assert loaded is None
+
     def test_load_config_from_path_direct_dict(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
