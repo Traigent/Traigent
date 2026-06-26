@@ -18,6 +18,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Import the genuine aiohttp classes directly from their defining submodules.
+# Other cloud tests patch the top-level re-exports
+# (``aiohttp.ClientSession`` / ``traigent.cloud.client.aiohttp.ClientSession``);
+# concurrent ``with patch(...)`` enters from gathered coroutines can interleave
+# their save/restore and leak a MagicMock onto the real ``aiohttp`` module. The
+# submodule attributes (``aiohttp.client.ClientSession`` etc.) are never the
+# patch target, so these references stay genuine regardless of pollution.
+from aiohttp.client import ClientSession as _REAL_CLIENT_SESSION
+from aiohttp.client import ClientTimeout as _REAL_CLIENT_TIMEOUT
+
 _TEST_API_KEY = "tg_test_" + "x" * 56
 
 
@@ -125,8 +135,33 @@ def _build_client_on_private_loop(client_kind: str) -> tuple[Any, Any, Any]:
 
     session = client._session
     assert session is not None
+
+    # Pollution resistance: if an earlier cloud test left
+    # ``aiohttp.ClientSession`` patched to a Mock, the lazily-built session (and
+    # therefore its connector) would be a Mock — its ``_conns`` is not
+    # subscriptable and the finalizer guard would skip a Mock session entirely.
+    # Deterministically exercise the REAL finalizer transport-close path by
+    # rebuilding a genuine session from the unpatched class and re-registering
+    # the finalizer on it. With a clean global this branch is a no-op.
+    if not isinstance(session, _REAL_CLIENT_SESSION):
+
+        async def _make_real_session() -> Any:
+            return _REAL_CLIENT_SESSION(
+                timeout=_REAL_CLIENT_TIMEOUT(total=30),
+            )
+
+        session = loop.run_until_complete(_make_real_session())
+        client._session = session
+        client._register_session_finalizer(session)
+
     connector = session._connector
     assert connector is not None
+    # The finalizer walks/clears exactly these internals; ensure they are the
+    # real owning containers the test injects into (a genuine session provides
+    # a ``defaultdict(list)`` / ``set`` / ``list`` here already).
+    assert isinstance(connector._conns, dict)
+    assert isinstance(connector._acquired, set)
+    assert isinstance(connector._cleanup_closed_transports, list)
     return loop, client, connector
 
 
@@ -388,3 +423,97 @@ class TestCloudClientSessionCleanup:
 
         mock_session.close.assert_awaited_once()
         mock_sleep.assert_not_awaited()
+
+
+class TestMockSessionNoFinalizer:
+    """GC of a client holding a Mock session must never raise TypeError."""
+
+    def test_mock_session_gc_raises_nothing_backend(self):
+        """BackendIntegratedClient with a Mock session: no finalizer, no TypeError on GC."""
+        import gc
+        from unittest.mock import MagicMock
+
+        from traigent.cloud.backend_client import BackendIntegratedClient
+
+        client = object.__new__(BackendIntegratedClient)
+        client._session_finalizer = None
+        client._session = MagicMock()
+
+        # _register_session_finalizer must NOT register a finalizer for a Mock
+        client._register_session_finalizer(client._session)
+        assert client._session_finalizer is None
+
+        # Drop the reference and force GC — must not raise
+        del client
+        gc.collect()
+        gc.collect()
+
+    def test_mock_session_gc_raises_nothing_cloud(self):
+        """TraigentCloudClient with a Mock session: no finalizer, no TypeError on GC."""
+        import gc
+        from unittest.mock import MagicMock
+
+        from traigent.cloud.client import TraigentCloudClient
+
+        client = object.__new__(TraigentCloudClient)
+        client._session_finalizer = None
+        client._aio_session = MagicMock()
+
+        # _register_session_finalizer must NOT register a finalizer for a Mock
+        client._register_session_finalizer(client._aio_session)
+        assert client._session_finalizer is None
+
+        # Drop the reference and force GC — must not raise
+        del client
+        gc.collect()
+        gc.collect()
+
+    def test_finalize_aiohttp_session_is_noop_for_mock(self):
+        """_finalize_aiohttp_session called directly with a Mock must be a no-op."""
+        from unittest.mock import MagicMock
+
+        from traigent.cloud.client import _finalize_aiohttp_session
+
+        mock_session = MagicMock()
+        # Must return immediately without accessing mock attributes that raise TypeError
+        _finalize_aiohttp_session(mock_session, "TestOwner")
+
+    def test_guard_recognizes_real_session_even_when_module_attr_is_mocked(self):
+        """The guard must identify a genuine session even under global pollution.
+
+        Regression for a guard that checked ``isinstance(session,
+        aiohttp.ClientSession)`` against the *mutable module attribute*. When an
+        earlier test leaves ``aiohttp.ClientSession`` replaced with a MagicMock,
+        that check raises ``TypeError`` (non-type) and is swallowed to ``False``,
+        wrongly rejecting a real session and skipping finalizer registration.
+        Checking against the class captured from ``aiohttp.client`` at import
+        time stays correct regardless of the module-attribute pollution.
+        """
+        from traigent.cloud.client import _is_real_aiohttp_session
+
+        async def _make_real_session() -> Any:
+            return _REAL_CLIENT_SESSION(timeout=_REAL_CLIENT_TIMEOUT(total=30))
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            real_session = loop.run_until_complete(_make_real_session())
+            try:
+                # Sanity: recognized when the global is clean.
+                assert _is_real_aiohttp_session(real_session) is True
+
+                # Pollute the mutable module attribute, exactly as a concurrent
+                # ``with patch("...aiohttp.ClientSession")`` leak would. The old
+                # module-attribute guard returns False here (and would raise
+                # TypeError internally); the import-time-class guard stays True.
+                with patch(
+                    "traigent.cloud.client.aiohttp.ClientSession",
+                    new=MagicMock(name="ClientSession"),
+                ):
+                    assert _is_real_aiohttp_session(real_session) is True
+                    assert _is_real_aiohttp_session(MagicMock()) is False
+            finally:
+                loop.run_until_complete(real_session.close())
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)

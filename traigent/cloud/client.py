@@ -17,6 +17,20 @@ from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+
+# Capture the genuine, unpatched ClientSession class at module-load time — before
+# any test can monkeypatch the mutable ``aiohttp.ClientSession`` module attribute.
+# The submodule attribute (``aiohttp.client.ClientSession``) is never the patch
+# target, so ``isinstance`` checks against this reference stay correct even when
+# ``aiohttp.ClientSession`` has been replaced with a MagicMock by another test.
+if AIOHTTP_AVAILABLE:
+    try:
+        from aiohttp.client import ClientSession as _REAL_AIOHTTP_CLIENT_SESSION
+    except ImportError:  # pragma: no cover - unexpected aiohttp layout
+        _REAL_AIOHTTP_CLIENT_SESSION = aiohttp.ClientSession
+else:  # pragma: no cover - minimal environments without aiohttp
+    _REAL_AIOHTTP_CLIENT_SESSION = None
+
 from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset
 from traigent.utils.env_config import is_backend_offline
@@ -376,8 +390,30 @@ def _close_aiohttp_session_transports_sync(session: Any) -> None:
             pass
 
 
+def _is_real_aiohttp_session(session: Any) -> bool:
+    """Return True only when *session* is a genuine aiohttp ClientSession.
+
+    The ``isinstance`` check uses ``_REAL_AIOHTTP_CLIENT_SESSION`` — the real
+    class captured from ``aiohttp.client`` at module-load time — rather than the
+    mutable ``aiohttp.ClientSession`` module attribute. Tests routinely
+    monkeypatch that attribute to a MagicMock; checking against it would both
+    raise ``TypeError`` (a non-type as the second isinstance arg) AND wrongly
+    reject a *genuine* session whenever the global is polluted, which would skip
+    finalizer registration on a real session. The captured class is always a
+    real type, so the check stays correct under such pollution.
+    """
+    return (
+        AIOHTTP_AVAILABLE
+        and _REAL_AIOHTTP_CLIENT_SESSION is not None
+        and isinstance(session, _REAL_AIOHTTP_CLIENT_SESSION)
+    )
+
+
 def _finalize_aiohttp_session(session: Any, owner: str) -> None:
     """Synchronously close an aiohttp session from a weakref finalizer."""
+
+    if not _is_real_aiohttp_session(session):
+        return
 
     try:
         if session is None or _session_is_closed(session):
@@ -861,12 +897,13 @@ class TraigentCloudClient(BaseTraigentClient):
 
     def _register_session_finalizer(self, session: aiohttp.ClientSession) -> None:
         self._detach_session_finalizer()
-        self._session_finalizer = weakref.finalize(
-            self,
-            _finalize_aiohttp_session,
-            session,
-            self.__class__.__name__,
-        )
+        if _is_real_aiohttp_session(session):
+            self._session_finalizer = weakref.finalize(
+                self,
+                _finalize_aiohttp_session,
+                session,
+                self.__class__.__name__,
+            )
 
     def _detach_session_finalizer(self) -> None:
         finalizer = getattr(self, "_session_finalizer", None)

@@ -36,6 +36,7 @@ from traigent.cloud.backend_components import (
 from traigent.cloud.client import (
     CloudServiceError,
     _finalize_aiohttp_session,
+    _is_real_aiohttp_session,
     cloud_backend_egress_disabled,
     raise_if_cloud_egress_disabled,
 )
@@ -827,12 +828,13 @@ class BackendIntegratedClient:
 
     def _register_session_finalizer(self, session: AioClientSession) -> None:
         self._detach_session_finalizer()
-        self._session_finalizer = weakref.finalize(
-            self,
-            _finalize_aiohttp_session,
-            session,
-            self.__class__.__name__,
-        )
+        if _is_real_aiohttp_session(session):
+            self._session_finalizer = weakref.finalize(
+                self,
+                _finalize_aiohttp_session,
+                session,
+                self.__class__.__name__,
+            )
 
     def _detach_session_finalizer(self) -> None:
         finalizer = getattr(self, "_session_finalizer", None)

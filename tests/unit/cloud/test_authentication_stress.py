@@ -10,10 +10,39 @@ import threading
 import time
 from unittest.mock import AsyncMock, Mock, patch
 
+import aiohttp
 import psutil
 import pytest
 
+# Genuine aiohttp classes captured from their defining submodules (never the
+# target of the ``patch("...aiohttp.ClientSession")`` calls below), used to
+# restore the real ``aiohttp`` module attributes after each stress test.
+from aiohttp.client import ClientSession as _REAL_CLIENT_SESSION
+from aiohttp.client import ClientTimeout as _REAL_CLIENT_TIMEOUT
+from aiohttp.connector import TCPConnector as _REAL_TCP_CONNECTOR
+
 from traigent.cloud.client import TraigentCloudClient
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_aiohttp_after_stress():
+    """Prevent cross-file aiohttp pollution from concurrent ``patch`` enters.
+
+    Several stress tests enter ``with patch("...aiohttp.ClientSession")`` from
+    coroutines run concurrently via ``asyncio.gather``. ``unittest.mock.patch``
+    saves/restores the *current* attribute value, so two concurrent enters of
+    the same target can interleave such that the restore leaves a MagicMock on
+    the real ``aiohttp`` module instead of the genuine class. That mock then
+    bleeds into later test files (e.g. the finalizer tests in
+    test_session_cleanup.py) which need a real session/connector. Restore the
+    genuine classes after every test here so the global module is left clean.
+    """
+    try:
+        yield
+    finally:
+        aiohttp.ClientSession = _REAL_CLIENT_SESSION
+        aiohttp.ClientTimeout = _REAL_CLIENT_TIMEOUT
+        aiohttp.TCPConnector = _REAL_TCP_CONNECTOR
 
 
 class TestHighVolumeRequests:
@@ -122,18 +151,18 @@ class TestHighVolumeRequests:
                                     incorrect_auth_count += 1
 
                         # All requests should have correct authentication
-                        assert (
-                            missing_auth_count == 0
-                        ), f"{missing_auth_count} requests missing Authorization header"
-                        assert (
-                            incorrect_auth_count == 0
-                        ), f"{incorrect_auth_count} requests with incorrect auth"
+                        assert missing_auth_count == 0, (
+                            f"{missing_auth_count} requests missing Authorization header"
+                        )
+                        assert incorrect_auth_count == 0, (
+                            f"{incorrect_auth_count} requests with incorrect auth"
+                        )
 
                         # Performance check - should complete reasonably quickly
                         execution_time = end_time - start_time
-                        assert (
-                            execution_time < 10.0
-                        ), f"Stress test took too long: {execution_time:.2f}s"
+                        assert execution_time < 10.0, (
+                            f"Stress test took too long: {execution_time:.2f}s"
+                        )
 
                         print(
                             f"✅ {num_requests} concurrent requests completed in {execution_time:.2f}s"
@@ -226,12 +255,12 @@ class TestHighVolumeRequests:
                         end_time = time.time()
 
                     # Verify authentication consistency
-                    assert (
-                        len(auth_headers_seen) <= 2
-                    ), f"Too many different auth headers: {len(auth_headers_seen)}"
-                    assert (
-                        len(inconsistent_headers) == 0
-                    ), f"Found inconsistent headers: {inconsistent_headers}"
+                    assert len(auth_headers_seen) <= 2, (
+                        f"Too many different auth headers: {len(auth_headers_seen)}"
+                    )
+                    assert len(inconsistent_headers) == 0, (
+                        f"Found inconsistent headers: {inconsistent_headers}"
+                    )
 
                     # Verify all requests were processed
                     assert len(request_times) == num_requests
@@ -243,12 +272,12 @@ class TestHighVolumeRequests:
                     print(
                         f"✅ {num_requests} extreme concurrent requests in {execution_time:.2f}s"
                     )
-                    print(f"   Average: {avg_request_time*1000:.2f}ms per request")
+                    print(f"   Average: {avg_request_time * 1000:.2f}ms per request")
 
                     # Should maintain reasonable performance
-                    assert (
-                        avg_request_time < 0.1
-                    ), f"Average request time too high: {avg_request_time:.3f}s"
+                    assert avg_request_time < 0.1, (
+                        f"Average request time too high: {avg_request_time:.3f}s"
+                    )
 
 
 class TestSessionSharingUnderLoad:
@@ -368,19 +397,19 @@ class TestSessionSharingUnderLoad:
                         print(f"Corruptions detected: {len(corruption_detected)}")
 
                         # Should create minimal sessions (ideally 1, at most a few)
-                        assert (
-                            len(session_creations) <= 5
-                        ), f"Too many sessions created: {len(session_creations)}"
+                        assert len(session_creations) <= 5, (
+                            f"Too many sessions created: {len(session_creations)}"
+                        )
 
                         # Should have many more usages than creations (session reuse)
-                        assert (
-                            len(session_usages) > len(session_creations) * 100
-                        ), "Insufficient session reuse"
+                        assert len(session_usages) > len(session_creations) * 100, (
+                            "Insufficient session reuse"
+                        )
 
                         # No corruption should occur
-                        assert (
-                            len(corruption_detected) == 0
-                        ), f"Header corruption detected: {corruption_detected[:5]}"
+                        assert len(corruption_detected) == 0, (
+                            f"Header corruption detected: {corruption_detected[:5]}"
+                        )
 
     @pytest.mark.asyncio
     async def test_session_cleanup_under_load(self):
@@ -487,14 +516,14 @@ class TestSessionSharingUnderLoad:
                             else 0
                         )
                         # Relax this requirement for mock environment
-                        assert (
-                            cleanup_ratio >= 0.0
-                        ), f"Negative cleanup ratio: {cleanup_ratio:.2f}"
+                        assert cleanup_ratio >= 0.0, (
+                            f"Negative cleanup ratio: {cleanup_ratio:.2f}"
+                        )
 
                         # Memory usage should be reasonable
-                        assert (
-                            memory_increase_mb < 50
-                        ), f"Excessive memory usage: {memory_increase_mb:.2f} MB"
+                        assert memory_increase_mb < 50, (
+                            f"Excessive memory usage: {memory_increase_mb:.2f} MB"
+                        )
 
 
 class TestAuthenticationPerformanceUnderLoad:
@@ -589,27 +618,27 @@ class TestAuthenticationPerformanceUnderLoad:
 
                         print(f"Total requests: {num_requests}")
                         print(f"Total time: {total_time:.3f}s")
-                        print(f"Avg request time: {avg_request_time*1000:.2f}ms")
-                        print(f"Avg auth time: {avg_auth_time*1000:.2f}ms")
+                        print(f"Avg request time: {avg_request_time * 1000:.2f}ms")
+                        print(f"Avg auth time: {avg_auth_time * 1000:.2f}ms")
                         print(f"Auth overhead: {auth_overhead_ratio:.1%}")
 
                         # Performance requirements
-                        assert (
-                            avg_request_time < 0.05
-                        ), f"Requests too slow: {avg_request_time:.3f}s"
+                        assert avg_request_time < 0.05, (
+                            f"Requests too slow: {avg_request_time:.3f}s"
+                        )
                         # Auth overhead may be high in mock environment, so relax this requirement
                         # In real usage, session caching would reduce this significantly
-                        assert (
-                            auth_overhead_ratio < 150
-                        ), f"Auth overhead too high: {auth_overhead_ratio:.1%}"
+                        assert auth_overhead_ratio < 150, (
+                            f"Auth overhead too high: {auth_overhead_ratio:.1%}"
+                        )
 
                         # Auth should be called reasonable number of times (session reuse)
                         # In mock environment, this may be called more than expected
                         # Allow up to 2 auth calls per request for mock test environment
                         expected_max_auth_calls = num_requests * 2
-                        assert (
-                            len(auth_times) <= expected_max_auth_calls + 10
-                        ), f"Too many auth calls: {len(auth_times)}"
+                        assert len(auth_times) <= expected_max_auth_calls + 10, (
+                            f"Too many auth calls: {len(auth_times)}"
+                        )
 
     @pytest.mark.asyncio
     async def test_concurrent_auth_operations_performance(self):
@@ -725,7 +754,7 @@ class TestAuthenticationPerformanceUnderLoad:
         print(f"  Avg client time: {avg_client_duration:.3f}s")
         print(f"  Slowest client: {slowest_client['duration']:.3f}s")
         print(f"  Fastest client: {fastest_client['duration']:.3f}s")
-        print(f"  Effective RPS: {total_requests/overall_duration:.1f}")
+        print(f"  Effective RPS: {total_requests / overall_duration:.1f}")
 
         # Performance requirements
         assert overall_duration < 5.0, f"Overall test too slow: {overall_duration:.3f}s"
@@ -747,9 +776,9 @@ class TestAuthenticationPerformanceUnderLoad:
         )
         p25_duration = sorted_durations[p25_idx]
         p75_duration = sorted_durations[p75_idx]
-        assert (
-            p75_duration / max(p25_duration, 1e-6) < 8.0
-        ), "Too much variance between clients"
+        assert p75_duration / max(p25_duration, 1e-6) < 8.0, (
+            "Too much variance between clients"
+        )
 
 
 class TestErrorRecoveryUnderLoad:
@@ -865,17 +894,17 @@ class TestErrorRecoveryUnderLoad:
                         # Verify authentication consistency during errors and recovery
                         if auth_headers_during_errors:
                             unique_error_headers = set(auth_headers_during_errors)
-                            assert (
-                                len(unique_error_headers) <= 1
-                            ), f"Inconsistent auth during errors: {len(unique_error_headers)}"
+                            assert len(unique_error_headers) <= 1, (
+                                f"Inconsistent auth during errors: {len(unique_error_headers)}"
+                            )
 
                             # Error requests should have same auth as success requests
                             if auth_headers_during_success:
                                 success_header = auth_headers_during_success[0]
                                 error_header = auth_headers_during_errors[0]
-                                assert (
-                                    success_header == error_header
-                                ), "Auth headers differ between success and error"
+                                assert success_header == error_header, (
+                                    "Auth headers differ between success and error"
+                                )
 
                         # All requests should have included proper authentication
                         missing_auth = [
@@ -883,15 +912,15 @@ class TestErrorRecoveryUnderLoad:
                             for a in request_attempts
                             if not a["headers"].get("Authorization")
                         ]
-                        assert (
-                            len(missing_auth) == 0
-                        ), f"Requests missing auth during errors: {len(missing_auth)}"
+                        assert len(missing_auth) == 0, (
+                            f"Requests missing auth during errors: {len(missing_auth)}"
+                        )
 
                         # Should have reasonable success rate despite errors
                         success_rate = len(recovered_requests) / len(request_attempts)
-                        assert (
-                            success_rate > 0.7
-                        ), f"Success rate too low: {success_rate:.1%}"
+                        assert success_rate > 0.7, (
+                            f"Success rate too low: {success_rate:.1%}"
+                        )
 
 
 class TestClientIsolationUnderStress:
@@ -1090,9 +1119,9 @@ class TestClientIsolationUnderStress:
         print(f"  Cross-contaminations detected: {len(cross_contamination_detected)}")
 
         # Verify isolation was maintained
-        assert (
-            len(cross_contamination_detected) == 0
-        ), f"Cross-contamination detected: {cross_contamination_detected[:3]}"
+        assert len(cross_contamination_detected) == 0, (
+            f"Cross-contamination detected: {cross_contamination_detected[:3]}"
+        )
 
         # Verify each client used consistent authentication
         for client_id in range(num_clients):
@@ -1100,33 +1129,33 @@ class TestClientIsolationUnderStress:
                 client_auth_headers = client_auth_usage[client_id]
                 unique_headers = set(client_auth_headers)
 
-                assert (
-                    len(unique_headers) <= 1
-                ), f"Client {client_id} used inconsistent auth headers: {len(unique_headers)}"
+                assert len(unique_headers) <= 1, (
+                    f"Client {client_id} used inconsistent auth headers: {len(unique_headers)}"
+                )
 
                 if unique_headers:
                     auth_header = list(unique_headers)[0]
                     expected_key = client_api_keys[client_id]
-                    assert (
-                        expected_key in auth_header
-                    ), f"Client {client_id} auth header missing expected key"
+                    assert expected_key in auth_header, (
+                        f"Client {client_id} auth header missing expected key"
+                    )
 
         # Performance should be reasonable even under stress
         requests_per_second = (
             total_successful_requests / execution_time if execution_time > 0 else 0
         )
-        assert (
-            requests_per_second > 50
-        ), f"Too slow under stress: {requests_per_second:.1f} RPS"
+        assert requests_per_second > 50, (
+            f"Too slow under stress: {requests_per_second:.1f} RPS"
+        )
 
         # Some requests should succeed (relaxed for mock environment)
         # The main test is for isolation, not success rate
         success_rate = (
             total_successful_requests / total_requests if total_requests > 0 else 0
         )
-        assert (
-            success_rate > 0.3
-        ), f"Success rate too low under stress: {success_rate:.1%}"
+        assert success_rate > 0.3, (
+            f"Success rate too low under stress: {success_rate:.1%}"
+        )
 
 
 class TestMemoryAndResourceManagement:
@@ -1232,16 +1261,18 @@ class TestMemoryAndResourceManagement:
         print(f"  Net increase: {memory_increase:.1f} MB")
         print(f"  Peak increase: {peak_increase:.1f} MB")
         print(f"  Total operations: {total_operations}")
-        print(f"  Memory per operation: {peak_increase*1024/total_operations:.2f} KB")
+        print(
+            f"  Memory per operation: {peak_increase * 1024 / total_operations:.2f} KB"
+        )
 
         # Memory usage should be reasonable
         assert peak_increase < 100, f"Memory increase too high: {peak_increase:.1f} MB"
-        assert (
-            memory_increase < 50
-        ), f"Final memory increase too high: {memory_increase:.1f} MB"
+        assert memory_increase < 50, (
+            f"Final memory increase too high: {memory_increase:.1f} MB"
+        )
 
         # Memory per operation should be minimal
         memory_per_op_kb = peak_increase * 1024 / total_operations
-        assert (
-            memory_per_op_kb < 50
-        ), f"Memory per operation too high: {memory_per_op_kb:.2f} KB"
+        assert memory_per_op_kb < 50, (
+            f"Memory per operation too high: {memory_per_op_kb:.2f} KB"
+        )
