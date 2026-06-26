@@ -836,6 +836,11 @@ def test_add_annotation_queue_items_returns_typed_dto():
                 "items": [
                     {
                         "id": "item_1",
+                        # tenant_id/project_id are part of the backend
+                        # AnnotationQueueItem.to_dict() runtime shape — must
+                        # survive into the DTO (no data loss vs raw dict, #1444).
+                        "tenant_id": "tenant_42",
+                        "project_id": "project_7",
                         "queue_id": "q_abc",
                         "target_type": "observability_trace",
                         "target_id": "trace_x",
@@ -848,6 +853,8 @@ def test_add_annotation_queue_items_returns_typed_dto():
                     },
                     {
                         "id": "item_2",
+                        "tenant_id": "tenant_42",
+                        "project_id": "project_7",
                         "queue_id": "q_abc",
                         "target_type": "observability_trace",
                         "target_id": "trace_y",
@@ -879,6 +886,11 @@ def test_add_annotation_queue_items_returns_typed_dto():
     assert result.items[0].target_id == "trace_x"
     assert result.items[1].target_id == "trace_y"
     assert result.items[0].status == AnnotationQueueItemStatus.PENDING
+    # Regression guard: tenant_id/project_id must NOT be dropped by the DTO.
+    assert result.items[0].tenant_id == "tenant_42"
+    assert result.items[0].project_id == "project_7"
+    assert result.items[1].tenant_id == "tenant_42"
+    assert result.items[1].project_id == "project_7"
 
 
 def test_complete_annotation_queue_item_returns_typed_dto():
@@ -890,6 +902,8 @@ def test_complete_annotation_queue_item_returns_typed_dto():
                 "queue_id": "q_abc",
                 "item": {
                     "id": "item_1",
+                    "tenant_id": "tenant_42",
+                    "project_id": "project_7",
                     "queue_id": "q_abc",
                     "target_type": "observability_trace",
                     "target_id": "trace_x",
@@ -903,6 +917,11 @@ def test_complete_annotation_queue_item_returns_typed_dto():
                 "scores": [
                     {
                         "id": "score_1",
+                        # tenant_id/project_id are part of the backend
+                        # ScoreRecord.to_dict() runtime shape (create_manual_score)
+                        # — must survive into the DTO (no data loss, #1444).
+                        "tenant_id": "tenant_42",
+                        "project_id": "project_7",
                         "measure_id": "quality_score",
                         "target_type": "observability_trace",
                         "target_id": "trace_x",
@@ -929,6 +948,12 @@ def test_complete_annotation_queue_item_returns_typed_dto():
     assert len(result.scores) == 1
     assert result.scores[0].id == "score_1"
     assert result.scores[0].numeric_value == 0.9
+    # Regression guard: tenant_id/project_id must NOT be dropped by the DTOs
+    # (nested item AND nested scores).
+    assert result.item.tenant_id == "tenant_42"
+    assert result.item.project_id == "project_7"
+    assert result.scores[0].tenant_id == "tenant_42"
+    assert result.scores[0].project_id == "project_7"
 
 
 def test_create_typed_measure_returns_typed_dto():

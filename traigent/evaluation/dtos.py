@@ -513,6 +513,12 @@ class BackfillResultDTO:
 @dataclass(frozen=True)
 class ScoreRecordDTO:
     id: str
+    # tenant_id / project_id are present in the backend ScoreRecord.to_dict()
+    # runtime shape (src/models/score_record.py) — the dict returned by
+    # create_manual_score and carried in complete_annotation_queue_item's
+    # `scores`. Kept so the DTO is a strict superset of the prior raw dict (#1444).
+    tenant_id: str | None
+    project_id: str | None
     measure_id: str
     evaluator_run_id: str | None
     target_type: EvaluationTargetType
@@ -537,6 +543,8 @@ class ScoreRecordDTO:
         value_type = payload.get("value_type")
         return cls(
             id=str(payload.get("id", "")),
+            tenant_id=payload.get("tenant_id"),
+            project_id=payload.get("project_id"),
             measure_id=str(payload.get("measure_id", "")),
             evaluator_run_id=payload.get("evaluator_run_id"),
             target_type=_require_target_type(payload),
@@ -603,6 +611,12 @@ class AnnotationQueueDTO:
 @dataclass(frozen=True)
 class AnnotationQueueItemDTO:
     id: str
+    # tenant_id / project_id are present in the backend AnnotationQueueItem.to_dict()
+    # runtime shape (src/models/annotation_queue_item.py). They are carried so the
+    # DTO is a strict superset of the raw dict previously returned by
+    # add_annotation_queue_items / complete_annotation_queue_item (#1444).
+    tenant_id: str | None
+    project_id: str | None
     queue_id: str
     target_type: EvaluationTargetType
     target_id: str
@@ -621,6 +635,8 @@ class AnnotationQueueItemDTO:
     def from_dict(cls, payload: dict[str, Any]) -> AnnotationQueueItemDTO:
         return cls(
             id=str(payload.get("id", "")),
+            tenant_id=payload.get("tenant_id"),
+            project_id=payload.get("project_id"),
             queue_id=str(payload.get("queue_id", "")),
             target_type=_require_target_type(payload),
             target_id=str(payload.get("target_id", "")),
