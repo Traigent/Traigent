@@ -127,9 +127,11 @@ export TRAIGENT_RUN_COST_LIMIT=5.00  # $5 max per optimization run
 
 The default limit is $2.00 per run.
 
-### Handling CostLimitExceeded
+### Cost Limit Behavior
 
-When the cost limit is reached, Traigent raises `CostLimitExceeded`:
+Traigent enforces cost limits through **two distinct surfaces**:
+
+**Pre-run (raises `CostLimitExceeded`)**: If cost approval is declined before the first trial — e.g. a non-interactive shell without `TRAIGENT_COST_APPROVED=true`, or the interactive prompt is rejected — Traigent raises `CostLimitExceeded`. `CostLimitExceeded` is a subclass of `OptimizationError`, so `except OptimizationError` also catches it.
 
 ```python
 from traigent.utils.exceptions import CostLimitExceeded
@@ -137,13 +139,21 @@ from traigent.utils.exceptions import CostLimitExceeded
 try:
     results = await func.optimize(max_trials=100, algorithm="random")
 except CostLimitExceeded as e:
-    print(f"Cost limit hit: ${e.accumulated:.2f} / ${e.limit:.2f}")
-    # Optimization stopped but partial results may be available
+    print(f"Cost approval declined: ${e.accumulated:.2f} / ${e.limit:.2f}")
 ```
 
 The exception has two attributes:
-- `e.accumulated` (float) - Total cost accumulated before the limit was hit.
+- `e.accumulated` (float) - Total cost accumulated when approval was declined.
 - `e.limit` (float) - The configured cost limit.
+
+**Mid-run (graceful stop, no exception)**: If accumulated spend reaches the budget *during* a run, Traigent stops gracefully after the current trial and returns a partial `OptimizationResult`. No exception is raised. Check `result.stop_reason`:
+
+```python
+results = await func.optimize(max_trials=100, algorithm="random")
+if results.stop_reason == "cost_limit":
+    print(f"Run stopped at cost limit: ${results.total_cost:.2f} spent")
+    # results.best_config and results.trials hold what was collected
+```
 
 ### Pre-Approving Costs
 
@@ -176,7 +186,9 @@ export TRAIGENT_STRICT_COST_ACCOUNTING=true
 ```
 
 `TRAIGENT_STRICT_COST_ACCOUNTING=true` must be the exact value `true`. Budget
-overruns are separate: they are controlled by `TRAIGENT_RUN_COST_LIMIT` and raise
+limits are separate: they are controlled by `TRAIGENT_RUN_COST_LIMIT`. A mid-run
+overrun stops the run gracefully and returns a partial result
+(`result.stop_reason == "cost_limit"`); only a pre-run approval failure raises
 `CostLimitExceeded`.
 
 ## Stop Conditions

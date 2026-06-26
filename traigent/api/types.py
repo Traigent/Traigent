@@ -685,7 +685,8 @@ class OptimizationResult:
             - "max_trials_reached": Hit the configured max_trials limit
             - "max_samples_reached": Hit the max samples/examples limit
             - "timeout": Exceeded the timeout duration
-            - "cost_limit": Hit the cost budget limit
+            - "cost_limit": Hit the cost budget limit mid-run; pre-run cost
+              approval declines raise CostLimitExceeded instead.
             - "metric_limit": Hit a soft cumulative metric limit
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)

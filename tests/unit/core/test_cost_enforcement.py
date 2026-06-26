@@ -31,6 +31,7 @@ from traigent.core.cost_enforcement import (
     normalize_cost_approved,
 )
 from traigent.core.stop_conditions import CostLimitStopCondition
+from traigent.utils.exceptions import OptimizationError
 
 
 def _create_mock_permit(amount: float = 0.0) -> Permit:
@@ -852,7 +853,12 @@ class TestCostEnforcerExceptions:
         assert "5.00" in str(exc)
         assert "2.00" in str(exc)
         assert exc.accumulated == 5.0
+        assert exc.spent == 5.0
         assert exc.limit == 2.0
+
+    def test_cost_limit_exceeded_is_optimization_error(self) -> None:
+        """CostLimitExceeded remains catchable by OptimizationError handlers."""
+        assert issubclass(CostLimitExceeded, OptimizationError)
 
     def test_optimization_aborted(self) -> None:
         """OptimizationAborted can be raised."""

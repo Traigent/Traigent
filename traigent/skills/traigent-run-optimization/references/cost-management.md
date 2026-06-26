@@ -27,42 +27,39 @@ os.environ["TRAIGENT_RUN_COST_LIMIT"] = "5.00"
 
 The default limit is $2.00 per optimization run. This applies per call to `optimize()` or `optimize_sync()`.
 
-## CostLimitExceeded Exception
+## Cost Limit Behavior
 
-When accumulated costs reach or exceed the limit, Traigent raises `CostLimitExceeded`.
+Traigent enforces cost limits through two distinct surfaces:
 
-```python
-from traigent.utils.exceptions import CostLimitExceeded
-```
+### Pre-Run: CostLimitExceeded (raised)
 
-### Attributes
-
-| Attribute | Type | Description |
-|---|---|---|
-| `accumulated` | `float` | Total cost in USD accumulated before the limit was hit. |
-| `limit` | `float` | The configured cost limit in USD. |
-
-### Handling
+`CostLimitExceeded` is raised when cost approval is **declined before the first trial** — for example when a non-interactive shell has no `TRAIGENT_COST_APPROVED=true`, or when the interactive cost-approval prompt is rejected. `CostLimitExceeded` is a subclass of `OptimizationError`, so `except OptimizationError` also catches it.
 
 ```python
-from traigent.utils.exceptions import CostLimitExceeded
+from traigent.utils.exceptions import CostLimitExceeded, OptimizationError
 
 try:
     results = await func.optimize(max_trials=100, algorithm="random")
 except CostLimitExceeded as e:
-    print(f"Cost limit exceeded: ${e.accumulated:.2f} of ${e.limit:.2f} budget")
-    # The optimization stopped gracefully.
-    # Partial results may be available via the orchestrator.
+    print(f"Cost approval declined: ${e.accumulated:.2f} of ${e.limit:.2f} limit")
 ```
 
-### Stop Reason
+#### CostLimitExceeded Attributes
 
-When optimization stops due to cost (without raising an exception), the result will have:
+| Attribute | Type | Description |
+|---|---|---|
+| `accumulated` | `float` | Total cost in USD accumulated when approval was declined. |
+| `limit` | `float` | The configured cost limit in USD. |
+
+### Mid-Run: Graceful stop (check stop_reason)
+
+When accumulated spend reaches the budget limit *during* a run, Traigent stops gracefully after the current trial and **returns** a partial `OptimizationResult`. No exception is raised. Inspect `result.stop_reason` to detect this:
 
 ```python
 results = await func.optimize(max_trials=50, algorithm="random")
 if results.stop_reason == "cost_limit":
-    print(f"Stopped at cost limit. Total cost: ${results.total_cost:.2f}")
+    print(f"Run stopped at cost limit. Total cost: ${results.total_cost:.2f}")
+    # results.best_config and results.trials hold what was collected so far
 ```
 
 ## Cost Tracking via LiteLLM
@@ -119,8 +116,9 @@ The environment value must be exactly `true`. In strict mode, unpriced models
 fail fast before trial 1, and missing or unknown runtime cost extraction raises
 `CostTrackingRequiredError` instead of logging a warning and continuing.
 
-Budget overruns are separate: `TRAIGENT_RUN_COST_LIMIT` controls the run budget
-and raises `CostLimitExceeded` when exceeded.
+Budget limits are separate: `TRAIGENT_RUN_COST_LIMIT` controls the run budget.
+Mid-run overruns stop the run gracefully (check `result.stop_reason == "cost_limit"`);
+pre-run approval failures raise `CostLimitExceeded`.
 
 ## Cost Warning Threshold
 

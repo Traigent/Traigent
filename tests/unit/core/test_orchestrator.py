@@ -2351,8 +2351,10 @@ class TestStopReasonInResult:
         assert len(result.trials) == 0
 
     @pytest.mark.asyncio
-    async def test_stop_reason_cost_limit(self, sample_dataset, monkeypatch):
-        """stop_reason is 'cost_limit' when the spend guard stops the run."""
+    async def test_mid_run_cost_limit_gracefully_returns_result(
+        self, sample_dataset, monkeypatch
+    ):
+        """Mid-run cost stops return a partial result with stop_reason='cost_limit'."""
         # Disable mock-LLM bypass so CostEnforcer tracks real permits.
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
         config_space = {"param1": (0, 1)}
@@ -2373,6 +2375,7 @@ class TestStopReasonInResult:
 
         result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
 
+        assert isinstance(result, OptimizationResult)
         assert result.stop_reason == "cost_limit"
         assert orchestrator._stop_reason == "cost_limit"
         assert len(result.trials) >= 1
