@@ -15,7 +15,7 @@ python examples/core/rag-optimization/run.py
 
 | Parameter | Values | Purpose |
 |-----------|--------|---------|
-| `model` | claude-3-5-sonnet, claude-3-haiku | Model selection |
+| `model` | claude-haiku-4-5-20251001, claude-sonnet-4-6 | Model selection |
 | `temperature` | 0.0 | Response consistency |
 | `use_rag` | true, false | Toggle RAG retrieval |
 | `top_k` | 1, 2, 3 | Documents to retrieve |

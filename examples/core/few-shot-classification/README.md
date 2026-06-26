@@ -13,7 +13,7 @@ python examples/core/few-shot-classification/run.py
 
 | Parameter | Values | Purpose |
 |-----------|--------|---------|
-| `model` | claude-3-haiku, claude-3-5-sonnet | Model selection |
+| `model` | claude-haiku-4-5-20251001, claude-sonnet-4-6 | Model selection |
 | `temperature` | 0.0, 0.3 | Response variance |
 | `k` | 0, 2, 4 | Number of examples |
 | `selection_strategy` | top_k, diverse | Example selection method |

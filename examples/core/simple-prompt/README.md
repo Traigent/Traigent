@@ -13,7 +13,7 @@ This is the "Hello World" of Traigent. It demonstrates the most basic usage: opt
 
 We want to summarize short text snippets. We are optimizing:
 
-1. **Model**: `claude-3-haiku` vs `claude-3-5-sonnet`.
+1. **Model**: `claude-haiku-4-5-20251001` vs `claude-sonnet-4-6`.
 2. **Temperature**: `0.0` (deterministic) vs `0.7` (creative).
 3. **Prompt Style**: `concise` vs `detailed`.
 

@@ -229,7 +229,7 @@ The default run uses Traigent's smart optimizer when portal credentials are avai
 ```python
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
+        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini/gemini-pro"],
         "temperature": [0.1, 0.5, 0.9],
     },
     objectives=["accuracy", "cost"],
@@ -313,7 +313,7 @@ for details.
 
 ### Evaluation
 
-Provide a JSONL dataset — Traigent scores outputs using semantic similarity by default:
+Provide a JSONL dataset — Traigent scores outputs by exact / case-insensitive match by default. For semantic scoring (paraphrases, summarization, translation), supply a `scoring_function` (embeddings or LLM-judge) or a `custom_evaluator`:
 
 ```jsonl
 {"input": {"question": "What is AI?"}, "output": "Artificial Intelligence"}

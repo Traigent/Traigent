@@ -206,7 +206,7 @@ def _mock_generate_sql(question: str) -> str:
     configuration_space={
         "model": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "temperature": [0.0, 0.2],
-        "include_schema": ["true", "false"],
+        "include_schema": [True, False],
     },
     metric_functions={"sql_accuracy": sql_accuracy},
     injection_mode="seamless",
@@ -234,7 +234,9 @@ def generate_sql(question: str) -> str:
     config = traigent.get_config()
     model = str(config.get("model", "claude-sonnet-4-6"))
     temperature = float(config.get("temperature", 0.0))
-    include_schema = str(config.get("include_schema", "true")) == "true"
+    include_schema = config.get("include_schema", True)
+    if not isinstance(include_schema, bool):
+        raise TypeError("include_schema config value must be a bool")
 
     system_parts = [
         "You are an expert SQL assistant. Convert the user's question into a valid SQL query.",
@@ -271,9 +273,9 @@ if __name__ == "__main__":
         print("        billing, network_usage)")
         print("Objective: sql_accuracy (normalize + exact-match scoring)")
         print("Configuration space:")
-        print("  - model: claude-3-haiku, claude-3-5-sonnet")
+        print("  - model: claude-haiku-4-5-20251001, claude-sonnet-4-6")
         print("  - temperature: 0.0, 0.2")
-        print("  - include_schema: true, false")
+        print("  - include_schema: True, False")
         print(
             f"Mode: {'MOCK (no API key required)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
         )
