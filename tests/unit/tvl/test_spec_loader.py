@@ -102,6 +102,103 @@ def test_environment_overrides_budget_and_space() -> None:
     assert artifact.configuration_space["retrieval_depth"] == (3, 8)
 
 
+def test_environment_overlay_out_of_domain_default_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Invalid defaults introduced by the active environment fail closed."""
+    spec_content = """
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    default: 0.5
+
+environments:
+  production:
+    overrides:
+      configuration_space:
+        temperature:
+          default: 2.0
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "env-invalid-default.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    with pytest.raises(TVLValidationError) as exc_info:
+        load_tvl_spec(spec_path=spec_file, environment="production")
+
+    message = str(exc_info.value)
+    assert "TVL schema validation failed" in message
+    assert "temperature" in message
+    assert "outside declared domain" in message
+
+
+def test_environment_overlay_valid_default_loads(tmp_path: Path) -> None:
+    """Valid defaults introduced by the active environment still load."""
+    spec_content = """
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    default: 0.5
+
+environments:
+  production:
+    overrides:
+      configuration_space:
+        temperature:
+          default: 0.7
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "env-valid-default.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    artifact = load_tvl_spec(spec_path=spec_file, environment="production")
+
+    assert artifact.default_config == {"temperature": 0.7}
+    assert artifact.configuration_space["temperature"] == (0.0, 1.0)
+
+
+def test_base_out_of_domain_default_still_fails_before_overlay(
+    tmp_path: Path,
+) -> None:
+    """Base-spec validation still fails before considering environment overlays."""
+    spec_content = """
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    default: 2.0
+
+environments:
+  production:
+    overrides:
+      configuration_space:
+        temperature:
+          default: 0.5
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "base-invalid-default.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    with pytest.raises(TVLValidationError) as exc_info:
+        load_tvl_spec(spec_path=spec_file, environment="production")
+
+    message = str(exc_info.value)
+    assert "TVL schema validation failed" in message
+    assert "temperature" in message
+    assert "outside declared domain" in message
+
+
 def test_compiled_constraints_attach_metadata() -> None:
     """Constraints are converted to decorator callables with metadata."""
 
@@ -1620,6 +1717,41 @@ class TestSchemaValidation:
         issues = validate_tvl_schema(data)
         assert any("invalid_type" in issue for issue in issues)
 
+    def test_validate_domain_membership_and_numeric_ranges(self) -> None:
+        """Out-of-domain defaults and invalid ranges are flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvl_version": "0.9",
+            "tvars": [
+                {
+                    "name": "model",
+                    "type": "enum[str]",
+                    "domain": ["gpt-4o"],
+                    "default": "claude-3",
+                },
+                {
+                    "name": "temperature",
+                    "type": "float",
+                    "domain": {"range": [1.0, 0.0]},
+                    "default": 0.5,
+                },
+            ],
+            "defaults": {"unknown_tvar": 1},
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any(
+            "model" in issue and "default" in issue and "declared domain" in issue
+            for issue in issues
+        )
+        assert any(
+            "temperature" in issue and "range lower bound" in issue for issue in issues
+        )
+        assert any(
+            "unknown_tvar" in issue and "unknown TVAR" in issue for issue in issues
+        )
+
     def test_validate_invalid_objective_direction(self) -> None:
         """Invalid objective direction is flagged."""
         from traigent.tvl.spec_loader import validate_tvl_schema
@@ -1668,7 +1800,7 @@ class TestSchemaValidation:
             validate_tvl_schema(data, strict=True)
 
     def test_load_tvl_spec_with_validate_schema_true(self, tmp_path: Path) -> None:
-        """load_tvl_spec validates schema and logs warnings."""
+        """load_tvl_spec fails closed on schema validation errors."""
         spec_content = """
 tvl_version: "0.9"
 tvars:
@@ -1683,10 +1815,105 @@ objectives:
         spec_file = tmp_path / "test.tvl.yml"
         spec_file.write_text(spec_content)
 
-        # Should complete without raising
-        artifact = load_tvl_spec(spec_path=spec_file, validate_schema=True)
-        assert artifact is not None
-        assert "temperature" in artifact.configuration_space
+        with pytest.raises(TVLValidationError, match="TVL schema validation failed"):
+            load_tvl_spec(spec_path=spec_file, validate_schema=True)
+
+    def test_load_tvl_spec_raises_for_schema_errors_and_out_of_domain_default(
+        self, tmp_path: Path
+    ) -> None:
+        """Invalid structure plus out-of-domain values raise at the load gate."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+    default: "claude-3"
+  - name: temperature
+    type: float
+    domain:
+      range: [1.0, 0.0]
+    default: 0.5
+unknown_section: should_fail_closed
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "invalid.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        with pytest.raises(TVLValidationError) as exc_info:
+            load_tvl_spec(spec_path=spec_file)
+
+        message = str(exc_info.value)
+        assert "TVL schema validation failed" in message
+        assert "Unknown top-level sections" in message
+        assert "model" in message and "declared domain" in message
+        assert "temperature" in message and "range lower bound" in message
+
+    def test_load_tvl_spec_loads_valid_domain_defaults(self, tmp_path: Path) -> None:
+        """Valid defaults inside declared domains still load cleanly."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o", "gpt-4o-mini"]
+    default: "gpt-4o"
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+    default: 0.5
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "valid.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.default_config == {"model": "gpt-4o", "temperature": 0.5}
+        assert artifact.configuration_space["model"] == ["gpt-4o", "gpt-4o-mini"]
+        assert artifact.configuration_space["temperature"] == (0.0, 1.0)
+
+    def test_load_tvl_spec_allows_cosmetic_deprecation_warnings(
+        self, tmp_path: Path
+    ) -> None:
+        """Cosmetic legacy warnings do not trip the fail-closed schema gate."""
+        spec_content = """
+configuration_space:
+  model:
+    type: categorical
+    values: ["gpt-4o-mini", "gpt-4o"]
+    default: "gpt-4o-mini"
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    default: 0.2
+
+constraints:
+  - id: temperature-limit
+    type: expression
+    rule: 'params.temperature <= 0.8'
+    error_message: "Keep temperature reasonable"
+
+optimization:
+  objectives:
+    - name: accuracy
+      direction: maximize
+"""
+        spec_file = tmp_path / "legacy.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        with pytest.warns(DeprecationWarning):
+            artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.default_config == {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+        }
 
     def test_load_tvl_spec_with_validate_schema_false(self, tmp_path: Path) -> None:
         """load_tvl_spec can skip schema validation."""
