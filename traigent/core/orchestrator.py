@@ -703,7 +703,7 @@ class OptimizationOrchestrator:
         self._stop_reason: StopReason | None = None
         # #1404: bounded auto-retry budget for transient vendor errors (429/503)
         # before the run loop gives up. Cumulative per category so the run always
-        # terminates. Configured via TRAIGENT_VENDOR_MAX_RETRIES (default 2).
+        # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
         self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
         self._logger: OptimizationLogger | None = None
         self._logger_v2: Any | None = None
