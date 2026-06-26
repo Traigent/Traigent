@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
 
 from traigent.prompts.dtos import PaginationInfo
+
+
+def _retain_extra(cls: type, payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the payload keys NOT mapped to a typed field on ``cls``.
+
+    Forward-compatibility guard: any backend response key the DTO does not
+    model is retained in the DTO's ``extra`` field rather than being silently
+    dropped, so a new backend key is preserved and remains accessible to
+    callers (no data loss when the backend shape evolves ahead of the DTO).
+
+    Known keys are derived from the dataclass field names (which mirror the
+    backend ``to_dict()`` keys one-to-one), so adding a typed field
+    automatically excludes it from ``extra`` — the set cannot drift.
+    """
+    known = {f.name for f in fields(cls)} - {"extra"}
+    return {key: value for key, value in payload.items() if key not in known}
 
 
 def _coalesce_not_none(candidate: dict[str, Any], *keys: str) -> Any:
@@ -537,6 +553,9 @@ class ScoreRecordDTO:
     actor_user_id: str | None
     created_at: str | None
     updated_at: str | None
+    # Forward-compat: any backend ScoreRecord.to_dict() key not modeled above
+    # is retained here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ScoreRecordDTO:
@@ -567,6 +586,7 @@ class ScoreRecordDTO:
             actor_user_id=payload.get("actor_user_id"),
             created_at=payload.get("created_at"),
             updated_at=payload.get("updated_at"),
+            extra=_retain_extra(cls, payload),
         )
 
 
@@ -630,6 +650,9 @@ class AnnotationQueueItemDTO:
     completed_at: str | None
     created_at: str | None
     updated_at: str | None
+    # Forward-compat: any backend AnnotationQueueItem.to_dict() key not modeled
+    # above is retained here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AnnotationQueueItemDTO:
@@ -654,6 +677,7 @@ class AnnotationQueueItemDTO:
             completed_at=payload.get("completed_at"),
             created_at=payload.get("created_at"),
             updated_at=payload.get("updated_at"),
+            extra=_retain_extra(cls, payload),
         )
 
 
@@ -747,6 +771,9 @@ class AnnotationQueueItemCreateResultDTO:
     queue_id: str
     created_count: int
     items: list[AnnotationQueueItemDTO]
+    # Forward-compat: any top-level result key not modeled above is retained
+    # here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AnnotationQueueItemCreateResultDTO:
@@ -757,6 +784,7 @@ class AnnotationQueueItemCreateResultDTO:
                 AnnotationQueueItemDTO.from_dict(item)
                 for item in payload.get("items") or []
             ],
+            extra=_retain_extra(cls, payload),
         )
 
 
@@ -772,6 +800,9 @@ class AnnotationQueueItemCompleteResultDTO:
     queue_id: str
     item: AnnotationQueueItemDTO
     scores: list[ScoreRecordDTO]
+    # Forward-compat: any top-level result key not modeled above is retained
+    # here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AnnotationQueueItemCompleteResultDTO:
@@ -779,6 +810,7 @@ class AnnotationQueueItemCompleteResultDTO:
             queue_id=str(payload.get("queue_id", "")),
             item=AnnotationQueueItemDTO.from_dict(payload.get("item") or {}),
             scores=[ScoreRecordDTO.from_dict(s) for s in payload.get("scores") or []],
+            extra=_retain_extra(cls, payload),
         )
 
 
@@ -818,6 +850,13 @@ class TypedMeasureDTO:
     allowed_score_sources: list[str]
     created_at: str | None
     updated_at: str | None
+    # ``error`` is emitted by the backend Measure.to_dict() EXCEPTION fallback
+    # branch (src/models/measure.py) when full conversion fails. None on the
+    # happy path. Carried so create/update_typed_measure don't drop it (#1444).
+    error: str | None
+    # Forward-compat: any backend Measure.to_dict() key not modeled above is
+    # retained here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> TypedMeasureDTO:
@@ -851,4 +890,6 @@ class TypedMeasureDTO:
             ],
             created_at=payload.get("created_at"),
             updated_at=payload.get("updated_at"),
+            error=payload.get("error"),
+            extra=_retain_extra(cls, payload),
         )

@@ -7,6 +7,7 @@ import pytest
 from traigent.evaluation import (
     AnnotationQueueItemCompleteResultDTO,
     AnnotationQueueItemCreateResultDTO,
+    AnnotationQueueItemDTO,
     AnnotationQueueItemStatus,
     AnnotationQueueStatus,
     EvaluationClient,
@@ -15,6 +16,7 @@ from traigent.evaluation import (
     EvaluatorRunStatus,
     JudgeConfigDTO,
     MeasureValueType,
+    ScoreRecordDTO,
     TypedMeasureDTO,
 )
 from traigent.utils.exceptions import AuthenticationError, TraigentConnectionError
@@ -1032,3 +1034,122 @@ def test_update_typed_measure_returns_typed_dto():
     assert result.version == "1.1.0"
     assert result.linked_evaluator_count == 1
     assert result.allowed_score_sources == ["manual", "evaluator"]
+
+
+# ---------------------------------------------------------------------------
+# Issue #1444 — no-data-loss: error field + forward-compat `extra` retention
+# ---------------------------------------------------------------------------
+
+
+def test_typed_measure_dto_carries_error_fallback_field():
+    """TypedMeasureDTO must surface the backend Measure.to_dict() EXCEPTION-path
+    `error` key (src/models/measure.py), not drop it."""
+    payload = {
+        "id": "measure_x",
+        "measure_id": "measure_x",
+        "tenant_id": "tenant_1",
+        "owner_user_id": "owner_1",
+        "project_id": "project_1",
+        "label": "Broken Measure",
+        "description": "partial",
+        "error": "Failed to convert all fields",
+    }
+
+    dto = TypedMeasureDTO.from_dict(payload)
+
+    assert dto.error == "Failed to convert all fields"
+    # Happy-path payloads (no error key) leave it None.
+    happy = TypedMeasureDTO.from_dict(
+        {"id": "m", "label": "ok", "measure_type": "accuracy"}
+    )
+    assert happy.error is None
+
+
+def test_annotation_queue_item_dto_retains_unknown_keys_in_extra():
+    """A backend key the DTO does not model must survive into `.extra`, never
+    be silently dropped (forward-compat guard, #1444)."""
+    payload = {
+        "id": "item_1",
+        "tenant_id": "tenant_1",
+        "project_id": "project_1",
+        "queue_id": "q_1",
+        "target_type": "observability_trace",
+        "target_id": "trace_1",
+        "status": "pending",
+        # A future/unmodeled backend field:
+        "future_backend_field": {"nested": 42},
+    }
+
+    dto = AnnotationQueueItemDTO.from_dict(payload)
+
+    assert dto.extra == {"future_backend_field": {"nested": 42}}
+    # Known keys must NOT leak into extra.
+    assert "id" not in dto.extra
+    assert "tenant_id" not in dto.extra
+
+
+def test_score_record_dto_retains_unknown_keys_in_extra():
+    """ScoreRecordDTO retains unmodeled backend keys in `.extra` (#1444)."""
+    payload = {
+        "id": "score_1",
+        "tenant_id": "tenant_1",
+        "project_id": "project_1",
+        "measure_id": "quality_score",
+        "target_type": "observability_trace",
+        "target_id": "trace_1",
+        "source": "manual",
+        "numeric_value": 0.9,
+        # Unmodeled future field:
+        "data_type": "NUMERIC",
+    }
+
+    dto = ScoreRecordDTO.from_dict(payload)
+
+    assert dto.extra == {"data_type": "NUMERIC"}
+    assert "measure_id" not in dto.extra
+
+
+def test_typed_measure_dto_retains_unknown_keys_in_extra():
+    """TypedMeasureDTO retains unmodeled backend keys in `.extra` (#1444)."""
+    payload = {
+        "id": "measure_x",
+        "label": "Accuracy",
+        "measure_type": "accuracy",
+        # Unmodeled future field:
+        "experimental_weight": 0.5,
+    }
+
+    dto = TypedMeasureDTO.from_dict(payload)
+
+    assert dto.extra == {"experimental_weight": 0.5}
+    # The `error` field is a modeled key, so it never lands in extra.
+    assert "error" not in dto.extra
+
+
+def test_result_dtos_retain_unknown_top_level_keys_in_extra():
+    """Both result DTOs retain unmodeled top-level result keys in `.extra` (#1444)."""
+    create = AnnotationQueueItemCreateResultDTO.from_dict(
+        {
+            "queue_id": "q_1",
+            "created_count": 0,
+            "items": [],
+            "request_id": "req_123",
+        }
+    )
+    assert create.extra == {"request_id": "req_123"}
+
+    complete = AnnotationQueueItemCompleteResultDTO.from_dict(
+        {
+            "queue_id": "q_1",
+            "item": {
+                "id": "item_1",
+                "queue_id": "q_1",
+                "target_type": "observability_trace",
+                "target_id": "trace_1",
+                "status": "completed",
+            },
+            "scores": [],
+            "audit_token": "tok_456",
+        }
+    )
+    assert complete.extra == {"audit_token": "tok_456"}
