@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, cast
+from collections.abc import Iterator
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
@@ -14,6 +15,7 @@ from traigent.prompts.dtos import (
     PromptDetail,
     PromptListResponse,
     PromptPlaygroundResult,
+    PromptSummary,
     PromptType,
     ResolvedPrompt,
 )
@@ -23,6 +25,7 @@ from traigent.utils.exceptions import (
     ClientError,
     TraigentConnectionError,
 )
+from traigent.utils.pagination import iter_pages
 
 
 class PromptManagementClient:
@@ -62,6 +65,33 @@ class PromptManagementClient:
         )
         payload = self._request_json("GET", query or "")
         return PromptListResponse.from_dict(self._unwrap_data(payload, "prompt list"))
+
+    def iter_prompts(
+        self,
+        *,
+        per_page: int = 100,
+        search: str | None = None,
+        prompt_type: PromptType | str | None = None,
+        label: str | None = None,
+    ) -> Iterator[PromptSummary]:
+        """Iterate over *all* prompts across pages, fetching lazily.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        search, prompt_type, label:
+            Same filter semantics as :meth:`list_prompts`.
+        """
+        yield from iter_pages(
+            self.list_prompts,
+            per_page=per_page,
+            search=search,
+            prompt_type=prompt_type,
+            label=label,
+        )
 
     def get_prompt(self, name: str) -> PromptDetail:
         payload = self._request_json("GET", f"/{self._quote_name(name)}")

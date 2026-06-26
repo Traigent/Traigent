@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from collections.abc import Iterator
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
@@ -21,6 +22,7 @@ from traigent.utils.exceptions import (
     ClientError,
     TraigentConnectionError,
 )
+from traigent.utils.pagination import iter_pages
 
 
 class ProjectManagementClient:
@@ -53,6 +55,31 @@ class ProjectManagementClient:
         path = f"?{query}" if query else ""
         payload = self._request_json("GET", path)
         return ProjectListResponse.from_dict(self._unwrap_data(payload, "project list"))
+
+    def iter_projects(
+        self,
+        *,
+        per_page: int = 100,
+        search: str | None = None,
+        status: str | None = None,
+    ) -> Iterator[ProjectDTO]:
+        """Iterate over *all* projects across pages, fetching lazily.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        search, status:
+            Same filter semantics as :meth:`list_projects`.
+        """
+        yield from iter_pages(
+            self.list_projects,
+            per_page=per_page,
+            search=search,
+            status=status,
+        )
 
     def get_project(self, project_id: str) -> ProjectDTO:
         payload = self._request_json("GET", f"/{quote(project_id, safe='')}")
