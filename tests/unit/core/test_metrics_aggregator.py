@@ -122,6 +122,29 @@ def test_mandatory_metrics_prefer_trial_values() -> None:
     assert aggregated.processed_metrics["total_tokens"] == 20
 
 
+def test_pruned_spend_counts_but_objective_metrics_stay_completed_only() -> None:
+    registry = MetricRegistry.default()
+
+    completed = make_trial(
+        trial_id="completed",
+        metrics={"accuracy": 0.8, "total_cost": 0.11, "total_tokens": 100},
+        status=TrialStatus.COMPLETED,
+    )
+    pruned = make_trial(
+        trial_id="pruned",
+        metrics={"accuracy": 0.1, "total_cost": 0.07, "total_tokens": 40},
+        status=TrialStatus.PRUNED,
+    )
+
+    aggregated = aggregate_metrics([completed, pruned], registry)
+
+    assert aggregated.total_cost == pytest.approx(0.18)
+    assert aggregated.total_tokens == 140
+    assert aggregated.processed_metrics["total_cost"] == pytest.approx(0.18)
+    assert aggregated.processed_metrics["total_tokens"] == 140
+    assert aggregated.processed_metrics["accuracy"] == pytest.approx(0.8)
+
+
 def test_build_safeguards_telemetry_defaults_to_allow_repeats() -> None:
     telemetry = build_safeguards_telemetry(
         trials_prevented=2,

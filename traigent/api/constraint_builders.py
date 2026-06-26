@@ -23,6 +23,12 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+__all__ = [
+    "NumericConstraintBuilderMixin",
+    "CategoricalConstraintBuilderMixin",
+]
+
+
 def _parameter_label(tvar: Any) -> str:
     return str(getattr(tvar, "name", None) or "parameter")
 
