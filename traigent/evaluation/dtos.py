@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
 
 from traigent.prompts.dtos import PaginationInfo
+
+
+def _retain_extra(cls: type, payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the payload keys NOT mapped to a typed field on ``cls``.
+
+    Forward-compatibility guard: any backend response key the DTO does not
+    model is retained in the DTO's ``extra`` field rather than being silently
+    dropped, so a new backend key is preserved and remains accessible to
+    callers (no data loss when the backend shape evolves ahead of the DTO).
+
+    Known keys are derived from the dataclass field names (which mirror the
+    backend ``to_dict()`` keys one-to-one), so adding a typed field
+    automatically excludes it from ``extra`` — the set cannot drift.
+    """
+    known = {f.name for f in fields(cls)} - {"extra"}
+    return {key: value for key, value in payload.items() if key not in known}
 
 
 def _coalesce_not_none(candidate: dict[str, Any], *keys: str) -> Any:
@@ -513,6 +529,12 @@ class BackfillResultDTO:
 @dataclass(frozen=True)
 class ScoreRecordDTO:
     id: str
+    # tenant_id / project_id are present in the backend ScoreRecord.to_dict()
+    # runtime shape (src/models/score_record.py) — the dict returned by
+    # create_manual_score and carried in complete_annotation_queue_item's
+    # `scores`. Kept so the DTO is a strict superset of the prior raw dict (#1444).
+    tenant_id: str | None
+    project_id: str | None
     measure_id: str
     evaluator_run_id: str | None
     target_type: EvaluationTargetType
@@ -531,12 +553,17 @@ class ScoreRecordDTO:
     actor_user_id: str | None
     created_at: str | None
     updated_at: str | None
+    # Forward-compat: any backend ScoreRecord.to_dict() key not modeled above
+    # is retained here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ScoreRecordDTO:
         value_type = payload.get("value_type")
         return cls(
             id=str(payload.get("id", "")),
+            tenant_id=payload.get("tenant_id"),
+            project_id=payload.get("project_id"),
             measure_id=str(payload.get("measure_id", "")),
             evaluator_run_id=payload.get("evaluator_run_id"),
             target_type=_require_target_type(payload),
@@ -559,6 +586,7 @@ class ScoreRecordDTO:
             actor_user_id=payload.get("actor_user_id"),
             created_at=payload.get("created_at"),
             updated_at=payload.get("updated_at"),
+            extra=_retain_extra(cls, payload),
         )
 
 
@@ -603,6 +631,12 @@ class AnnotationQueueDTO:
 @dataclass(frozen=True)
 class AnnotationQueueItemDTO:
     id: str
+    # tenant_id / project_id are present in the backend AnnotationQueueItem.to_dict()
+    # runtime shape (src/models/annotation_queue_item.py). They are carried so the
+    # DTO is a strict superset of the raw dict previously returned by
+    # add_annotation_queue_items / complete_annotation_queue_item (#1444).
+    tenant_id: str | None
+    project_id: str | None
     queue_id: str
     target_type: EvaluationTargetType
     target_id: str
@@ -616,11 +650,16 @@ class AnnotationQueueItemDTO:
     completed_at: str | None
     created_at: str | None
     updated_at: str | None
+    # Forward-compat: any backend AnnotationQueueItem.to_dict() key not modeled
+    # above is retained here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AnnotationQueueItemDTO:
         return cls(
             id=str(payload.get("id", "")),
+            tenant_id=payload.get("tenant_id"),
+            project_id=payload.get("project_id"),
             queue_id=str(payload.get("queue_id", "")),
             target_type=_require_target_type(payload),
             target_id=str(payload.get("target_id", "")),
@@ -638,6 +677,7 @@ class AnnotationQueueItemDTO:
             completed_at=payload.get("completed_at"),
             created_at=payload.get("created_at"),
             updated_at=payload.get("updated_at"),
+            extra=_retain_extra(cls, payload),
         )
 
 
@@ -716,4 +756,140 @@ class AnnotationQueueItemListResponse:
                 for item in payload.get("items") or []
             ],
             pagination=PaginationInfo.from_dict(payload.get("pagination") or {}),
+        )
+
+
+@dataclass(frozen=True)
+class AnnotationQueueItemCreateResultDTO:
+    """Return type for :meth:`EvaluationClient.add_annotation_queue_items`.
+
+    Matches the backend response shape:
+    ``{"queue_id": str, "created_count": int, "items": [<AnnotationQueueItem>]}``.
+    Parity with JS ``AnnotationQueueItemCreateResult`` (AnnotationQueueItemCreateResultSchema).
+    """
+
+    queue_id: str
+    created_count: int
+    items: list[AnnotationQueueItemDTO]
+    # Forward-compat: any top-level result key not modeled above is retained
+    # here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> AnnotationQueueItemCreateResultDTO:
+        return cls(
+            queue_id=str(payload.get("queue_id", "")),
+            created_count=int(payload.get("created_count", 0)),
+            items=[
+                AnnotationQueueItemDTO.from_dict(item)
+                for item in payload.get("items") or []
+            ],
+            extra=_retain_extra(cls, payload),
+        )
+
+
+@dataclass(frozen=True)
+class AnnotationQueueItemCompleteResultDTO:
+    """Return type for :meth:`EvaluationClient.complete_annotation_queue_item`.
+
+    Matches the backend response shape:
+    ``{"queue_id": str, "item": <AnnotationQueueItem>, "scores": [<ScoreRecord>]}``.
+    Parity with JS ``AnnotationQueueItemCompleteResult`` (AnnotationQueueItemCompleteResultSchema).
+    """
+
+    queue_id: str
+    item: AnnotationQueueItemDTO
+    scores: list[ScoreRecordDTO]
+    # Forward-compat: any top-level result key not modeled above is retained
+    # here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> AnnotationQueueItemCompleteResultDTO:
+        return cls(
+            queue_id=str(payload.get("queue_id", "")),
+            item=AnnotationQueueItemDTO.from_dict(payload.get("item") or {}),
+            scores=[ScoreRecordDTO.from_dict(s) for s in payload.get("scores") or []],
+            extra=_retain_extra(cls, payload),
+        )
+
+
+@dataclass(frozen=True)
+class TypedMeasureDTO:
+    """Return type for :meth:`EvaluationClient.create_typed_measure` and
+    :meth:`EvaluationClient.update_typed_measure`.
+
+    Mirrors the backend ``Measure.to_dict()`` shape.  The ``measure_id`` field is
+    a backward-compatibility alias for ``id`` preserved by the backend.
+    """
+
+    id: str
+    measure_id: str
+    label: str
+    measure_type: str
+    version: str
+    value_type: str
+    is_custom: bool
+    tenant_id: str | None
+    owner_user_id: str | None
+    project_id: str | None
+    description: str | None
+    category: str | None
+    evaluation_method: str | None
+    target_aspect: str | None
+    inverse: bool | None
+    unit: str | None
+    criteria: str | None
+    linked_evaluator_count: int
+    domain: list[float]
+    agent_types: list[dict[str, Any]]
+    python_packages: list[Any]
+    measure_parameters: dict[str, Any]
+    categories: list[str]
+    target_types: list[str]
+    allowed_score_sources: list[str]
+    created_at: str | None
+    updated_at: str | None
+    # ``error`` is emitted by the backend Measure.to_dict() EXCEPTION fallback
+    # branch (src/models/measure.py) when full conversion fails. None on the
+    # happy path. Carried so create/update_typed_measure don't drop it (#1444).
+    error: str | None
+    # Forward-compat: any backend Measure.to_dict() key not modeled above is
+    # retained here instead of being dropped (#1444).
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> TypedMeasureDTO:
+        return cls(
+            id=str(payload.get("id", "")),
+            measure_id=str(payload.get("measure_id") or payload.get("id", "")),
+            label=str(payload.get("label", "")),
+            measure_type=str(payload.get("measure_type", "")),
+            version=str(payload.get("version", "1.0.0")),
+            value_type=str(payload.get("value_type") or "numeric"),
+            is_custom=bool(payload.get("is_custom", False)),
+            tenant_id=payload.get("tenant_id"),
+            owner_user_id=payload.get("owner_user_id"),
+            project_id=payload.get("project_id"),
+            description=payload.get("description"),
+            category=payload.get("category"),
+            evaluation_method=payload.get("evaluation_method"),
+            target_aspect=payload.get("target_aspect"),
+            inverse=payload.get("inverse"),
+            unit=payload.get("unit"),
+            criteria=payload.get("criteria"),
+            linked_evaluator_count=int(payload.get("linked_evaluator_count", 0)),
+            domain=list(payload.get("domain") or [0.0, 1.0]),
+            agent_types=list(payload.get("agent_types") or []),
+            python_packages=list(payload.get("python_packages") or []),
+            measure_parameters=dict(payload.get("measure_parameters") or {}),
+            categories=[str(c) for c in payload.get("categories") or []],
+            target_types=[str(t) for t in payload.get("target_types") or []],
+            allowed_score_sources=[
+                str(s) for s in payload.get("allowed_score_sources") or []
+            ],
+            created_at=payload.get("created_at"),
+            updated_at=payload.get("updated_at"),
+            error=payload.get("error"),
+            extra=_retain_extra(cls, payload),
         )
