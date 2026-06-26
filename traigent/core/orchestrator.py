@@ -2850,6 +2850,28 @@ class OptimizationOrchestrator:
             await self._finalize_optimization(result, session_id, session_span)
             return result
 
+        except KeyboardInterrupt:
+            self._stop_reason = "user_cancelled"
+            self._status = OptimizationStatus.CANCELLED
+            logger.warning(
+                "Optimization %s interrupted by user; stopping and finalizing "
+                "with %d completed trial(s).",
+                self._optimization_id,
+                len(self._trials),
+            )
+            result = self._create_optimization_result()
+            try:
+                await self._finalize_optimization(result, session_id, session_span)
+            except Exception as finalize_error:
+                logger.warning(
+                    "Finalization failed after user interrupt; returning partial "
+                    "optimization result with %d completed trial(s): %s",
+                    len(self._trials),
+                    finalize_error,
+                    exc_info=True,
+                )
+            return result
+
         except OptimizationError:
             self._status = OptimizationStatus.FAILED
             raise
