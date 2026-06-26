@@ -630,6 +630,56 @@ class TestOptimizationOrchestrator:
         assert evaluator.calls == 2
         assert evaluator.evaluation_count == 1
 
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)
+    async def test_cancelled_error_returns_completed_partial_trials(
+        self, mock_optimizer, mock_function, sample_dataset
+    ):
+        """asyncio task cancellation returns completed partial results."""
+
+        class CancelDuringSecondTrialEvaluator(MockEvaluator):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+                self.second_trial_started = asyncio.Event()
+
+            async def evaluate(self, *args, **kwargs) -> EvaluationResult:
+                self.calls += 1
+                if self.calls > 1:
+                    self.second_trial_started.set()
+                    await asyncio.sleep(60)
+                return await super().evaluate(*args, **kwargs)
+
+        evaluator = CancelDuringSecondTrialEvaluator()
+        mock_optimizer.set_max_suggestions(5)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=evaluator,
+            max_trials=5,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        task = asyncio.create_task(orchestrator.optimize(mock_function, sample_dataset))
+        await asyncio.wait_for(evaluator.second_trial_started.wait(), timeout=1.0)
+        task.cancel()
+
+        try:
+            result = await task
+        except asyncio.CancelledError as exc:
+            raise AssertionError(
+                "CancelledError should return a partial OptimizationResult"
+            ) from exc
+
+        assert isinstance(result, OptimizationResult)
+        assert result.stop_reason == "user_cancelled"
+        assert result.status == OptimizationStatus.CANCELLED
+        assert result.metadata["persistence_status"] == "skipped"
+        assert len(result.trials) == 1
+        assert result.trials[0].status == TrialStatus.COMPLETED
+        assert result.trials[0].config["param1"] == 0
+        assert evaluator.calls == 2
+        assert evaluator.evaluation_count == 1
+
     def test_result_source_is_local_when_backend_degraded(self, orchestrator):
         """Issue #1265: when the backend becomes unreachable mid-run, the
         result is marked source='local_fallback' (top-level field and metadata) rather
