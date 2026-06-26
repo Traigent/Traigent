@@ -25,6 +25,14 @@ from traigent.utils.exceptions import ValidationError
 logger = logging.getLogger(__name__)
 
 
+__all__ = [
+    "OptimizeParameters",
+    "ParameterValidator",
+    "validate_optimize_parameters",
+    "validate_safety_constraints",
+]
+
+
 @dataclass
 class OptimizeParameters:
     """Structured representation of optimize decorator parameters."""

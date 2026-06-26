@@ -50,6 +50,27 @@ if TYPE_CHECKING:
     from traigent.core.objectives import ObjectiveSchema
 
 
+__all__ = [
+    "configure",
+    "initialize",
+    "get_global_config",
+    "get_api_key",
+    "get_config",
+    "get_trial_config",
+    "get_current_config",
+    "override_config",
+    "configure_for_budget",
+    "set_strategy",
+    "get_available_strategies",
+    "list_recommendation_agent_types",
+    "recommend_configuration_space",
+    "get_version_info",
+    "get_optimization_insights",
+    "get_global_parallel_config",
+    "with_usage",
+]
+
+
 def configure(
     default_storage_backend: str | None = None,
     parallel_workers: int | None = None,

@@ -49,6 +49,24 @@ _FAILED_PARETO_RATIONALE = (
 _FLOAT_BOUNDARY_TOLERANCE = 1e-9
 
 
+__all__ = [
+    "PresetName",
+    "ADVISORY_SELECTION_NOTICE",
+    "MAX_ACCURACY_THEN_CHEAPEST",
+    "QUALITY_FLOOR_MIN_COST",
+    "PARETO_FRONTIER",
+    "StrategyPresetError",
+    "UnknownStrategyPresetError",
+    "StrategyPresetValidationError",
+    "NormalizedStrategyPreset",
+    "is_strategy_preset_name",
+    "normalize_strategy_preset",
+    "normalize",
+    "select_strategy_preset",
+    "calculate_weighted_trial_score",
+]
+
+
 class StrategyPresetError(ValueError):
     """Base class for strategy preset validation errors."""
 

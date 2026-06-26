@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 _GLOBAL_CONFIG: dict[str, Any] = {}
 
 
+__all__ = [
+    "ConfigurationBuilder",
+    "build_optimize_configuration",
+    "update_global_config",
+    "get_global_config",
+    "clear_global_config",
+]
+
+
 class ConfigurationBuilder:
     """Builds configuration for OptimizedFunction from validated parameters."""
 
