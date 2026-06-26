@@ -186,7 +186,9 @@ export TRAIGENT_STRICT_COST_ACCOUNTING=true
 ```
 
 `TRAIGENT_STRICT_COST_ACCOUNTING=true` must be the exact value `true`. Budget
-overruns are separate: they are controlled by `TRAIGENT_RUN_COST_LIMIT` and raise
+limits are separate: they are controlled by `TRAIGENT_RUN_COST_LIMIT`. A mid-run
+overrun stops the run gracefully and returns a partial result
+(`result.stop_reason == "cost_limit"`); only a pre-run approval failure raises
 `CostLimitExceeded`.
 
 ## Stop Conditions
