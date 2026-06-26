@@ -636,7 +636,15 @@ class SessionOperations:
         except AuthenticationError as exc:
             if _must_fail_loud(exc):
                 raise
-            logger.debug(
+            # Issue #1373 (the "outer create_session swallow"): an auth/scope
+            # failure that ESCAPES _create_session_async (e.g. from the
+            # has_api_key preflight, or the async-runner machinery) on a
+            # non-governed run must NOT fall to debug-only — a failed publish
+            # would be invisible at the default log level. Mirror the inner
+            # sibling (~:573) and surface at WARNING. The two sites are
+            # mutually exclusive per failure (a single AuthenticationError is
+            # caught by exactly one handler), so this does not double-log.
+            logger.warning(
                 "Backend auth failed for '%s': %s",
                 function_name,
                 exc,
