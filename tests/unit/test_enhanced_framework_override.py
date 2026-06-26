@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Tests for enhanced framework override system with streaming and tool support."""
 
+import functools
+import sys
+from types import ModuleType
+
 import pytest
 
 from traigent.config.context import set_config
@@ -198,6 +202,76 @@ class TestMethodOverrides:
         assert "temperature" in chat_params
         assert "stream" in chat_params
         assert "tools" in chat_params
+
+    def test_cached_property_resource_method_override_reaches_resource_class(
+        self, monkeypatch
+    ):
+        """Method override reaches resource classes behind cached_property accessors."""
+        disable_framework_overrides()
+        target, resource_class = self._cached_property_target(monkeypatch)
+        original_create = resource_class.create
+
+        if target not in self.manager._method_mappings:
+            self.manager._parameter_mappings[target] = {"model": "model"}
+            self.manager._method_mappings[target] = {
+                "chat.completions.create": ["model"]
+            }
+
+        try:
+            self.manager.activate_overrides([target])
+
+            assert resource_class.create is not original_create
+            wrapped_create = getattr(resource_class.create, "__wrapped__", None)
+            assert wrapped_create is original_create
+        finally:
+            self.manager.deactivate_overrides()
+            assert resource_class.create is original_create
+
+    def _cached_property_target(self, monkeypatch):
+        try:
+            from openai.resources.chat.completions import Completions
+
+            return "openai.OpenAI", Completions
+        except ImportError:
+            return self._cached_property_sdk_stand_in(monkeypatch)
+
+    def _cached_property_sdk_stand_in(self, monkeypatch):
+        sdk_module = ModuleType("cached_property_sdk")
+        sdk_module.__path__ = []
+        resources_module = ModuleType("cached_property_sdk.resources")
+
+        resources_module.__dict__["functools"] = functools
+        exec(
+            """
+class ChatCompletions:
+    def create(self, **kwargs):
+        return kwargs
+
+class Chat:
+    @functools.cached_property
+    def completions(self) -> "ChatCompletions":
+        return ChatCompletions()
+""",
+            resources_module.__dict__,
+        )
+
+        sdk_module.__dict__["functools"] = functools
+        exec(
+            """
+class Client:
+    @functools.cached_property
+    def chat(self) -> "Chat":
+        return resources.Chat()
+""",
+            sdk_module.__dict__,
+        )
+        sdk_module.resources = resources_module
+
+        monkeypatch.setitem(sys.modules, "cached_property_sdk", sdk_module)
+        monkeypatch.setitem(
+            sys.modules, "cached_property_sdk.resources", resources_module
+        )
+        return "cached_property_sdk.Client", resources_module.ChatCompletions
 
     def test_anthropic_method_override(self):
         """Test Anthropic method parameter override (simplified test)."""

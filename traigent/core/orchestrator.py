@@ -8,6 +8,7 @@ import asyncio
 import copy
 import inspect
 import math
+import os
 import sys
 import time
 import uuid
@@ -700,6 +701,10 @@ class OptimizationOrchestrator:
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
         self._stop_reason: StopReason | None = None
+        # #1404: bounded auto-retry budget for transient vendor errors (429/503)
+        # before the run loop gives up. Cumulative per category so the run always
+        # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
+        self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
         self._logger: OptimizationLogger | None = None
         self._logger_v2: Any | None = None
         self._logger_facade = LoggerFacade()
@@ -2423,6 +2428,11 @@ class OptimizationOrchestrator:
         """Check cost approval before optimization. Delegates to CostEstimator."""
         self._cost_estimator.check_cost_approval(dataset)
 
+    def _is_cost_limit_reached(self) -> bool:
+        """Return whether the shared cost enforcer has hit its run limit."""
+        cost_enforcer = getattr(self, "cost_enforcer", None)
+        return bool(cost_enforcer is not None and cost_enforcer.is_limit_reached)
+
     def _check_budget_limits(
         self, trial_count: int
     ) -> tuple[float, float, StopReason | None]:
@@ -2434,6 +2444,10 @@ class OptimizationOrchestrator:
         remaining = (
             float("inf") if self.max_trials is None else self.max_trials - trial_count
         )
+
+        if self._is_cost_limit_reached():
+            logger.info("Cost limit reached")
+            return remaining, 0, "cost_limit"
 
         if remaining <= 0:
             logger.info(f"Trial limit reached: {self.max_trials}")
@@ -2452,7 +2466,7 @@ class OptimizationOrchestrator:
         """Record a budget stop reason and return True if the loop should break."""
         if not budget_stop:
             return False
-        if not self._stop_reason:
+        if budget_stop == "cost_limit" or not self._stop_reason:
             self._stop_reason = budget_stop
         return True
 
@@ -2553,12 +2567,96 @@ class OptimizationOrchestrator:
                 return trial_count, "break"
             return trial_count, "continue"  # User chose to resume
 
+    @staticmethod
+    def _vendor_retry_settings() -> tuple[int, float]:
+        """Resolve bounded vendor-retry budget and base backoff from env (#1404).
+
+        Returns ``(max_retries, base_backoff_seconds)``. Defaults to ``0``
+        (opt-in) so the documented graceful fail-stop contract is unchanged
+        unless the operator sets ``TRAIGENT_VENDOR_MAX_RETRIES``. A malformed
+        value also yields the default.
+        """
+
+        def _read(name: str, default: float, *, minimum: float) -> float:
+            raw = os.environ.get(name)
+            if raw is None or not raw.strip():
+                return default
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return default
+            return value if value >= minimum else default
+
+        max_retries = int(_read("TRAIGENT_VENDOR_MAX_RETRIES", 0.0, minimum=0.0))
+        base_backoff = _read("TRAIGENT_VENDOR_RETRY_BACKOFF", 1.0, minimum=0.0)
+        return max_retries, base_backoff
+
+    async def _maybe_auto_retry_vendor_error(self, exc: VendorPauseError) -> str | None:
+        """Bounded auto-retry/backoff for transient vendor errors (#1404).
+
+        For *recoverable* categories (rate limit / service unavailable) a single
+        transient ``429``/``503`` should not auto-stop an entire unattended run.
+        Sleeps with bounded backoff (honoring ``Retry-After`` when the vendor
+        exposes it) and returns ``"continue"`` up to ``TRAIGENT_VENDOR_MAX_RETRIES``
+        times per category. Returns ``None`` when no auto-retry applies, so the
+        caller falls back to the existing resume/stop prompt path. The budget is
+        cumulative per category, guaranteeing the loop always terminates.
+        """
+        category = exc.category
+        recoverable = {
+            VendorErrorCategory.RATE_LIMIT,
+            VendorErrorCategory.SERVICE_UNAVAILABLE,
+        }
+        if category not in recoverable:
+            return None
+
+        max_retries, base_backoff = self._vendor_retry_settings()
+        if max_retries <= 0:
+            return None
+
+        used = self._vendor_retry_counts.get(category, 0)
+        if used >= max_retries:
+            logger.warning(
+                "traigent.vendor_auto_retry exhausted category=%s attempts=%s/%s",
+                category.value,
+                used,
+                max_retries,
+            )
+            return None
+
+        self._vendor_retry_counts[category] = used + 1
+
+        # Honor a vendor-provided Retry-After when available, else exponential.
+        retry_after = getattr(exc.original_error, "retry_after", None)
+        try:
+            delay = float(retry_after) if retry_after is not None else None
+        except (TypeError, ValueError):
+            delay = None
+        if delay is None or delay < 0:
+            delay = base_backoff * (2**used)
+
+        logger.warning(
+            "traigent.vendor_auto_retry category=%s attempt=%s/%s backoff=%.2fs "
+            "(set TRAIGENT_VENDOR_MAX_RETRIES=0 to disable)",
+            category.value,
+            used + 1,
+            max_retries,
+            delay,
+        )
+        if delay > 0:
+            await asyncio.sleep(delay)
+        return "continue"
+
     async def _handle_vendor_pause(self, exc: VendorPauseError) -> str:
         """Prompt user to resume or stop after a vendor error.
 
         Returns:
             ``"continue"`` to retry the trial, ``"break"`` to stop.
         """
+        if exc.category is not None:
+            auto = await self._maybe_auto_retry_vendor_error(exc)
+            if auto is not None:
+                return auto
         if self._prompt_adapter is None or exc.category is None:
             return "break"
         decision = self._prompt_adapter.prompt_vendor_pause(
@@ -3050,18 +3148,19 @@ class OptimizationOrchestrator:
         # Evaluate reusable stop conditions first
         stop_triggered, reason = self._stop_condition_manager.should_stop(self._trials)
         if stop_triggered:
-            if not self._stop_reason:
-                # Map stop condition reasons to StopReason literals
-                reason_mapping: dict[str | None, StopReason] = {
-                    "max_samples": "max_samples_reached",
-                    "max_trials": "max_trials_reached",
-                    "plateau": "plateau",
-                    "cost_limit": "cost_limit",
-                    "timeout": "timeout",
-                    "metric_limit": "metric_limit",
-                    "convergence": "convergence",
-                }
-                self._stop_reason = reason_mapping.get(reason, "condition")
+            # Map stop condition reasons to StopReason literals
+            reason_mapping: dict[str | None, StopReason] = {
+                "max_samples": "max_samples_reached",
+                "max_trials": "max_trials_reached",
+                "plateau": "plateau",
+                "cost_limit": "cost_limit",
+                "timeout": "timeout",
+                "metric_limit": "metric_limit",
+                "convergence": "convergence",
+            }
+            mapped_reason = reason_mapping.get(reason, "condition")
+            if mapped_reason == "cost_limit" or not self._stop_reason:
+                self._stop_reason = mapped_reason
             logger.info("Stopping: %s condition triggered", self._stop_reason)
             return True
 

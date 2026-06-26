@@ -32,6 +32,38 @@ if TYPE_CHECKING:
     from traigent.core.objectives import ObjectiveSchema
 
 
+__all__ = [
+    "SelectionGrade",
+    "OptimizationStatus",
+    "TrialStatus",
+    "MetricCoverage",
+    "ComparabilityInfo",
+    "StopReason",
+    "TrialDatetimeFormat",
+    "Trial",
+    "TrialError",
+    "TrialResult",
+    "PresetSelection",
+    "serialize_trials",
+    "ExampleResult",
+    "ExperimentStats",
+    "OptimizationResult",
+    "SensitivityAnalysis",
+    "ConfigurationComparison",
+    "ParetoFront",
+    "StrategyConfig",
+    "OptimizationJob",
+    "AgentType",
+    "AgentMeta",
+    "AgentDefinition",
+    "GlobalConfiguration",
+    "AgentConfiguration",
+    "ConfigSpace",
+    "Metrics",
+    "Objectives",
+]
+
+
 class OptimizationStatus(StrEnum):
     """Status of an optimization run."""
 

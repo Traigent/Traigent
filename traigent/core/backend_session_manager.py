@@ -386,6 +386,21 @@ class BackendSessionManager:
             self.disable_backend_tracking(reason)
 
             if not was_enabled:
+                # Even when tracking was already disabled, an AUTH-reason failure
+                # must surface at WARNING so the user sees the remedy text
+                # (missing_permissions, re-auth hint, etc.) — issue #1373 Case 2.
+                # For non-auth reasons (NO_API_KEY, SESSION_FAILED) the normal
+                # message was already emitted on the first disable; stay silent.
+                if reason == SessionCreationFailureReason.AUTH:
+                    classification = _classify_session_creation_failure(
+                        reason, result.failure_response
+                    )
+                    logger.warning(
+                        "%s",
+                        _format_untracked_warning_block(
+                            result, classification, aborting=False
+                        ),
+                    )
                 return str(result.session_id)
 
             policy = policy_from_config(self._traigent_config)
@@ -712,10 +727,31 @@ class BackendSessionManager:
                     self._strategy_preset_metadata
                 )
 
-            # Use human-readable name with disambiguating hash suffix
-            # e.g. "answer_question (f282c9de)" instead of the full slug
-            portal_name = function_display_name or function_identifier
+            # Build the portal display name.
+            # When the user supplied an explicit experiment_name, honour it.
+            # When no name was given, weave in objectives and knob names so the
+            # experiment is self-describing in the portal's Recent Experiments
+            # list (issue #1422): e.g. "opt:accuracy,cost · model,temperature".
             slug_hash = function_slug.rsplit("_", 1)[-1] if function_slug else ""
+            if experiment_display_name is None:
+                # Collect up to 3 objective names and up to 4 knob names to
+                # keep the label concise.
+                obj_names = (self._objectives or [])[:3]
+                knob_names = list(
+                    (getattr(self._optimizer, "config_space", {}) or {}).keys()
+                )[:4]
+                label_parts: list[str] = []
+                if obj_names:
+                    label_parts.append("opt:" + ",".join(obj_names))
+                if knob_names:
+                    label_parts.append(",".join(knob_names))
+                portal_name = (
+                    " · ".join(label_parts)
+                    if label_parts
+                    else (function_display_name or function_identifier)
+                )
+            else:
+                portal_name = function_display_name or function_identifier
             if slug_hash:
                 portal_name = f"{portal_name} ({slug_hash})"
 

@@ -43,7 +43,7 @@ dependencies = [
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
     "PyJWT[crypto]>=2.13.0,<3.0.0",  # >=2.13.0: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
-    "litellm==1.87.1",  # Stable pin: 1.83.x python-dotenv==1.0.1 and 1.83.14 openai==2.24.0 sub-pins are gone from stable 1.84+ (1.87.1 ships openai>=2.20,<3 and python-dotenv>=1.0,<2, compatible with langchain-openai>=1.1.14). Keep pinned + verified on bumps; no need for RC/dev builds anymore.
+    "litellm>=1.87.1,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. The demo (TraigentDemo) requires 1.88.0; this range admits it. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
     "rank-bm25",
     "psutil>=5.8.0",
     # Required by API decorators and config validation

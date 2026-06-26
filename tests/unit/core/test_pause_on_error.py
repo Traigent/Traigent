@@ -47,7 +47,14 @@ class TestHandleVendorPause:
 
         # We test the methods directly by calling them on a mock
         orch = MagicMock()
-        # Bind the real method
+        # Bind the real handler methods. #1404 added a bounded auto-retry layer
+        # in front of the prompt path; it is opt-in (default off), so the prompt
+        # contract asserted here is unchanged.
+        orch._vendor_retry_counts = {}
+        orch._vendor_retry_settings = OptimizationOrchestrator._vendor_retry_settings
+        orch._maybe_auto_retry_vendor_error = (
+            OptimizationOrchestrator._maybe_auto_retry_vendor_error.__get__(orch)
+        )
         orch._handle_vendor_pause = (
             OptimizationOrchestrator._handle_vendor_pause.__get__(orch)
         )

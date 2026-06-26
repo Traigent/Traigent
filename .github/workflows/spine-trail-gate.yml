@@ -15,12 +15,13 @@ on:
   pull_request:
     branches: [develop, main]
     types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: spine-trail-gate-${{ github.event.pull_request.number }}
+  group: spine-trail-gate-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,6 +34,11 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "✅ merge_group candidate — spine mark already validated at PR time."
+            exit 0
+          fi
+
           # Valid markers (anchored to line start, tolerant of leading spaces).
           trail='^[[:space:]]*Spine-Trail:[[:space:]]*st_[0-9a-f]{12}[[:space:]]*$'
           session='^[[:space:]]*Spine:[[:space:]]*cs_[0-9a-z]{6,}[[:space:]]*$'

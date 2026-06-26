@@ -10,6 +10,8 @@ Complete reference of environment variables recognized by the Traigent SDK.
 | `TRAIGENT_OFFLINE_MODE`            | `false`         | When `true`, skips all backend communication. Use for local-only development.                       |
 | `TRAIGENT_RUN_COST_LIMIT`         | `2.0`           | Maximum cost budget (in USD) per optimization run. Optimization stops when this limit is reached.    |
 | `TRAIGENT_COST_APPROVED`          | `false`         | Exact value `true` pre-approves both the cost-limit prompt and unpriced-model preflight. `1`, `yes`, and `on` do not approve. |
+| `TRAIGENT_VENDOR_MAX_RETRIES`     | `0`             | Bounded auto-retries on a transient vendor error (`429` rate-limit / `503` service-unavailable) before the run stops. `0` (default) preserves the immediate graceful stop; set e.g. `2` so a single transient blip does not abort an unattended/CI run. |
+| `TRAIGENT_VENDOR_RETRY_BACKOFF`   | `1.0`           | Base backoff (seconds) between vendor auto-retries; grows exponentially and honors a vendor `Retry-After` when present. Only used when `TRAIGENT_VENDOR_MAX_RETRIES` > 0. |
 | `TRAIGENT_SKIP_PROVIDER_VALIDATION`| `false`        | When `true`, skips API key validation at decoration time. Useful in CI environments.                |
 | `TRAIGENT_VALIDATION_TIMEOUT`     | `5.0`           | Timeout in seconds for provider API key validation checks.                                          |
 | `TRAIGENT_STRICT_COST_ACCOUNTING` | `false`         | Exact value `true` fails fast before trial 1 on unpriced models and when runtime cost extraction is missing or unknown. |

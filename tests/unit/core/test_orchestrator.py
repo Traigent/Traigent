@@ -2309,6 +2309,35 @@ class TestStopReasonInResult:
         assert 1 <= len(result.trials) <= 3
         assert orchestrator.cost_enforcer.get_status().limit_reached is True
 
+    @pytest.mark.asyncio
+    async def test_stop_reason_cost_limit_precedes_max_trials(
+        self, sample_dataset, monkeypatch
+    ):
+        """If cost and trial limits are both true, report the binding cost guard."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_metrics({"accuracy": 0.5, "cost": 0.06})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=2,
+            config=TraigentConfig.edge_analytics_mode(),
+            cost_limit=0.12,
+            cost_approved=True,
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert len(result.trials) == 2
+        assert orchestrator.cost_enforcer.get_status().limit_reached is True
+        assert result.stop_reason == "cost_limit"
+        assert result.stop_reason != "max_trials_reached"
+
 
 class TestUsageAnalyticsSubmission:
     """Tests for optimization-completion analytics submission."""

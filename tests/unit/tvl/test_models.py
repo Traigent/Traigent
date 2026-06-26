@@ -226,6 +226,17 @@ class TestPromotionPolicy:
         assert policy.adjust == "BH"
         assert len(policy.chance_constraints) == 1
 
+    def test_supported_adjust_methods(self) -> None:
+        """Supported multiple-comparison adjustment methods are accepted."""
+        for adjust in ("none", "BH", "holm", "bonferroni"):
+            policy = PromotionPolicy.from_dict({"adjust": adjust})
+            assert policy.adjust == adjust
+
+    def test_unsupported_adjust_method_rejected(self) -> None:
+        """Unsupported adjustment methods fail at policy construction."""
+        with pytest.raises(ValueError, match="Unsupported promotion_policy.adjust"):
+            PromotionPolicy(adjust="sidak")  # type: ignore[arg-type]
+
 
 class TestStructuralConstraint:
     """Tests for StructuralConstraint data class."""
