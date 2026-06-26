@@ -113,11 +113,15 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_deprecated_cloud_resolves_to_hybrid_mode(self):
-        """Deprecated cloud keeps cloud-first policy with hybrid compat mode."""
+    def test_execution_bundle_deprecated_cloud_resolves_to_hybrid_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Deprecated cloud keeps cloud-first policy only with explicit opt-in."""
         import warnings
 
         from traigent.api.decorators import ExecutionOptions
+
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -442,9 +446,13 @@ class TestOptimizeDecorator:
         result = complex_function("test", 10, "extra", key="value")
         assert "test-10-1-1" in result
 
-    def test_decorator_with_cloud_execution_mode_deprecated(self):
-        """Deprecated cloud mode warns and keeps hybrid compat mode."""
+    def test_decorator_with_cloud_execution_mode_deprecated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Deprecated cloud mode warns and keeps hybrid compat mode when opted in."""
         import warnings
+
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

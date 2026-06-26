@@ -5,7 +5,11 @@ import pytest
 from traigent.api.decorators import optimize
 
 
-def test_decorator_privacy_alias_maps_to_cloud_brain_policy():
+def test_decorator_privacy_alias_maps_to_cloud_brain_policy(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
     with pytest.warns(DeprecationWarning):
 
         @optimize(

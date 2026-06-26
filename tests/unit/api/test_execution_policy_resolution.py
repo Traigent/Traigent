@@ -51,7 +51,58 @@ def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
     assert any("preserve the legacy no-egress guarantee" in msg for msg in messages)
 
 
-def test_legacy_cloud_maps_to_cloud_first_with_hybrid_compat_mode() -> None:
+@pytest.mark.parametrize("legacy_mode", ("privacy", "cloud"))
+def test_legacy_privacy_cloud_modes_raise_fail_closed_with_warnings_suppressed(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: str
+) -> None:
+    monkeypatch.delenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", raising=False)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ConfigurationError) as exc_info:
+            resolve_execution_policy(execution_mode=legacy_mode)
+
+    message = str(exc_info.value)
+    assert "offline=True" in message
+    assert "omit execution_mode" in message
+    assert "algorithm='auto'" in message
+
+
+def test_legacy_cloud_escape_hatch_maps_to_cloud_first_with_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        policy = resolve_execution_policy(execution_mode="cloud")
+
+    messages = [
+        str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
+    ]
+    assert policy.intent is ExecutionIntent.CLOUD_BRAIN
+    assert policy.offline is False
+    assert policy.legacy_execution_mode_value == "hybrid"
+    assert any("semantic flip" in msg for msg in messages)
+
+
+def test_legacy_privacy_mode_with_offline_true_stays_local_no_egress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", raising=False)
+
+    policy = resolve_execution_policy(execution_mode="privacy", offline=True)
+
+    assert policy.intent is ExecutionIntent.LOCAL_ONLY
+    assert policy.offline is True
+    assert policy.legacy_execution_mode_value == "edge_analytics"
+
+
+def test_legacy_cloud_optimize_escape_hatch_maps_to_cloud_first_with_hybrid_compat_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
@@ -81,6 +132,7 @@ def test_initialize_cloud_global_default_matches_decorator_cloud_policy() -> Non
             @optimize(configuration_space={"x": [1, 2]})
             def sample(x: int) -> int:
                 return x
+
     finally:
         _GLOBAL_CONFIG.clear()
         _GLOBAL_CONFIG.update(original_config)

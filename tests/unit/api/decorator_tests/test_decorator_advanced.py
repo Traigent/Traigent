@@ -241,9 +241,13 @@ class TestOptimizationScenarios(DecoratorTestBase):
         assert callable(test_func)
         assert test_func("hello") == "Response: hello"
 
-    def test_cloud_execution_mode_deprecated_resolves_to_hybrid(self):
-        """Deprecated cloud execution mode is accepted with DeprecationWarning."""
+    def test_cloud_execution_mode_deprecated_resolves_to_hybrid(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Deprecated cloud execution mode is accepted only with explicit opt-in."""
         import warnings
+
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

@@ -76,6 +76,7 @@ _EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
 }
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+_LEGACY_CLOUD_EXECUTION_MODE_ENV = "TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE"
 _CONFIG_VALUE_UNSET = object()
 _PURGED_PUBLIC_CONFIG_KEYS = frozenset(
     {
@@ -119,6 +120,12 @@ def is_traigent_require_cloud_requested() -> bool:
     """Return whether ``TRAIGENT_REQUIRE_CLOUD`` disables local fallback."""
 
     return _read_bool_env("TRAIGENT_REQUIRE_CLOUD")
+
+
+def is_legacy_cloud_execution_mode_allowed() -> bool:
+    """Return whether legacy privacy/cloud execution_mode may egress."""
+
+    return _read_bool_env(_LEGACY_CLOUD_EXECUTION_MODE_ENV)
 
 
 def normalize_algorithm_name(algorithm: str | None) -> str:
@@ -386,23 +393,42 @@ def resolve_execution_policy(
                 DeprecationWarning,
                 stacklevel=3,
             )
-        elif normalized_mode == "privacy":
-            warnings.warn(
-                "execution_mode='privacy' is deprecated and no longer means "
-                "no egress. Mapping to cloud-first automatic optimization; use "
-                "offline=True for no egress.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        elif normalized_mode == "cloud":
-            warnings.warn(
-                "execution_mode='cloud' is deprecated and now maps to "
-                "cloud-first automatic optimization. This is a semantic flip "
-                "from the historical local edge_analytics mapping; audit callers "
-                "and use offline=True for no egress.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
+        elif normalized_mode in {"privacy", "cloud"}:
+            if offline_requested:
+                warnings.warn(
+                    f"execution_mode={raw_mode!r} is deprecated. offline=True "
+                    "preserves local-only, no-egress execution; omit "
+                    "execution_mode and use offline=True directly.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+            elif is_legacy_cloud_execution_mode_allowed():
+                if normalized_mode == "privacy":
+                    warnings.warn(
+                        "execution_mode='privacy' is deprecated and no longer means "
+                        "no egress. Mapping to cloud-first automatic optimization; use "
+                        "offline=True for no egress.",
+                        DeprecationWarning,
+                        stacklevel=3,
+                    )
+                else:
+                    warnings.warn(
+                        "execution_mode='cloud' is deprecated and now maps to "
+                        "cloud-first automatic optimization. This is a semantic flip "
+                        "from the historical local edge_analytics mapping; audit callers "
+                        "and use offline=True for no egress.",
+                        DeprecationWarning,
+                        stacklevel=3,
+                    )
+            else:
+                raise ConfigurationError(
+                    f"execution_mode={raw_mode!r} is deprecated and would change "
+                    "historical no-egress behavior into cloud egress. Set "
+                    "offline=True to preserve no-egress local execution, or "
+                    "explicitly opt into cloud: omit execution_mode and "
+                    "use algorithm='auto'. To temporarily allow the legacy "
+                    f"cloud mapping, set {_LEGACY_CLOUD_EXECUTION_MODE_ENV}=1."
+                )
         elif normalized_mode == "hybrid_api":
             warnings.warn(
                 "execution_mode='hybrid_api' is deprecated as a public execution "
@@ -580,7 +606,9 @@ class TraigentConfig:
     comparability_mode: Literal["legacy", "warn", "strict"] = "warn"
 
     # Analytics and telemetry settings
-    enable_usage_analytics: bool = True  # Send privacy-safe usage stats when backend/portal integration is configured
+    enable_usage_analytics: bool = (
+        True  # Send privacy-safe usage stats when backend/portal integration is configured
+    )
     analytics_endpoint: str | None = None  # Custom analytics endpoint
     anonymous_user_id: str | None = None  # Anonymous identifier (auto-generated)
 

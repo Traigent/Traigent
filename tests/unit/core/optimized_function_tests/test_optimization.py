@@ -829,10 +829,17 @@ class TestOptimization:
 
     @pytest.mark.asyncio
     async def test_optimization_with_deprecated_cloud_resolves_to_hybrid(
-        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+        self,
+        simple_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+        monkeypatch,
     ):
-        """Deprecated cloud mode resolves to cloud-first hybrid with DeprecationWarning."""
+        """Deprecated cloud mode resolves to cloud-first hybrid when opted in."""
         import warnings
+
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

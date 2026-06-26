@@ -10,9 +10,16 @@ class TestCloudIntegration:
     """Cloud mode is deprecated; it resolves to hybrid with a DeprecationWarning."""
 
     def test_cloud_mode_deprecated_resolves_to_hybrid(
-        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+        self,
+        simple_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+        monkeypatch,
     ):
-        """Deprecated cloud mode resolves to cloud-first hybrid with DeprecationWarning."""
+        """Deprecated cloud mode resolves to hybrid only with explicit opt-in."""
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             opt_func = OptimizedFunction(

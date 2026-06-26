@@ -79,7 +79,10 @@ def test_traigent_client_deprecated_execution_mode_warns_and_maps_local(
 
 def test_traigent_client_deprecated_cloud_warns_and_maps_hybrid_mode(
     backend_client_factory: Mock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
     with pytest.warns(DeprecationWarning, match="semantic flip"):
         client = TraigentClient(execution_mode="cloud")
 
