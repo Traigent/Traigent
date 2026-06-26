@@ -650,7 +650,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             Set to False to allow mixed types (e.g., [None, "default", 1]).
 
     Example:
-        >>> model = Choices(["gpt-4", "gpt-3.5-turbo", "claude-2"])
+        >>> model = Choices(["gpt-4", "gpt-3.5-turbo", "claude-haiku-4-5-20251001"])
         >>> use_cache = Choices([True, False], default=True)
         >>> temperature = Choices([0.0, 0.3, 0.7, 1.0])
         >>> # Multi-agent: assign to specific agent

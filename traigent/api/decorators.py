@@ -26,7 +26,7 @@ Examples:
     ...     eval_dataset="customer_support.jsonl",
     ...     objectives=["accuracy", "cost", "latency"],
     ...     configuration_space={
-    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-2"],
+    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-haiku-4-5-20251001"],
     ...         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
     ...         "max_tokens": [100, 500, 1000]
     ...     },
@@ -2285,7 +2285,7 @@ def optimize(  # NOSONAR(S107)
         ...         "minimal_logging": True,
         ...     },
         ...     configuration_space={
-        ...         "model": ["gpt-4", "claude-2"],
+        ...         "model": ["gpt-4", "claude-haiku-4-5-20251001"],
         ...         "temperature": [0.1, 0.3, 0.5],
         ...         "safety_filter": ["strict", "moderate"]
         ...     }
