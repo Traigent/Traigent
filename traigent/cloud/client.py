@@ -112,6 +112,270 @@ def _session_is_closed(session: Any) -> bool:
     return False
 
 
+def _log_finalizer_close_task_result(task: asyncio.Task[Any], owner: str) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.debug("%s aiohttp session close task was cancelled", owner)
+    except Exception as exc:  # pragma: no cover - defensive finalizer callback
+        logger.debug("Error closing %s aiohttp session: %s", owner, exc)
+
+
+def _close_awaitable(thing: Any) -> None:
+    close_method = getattr(thing, "close", None)
+    if callable(close_method):
+        try:
+            close_method()
+        except Exception:
+            pass
+
+
+def _schedule_aiohttp_session_close(
+    session: Any,
+    loop: asyncio.AbstractEventLoop,
+    owner: str,
+) -> bool:
+    close_method = getattr(session, "close", None)
+    if not callable(close_method):
+        return False
+
+    def create_task() -> None:
+        close_result: Any = None
+        try:
+            close_result = close_method()
+            if inspect.isawaitable(close_result):
+                task = loop.create_task(close_result)
+                task.add_done_callback(
+                    lambda done_task: _log_finalizer_close_task_result(done_task, owner)
+                )
+        except Exception as exc:  # pragma: no cover - defensive finalizer path
+            _close_awaitable(close_result)
+            logger.debug("Error scheduling %s aiohttp session close: %s", owner, exc)
+
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    try:
+        if current_loop is loop:
+            create_task()
+        else:
+            loop.call_soon_threadsafe(create_task)
+    except Exception as exc:  # pragma: no cover - defensive finalizer path
+        logger.debug("Error scheduling %s aiohttp session close: %s", owner, exc)
+        return False
+    return True
+
+
+def _run_aiohttp_session_close(
+    session: Any,
+    loop: asyncio.AbstractEventLoop,
+    owner: str,
+) -> bool:
+    close_method = getattr(session, "close", None)
+    if not callable(close_method):
+        return False
+
+    close_result: Any = None
+    try:
+        close_result = close_method()
+        if inspect.isawaitable(close_result):
+            loop.run_until_complete(close_result)
+        return True
+    except Exception as exc:  # pragma: no cover - defensive finalizer path
+        _close_awaitable(close_result)
+        logger.debug("Error closing %s aiohttp session on its loop: %s", owner, exc)
+        return False
+
+
+def _iter_connector_protocols(connector: Any) -> list[Any]:
+    protocols: list[Any] = []
+    seen: set[int] = set()
+
+    def add(protocol: Any) -> None:
+        if protocol is None:
+            return
+        identifier = id(protocol)
+        if identifier in seen:
+            return
+        seen.add(identifier)
+        protocols.append(protocol)
+
+    conns = getattr(connector, "_conns", None)
+    values = getattr(conns, "values", None)
+    if callable(values):
+        for pooled_connections in list(values()):
+            for connection_entry in list(pooled_connections):
+                protocol = connection_entry
+                if isinstance(connection_entry, (tuple, list)) and connection_entry:
+                    protocol = connection_entry[0]
+                add(getattr(protocol, "protocol", protocol))
+
+    for protocol in list(getattr(connector, "_acquired", ()) or ()):
+        add(getattr(protocol, "protocol", protocol))
+
+    return protocols
+
+
+def _raw_socket_from_transport(transport: Any) -> Any:
+    get_extra_info = getattr(transport, "get_extra_info", None)
+    if callable(get_extra_info):
+        try:
+            socket_info = get_extra_info("socket")
+        except Exception:
+            socket_info = None
+        if socket_info is not None:
+            return getattr(socket_info, "_sock", socket_info)
+    return getattr(transport, "_sock", None)
+
+
+def _close_transport_sync(transport: Any, seen: set[int] | None = None) -> None:
+    if transport is None:
+        return
+
+    if seen is None:
+        seen = set()
+    identifier = id(transport)
+    if identifier in seen:
+        return
+    seen.add(identifier)
+
+    for method_name in ("abort", "close"):
+        method = getattr(transport, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+
+    call_connection_lost = getattr(transport, "_call_connection_lost", None)
+    if callable(call_connection_lost):
+        try:
+            call_connection_lost(None)
+        except Exception:
+            pass
+
+    raw_socket = _raw_socket_from_transport(transport)
+    if raw_socket is not None:
+        close_socket = getattr(raw_socket, "close", None)
+        if callable(close_socket):
+            try:
+                close_socket()
+            except Exception:
+                pass
+
+    for nested_attr in ("_transport",):
+        nested_transport = getattr(transport, nested_attr, None)
+        if nested_transport is not None:
+            _close_transport_sync(nested_transport, seen)
+
+    ssl_protocol = getattr(transport, "_ssl_protocol", None)
+    nested_transport = getattr(ssl_protocol, "_transport", None)
+    if nested_transport is not None:
+        _close_transport_sync(nested_transport, seen)
+
+
+def _close_protocol_sync(protocol: Any) -> None:
+    transport = getattr(protocol, "transport", None)
+
+    for method_name in ("abort", "close"):
+        method = getattr(protocol, method_name, None)
+        if callable(method):
+            try:
+                method()
+                break
+            except Exception:
+                pass
+
+    _close_transport_sync(transport)
+
+
+def _cancel_connector_handle(connector: Any, name: str) -> None:
+    handle = getattr(connector, name, None)
+    cancel = getattr(handle, "cancel", None)
+    if callable(cancel):
+        try:
+            cancel()
+        except Exception:
+            pass
+    if hasattr(connector, name):
+        try:
+            setattr(connector, name, None)
+        except Exception:
+            pass
+
+
+def _clear_connector_waiters(connector: Any) -> None:
+    waiters = getattr(connector, "_waiters", None)
+    values = getattr(waiters, "values", None)
+    if callable(values):
+        for keyed_waiters in list(values()):
+            for waiter in list(keyed_waiters):
+                cancel = getattr(waiter, "cancel", None)
+                if callable(cancel):
+                    try:
+                        cancel()
+                    except Exception:
+                        pass
+    clear = getattr(waiters, "clear", None)
+    if callable(clear):
+        try:
+            clear()
+        except Exception:
+            pass
+
+
+def _clear_connector_collection(connector: Any, name: str) -> None:
+    collection = getattr(connector, name, None)
+    clear = getattr(collection, "clear", None)
+    if callable(clear):
+        try:
+            clear()
+        except Exception:
+            pass
+
+
+def _close_connector_transports_sync(connector: Any) -> None:
+    for protocol in _iter_connector_protocols(connector):
+        _close_protocol_sync(protocol)
+
+    for transport in list(getattr(connector, "_cleanup_closed_transports", ()) or ()):
+        _close_transport_sync(transport)
+
+    for handle_name in ("_cleanup_handle", "_cleanup_closed_handle"):
+        _cancel_connector_handle(connector, handle_name)
+
+    _clear_connector_waiters(connector)
+    for collection_name in (
+        "_conns",
+        "_acquired",
+        "_acquired_per_host",
+        "_cleanup_closed_transports",
+    ):
+        _clear_connector_collection(connector, collection_name)
+
+    if hasattr(connector, "_closed"):
+        try:
+            connector._closed = True
+        except Exception:
+            pass
+
+
+def _close_aiohttp_session_transports_sync(session: Any) -> None:
+    connector = getattr(session, "_connector", None)
+    owns_connector = bool(getattr(session, "_connector_owner", True))
+
+    if connector is not None and owns_connector:
+        _close_connector_transports_sync(connector)
+
+    if hasattr(session, "_connector"):
+        try:
+            session._connector = None
+        except Exception:
+            pass
+
+
 def _finalize_aiohttp_session(session: Any, owner: str) -> None:
     """Synchronously close an aiohttp session from a weakref finalizer."""
 
@@ -119,18 +383,15 @@ def _finalize_aiohttp_session(session: Any, owner: str) -> None:
         if session is None or _session_is_closed(session):
             return
 
-        connector = getattr(session, "_connector", None)
-        owns_connector = bool(getattr(session, "_connector_owner", True))
-        if connector is not None and owns_connector:
-            close_now = getattr(connector, "_close", None)
-            if callable(close_now):
-                try:
-                    close_now(abort_ssl=True)
-                except TypeError:
-                    close_now()
+        session_loop = getattr(session, "_loop", None)
+        if session_loop is not None and not session_loop.is_closed():
+            if session_loop.is_running():
+                if _schedule_aiohttp_session_close(session, session_loop, owner):
+                    return
+            elif _run_aiohttp_session_close(session, session_loop, owner):
+                return
 
-        if hasattr(session, "_connector"):
-            session._connector = None
+        _close_aiohttp_session_transports_sync(session)
     except Exception as exc:  # pragma: no cover - defensive finalizer
         logger.debug("Error finalizing %s aiohttp session: %s", owner, exc)
 
