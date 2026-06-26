@@ -9,7 +9,8 @@ Adaptive Cost Estimation:
     - Initial estimates use configured estimated_cost_per_trial
     - After trials complete, estimates update via exponential moving average (EMA)
     - Confidence levels indicate reliability of estimates (0.0-1.0)
-    - Warnings log when estimates diverge significantly from reality
+    - Divergence warnings are estimate-accuracy signals only; they do not
+      override permit admission or enforce the run budget
 
 Environment Variables:
     TRAIGENT_RUN_COST_LIMIT: Maximum USD spending per optimization run (default: 2.0)
@@ -19,7 +20,8 @@ Environment Variables:
     TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs
         (default: false)
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
-        this value (default: 2.0, meaning 2x divergence triggers warning)
+        this value (default: 2.0, meaning 2x divergence triggers warning).
+        This is a per-trial actual-vs-EMA estimate check, not a budget guardrail.
 
 Note:
     ``TRAIGENT_MOCK_LLM`` is intentionally NOT consulted here. Sprint 2-B
@@ -27,6 +29,11 @@ Note:
     and billing accounting if the variable ever leaked into a production
     environment. Cost approval, permit acquisition, and cost tracking
     always run regardless of any mock-mode flag.
+    Runtime budget enforcement is permit-based and trial-granular: each trial
+    reserves an estimated amount before it starts, then records actual cost
+    after completion. A single large trial can therefore overshoot the approved
+    limit by roughly one trial's actual-minus-reserved delta, plus any parallel
+    in-flight reservation slack, before the next admission check halts new work.
 """
 
 from __future__ import annotations
@@ -129,7 +136,8 @@ class CostEnforcerConfig:
         warning_threshold: Fraction of limit at which to emit warnings.
         fallback_trial_limit: If cost cannot be determined, limit by trial count.
         estimated_cost_per_trial: Initial estimate for per-trial cost reservation.
-            Used for in-flight budget reservation in parallel execution.
+            Used for in-flight budget reservation in parallel execution; actual
+            trial cost may exceed the reservation before later admissions stop.
     """
 
     limit: float = DEFAULT_COST_LIMIT_USD
@@ -580,6 +588,10 @@ Options:
         When a permit is acquired, budget is reserved for the in-flight trial
         to prevent multiple parallel trials from all starting when there's only
         budget for one. The reservation is released when track_cost is called.
+        This is a per-trial admission check against an estimated reservation,
+        not a mid-trial or per-token hard stop. If an admitted trial costs more
+        than reserved, actual spend can overshoot the approved limit by about
+        one trial plus parallel reservation slack before the next denial.
 
         Returns:
             Permit object with is_granted=True if permitted, or is_granted=False
@@ -639,6 +651,8 @@ Options:
         When a permit is acquired, budget is reserved for the in-flight trial
         to prevent multiple parallel trials from all starting when there's only
         budget for one. The reservation is released when track_cost_async is called.
+        Like the sync path, this is a per-trial estimated reservation rather
+        than a mid-trial billing cap.
 
         Returns:
             Permit object with is_granted=True if permitted, or is_granted=False
@@ -730,8 +744,11 @@ Options:
     def _check_cost_divergence(self, actual_cost: float) -> None:
         """Check if actual cost diverges significantly from estimate.
 
-        Called with lock held. Logs warning if ratio exceeds threshold.
+        Called with lock held. Logs warning or info based on the ratio between
+        the latest trial's actual cost and the current per-trial EMA estimate.
         Configured via TRAIGENT_COST_DIVERGENCE_THRESHOLD (default 2.0).
+        This is an estimate-accuracy signal only: it does not abort execution,
+        revoke permits, or enforce the approved run budget.
 
         Args:
             actual_cost: The actual cost observed for a trial.
@@ -935,7 +952,8 @@ Options:
             self._active_permits[permit.id] = permit
             return permit
 
-        # Check if there's budget available considering reserved in-flight cost
+        # Admission is checked at trial granularity using the current estimated
+        # reservation plus any already-reserved in-flight cost.
         reserved_amount = self._estimated_cost
         total_committed = self._accumulated_cost + self._reserved_cost
         if total_committed + reserved_amount > self.config.limit:
@@ -1208,7 +1226,8 @@ Options:
 
         I4 is an admission-time budget guard enforced by _acquire_permit_locked(),
         not a runtime state invariant. Post-execution actuals may exceed reserved
-        estimates, even while other permits remain in flight.
+        estimates, even while other permits remain in flight, so overshoot is
+        bounded at admitted-trial granularity rather than prevented mid-trial.
         """
         violations: list[str] = []
 

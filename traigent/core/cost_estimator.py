@@ -239,7 +239,7 @@ class CostEstimator:
         - Estimates total samples based on configuration and dataset size
         - Uses max_total_examples if configured (shared budget across trials)
         - Otherwise estimates samples_per_trial x max_trials
-        - Includes retry factor (1.2x) for potential failures
+        - Applies a flat 1.2x conservative buffer to the estimate
         - Uses conservative estimates for unknown models
 
         Note: This is an ESTIMATE. Actual costs may vary significantly.
@@ -274,13 +274,15 @@ class CostEstimator:
             total_samples = max_trials * samples_per_trial
             estimation_mode = "per_trial_full_dataset"
 
-        # Total cost with retry factor for failures and potential re-evaluations
+        # Apply a flat conservative buffer. The optimizer eval path invokes
+        # invoker.invoke() directly today, so this does not model automatic
+        # per-example retries in the default evaluation loop.
         retry_factor = 1.2
         estimated_total = total_samples * base_cost_per_example * retry_factor
 
         logger.debug(
             f"Cost estimate ({estimation_mode}): {total_samples} total samples "
-            f"× ${base_cost_per_example}/sample × {retry_factor} retry = ${estimated_total:.2f} "
+            f"× ${base_cost_per_example}/sample × {retry_factor} buffer = ${estimated_total:.2f} "
             f"(pricing_source={pricing_source})"
         )
 
