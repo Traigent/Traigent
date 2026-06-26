@@ -743,6 +743,18 @@ def validate_tvl_schema(
     return messages
 
 
+def _validate_tvl_schema_or_raise(data: dict[str, Any], *, path_name: str) -> None:
+    schema_issues = _collect_tvl_schema_issues(data)
+    schema_errors = _schema_messages(schema_issues, "error")
+    schema_warnings = _schema_messages(schema_issues, "warning")
+    for warning in schema_warnings:
+        logger.warning("TVL schema warning in %s: %s", path_name, warning)
+    if schema_errors:
+        raise TVLValidationError(
+            _format_schema_validation_error(schema_errors, path_name=path_name)
+        )
+
+
 def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
     """Validate structure of tvars section (legacy dict format)."""
     issues: list[str] = []
@@ -1041,17 +1053,15 @@ def load_tvl_spec(
 
     # T-5: Early schema validation before detailed parsing
     if validate_schema:
-        schema_issues = _collect_tvl_schema_issues(raw_data)
-        schema_errors = _schema_messages(schema_issues, "error")
-        schema_warnings = _schema_messages(schema_issues, "warning")
-        for warning in schema_warnings:
-            logger.warning("TVL schema warning in %s: %s", path.name, warning)
-        if schema_errors:
-            raise TVLValidationError(
-                _format_schema_validation_error(schema_errors, path_name=path.name)
-            )
+        _validate_tvl_schema_or_raise(raw_data, path_name=path.name)
 
     resolved = _apply_environment(raw_data, environment)
+
+    # Validate the effective config after applying the active environment.
+    # Environment overlays can introduce invalid defaults or structures that
+    # are intentionally absent from the base spec.
+    if validate_schema:
+        _validate_tvl_schema_or_raise(resolved, path_name=path.name)
 
     # Parse TVL 0.9 header (tvl section)
     tvl_header = _parse_tvl_header(resolved.get("tvl"))

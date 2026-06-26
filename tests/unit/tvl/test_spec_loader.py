@@ -102,6 +102,103 @@ def test_environment_overrides_budget_and_space() -> None:
     assert artifact.configuration_space["retrieval_depth"] == (3, 8)
 
 
+def test_environment_overlay_out_of_domain_default_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Invalid defaults introduced by the active environment fail closed."""
+    spec_content = """
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    default: 0.5
+
+environments:
+  production:
+    overrides:
+      configuration_space:
+        temperature:
+          default: 2.0
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "env-invalid-default.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    with pytest.raises(TVLValidationError) as exc_info:
+        load_tvl_spec(spec_path=spec_file, environment="production")
+
+    message = str(exc_info.value)
+    assert "TVL schema validation failed" in message
+    assert "temperature" in message
+    assert "outside declared domain" in message
+
+
+def test_environment_overlay_valid_default_loads(tmp_path: Path) -> None:
+    """Valid defaults introduced by the active environment still load."""
+    spec_content = """
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    default: 0.5
+
+environments:
+  production:
+    overrides:
+      configuration_space:
+        temperature:
+          default: 0.7
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "env-valid-default.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    artifact = load_tvl_spec(spec_path=spec_file, environment="production")
+
+    assert artifact.default_config == {"temperature": 0.7}
+    assert artifact.configuration_space["temperature"] == (0.0, 1.0)
+
+
+def test_base_out_of_domain_default_still_fails_before_overlay(
+    tmp_path: Path,
+) -> None:
+    """Base-spec validation still fails before considering environment overlays."""
+    spec_content = """
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    default: 2.0
+
+environments:
+  production:
+    overrides:
+      configuration_space:
+        temperature:
+          default: 0.5
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "base-invalid-default.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    with pytest.raises(TVLValidationError) as exc_info:
+        load_tvl_spec(spec_path=spec_file, environment="production")
+
+    message = str(exc_info.value)
+    assert "TVL schema validation failed" in message
+    assert "temperature" in message
+    assert "outside declared domain" in message
+
+
 def test_compiled_constraints_attach_metadata() -> None:
     """Constraints are converted to decorator callables with metadata."""
 
