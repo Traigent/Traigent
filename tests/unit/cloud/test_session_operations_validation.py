@@ -1,5 +1,6 @@
 """Validation and locking tests for SessionOperations."""
 
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -8,8 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from traigent.cloud.api_operations import TraigentSessionApiResult
+from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 from traigent.cloud.session_operations import SessionOperations
+from traigent.cloud.session_types import SessionCreationFailureReason
 from traigent.utils.exceptions import ValidationError as ValidationException
 
 
@@ -247,3 +250,54 @@ def test_create_session_prunes_completed_sessions_with_aware_timestamps(monkeypa
     assert "completed-oldest" not in client._active_sessions
     assert "active-newer" in client._active_sessions
     assert "session-123" in client._active_sessions
+
+
+def test_create_session_auth_failure_logs_warning_not_debug(monkeypatch, caplog):
+    """Issue #1373(A): a backend AuthenticationError during the outer
+    ``SessionOperations.create_session`` path must surface at WARNING.
+
+    This drives the REAL create-session code path (not just
+    ``handle_session_creation_result``): ``_create_traigent_session_via_api``
+    raises ``AuthenticationError``, which is caught by the inner handler that
+    logs ``"Backend auth failed for ..."`` (session_operations.py ~:573).
+
+    Pre-fix that site was ``logger.debug``, so the failed publish was invisible
+    at the default log level. After the fix it is ``logger.warning``.
+
+    Coverage proof: reverting ONLY that line back to ``logger.debug`` makes
+    this test FAIL (no WARNING record captured); restoring ``logger.warning``
+    makes it PASS.
+    """
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        raise AuthenticationError("403 Forbidden: missing_permissions")
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        # Non-governed call → AuthenticationError is NOT fail-loud; it is caught,
+        # logged, and downgraded to a local fallback result.
+        result = ops.create_session(
+            "demo-function",
+            {"model": ["gpt-4o"]},
+            metadata={"max_trials": 3, "dataset_size": 4},
+        )
+
+    # The call returns a local fallback with reason=AUTH (no exception raised).
+    assert result.backend_connected is False
+    assert result.failure_reason == SessionCreationFailureReason.AUTH
+
+    # The auth failure MUST be visible at WARNING level (issue #1373(A)).
+    auth_warnings = [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and "Backend auth failed" in record.getMessage()
+    ]
+    assert auth_warnings, (
+        "Expected a WARNING-level 'Backend auth failed' record from the "
+        "create_session auth-failure path; got: "
+        f"{[(r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
