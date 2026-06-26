@@ -32,10 +32,18 @@ def _get_litellm_specifier_from_pyproject() -> str:
     data = tomllib.loads(PYPROJECT_PATH.read_text())
     deps: list[str] = data["project"]["dependencies"]
     for dep in deps:
-        normalized = dep.strip().lower().split("[")[0].split(">=")[0].split("==")[0].split(",")[0].strip()
+        normalized = (
+            dep.strip()
+            .lower()
+            .split("[")[0]
+            .split(">=")[0]
+            .split("==")[0]
+            .split(",")[0]
+            .strip()
+        )
         if normalized.rstrip() == "litellm":
             # Extract the specifier part: everything after "litellm"
-            specifier = dep.strip()[len("litellm"):]
+            specifier = dep.strip()[len("litellm") :]
             # Strip trailing comments
             specifier = specifier.split("#")[0].strip()
             return specifier
@@ -87,7 +95,7 @@ def test_litellm_specifier_is_not_exact_pin():
 def test_quickstart_install_hint_uses_range():
     """The quickstart error hint should NOT hardcode a specific exact version."""
     source = QUICKSTART_MAIN_PATH.read_text()
-    assert 'litellm==1.87.1' not in source, (
+    assert "litellm==1.87.1" not in source, (
         "traigent/examples/quickstart/__main__.py still hardcodes 'litellm==1.87.1' "
         "in the install hint. Update it to match the pyproject.toml range "
         "(e.g. 'litellm>=1.87.1,<2'). See GitHub issue #1418."
