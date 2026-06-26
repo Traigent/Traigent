@@ -1,6 +1,6 @@
 # Guided Generation
 
-**Privacy-preserving prompt rewrite + benchmark growth, guided by backend tuning
+**Privacy-preserving prompt rewrite + evaluation dataset growth, guided by backend tuning
 signals — without ever revealing those signals.**
 
 Traigent can generate *new* tuning material for you:
@@ -8,7 +8,7 @@ Traigent can generate *new* tuning material for you:
 - **Prompt rewrite** — LLM-generated prompt candidates aimed at your prompt's
   measured weak spots, folded into the configuration space as new `Choices` the
   optimizer searches (no optimizer changes).
-- **Benchmark guide generation** — new evaluation examples synthesized near the
+- **Evaluation dataset guide generation** — new evaluation examples synthesized near the
   informative/difficult frontier, growing your dataset.
 
 Both run **on your own LLM** in privacy mode, so prompt text and example content
