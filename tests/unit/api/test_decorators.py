@@ -12,6 +12,8 @@ from traigent.api.strategy_presets import (
     MAX_ACCURACY_THEN_CHEAPEST,
     PARETO_FRONTIER,
     QUALITY_FLOOR_MIN_COST,
+    VALID_PRESET_NAMES,
+    UnknownStrategyPresetError,
 )
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
@@ -219,8 +221,8 @@ class TestOptimizeDecorator:
         assert sample_function.algorithm == "grid"
 
     def test_decorator_rejects_unknown_strategy_name(self):
-        """Non-preset strategy values should raise ValueError."""
-        with pytest.raises(ValueError, match="Unknown strategy preset"):
+        """Non-preset strategy values should list valid presets."""
+        with pytest.raises(ValueError) as exc_info:
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -228,6 +230,15 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
+
+        assert isinstance(exc_info.value, UnknownStrategyPresetError)
+        message = str(exc_info.value)
+        assert message == (
+            f"Unknown strategy preset 'grid'. Valid presets: "
+            f"{', '.join(VALID_PRESET_NAMES)}."
+        )
+        for preset_name in VALID_PRESET_NAMES:
+            assert preset_name in message
 
     def test_decorator_accepts_strategy_preset(self):
         """Registered strategy names should configure advisory preset metadata."""
