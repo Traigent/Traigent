@@ -9,6 +9,9 @@ self._optimization_results.trials directly (no dead `or []` guard).
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
 
 from traigent.api.types import (
     OptimizationResult,
@@ -128,3 +131,42 @@ class TestCreateFullExportContractFields:
 
         assert export["trials"] == []
         assert export["optimization"]["total_trials"] == 0
+
+
+class TestCreateFullExportFailLoud:
+    """A genuinely-missing contract field surfaces as an error, not fake-success.
+
+    These tests FAIL on the pre-fix code (where the hasattr/"completed"
+    fallback masked a missing status) and PASS on the fixed code (direct
+    t.status access raises).
+    """
+
+    def test_trial_missing_status_raises_not_completed_default(self) -> None:
+        """A trial object without a ``status`` attribute must raise AttributeError.
+
+        Pre-fix: ``t.status if hasattr(t, "status") else "completed"`` silently
+        emitted ``"completed"`` (the #1302 success-masking pattern).
+        Post-fix: ``t.status`` raises, surfacing the contract break.
+        """
+        # A trial-shaped object that is MISSING the contract-guaranteed `status`.
+        bad_trial = SimpleNamespace(
+            trial_id="t1",
+            config={"model": "gpt-4o"},
+            metrics={"accuracy": 0.9},
+            # status deliberately absent
+        )
+        opt_result = SimpleNamespace(
+            trials=[bad_trial],
+            best_config={"model": "gpt-4o"},
+            best_metrics={},
+            stop_reason=None,
+        )
+        mgr: ConfigStateManager = ConfigStateManager.__new__(ConfigStateManager)
+        mgr._optimization_results = opt_result  # type: ignore[assignment]
+        mgr._best_config = {"model": "gpt-4o"}
+        mgr.func = lambda x: x
+        mgr.func.__name__ = "test_fn"  # type: ignore[method-assign]
+        mgr.configuration_space = None
+
+        with pytest.raises(AttributeError):
+            mgr._create_full_export(include_metadata=False)

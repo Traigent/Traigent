@@ -575,3 +575,52 @@ class TestFallbackOptimizationTrialsCount:
 
         # Must be 4 (len(trials)), not 0 (former isinstance-guard fallback value)
         assert result.trials_count == 4
+
+    def test_non_list_trials_raises_not_zero_count(self) -> None:
+        """A non-list ``trials`` (contract violation) must raise, not report 0.
+
+        Pre-fix: ``len(trials) if isinstance(trials, list) else 0`` returned 0
+        for a non-list value, masking the producer-contract breach.
+        Post-fix: ``len(trials)`` raises TypeError, surfacing it.
+
+        FAILS on pre-fix code (which would return trials_count=0); PASSES on
+        the fixed code (which raises).
+        """
+        # optimization_result whose `trials` is None — a producer-contract
+        # violation that the removed `isinstance ... else 0` guard would mask.
+        from types import SimpleNamespace
+
+        bad_result = SimpleNamespace(
+            trials=None,
+            best_config={"k": "v"},
+            best_metrics={"accuracy": 0.5},
+            best_score=0.5,
+        )
+
+        client = TraigentCloudClient(
+            api_key="tg_test_" + "x" * 56,  # pragma: allowlist secret
+            base_url="http://localhost",
+        )
+        dataset = Dataset([EvaluationExample({"text": "x"}, "x")], name="d")
+
+        async def run_test() -> CloudOptimizationResult:
+            with (
+                patch(
+                    "traigent.core.orchestrator.OptimizationOrchestrator"
+                ) as mock_orch_cls,
+                patch("traigent.evaluators.local.LocalEvaluator"),
+                patch("traigent.optimizers.registry.get_optimizer"),
+            ):
+                mock_orch = mock_orch_cls.return_value
+                mock_orch.optimize = AsyncMock(return_value=bad_result)
+                return await client._fallback_optimization(
+                    function_name="dummy",
+                    dataset=dataset,
+                    configuration_space={"k": ["v"]},
+                    objectives=["accuracy"],
+                    max_trials=4,
+                    local_function=lambda text: text,
+                )
+
+        with pytest.raises(TypeError):
+            asyncio.run(run_test())

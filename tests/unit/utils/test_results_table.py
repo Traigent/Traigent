@@ -9,6 +9,7 @@ should emit a clear "all trials failed" banner.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -456,3 +457,63 @@ class TestPrintResultsTableDirectFieldAccess:
         # Trial index 1 (score=0.8) is best — only works if metric_info was
         # populated from the real metrics dict
         assert 1 in best.get("score", set())
+
+
+class TestPrintResultsTableFailLoud:
+    """Missing contract fields surface as errors, not silent empty rendering.
+
+    These tests FAIL on the pre-fix code (where the getattr defaults masked
+    the missing attribute and rendered an empty/degraded table) and PASS on
+    the fixed code (direct access raises).
+    """
+
+    def test_results_missing_trials_raises_not_no_trials_banner(self) -> None:
+        """A results object without ``.trials`` must raise AttributeError.
+
+        Pre-fix: ``getattr(results, "trials", [])`` returned ``[]`` and the
+        function printed "No trials to display" and returned cleanly — masking
+        a contract break as a benign empty run.
+        Post-fix: ``results.trials`` raises, surfacing the breach.
+        """
+        # An OptimizationResult-shaped object MISSING the required `trials`.
+        bad_results = SimpleNamespace(
+            best_config={"model": "m1"},
+            best_score=0.5,
+            metadata={},
+        )
+
+        with pytest.raises(AttributeError):
+            print_results_table(
+                bad_results,  # type: ignore[arg-type]
+                config_space={"model": ["m1"]},
+                objectives=["accuracy"],
+            )
+
+    def test_trial_missing_metrics_raises_not_empty_metric_set(self) -> None:
+        """A first trial without ``.metrics`` must raise AttributeError.
+
+        Pre-fix: ``getattr(trials[0], "metrics", {})`` returned ``{}`` so the
+        metric columns silently vanished from the table.
+        Post-fix: ``trials[0].metrics`` raises, surfacing the breach.
+        """
+        # Non-empty trials so the `if not trials` guard is passed, but the
+        # first trial is MISSING the required `metrics` attribute.
+        trial_without_metrics = SimpleNamespace(
+            trial_id="t1",
+            config={"model": "m1"},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+        )
+        bad_results = SimpleNamespace(
+            trials=[trial_without_metrics],
+            best_config={"model": "m1"},
+            best_score=0.5,
+            metadata={},
+        )
+
+        with pytest.raises(AttributeError):
+            print_results_table(
+                bad_results,  # type: ignore[arg-type]
+                config_space={"model": ["m1"]},
+                objectives=["accuracy"],
+            )
