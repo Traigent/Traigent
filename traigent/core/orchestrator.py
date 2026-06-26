@@ -2423,6 +2423,11 @@ class OptimizationOrchestrator:
         """Check cost approval before optimization. Delegates to CostEstimator."""
         self._cost_estimator.check_cost_approval(dataset)
 
+    def _is_cost_limit_reached(self) -> bool:
+        """Return whether the shared cost enforcer has hit its run limit."""
+        cost_enforcer = getattr(self, "cost_enforcer", None)
+        return bool(cost_enforcer is not None and cost_enforcer.is_limit_reached)
+
     def _check_budget_limits(
         self, trial_count: int
     ) -> tuple[float, float, StopReason | None]:
@@ -2434,6 +2439,10 @@ class OptimizationOrchestrator:
         remaining = (
             float("inf") if self.max_trials is None else self.max_trials - trial_count
         )
+
+        if self._is_cost_limit_reached():
+            logger.info("Cost limit reached")
+            return remaining, 0, "cost_limit"
 
         if remaining <= 0:
             logger.info(f"Trial limit reached: {self.max_trials}")
@@ -2452,7 +2461,7 @@ class OptimizationOrchestrator:
         """Record a budget stop reason and return True if the loop should break."""
         if not budget_stop:
             return False
-        if not self._stop_reason:
+        if budget_stop == "cost_limit" or not self._stop_reason:
             self._stop_reason = budget_stop
         return True
 
@@ -3050,18 +3059,19 @@ class OptimizationOrchestrator:
         # Evaluate reusable stop conditions first
         stop_triggered, reason = self._stop_condition_manager.should_stop(self._trials)
         if stop_triggered:
-            if not self._stop_reason:
-                # Map stop condition reasons to StopReason literals
-                reason_mapping: dict[str | None, StopReason] = {
-                    "max_samples": "max_samples_reached",
-                    "max_trials": "max_trials_reached",
-                    "plateau": "plateau",
-                    "cost_limit": "cost_limit",
-                    "timeout": "timeout",
-                    "metric_limit": "metric_limit",
-                    "convergence": "convergence",
-                }
-                self._stop_reason = reason_mapping.get(reason, "condition")
+            # Map stop condition reasons to StopReason literals
+            reason_mapping: dict[str | None, StopReason] = {
+                "max_samples": "max_samples_reached",
+                "max_trials": "max_trials_reached",
+                "plateau": "plateau",
+                "cost_limit": "cost_limit",
+                "timeout": "timeout",
+                "metric_limit": "metric_limit",
+                "convergence": "convergence",
+            }
+            mapped_reason = reason_mapping.get(reason, "condition")
+            if mapped_reason == "cost_limit" or not self._stop_reason:
+                self._stop_reason = mapped_reason
             logger.info("Stopping: %s condition triggered", self._stop_reason)
             return True
 
