@@ -328,6 +328,27 @@ def _set_metric_if_convertible(
         )
 
 
+def _set_token_metric_from_progress(
+    metrics: dict[str, Any],
+    progress_state: dict[str, Any],
+    key: str,
+    trial_id: str,
+) -> None:
+    raw_value = progress_state.get(key)
+    if raw_value is None:
+        return
+    try:
+        metrics.setdefault(key, int(float(raw_value)))
+    except (TypeError, ValueError) as error:
+        logger.warning(
+            "Failed to convert %s to int for trial %s: %s (value: %s)",
+            key,
+            trial_id,
+            error,
+            raw_value,
+        )
+
+
 def _reconcile_cost_with_total_cost(metrics: dict[str, Any], trial_id: str) -> None:
     """Wire the per-config ``cost`` metric to ``total_cost`` when decoupled (#1423).
 
@@ -614,6 +635,10 @@ def build_pruned_result(
                     total_cost_value,
                 )
 
+        _set_token_metric_from_progress(
+            metrics, progress_state, "total_tokens", trial_id
+        )
+
     return TrialResult(
         trial_id=trial_id,
         config=copy.deepcopy(evaluation_config),
@@ -673,6 +698,10 @@ def build_failed_result(
                     e,
                     total_cost_value,
                 )
+
+        _set_token_metric_from_progress(
+            metrics, progress_state, "total_tokens", trial_id
+        )
 
     return TrialResult(
         trial_id=trial_id,

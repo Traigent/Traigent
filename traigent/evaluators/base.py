@@ -113,7 +113,16 @@ def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bo
 
 
 def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
-    """Return direct equality for accuracy comparisons with an explicit bool type."""
+    """Return direct equality, treating bool as distinct from plain numerics.
+
+    Python's ``bool`` is an ``int`` subclass, so ``True == 1`` and ``False == 0``.
+    For typed exact-match accuracy that conflation silently scores a numeric
+    output as a boolean match (and vice versa). When exactly one side is a bool
+    and the other is a non-bool number, the values do not match.
+    """
+    if isinstance(actual, bool) != isinstance(expected, bool):
+        if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+            return False
     return cast(bool, actual == expected)
 
 
@@ -2219,7 +2228,11 @@ class BaseEvaluator(ABC):
         if error is None and example.expected_output is not None:
             try:
                 metrics_payload["accuracy"] = (
-                    1.0 if result.actual_output == example.expected_output else 0.0
+                    1.0
+                    if _accuracy_values_match(
+                        result.actual_output, example.expected_output
+                    )
+                    else 0.0
                 )
             except Exception as exc:
                 logger.warning(
