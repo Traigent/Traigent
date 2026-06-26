@@ -498,3 +498,80 @@ class TestCloudServiceError:
         """Test CloudServiceError inheritance from Exception."""
         error = CloudServiceError("Test error")
         assert isinstance(error, Exception)
+
+
+class TestFallbackOptimizationTrialsCount:
+    """_fallback_optimization reports len(optimization_result.trials) directly.
+
+    Regression (#1493): the former guard
+    ``len(trials) if isinstance(trials, list) else 0`` would mask a
+    producer-contract violation; the fix uses ``len(trials)`` directly so a
+    non-list trials value raises instead of silently reporting 0.
+    """
+
+    def test_trials_count_equals_number_of_returned_trials(self) -> None:
+        """trials_count == len(optimization_result.trials) for a valid result."""
+        from datetime import UTC, datetime
+
+        from traigent.api.types import (
+            OptimizationResult,
+            OptimizationStatus,
+            TrialResult,
+            TrialStatus,
+        )
+
+        def _trial(tid: str) -> TrialResult:
+            return TrialResult(
+                trial_id=tid,
+                config={"k": "v"},
+                metrics={"accuracy": 0.5},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+            )
+
+        # 4-trial result — OptimizationResult.trials is always list[TrialResult]
+        mock_result = OptimizationResult(
+            trials=[_trial("t1"), _trial("t2"), _trial("t3"), _trial("t4")],
+            best_config={"k": "v"},
+            best_score=0.5,
+            optimization_id="oid",
+            duration=4.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+        )
+
+        client = TraigentCloudClient(
+            api_key="tg_test_" + "x" * 56,  # pragma: allowlist secret
+            base_url="http://localhost",
+        )
+        dataset = Dataset([EvaluationExample({"text": "x"}, "x")], name="d")
+
+        async def run_test() -> CloudOptimizationResult:
+            # Patch at the source modules — local imports in _fallback_optimization
+            # pick up the patched versions from sys.modules.
+            with (
+                patch(
+                    "traigent.core.orchestrator.OptimizationOrchestrator"
+                ) as mock_orch_cls,
+                patch("traigent.evaluators.local.LocalEvaluator"),
+                patch("traigent.optimizers.registry.get_optimizer"),
+            ):
+                mock_orch = mock_orch_cls.return_value
+                mock_orch.optimize = AsyncMock(return_value=mock_result)
+                return await client._fallback_optimization(
+                    function_name="dummy",
+                    dataset=dataset,
+                    configuration_space={"k": ["v"]},
+                    objectives=["accuracy"],
+                    max_trials=4,
+                    local_function=lambda text: text,
+                )
+
+        result = asyncio.run(run_test())
+
+        # Must be 4 (len(trials)), not 0 (former isinstance-guard fallback value)
+        assert result.trials_count == 4

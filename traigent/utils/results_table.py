@@ -424,7 +424,7 @@ def print_results_table(
         mode_label: Optional label rendered in the table title, e.g. ``"MOCK"``.
         metric_overrides: Optional per-metric display values by trial index.
     """
-    trials = getattr(results, "trials", [])
+    trials = results.trials
     if not trials:
         _safe_table_print("\nNo trials to display.")
         return
@@ -434,7 +434,7 @@ def print_results_table(
 
     # Resolve objectives & metrics present in trial data
     objective_info = _get_objective_info(objectives)
-    sample_metrics = getattr(trials[0], "metrics", {})
+    sample_metrics = trials[0].metrics
     metric_info = [(n, o) for n, o in objective_info if n in sample_metrics]
     metric_names = [n for n, _ in metric_info]
     param_names = list(config_space.keys())
