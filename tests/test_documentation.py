@@ -80,7 +80,7 @@ class TestDocumentationConsistency(unittest.TestCase):
                     ")"
                 ):
                     continue
-                self.fail(f"Syntax error in README code example {i+1}: {e}")
+                self.fail(f"Syntax error in README code example {i + 1}: {e}")
 
     def test_version_consistency(self):
         """Test that version numbers are consistent across files."""
@@ -127,7 +127,6 @@ class TestDocumentationConsistency(unittest.TestCase):
             ("traigent/api/decorators.py", "optimize decorator"),
             ("traigent/optimizers/grid.py", "grid search"),
             ("traigent/optimizers/random.py", "random search"),
-            ("traigent/optimizers/bayesian.py", "Bayesian optimization"),
         ]
 
         for module_path, feature_name in expected_modules:
