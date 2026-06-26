@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import os
 import time
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -16,6 +17,20 @@ from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+
+# Capture the genuine, unpatched ClientSession class at module-load time — before
+# any test can monkeypatch the mutable ``aiohttp.ClientSession`` module attribute.
+# The submodule attribute (``aiohttp.client.ClientSession``) is never the patch
+# target, so ``isinstance`` checks against this reference stay correct even when
+# ``aiohttp.ClientSession`` has been replaced with a MagicMock by another test.
+if AIOHTTP_AVAILABLE:
+    try:
+        from aiohttp.client import ClientSession as _REAL_AIOHTTP_CLIENT_SESSION
+    except ImportError:  # pragma: no cover - unexpected aiohttp layout
+        _REAL_AIOHTTP_CLIENT_SESSION = aiohttp.ClientSession
+else:  # pragma: no cover - minimal environments without aiohttp
+    _REAL_AIOHTTP_CLIENT_SESSION = None
+
 from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset
 from traigent.utils.env_config import is_backend_offline
@@ -109,6 +124,312 @@ def _session_is_closed(session: Any) -> bool:
     if isinstance(closed_flag, bool):
         return closed_flag
     return False
+
+
+def _log_finalizer_close_task_result(task: asyncio.Task[Any], owner: str) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.debug("%s aiohttp session close task was cancelled", owner)
+    except Exception as exc:  # pragma: no cover - defensive finalizer callback
+        logger.debug("Error closing %s aiohttp session: %s", owner, exc)
+
+
+def _close_awaitable(thing: Any) -> None:
+    close_method = getattr(thing, "close", None)
+    if callable(close_method):
+        try:
+            close_method()
+        except Exception:
+            pass
+
+
+def _schedule_aiohttp_session_close(
+    session: Any,
+    loop: asyncio.AbstractEventLoop,
+    owner: str,
+) -> bool:
+    close_method = getattr(session, "close", None)
+    if not callable(close_method):
+        return False
+
+    def create_task() -> None:
+        close_result: Any = None
+        try:
+            close_result = close_method()
+            if inspect.isawaitable(close_result):
+                task = loop.create_task(close_result)
+                task.add_done_callback(
+                    lambda done_task: _log_finalizer_close_task_result(done_task, owner)
+                )
+        except Exception as exc:  # pragma: no cover - defensive finalizer path
+            _close_awaitable(close_result)
+            logger.debug("Error scheduling %s aiohttp session close: %s", owner, exc)
+
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    try:
+        if current_loop is loop:
+            create_task()
+        else:
+            loop.call_soon_threadsafe(create_task)
+    except Exception as exc:  # pragma: no cover - defensive finalizer path
+        logger.debug("Error scheduling %s aiohttp session close: %s", owner, exc)
+        return False
+    return True
+
+
+def _run_aiohttp_session_close(
+    session: Any,
+    loop: asyncio.AbstractEventLoop,
+    owner: str,
+) -> bool:
+    close_method = getattr(session, "close", None)
+    if not callable(close_method):
+        return False
+
+    close_result: Any = None
+    try:
+        close_result = close_method()
+        if inspect.isawaitable(close_result):
+            loop.run_until_complete(close_result)
+        return True
+    except Exception as exc:  # pragma: no cover - defensive finalizer path
+        _close_awaitable(close_result)
+        logger.debug("Error closing %s aiohttp session on its loop: %s", owner, exc)
+        return False
+
+
+def _iter_connector_protocols(connector: Any) -> list[Any]:
+    protocols: list[Any] = []
+    seen: set[int] = set()
+
+    def add(protocol: Any) -> None:
+        if protocol is None:
+            return
+        identifier = id(protocol)
+        if identifier in seen:
+            return
+        seen.add(identifier)
+        protocols.append(protocol)
+
+    conns = getattr(connector, "_conns", None)
+    values = getattr(conns, "values", None)
+    if callable(values):
+        for pooled_connections in list(values()):
+            for connection_entry in list(pooled_connections):
+                protocol = connection_entry
+                if isinstance(connection_entry, (tuple, list)) and connection_entry:
+                    protocol = connection_entry[0]
+                add(getattr(protocol, "protocol", protocol))
+
+    for protocol in list(getattr(connector, "_acquired", ()) or ()):
+        add(getattr(protocol, "protocol", protocol))
+
+    return protocols
+
+
+def _raw_socket_from_transport(transport: Any) -> Any:
+    get_extra_info = getattr(transport, "get_extra_info", None)
+    if callable(get_extra_info):
+        try:
+            socket_info = get_extra_info("socket")
+        except Exception:
+            socket_info = None
+        if socket_info is not None:
+            return getattr(socket_info, "_sock", socket_info)
+    return getattr(transport, "_sock", None)
+
+
+def _close_transport_sync(transport: Any, seen: set[int] | None = None) -> None:
+    if transport is None:
+        return
+
+    if seen is None:
+        seen = set()
+    identifier = id(transport)
+    if identifier in seen:
+        return
+    seen.add(identifier)
+
+    for method_name in ("abort", "close"):
+        method = getattr(transport, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+
+    call_connection_lost = getattr(transport, "_call_connection_lost", None)
+    if callable(call_connection_lost):
+        try:
+            call_connection_lost(None)
+        except Exception:
+            pass
+
+    raw_socket = _raw_socket_from_transport(transport)
+    if raw_socket is not None:
+        close_socket = getattr(raw_socket, "close", None)
+        if callable(close_socket):
+            try:
+                close_socket()
+            except Exception:
+                pass
+
+    for nested_attr in ("_transport",):
+        nested_transport = getattr(transport, nested_attr, None)
+        if nested_transport is not None:
+            _close_transport_sync(nested_transport, seen)
+
+    ssl_protocol = getattr(transport, "_ssl_protocol", None)
+    nested_transport = getattr(ssl_protocol, "_transport", None)
+    if nested_transport is not None:
+        _close_transport_sync(nested_transport, seen)
+
+
+def _close_protocol_sync(protocol: Any) -> None:
+    transport = getattr(protocol, "transport", None)
+
+    for method_name in ("abort", "close"):
+        method = getattr(protocol, method_name, None)
+        if callable(method):
+            try:
+                method()
+                break
+            except Exception:
+                pass
+
+    _close_transport_sync(transport)
+
+
+def _cancel_connector_handle(connector: Any, name: str) -> None:
+    handle = getattr(connector, name, None)
+    cancel = getattr(handle, "cancel", None)
+    if callable(cancel):
+        try:
+            cancel()
+        except Exception:
+            pass
+    if hasattr(connector, name):
+        try:
+            setattr(connector, name, None)
+        except Exception:
+            pass
+
+
+def _clear_connector_waiters(connector: Any) -> None:
+    waiters = getattr(connector, "_waiters", None)
+    values = getattr(waiters, "values", None)
+    if callable(values):
+        for keyed_waiters in list(values()):
+            for waiter in list(keyed_waiters):
+                cancel = getattr(waiter, "cancel", None)
+                if callable(cancel):
+                    try:
+                        cancel()
+                    except Exception:
+                        pass
+    clear = getattr(waiters, "clear", None)
+    if callable(clear):
+        try:
+            clear()
+        except Exception:
+            pass
+
+
+def _clear_connector_collection(connector: Any, name: str) -> None:
+    collection = getattr(connector, name, None)
+    clear = getattr(collection, "clear", None)
+    if callable(clear):
+        try:
+            clear()
+        except Exception:
+            pass
+
+
+def _close_connector_transports_sync(connector: Any) -> None:
+    for protocol in _iter_connector_protocols(connector):
+        _close_protocol_sync(protocol)
+
+    for transport in list(getattr(connector, "_cleanup_closed_transports", ()) or ()):
+        _close_transport_sync(transport)
+
+    for handle_name in ("_cleanup_handle", "_cleanup_closed_handle"):
+        _cancel_connector_handle(connector, handle_name)
+
+    _clear_connector_waiters(connector)
+    for collection_name in (
+        "_conns",
+        "_acquired",
+        "_acquired_per_host",
+        "_cleanup_closed_transports",
+    ):
+        _clear_connector_collection(connector, collection_name)
+
+    if hasattr(connector, "_closed"):
+        try:
+            connector._closed = True
+        except Exception:
+            pass
+
+
+def _close_aiohttp_session_transports_sync(session: Any) -> None:
+    connector = getattr(session, "_connector", None)
+    owns_connector = bool(getattr(session, "_connector_owner", True))
+
+    if connector is not None and owns_connector:
+        _close_connector_transports_sync(connector)
+
+    if hasattr(session, "_connector"):
+        try:
+            session._connector = None
+        except Exception:
+            pass
+
+
+def _is_real_aiohttp_session(session: Any) -> bool:
+    """Return True only when *session* is a genuine aiohttp ClientSession.
+
+    The ``isinstance`` check uses ``_REAL_AIOHTTP_CLIENT_SESSION`` — the real
+    class captured from ``aiohttp.client`` at module-load time — rather than the
+    mutable ``aiohttp.ClientSession`` module attribute. Tests routinely
+    monkeypatch that attribute to a MagicMock; checking against it would both
+    raise ``TypeError`` (a non-type as the second isinstance arg) AND wrongly
+    reject a *genuine* session whenever the global is polluted, which would skip
+    finalizer registration on a real session. The captured class is always a
+    real type, so the check stays correct under such pollution.
+    """
+    return (
+        AIOHTTP_AVAILABLE
+        and _REAL_AIOHTTP_CLIENT_SESSION is not None
+        and isinstance(session, _REAL_AIOHTTP_CLIENT_SESSION)
+    )
+
+
+def _finalize_aiohttp_session(session: Any, owner: str) -> None:
+    """Synchronously close an aiohttp session from a weakref finalizer."""
+
+    if not _is_real_aiohttp_session(session):
+        return
+
+    try:
+        if session is None or _session_is_closed(session):
+            return
+
+        session_loop = getattr(session, "_loop", None)
+        if session_loop is not None and not session_loop.is_closed():
+            if session_loop.is_running():
+                if _schedule_aiohttp_session_close(session, session_loop, owner):
+                    return
+            elif _run_aiohttp_session_close(session, session_loop, owner):
+                return
+
+        _close_aiohttp_session_transports_sync(session)
+    except Exception as exc:  # pragma: no cover - defensive finalizer
+        logger.debug("Error finalizing %s aiohttp session: %s", owner, exc)
 
 
 def _coerce_enum(enum_cls: Any, raw: Any, *, fallback: Any) -> Any:
@@ -480,6 +801,7 @@ class TraigentCloudClient(BaseTraigentClient):
         # Session management
         self._aio_session: aiohttp.ClientSession | None = None
         self._session_lock: asyncio.Lock = asyncio.Lock()
+        self._session_finalizer: weakref.finalize | None = None
         # Track session ownership fingerprints for clearer error reporting
         self._session_owners: dict[str, dict[str, Any]] = {}
 
@@ -505,6 +827,7 @@ class TraigentCloudClient(BaseTraigentClient):
             timeout=aiohttp.ClientTimeout(total=self.timeout),
             headers=await self.auth.get_headers(),
         )
+        self._register_session_finalizer(self._aio_session)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -553,6 +876,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
             )
+            self._register_session_finalizer(self._aio_session)
             return self._aio_session
 
     async def _get_headers(self) -> dict[str, str]:
@@ -571,6 +895,22 @@ class TraigentCloudClient(BaseTraigentClient):
         """Close and discard the shared aiohttp session after failures."""
         await self._close_http_session(reason=reason)
 
+    def _register_session_finalizer(self, session: aiohttp.ClientSession) -> None:
+        self._detach_session_finalizer()
+        if _is_real_aiohttp_session(session):
+            self._session_finalizer = weakref.finalize(
+                self,
+                _finalize_aiohttp_session,
+                session,
+                self.__class__.__name__,
+            )
+
+    def _detach_session_finalizer(self) -> None:
+        finalizer = getattr(self, "_session_finalizer", None)
+        if finalizer is not None:
+            finalizer.detach()
+            self._session_finalizer = None
+
     async def _close_http_session(self, reason: str | None = None) -> None:
         """Best-effort close for the shared HTTP session."""
         if not self._aio_session:
@@ -580,6 +920,7 @@ class TraigentCloudClient(BaseTraigentClient):
         if session is None:
             return
         self._aio_session = None
+        self._detach_session_finalizer()
 
         close_method = getattr(session, "close", None)
         if not callable(close_method):

@@ -12,6 +12,7 @@ import os
 import secrets
 import sys
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -34,6 +35,8 @@ from traigent.cloud.backend_components import (
 )
 from traigent.cloud.client import (
     CloudServiceError,
+    _finalize_aiohttp_session,
+    _is_real_aiohttp_session,
     cloud_backend_egress_disabled,
     raise_if_cloud_egress_disabled,
 )
@@ -508,6 +511,7 @@ class BackendIntegratedClient:
         # Initialize session
         self._session: AioClientSession | None = None
         self._session_lock: asyncio.Lock = asyncio.Lock()
+        self._session_finalizer: weakref.finalize | None = None
 
         # Initialize remaining components
         self.subset_selector = SmartSubsetSelector()
@@ -722,6 +726,7 @@ class BackendIntegratedClient:
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
             )
+            self._register_session_finalizer(self._session)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -778,6 +783,7 @@ class BackendIntegratedClient:
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
             )
+            self._register_session_finalizer(self._session)
 
             return cast(AioClientSession, self._session)
 
@@ -794,6 +800,7 @@ class BackendIntegratedClient:
 
         session = self._session
         self._session = None
+        self._detach_session_finalizer()
         try:
             if _session_is_closed(session):
                 return
@@ -818,6 +825,22 @@ class BackendIntegratedClient:
         """Close any active HTTP session to avoid resource leaks."""
 
         await self._reset_http_session(_reason)
+
+    def _register_session_finalizer(self, session: AioClientSession) -> None:
+        self._detach_session_finalizer()
+        if _is_real_aiohttp_session(session):
+            self._session_finalizer = weakref.finalize(
+                self,
+                _finalize_aiohttp_session,
+                session,
+                self.__class__.__name__,
+            )
+
+    def _detach_session_finalizer(self) -> None:
+        finalizer = getattr(self, "_session_finalizer", None)
+        if finalizer is not None:
+            finalizer.detach()
+            self._session_finalizer = None
 
     # === Delegated Operations ===
     # The following methods delegate to the refactored sub-modules
