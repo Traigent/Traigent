@@ -143,6 +143,41 @@ class TestRange:
         assert not is_float_range_config_dict(simple)
         assert is_float_range_config_dict(advanced)
 
+    def test_range_non_dividing_step_warns_unreachable_high(self):
+        """Range(0, 1.0, step=0.4): step 0.4 does not divide span 1.0 — warns.
+
+        Grid lands at 0.0, 0.4, 0.8 and the declared high 1.0 is effectively
+        unreachable (probability ~0 via uniform(0,1) clamped at 1.0).
+        This test would FAIL on pre-fix code that had no divisibility check.
+        """
+        with pytest.warns(UserWarning, match="does not evenly divide span"):
+            Range(0.0, 1.0, step=0.4)
+
+    def test_range_non_dividing_step_warns_overshot_high(self):
+        """Range(0, 1.1, step=0.4): step 0.4 does not divide span 1.1 — warns.
+
+        Grid lands at 0.0, 0.4, 0.8; the next cell 1.2 overshoots high 1.1
+        and the clamp folds all draws in [1.05, 1.1] onto 1.1 with skewed
+        probability.  This test would FAIL on pre-fix code.
+        """
+        with pytest.warns(UserWarning, match="does not evenly divide span"):
+            Range(0.0, 1.1, step=0.4)
+
+    def test_range_dividing_step_no_warning(self):
+        """Range(0, 1.0, step=0.5): step 0.5 divides span 1.0 exactly — no warn."""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            # Should NOT raise; step 0.5 divides span [0.0, 1.0] evenly (2 intervals).
+            r = Range(0.0, 1.0, step=0.5)
+        assert r.step == 0.5
+
+    def test_range_non_dividing_step_warning_message_names_bounds(self):
+        """Warning message for non-dividing step names the low, high, and step."""
+        with pytest.warns(UserWarning, match=r"\[0\.0, 1\.0\]"):
+            Range(0.0, 1.0, step=0.4)
+
 
 class TestIntRange:
     """Tests for IntRange class."""
