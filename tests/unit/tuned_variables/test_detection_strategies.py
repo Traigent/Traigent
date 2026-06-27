@@ -232,9 +232,9 @@ class TestASTDetectionStrategy:
         candidates = strategy.detect(src, "my_func")
         # "temp" is a known variant of "temperature" in the universal mapping,
         # so it gets HIGH confidence (direct known-param match), not MEDIUM.
-        assert (
-            len(candidates) == 1
-        ), f"'temp' should yield exactly 1 candidate; got {[c.name for c in candidates]}"
+        assert len(candidates) == 1, (
+            f"'temp' should yield exactly 1 candidate; got {[c.name for c in candidates]}"
+        )
         c = candidates[0]
         assert c.name == "temp"
         assert c.confidence == DetectionConfidence.HIGH
@@ -250,9 +250,9 @@ class TestASTDetectionStrategy:
         """)
         candidates = strategy.detect(src, "infer")
         # "llm_model" is not an exact match but "claude-3-opus" looks like a model
-        assert (
-            len(candidates) == 1
-        ), f"model string heuristic should fire exactly once; got {[c.name for c in candidates]}"
+        assert len(candidates) == 1, (
+            f"model string heuristic should fire exactly once; got {[c.name for c in candidates]}"
+        )
         c = candidates[0]
         assert c.name == "llm_model"
         assert c.current_value == "claude-3-opus"
@@ -271,9 +271,9 @@ class TestASTDetectionStrategy:
         """)
         candidates = strategy.detect(src, "my_func")
         c = _by_name(candidates, "temperature")
-        assert (
-            c is None
-        ), "Variable already using ParameterRange must not be re-detected"
+        assert c is None, (
+            "Variable already using ParameterRange must not be re-detected"
+        )
 
     def test_skips_choices_assignment(self, strategy) -> None:
         src = _dedent("""
@@ -337,9 +337,9 @@ class TestASTDetectionStrategy:
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "temperature")
         assert c is not None
-        assert (
-            c.suggested_range is not None
-        ), "temperature should have a suggested range"
+        assert c.suggested_range is not None, (
+            "temperature should have a suggested range"
+        )
         assert c.suggested_range.range_type == "Range"
         code = c.suggested_range.to_parameter_range_code()
         assert "Range(" in code
@@ -364,9 +364,9 @@ class TestASTDetectionStrategy:
         """)
         candidates = strategy.detect(src, "fn")
         # No literal value → cannot extract; should be empty
-        assert (
-            candidates == []
-        ), f"Non-literal assignments must not be detected; got {[c.name for c in candidates]}"
+        assert candidates == [], (
+            f"Non-literal assignments must not be detected; got {[c.name for c in candidates]}"
+        )
 
     def test_detects_stop_parameter_with_list_value(self, strategy) -> None:
         """'stop' parameter with a list of strings should be detected as CATEGORICAL."""
@@ -404,9 +404,9 @@ class TestASTDetectionStrategy:
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "model_name")
         assert c is not None, "model_name should be detected as a known variant"
-        assert (
-            c.canonical_name == "model"
-        ), f"Expected canonical 'model', got {c.canonical_name!r}"
+        assert c.canonical_name == "model", (
+            f"Expected canonical 'model', got {c.canonical_name!r}"
+        )
 
     # -- Source location is set -----------------------------------------------
 
@@ -435,9 +435,9 @@ class TestASTDetectionStrategy:
         assert "model" in names, f"model not detected; got {names}"
         assert "temperature" in names, f"temperature not detected; got {names}"
         assert "max_tokens" in names, f"max_tokens not detected; got {names}"
-        assert (
-            len(candidates) == 3
-        ), f"Expected exactly 3 candidates, got {len(candidates)}"
+        assert len(candidates) == 3, (
+            f"Expected exactly 3 candidates, got {len(candidates)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -487,9 +487,9 @@ class TestLLMDetectionStrategy:
         candidates = strategy.detect(src, "fn")
 
         assert len(candidates) == 1
-        assert (
-            candidates[0].confidence == DetectionConfidence.LOW
-        ), "LLM-only candidates must start at LOW confidence"
+        assert candidates[0].confidence == DetectionConfidence.LOW, (
+            "LLM-only candidates must start at LOW confidence"
+        )
         assert candidates[0].detection_source == "llm"
 
     def test_handles_malformed_json_gracefully(self) -> None:

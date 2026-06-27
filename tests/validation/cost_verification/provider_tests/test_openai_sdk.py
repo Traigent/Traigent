@@ -165,9 +165,9 @@ class TestOpenAISDKCost:
             expected_output_price_per_token=GPT4O_MINI_OUTPUT_PRICE,
         )
 
-        assert (
-            result.cost_matches
-        ), f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        assert result.cost_matches, (
+            f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        )
 
         return result
 

@@ -33,11 +33,7 @@ def plugin_tracing():
     """Import the plugin's tracing module from its on-disk path."""
     repo_root = Path(__file__).resolve().parents[3]
     plugin_path = (
-        repo_root
-        / "plugins"
-        / "traigent-tracing"
-        / "traigent_tracing"
-        / "tracing.py"
+        repo_root / "plugins" / "traigent-tracing" / "traigent_tracing" / "tracing.py"
     )
     spec = importlib.util.spec_from_file_location(
         "_traigent_tracing_under_test", plugin_path
@@ -133,8 +129,7 @@ class TestPluginExportedAttributeScrubbing:
                 pass
 
         input_call = next(
-            c for c in span.set_attribute.call_args_list
-            if c.args[0] == "example.input"
+            c for c in span.set_attribute.call_args_list if c.args[0] == "example.input"
         )
         exported = input_call.args[1]
         assert "janet@example.org" not in exported
@@ -151,7 +146,8 @@ class TestPluginExportedAttributeScrubbing:
                 pass
 
         expected_call = next(
-            c for c in span.set_attribute.call_args_list
+            c
+            for c in span.set_attribute.call_args_list
             if c.args[0] == "example.expected_output"
         )
         exported = expected_call.args[1]
@@ -171,7 +167,8 @@ class TestPluginExportedAttributeScrubbing:
         )
 
         actual_call = next(
-            c for c in span.set_attribute.call_args_list
+            c
+            for c in span.set_attribute.call_args_list
             if c.args[0] == "example.actual_output"
         )
         exported = actual_call.args[1]
@@ -199,15 +196,12 @@ class TestPluginExportedAttributeScrubbing:
                 pass
 
         config_call = next(
-            c for c in span.set_attribute.call_args_list
-            if c.args[0] == "trial.config"
+            c for c in span.set_attribute.call_args_list if c.args[0] == "trial.config"
         )
         assert fake_access_key not in config_call.args[1]
         assert "***REDACTED***" in config_call.args[1]
 
-    def test_optimization_best_config_scrubs_secret_keys(
-        self, plugin_tracing
-    ) -> None:
+    def test_optimization_best_config_scrubs_secret_keys(self, plugin_tracing) -> None:
         span = MagicMock()
         fake_access_key = "AKIA" + ("X" * 16)
         plugin_tracing.record_optimization_complete(
@@ -221,7 +215,8 @@ class TestPluginExportedAttributeScrubbing:
         )
 
         best_config_call = next(
-            c for c in span.set_attribute.call_args_list
+            c
+            for c in span.set_attribute.call_args_list
             if c.args[0] == "optimization.best_config"
         )
         assert fake_access_key not in best_config_call.args[1]

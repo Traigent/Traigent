@@ -58,9 +58,9 @@ class TestTVLExamplesLoad:
         artifact = load_tvl_spec(spec_path=spec_path)
 
         # All examples should have at least one tunable parameter
-        assert (
-            len(artifact.configuration_space) > 0
-        ), f"Spec {spec_path.name} has no configuration space parameters"
+        assert len(artifact.configuration_space) > 0, (
+            f"Spec {spec_path.name} has no configuration space parameters"
+        )
 
 
 class TestTVLExamplesContent:
@@ -164,9 +164,9 @@ class TestSpecificExamples:
 
         # Should have objective schema with multiple objectives
         assert artifact.objective_schema is not None
-        assert (
-            len(artifact.objective_schema.objectives) >= 2
-        ), "Expected at least two objectives"
+        assert len(artifact.objective_schema.objectives) >= 2, (
+            "Expected at least two objectives"
+        )
 
     def test_promotion_policy_example_loads(self) -> None:
         """The promotion_policy example should load with policy configuration."""

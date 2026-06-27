@@ -392,14 +392,16 @@ class TestReviewRoundTwoCoverage:
                 "c1": Knob(
                     name="c1",
                     binding=Calibrated(
-                        signal=_signal(), target=_target(),
+                        signal=_signal(),
+                        target=_target(),
                         depends_on=(Ref(knob="c2"),),
                     ),
                 ),
                 "c2": Knob(
                     name="c2",
                     binding=Calibrated(
-                        signal=_signal(), target=_target(),
+                        signal=_signal(),
+                        target=_target(),
                         depends_on=(Ref(knob="c1"),),
                     ),
                 ),

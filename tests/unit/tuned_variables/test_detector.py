@@ -76,9 +76,9 @@ class TestUpgradeConfidence:
     def test_two_low_upgrades_to_medium(self) -> None:
         # When two strategies both detect (even at LOW), agreement = upgrade
         result = _upgrade_confidence(DetectionConfidence.LOW, DetectionConfidence.LOW)
-        assert (
-            result == DetectionConfidence.MEDIUM
-        ), "Two LOW detections should upgrade to MEDIUM"
+        assert result == DetectionConfidence.MEDIUM, (
+            "Two LOW detections should upgrade to MEDIUM"
+        )
 
     def test_low_and_medium_gives_medium(self) -> None:
         result = _upgrade_confidence(
@@ -131,9 +131,9 @@ class TestDetectFromSource:
     def test_source_hash_populated(self, detector) -> None:
         src = "def fn():\n    temperature = 0.5\n"
         result = detector.detect_from_source(src, "fn")
-        assert (
-            len(result.source_hash) == 16
-        ), f"Expected 16-char hash, got: {result.source_hash!r}"
+        assert len(result.source_hash) == 16, (
+            f"Expected 16-char hash, got: {result.source_hash!r}"
+        )
 
     def test_context_existing_tvars_skips_detected(self, detector) -> None:
         src = _dedent("""
@@ -180,9 +180,9 @@ class TestDetectFromSource:
         src = "def fn():\n    temperature = 0.7\n"
         result = detector.detect_from_source(src, "fn")
         # AST strategy still ran despite broken one
-        assert (
-            result.count == 1
-        ), "Working strategy should still produce exactly 1 result"
+        assert result.count == 1, (
+            "Working strategy should still produce exactly 1 result"
+        )
         assert _by_name(result.candidates, "temperature") is not None
 
 
@@ -272,9 +272,9 @@ class TestDetectFromFile:
     def test_detects_from_file_all_functions(self, detector, sample_py_file) -> None:
         results = detector.detect_from_file(sample_py_file)
         # Only agent_call has known params; helper has none
-        assert (
-            len(results) == 1
-        ), f"Expected exactly 1 result (agent_call), got {len(results)}"
+        assert len(results) == 1, (
+            f"Expected exactly 1 result (agent_call), got {len(results)}"
+        )
         func_names = [r.function_name for r in results]
         assert "agent_call" in func_names, f"agent_call not found; got {func_names}"
 
@@ -305,9 +305,9 @@ class TestDetectFromFile:
     ) -> None:
         results = detector.detect_from_file(sample_py_file)
         func_names = [r.function_name for r in results]
-        assert (
-            "helper" not in func_names
-        ), "helper() has no tunable vars and should be excluded from results"
+        assert "helper" not in func_names, (
+            "helper() has no tunable vars and should be excluded from results"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -340,9 +340,9 @@ class TestMergeCandidates:
 
         # Should merge into 1 candidate, not 2
         temp_candidates = [c for c in result.candidates if c.name == "temperature"]
-        assert (
-            len(temp_candidates) == 1
-        ), f"Expected 1 merged candidate, got {len(temp_candidates)}"
+        assert len(temp_candidates) == 1, (
+            f"Expected 1 merged candidate, got {len(temp_candidates)}"
+        )
         # Confidence should be upgraded from LOW+MEDIUM → MEDIUM or higher
         assert temp_candidates[0].confidence in (
             DetectionConfidence.MEDIUM,
@@ -438,6 +438,6 @@ class TestDetectorResultIntegration:
         result = detector.detect_from_source(src, "fn")
         high = result.high_confidence
         for c in high:
-            assert (
-                c.confidence == DetectionConfidence.HIGH
-            ), f"high_confidence returned non-HIGH candidate: {c.confidence}"
+            assert c.confidence == DetectionConfidence.HIGH, (
+                f"high_confidence returned non-HIGH candidate: {c.confidence}"
+            )

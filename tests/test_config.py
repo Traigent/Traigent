@@ -20,12 +20,14 @@ class TestConfig:
 
     # Test database configuration
     TEST_DATABASE_URL = os.getenv(
-        "TEST_DATABASE_URL", "sqlite:///:memory:"  # In-memory database for tests
+        "TEST_DATABASE_URL",
+        "sqlite:///:memory:",  # In-memory database for tests
     )
 
     # Test Redis URL
     TEST_REDIS_URL = os.getenv(
-        "TEST_REDIS_URL", "redis://localhost:6379/15"  # Use database 15 for tests
+        "TEST_REDIS_URL",
+        "redis://localhost:6379/15",  # Use database 15 for tests
     )
 
     # Mock mode for tests

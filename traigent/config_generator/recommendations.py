@@ -145,8 +145,7 @@ def _normalize_agent_type(agent_type: str) -> str:
 
     valid = ", ".join(valid_types) or "<none>"
     raise ValueError(
-        f"Unknown agent_type {agent_type!r}. "
-        f"Valid recommendation agent types: {valid}."
+        f"Unknown agent_type {agent_type!r}. Valid recommendation agent types: {valid}."
     )
 
 
@@ -256,8 +255,7 @@ def _format_evidence_ref(ref: EvidenceRef | Mapping[str, Any]) -> str:
         summary = "observational support; no measured delta"
     else:
         summary = (
-            f"{public_ref['metric']} delta "
-            f"{_format_delta(float(public_ref['delta']))}"
+            f"{public_ref['metric']} delta {_format_delta(float(public_ref['delta']))}"
         )
     return (
         f"{summary} on {public_ref['scope']} benchmark "

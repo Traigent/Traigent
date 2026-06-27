@@ -117,8 +117,7 @@ class Gate:
             # silently NEVER escalate (fail-open). Non-finite thresholds are
             # a calibration defect: fail closed.
             raise ValueError(
-                f"Gate threshold is non-finite ({threshold!r}); "
-                "re-calibrate the CVAR."
+                f"Gate threshold is non-finite ({threshold!r}); re-calibrate the CVAR."
             )
         return vote.margin < threshold
 

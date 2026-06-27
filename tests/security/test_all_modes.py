@@ -7,9 +7,9 @@ import sys
 
 def run_tests_in_environment(environment: str, env_vars: dict):
     """Run tests in specific environment."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Testing in {environment.upper()} mode")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # Set environment variables
     env = os.environ.copy()

@@ -280,15 +280,19 @@ def test_telemetry_names_are_truthful_for_pre_and_post_cascades() -> None:
     assert "escalation_rate" not in _router().telemetry_names
 
     assert _fallback().telemetry_names == POST_TELEMETRY
-    assert binary_cascade(
-        "bc",
-        base_stage="cheap",
-        expert_stage="strong",
-        threshold="theta",
-    ).telemetry_names == POST_TELEMETRY
-    assert n_cascade(
-        "nc", stages=("a", "b", "c"), thresholds=("t0", "t1")
-    ).telemetry_names == POST_TELEMETRY
+    assert (
+        binary_cascade(
+            "bc",
+            base_stage="cheap",
+            expert_stage="strong",
+            threshold="theta",
+        ).telemetry_names
+        == POST_TELEMETRY
+    )
+    assert (
+        n_cascade("nc", stages=("a", "b", "c"), thresholds=("t0", "t1")).telemetry_names
+        == POST_TELEMETRY
+    )
 
 
 def test_fallback_docstring_states_no_accept_not_error_contract() -> None:

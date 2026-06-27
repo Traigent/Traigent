@@ -269,7 +269,7 @@ def create_realistic_optimizer_results(
         latency = 1.0 + random.uniform(0, 0.5)
 
         result = TrialResult(
-            trial_id=f"trial_{i+1}",
+            trial_id=f"trial_{i + 1}",
             config=config,
             metrics={
                 "accuracy": round(accuracy, 3),

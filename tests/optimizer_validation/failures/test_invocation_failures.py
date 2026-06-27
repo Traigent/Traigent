@@ -454,9 +454,9 @@ class TestInvalidExecutionConfig:
         else:
             # If no exception, should have 0 trials (as per scenario expectation)
             if hasattr(result, "trials"):
-                assert (
-                    len(result.trials) == 0
-                ), f"Zero max_trials should yield 0 trials, got {len(result.trials)}"
+                assert len(result.trials) == 0, (
+                    f"Zero max_trials should yield 0 trials, got {len(result.trials)}"
+                )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -523,16 +523,16 @@ class TestInvalidExecutionConfig:
         _, result = await scenario_runner(scenario)
 
         # Zero timeout should complete without error but with 0 trials
-        assert not isinstance(
-            result, Exception
-        ), f"Zero timeout should not crash: {result}"
+        assert not isinstance(result, Exception), (
+            f"Zero timeout should not crash: {result}"
+        )
 
         # Zero timeout means immediate timeout, so 0 trials expected
         if hasattr(result, "trials"):
             # Per docstring: "zero timeout results in 0 trials due to immediate timeout"
-            assert (
-                len(result.trials) == 0
-            ), f"Zero timeout should yield 0 trials, got {len(result.trials)}"
+            assert len(result.trials) == 0, (
+                f"Zero timeout should yield 0 trials, got {len(result.trials)}"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -882,9 +882,9 @@ class TestInvalidConstraintSignatures:
         # rejected, so we expect 0 trials to complete.
         if hasattr(result, "trials"):
             # Invalid constraint signature leads to 0 trials (all configs rejected)
-            assert (
-                len(result.trials) == 0
-            ), "Invalid constraint should reject all configs"
+            assert len(result.trials) == 0, (
+                "Invalid constraint should reject all configs"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

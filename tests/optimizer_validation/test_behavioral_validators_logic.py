@@ -466,6 +466,6 @@ class TestValidatorApplicability:
         ]
 
         for validator in validators:
-            assert not validator.applies_to(
-                failure_scenario
-            ), f"{validator.name} should skip failure scenarios"
+            assert not validator.applies_to(failure_scenario), (
+                f"{validator.name} should skip failure scenarios"
+            )

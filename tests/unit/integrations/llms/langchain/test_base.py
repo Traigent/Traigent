@@ -514,9 +514,9 @@ class TestParameterMappings:
             # All values should be strings (parameter names)
             for key, value in mapping.items():
                 assert isinstance(key, str), f"{llm_class} key {key} is not string"
-                assert isinstance(
-                    value, str
-                ), f"{llm_class} value {value} is not string"
+                assert isinstance(value, str), (
+                    f"{llm_class} value {value} is not string"
+                )
 
 
 class TestEdgeCases:

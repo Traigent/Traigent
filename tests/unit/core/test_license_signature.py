@@ -91,8 +91,7 @@ class TestSignedVerificationWhenKeyConfigured:
         assert info.tier == LicenseTier.ENTERPRISE
         assert info.organization == "Acme"
         assert info.validation_source == "offline", (
-            "verified offline tokens must be tagged plain 'offline', "
-            "not the legacy tag"
+            "verified offline tokens must be tagged plain 'offline', not the legacy tag"
         )
 
     def test_unsigned_token_is_rejected_when_key_configured(

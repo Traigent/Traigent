@@ -75,9 +75,7 @@ class TestBuildCertifiedSelection:
             issued_hash=cert.issued_hash,
         )
         assert (
-            build_certified_selection(
-                "trial_42", {"theta": cert, "phi": uncertified}
-            )
+            build_certified_selection("trial_42", {"theta": cert, "phi": uncertified})
             is None
         )
 
@@ -334,11 +332,13 @@ class TestWireThreading:
                 ClientError=Exception,
             ),
         )
-        monkeypatch.setattr(
-            "traigent.cloud.session_operations.AIOHTTP_AVAILABLE", True
-        )
+        monkeypatch.setattr("traigent.cloud.session_operations.AIOHTTP_AVAILABLE", True)
 
-        report = {"trial_id": "t1", "certificates": [], "attestation": "sdk_client_attested"}
+        report = {
+            "trial_id": "t1",
+            "certificates": [],
+            "attestation": "sdk_client_attested",
+        }
         await ops._finalize_session_via_api("s-1", "r-1", certified_selection=report)
         assert captured["body"]["certified_selection"] == report
         assert "certified_selection" not in captured["body"].get("metadata", {})
@@ -359,8 +359,12 @@ class TestWireThreading:
         manager._backend_client = client
 
         report = {"trial_id": "t1"}
-        manager.finalize_session("s-1", OptimizationStatus.FAILED, certified_selection=report)
-        assert client.finalize_session_sync.call_args.kwargs["certified_selection"] is None
+        manager.finalize_session(
+            "s-1", OptimizationStatus.FAILED, certified_selection=report
+        )
+        assert (
+            client.finalize_session_sync.call_args.kwargs["certified_selection"] is None
+        )
 
         manager.finalize_session(
             "s-1", OptimizationStatus.COMPLETED, certified_selection=report

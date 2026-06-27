@@ -145,7 +145,8 @@ class NextStepsClient:
         Returns:
             Dict with the backend next-steps contract payload. The response
             includes a ``caveat`` field that callers should display near the
-            recommendations.
+            recommendations. If the backend includes the optional opaque
+            ``posture`` block, it is returned unchanged.
 
         Raises:
             httpx.HTTPError: If request fails. A 404 response is raised as

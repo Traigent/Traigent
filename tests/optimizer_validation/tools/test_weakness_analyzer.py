@@ -420,7 +420,7 @@ class TestFunctionAnalysis:
             ):
                 line = self.source_lines[i]
                 if "result_validator" in line:
-                    self.validator_call_lines.append(f"L{i+1}: {line.strip()}")
+                    self.validator_call_lines.append(f"L{i + 1}: {line.strip()}")
 
         if "validation.passed" in source_block or ".passed" in source_block:
             self.has_validation_passed_assert = True

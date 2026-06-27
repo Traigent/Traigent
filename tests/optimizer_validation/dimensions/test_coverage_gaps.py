@@ -117,13 +117,13 @@ class TestInvalidExecutionMode:
         else:
             # If it uses a default, verify the result is valid
             if hasattr(result, "trials"):
-                assert (
-                    len(result.trials) >= 1
-                ), "Should complete at least one trial with default mode"
+                assert len(result.trials) >= 1, (
+                    "Should complete at least one trial with default mode"
+                )
             # Verify result has expected structure
-            assert hasattr(result, "best_config") or hasattr(
-                result, "trials"
-            ), "Result should have optimization data"
+            assert hasattr(result, "best_config") or hasattr(result, "trials"), (
+                "Result should have optimization data"
+            )
             # Validate with custom scenario that expects success (fallback behavior)
             success_scenario = TestScenario(
                 name="empty_execution_mode_fallback",
@@ -195,9 +195,9 @@ class TestBoundedObjectiveConfig:
         # Verify all trial scores are within bounds
         for trial in result.trials:
             if hasattr(trial, "score") and trial.score is not None:
-                assert (
-                    0.0 <= trial.score <= 1.0
-                ), f"Score {trial.score} out of bounds [0.0, 1.0]"
+                assert 0.0 <= trial.score <= 1.0, (
+                    f"Score {trial.score} out of bounds [0.0, 1.0]"
+                )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

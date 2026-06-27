@@ -91,9 +91,9 @@ def test_trial_caps():
     os.unlink(dataset_path)
 
     print(f"Trials executed: {len(result.trials)}")
-    assert (
-        len(result.trials) <= 5
-    ), f"Trial cap violated! Got {len(result.trials)} trials"
+    assert len(result.trials) <= 5, (
+        f"Trial cap violated! Got {len(result.trials)} trials"
+    )
     print("✅ Trial cap enforced successfully!")
 
 

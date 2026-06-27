@@ -328,12 +328,12 @@ class TestMCPRequestHandling:
 
                 # The client handles timeout gracefully - returns MCPResponse with success=False
                 result = await self.client.call_tool("test_tool", {})
-                assert (
-                    result.success is False
-                ), "Timeout should result in failed response"
-                assert (
-                    "timeout" in result.error_message.lower()
-                ), "Error message should mention timeout"
+                assert result.success is False, (
+                    "Timeout should result in failed response"
+                )
+                assert "timeout" in result.error_message.lower(), (
+                    "Error message should mention timeout"
+                )
 
 
 class TestMCPRetryMechanism:
@@ -1931,9 +1931,9 @@ class TestCreateAgent:
                 await self.client.create_agent(spec)
 
             _, arguments = mock_call_tool.call_args.args
-            assert (
-                "agent_id" not in arguments
-            ), f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+            assert "agent_id" not in arguments, (
+                f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+            )
 
 
 class TestUploadDataset:

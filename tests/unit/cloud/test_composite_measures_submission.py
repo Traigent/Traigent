@@ -214,9 +214,9 @@ async def test_composite_metrics_pass_measuresdict_on_the_submission_path() -> N
         for call in mock_logger.warning.call_args_list
         if call.args and isinstance(call.args[0], str)
     ]
-    assert not any(
-        "Metrics validation warning" in msg for msg in warning_msgs
-    ), f"composite metrics tripped MeasuresDict validation: {warning_msgs}"
+    assert not any("Metrics validation warning" in msg for msg in warning_msgs), (
+        f"composite metrics tripped MeasuresDict validation: {warning_msgs}"
+    )
 
 
 # ---------------------------------------------------------------------------

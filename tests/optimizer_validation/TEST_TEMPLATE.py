@@ -113,16 +113,16 @@ class TestTemplateExample:
         if hasattr(result, "stop_reason") and result.stop_reason:
             # Customize based on expected stop condition
             valid_reasons = ["max_trials_reached", "config_exhaustion", "optimizer"]
-            assert (
-                result.stop_reason in valid_reasons
-            ), f"Unexpected stop reason: {result.stop_reason}"
+            assert result.stop_reason in valid_reasons, (
+                f"Unexpected stop reason: {result.stop_reason}"
+            )
 
         # Example: Verify best_config (for optimization tests)
         if result.best_config is not None:
             assert "model" in result.best_config, "best_config should have model"
-            assert (
-                "temperature" in result.best_config
-            ), "best_config should have temperature"
+            assert "temperature" in result.best_config, (
+                "best_config should have temperature"
+            )
 
         # Example: Verify metrics (for evaluator tests)
         for trial in result.trials:

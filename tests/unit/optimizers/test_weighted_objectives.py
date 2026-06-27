@@ -427,9 +427,9 @@ class TestWeightedObjectivesIntegration:
                 scores.append(score)
 
             best_trial_index = scores.index(max(scores))
-            assert (
-                best_trial_index == expected_winners[i]
-            ), f"Scenario {i}: Expected trial {expected_winners[i]}, got {best_trial_index}"
+            assert best_trial_index == expected_winners[i], (
+                f"Scenario {i}: Expected trial {expected_winners[i]}, got {best_trial_index}"
+            )
 
     def test_weighted_objectives_with_missing_data(self):
         """Test weighted objectives handling when some trials have missing metrics."""

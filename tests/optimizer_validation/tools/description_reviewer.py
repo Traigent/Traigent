@@ -251,9 +251,9 @@ class DescriptionReviewer:
 Total Tests: {total}
 
 Quality Distribution:
-  ✓ Excellent (8-10): {excellent} ({excellent/total*100:.0f}%)
-  ~ Adequate (5-7):   {adequate} ({adequate/total*100:.0f}%)
-  ✗ Poor (0-4):       {poor} ({poor/total*100:.0f}%)
+  ✓ Excellent (8-10): {excellent} ({excellent / total * 100:.0f}%)
+  ~ Adequate (5-7):   {adequate} ({adequate / total * 100:.0f}%)
+  ✗ Poor (0-4):       {poor} ({poor / total * 100:.0f}%)
 """
         self.console.print(
             Panel(summary, title="Description Quality Summary", border_style="blue")
@@ -266,7 +266,7 @@ Quality Distribution:
         table.add_column("% of Tests", justify="right")
 
         for issue, count in sorted(issue_counts.items(), key=lambda x: -x[1]):
-            table.add_row(issue, str(count), f"{count/total*100:.0f}%")
+            table.add_row(issue, str(count), f"{count / total * 100:.0f}%")
 
         self.console.print(table)
 
@@ -302,12 +302,12 @@ Quality Distribution:
         print(f"\n=== Description Quality Summary ===")
         print(f"Total Tests: {total}")
         print(f"\nQuality Distribution:")
-        print(f"  ✓ Excellent (8-10): {excellent} ({excellent/total*100:.0f}%)")
-        print(f"  ~ Adequate (5-7):   {adequate} ({adequate/total*100:.0f}%)")
-        print(f"  ✗ Poor (0-4):       {poor} ({poor/total*100:.0f}%)")
+        print(f"  ✓ Excellent (8-10): {excellent} ({excellent / total * 100:.0f}%)")
+        print(f"  ~ Adequate (5-7):   {adequate} ({adequate / total * 100:.0f}%)")
+        print(f"  ✗ Poor (0-4):       {poor} ({poor / total * 100:.0f}%)")
         print(f"\nCommon Issues:")
         for issue, count in sorted(issue_counts.items(), key=lambda x: -x[1]):
-            print(f"  {issue}: {count} ({count/total*100:.0f}%)")
+            print(f"  {issue}: {count} ({count / total * 100:.0f}%)")
 
     def get_tests_for_review(
         self,
@@ -362,7 +362,7 @@ Why it matters: [1-2 sentences on user impact]
 File: {desc.file_path}
 Lines: {desc.line_start}-{desc.line_end}
 Current Score: {desc.quality_score}/10
-Issues: {', '.join(desc.issues)}
+Issues: {", ".join(desc.issues)}
 
 Current docstring:
 ```

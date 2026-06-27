@@ -76,7 +76,9 @@ def test_request_builder_mode1_requires_baseline() -> None:
 
 
 def test_request_builder_mode2_omits_baseline() -> None:
-    request = build_guaranteed_selection_request("accuracy_then_cost", delta=0.02, epsilon=0.1)
+    request = build_guaranteed_selection_request(
+        "accuracy_then_cost", delta=0.02, epsilon=0.1
+    )
     assert request["selection_mode"] == "accuracy_then_cost"
     assert "baseline_ref" not in request
 

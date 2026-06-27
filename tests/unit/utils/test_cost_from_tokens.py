@@ -156,7 +156,9 @@ class TestCostFromTokensUnknownModels:
         assert any(
             "Unknown model" in record.message and "zero cost" in record.message
             for record in caplog.records
-        ), f"Expected warning about unknown model, got: {[r.message for r in caplog.records]}"
+        ), (
+            f"Expected warning about unknown model, got: {[r.message for r in caplog.records]}"
+        )
 
     def test_unknown_model_error_is_key_error(self) -> None:
         """UnknownModelError is a subclass of KeyError (backward compat)."""

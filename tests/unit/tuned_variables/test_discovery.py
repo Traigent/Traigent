@@ -250,9 +250,9 @@ class TestDiscoverCallables:
         assert "decorated_callable" in callables
         assert "another_decorated" in callables
         assert "get_count" in callables
-        assert (
-            len(callables) == 7
-        ), f"Expected exactly 7 public functions, got {len(callables)}: {list(callables)}"
+        assert len(callables) == 7, (
+            f"Expected exactly 7 public functions, got {len(callables)}: {list(callables)}"
+        )
 
         # Should NOT include private or imported functions
         assert "_internal_helper" not in callables
@@ -434,9 +434,9 @@ class TestFilterBySignature:
 
         # Only retrieve_documents has exact match (query: str, k: int = 5) -> list
         assert "retrieve_documents" in filtered
-        assert (
-            len(filtered) == 1
-        ), f"Strict mode should match only retrieve_documents, got: {list(filtered)}"
+        assert len(filtered) == 1, (
+            f"Strict mode should match only retrieve_documents, got: {list(filtered)}"
+        )
 
     def test_filter_allows_extra_defaults(self, test_module: ModuleType) -> None:
         """Test that non-strict mode allows extra parameters with defaults."""
@@ -507,9 +507,9 @@ class TestDiscoveryIntegration:
         """Test complete discovery workflow."""
         # 1. Discover all callables
         all_callables = discover_callables(test_module)
-        assert (
-            len(all_callables) == 7
-        ), f"Expected 7 public functions, got {len(all_callables)}: {list(all_callables)}"
+        assert len(all_callables) == 7, (
+            f"Expected 7 public functions, got {len(all_callables)}: {list(all_callables)}"
+        )
 
         # 2. Filter by pattern
         retrievers = discover_callables(test_module, pattern=r"^(retrieve|search)_")
@@ -605,9 +605,9 @@ class TestEdgeCases:
         callables = discover_callables(test_module)
         info = callables["get_count"]
         # Tags extracted from __tags__ string should be empty (not crash or split string)
-        assert (
-            info.tags == ()
-        ), f"Expected no tags from non-list __tags__, got: {info.tags}"
+        assert info.tags == (), (
+            f"Expected no tags from non-list __tags__, got: {info.tags}"
+        )
 
     def test_docstring_without_tags_line_extracts_no_tags(self) -> None:
         """Function with docstring but no 'Tags:' line gets empty tags tuple."""
@@ -643,6 +643,6 @@ class TestEdgeCases:
     def test_discover_decorated_exact_count(self, test_module: ModuleType) -> None:
         """Only exactly 2 functions carry __traigent_callable__ in the test module."""
         callables = discover_callables_by_decorator(test_module)
-        assert (
-            len(callables) == 2
-        ), f"Expected exactly 2 decorated callables, got {len(callables)}: {list(callables)}"
+        assert len(callables) == 2, (
+            f"Expected exactly 2 decorated callables, got {len(callables)}: {list(callables)}"
+        )

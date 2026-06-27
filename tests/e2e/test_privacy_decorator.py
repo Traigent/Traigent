@@ -222,9 +222,9 @@ class TestPrivacyDecoratorE2E:
 
                 # CRITICAL: Verify no privacy violations
                 privacy_report = privacy_server.get_privacy_report()
-                assert (
-                    privacy_report["compliant"] is True
-                ), f"Privacy violations: {privacy_report['violations']}"
+                assert privacy_report["compliant"] is True, (
+                    f"Privacy violations: {privacy_report['violations']}"
+                )
                 assert privacy_report["violation_count"] == 0
 
                 # Verify no sensitive fields were sent
@@ -526,9 +526,9 @@ class TestPrivacyDecoratorE2E:
                 }
                 sent_fields = privacy_report["data_fields_seen"]
                 violations = sent_fields.intersection(sensitive_fields)
-                assert (
-                    len(violations) == 0
-                ), f"Sensitive financial data sent: {violations}"
+                assert len(violations) == 0, (
+                    f"Sensitive financial data sent: {violations}"
+                )
 
                 # Verify efficient subset usage
                 total_requests = privacy_report["requests_received"]
