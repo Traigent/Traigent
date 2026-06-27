@@ -8,7 +8,7 @@ This file ensures the "watchmen are actually watching."
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 from tests.optimizer_validation.specs.behavioral_validators import (
@@ -295,7 +295,7 @@ class TestSequentialValidatorDetection:
         """Validator should detect out-of-order timestamps."""
         validator = SequentialValidator()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         scenario = MockTestScenario(
             config_space={"model": ["a"]},
             parallel_config=None,  # Sequential mode
@@ -335,7 +335,7 @@ class TestParallelValidatorDetection:
         """Validator should detect when max concurrent exceeds limit."""
         validator = ParallelValidator()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         scenario = MockTestScenario(
             config_space={"model": ["a"]},
             parallel_config={"trial_concurrency": 2},  # Max 2 concurrent
@@ -362,7 +362,7 @@ class TestParallelValidatorDetection:
         """Validator should pass when concurrency is within limit."""
         validator = ParallelValidator()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         scenario = MockTestScenario(
             config_space={"model": ["a"]},
             parallel_config={"trial_concurrency": 4},  # Allow 4 concurrent

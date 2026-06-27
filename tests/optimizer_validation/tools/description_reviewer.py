@@ -16,10 +16,8 @@ import argparse
 import ast
 import asyncio
 import json
-import re
-import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
@@ -197,15 +195,15 @@ class DescriptionReviewer:
                 return json.load(f)
         return {
             "metadata": {
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "last_updated": datetime.now(UTC).isoformat(),
             },
             "descriptions": [],
         }
 
     def save_tracking(self, data: dict[str, Any]) -> None:
         """Save tracking data."""
-        data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat()
+        data["metadata"]["last_updated"] = datetime.now(UTC).isoformat()
         with open(self.tracking_file, "w") as f:
             json.dump(data, f, indent=2)
 
@@ -299,13 +297,13 @@ Quality Distribution:
         issue_counts: dict[str, int],
     ) -> None:
         """Show status with plain text."""
-        print(f"\n=== Description Quality Summary ===")
+        print("\n=== Description Quality Summary ===")
         print(f"Total Tests: {total}")
-        print(f"\nQuality Distribution:")
+        print("\nQuality Distribution:")
         print(f"  ✓ Excellent (8-10): {excellent} ({excellent / total * 100:.0f}%)")
         print(f"  ~ Adequate (5-7):   {adequate} ({adequate / total * 100:.0f}%)")
         print(f"  ✗ Poor (0-4):       {poor} ({poor / total * 100:.0f}%)")
-        print(f"\nCommon Issues:")
+        print("\nCommon Issues:")
         for issue, count in sorted(issue_counts.items(), key=lambda x: -x[1]):
             print(f"  {issue}: {count} ({count / total * 100:.0f}%)")
 
@@ -414,9 +412,9 @@ Read each test file to understand the actual test logic, then provide improved d
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input=prompt.encode()), timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
-            raise TimeoutError(f"Claude CLI timed out after {timeout}s")
+            raise TimeoutError(f"Claude CLI timed out after {timeout}s") from None
 
         if process.returncode != 0:
             raise RuntimeError(f"Claude CLI failed: {stderr.decode()}")

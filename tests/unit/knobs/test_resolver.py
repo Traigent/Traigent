@@ -15,7 +15,7 @@ import dataclasses
 import pytest
 
 from traigent.api.config_space import ConfigSpace
-from traigent.api.parameter_ranges import Choices, IntRange
+from traigent.api.parameter_ranges import Choices
 from traigent.knobs import (
     Calibrated,
     CalibratedInput,
@@ -51,20 +51,20 @@ def _target() -> TargetProperty:
 
 
 def _ctx(parents=(("model", "a"),), **overrides) -> FreshnessContext:
-    base = dict(
-        cvar_name="theta",
-        tuned_parent_values=tuple(parents),
-        calibration_source_id="pool_a",
-        signal_spec_hash=_signal().spec_hash(),
-        calibrator_id="budget_threshold",
-        calibrator_version="1",
-        calibrator_params_hash=canonical_hash({}),
-        dataset_hash="ds_v1",
-        evidence_n=20,
-        calibration_split="cal",
-        eval_split="eval",
-        target=_target(),
-    )
+    base = {
+        "cvar_name": "theta",
+        "tuned_parent_values": tuple(parents),
+        "calibration_source_id": "pool_a",
+        "signal_spec_hash": _signal().spec_hash(),
+        "calibrator_id": "budget_threshold",
+        "calibrator_version": "1",
+        "calibrator_params_hash": canonical_hash({}),
+        "dataset_hash": "ds_v1",
+        "evidence_n": 20,
+        "calibration_split": "cal",
+        "eval_split": "eval",
+        "target": _target(),
+    }
     base.update(overrides)
     return FreshnessContext(**base)
 

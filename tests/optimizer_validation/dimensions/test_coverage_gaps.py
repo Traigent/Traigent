@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
 
 import pytest
 
@@ -22,7 +21,6 @@ from tests.optimizer_validation.specs import (
     ExpectedResult,
     ObjectiveSpec,
     TestScenario,
-    basic_scenario,
 )
 
 # =============================================================================

@@ -20,7 +20,6 @@ from traigent.cloud.governance import build_certified_selection
 from traigent.knobs.canonical import canonical_hash
 from traigent.knobs.certificates import (
     CertificateDecision,
-    EvidenceRef,
     FreshnessContext,
     TargetProperty,
     issue_certificate,

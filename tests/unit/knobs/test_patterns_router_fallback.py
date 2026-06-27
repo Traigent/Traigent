@@ -16,7 +16,6 @@ from traigent.knobs.composites import (
     CascadeBody,
     CompositeArm,
     CompositeKind,
-    CompositeNode,
     CompositeProgram,
     EnsembleBody,
     LoopBody,

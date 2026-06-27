@@ -1182,7 +1182,6 @@ class TestGlobalMCPClientFunctions:
         """Test get_production_mcp_client creates new client."""
         from traigent.cloud import production_mcp_client
         from traigent.cloud.production_mcp_client import (
-            _production_client,
             get_production_mcp_client,
         )
 
@@ -1237,9 +1236,7 @@ class TestGlobalMCPClientFunctions:
 
     def test_get_production_mcp_client_returns_existing(self):
         """Test get_production_mcp_client returns existing client."""
-        from traigent.cloud import production_mcp_client
         from traigent.cloud.production_mcp_client import (
-            MCPServerConfig,
             get_production_mcp_client,
         )
 

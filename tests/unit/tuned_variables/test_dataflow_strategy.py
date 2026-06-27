@@ -18,15 +18,12 @@ from traigent.tuned_variables.dataflow_strategy import (
     CONSTRUCTOR_CLASS_HINTS,
     DEFAULT_SINK_PATTERNS,
     DataFlowDetectionStrategy,
-    SinkPattern,
     _build_def_use_map,
-    _DefUseBuilder,
-    _DefUseMap,
     _hop_to_confidence,
     _names_in_expr,
     _SinkFinder,
 )
-from traigent.tuned_variables.detection_types import CandidateType, DetectionConfidence
+from traigent.tuned_variables.detection_types import DetectionConfidence
 
 # ---------------------------------------------------------------------------
 # Helpers

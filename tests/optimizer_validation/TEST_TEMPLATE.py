@@ -127,7 +127,7 @@ class TestTemplateExample:
         # Example: Verify metrics (for evaluator tests)
         for trial in result.trials:
             if trial.metrics:
-                assert "accuracy" in trial.metrics, f"Trial should have accuracy metric"
+                assert "accuracy" in trial.metrics, "Trial should have accuracy metric"
                 acc = trial.metrics["accuracy"]
                 assert 0.0 <= acc <= 1.0, f"Accuracy should be in [0,1], got {acc}"
 
