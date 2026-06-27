@@ -1,0 +1,307 @@
+"""Unit tests for BackendIntegratedClient.get_interaction_policy."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import pytest
+
+from traigent.cloud.backend_client import STATIC_POLICY_TEXT, BackendIntegratedClient
+from traigent.testing import _reset_for_tests, enable_mock_mode_for_quickstart
+
+FAKE_API_KEY = "tg_" + "x" * 61  # pragma: allowlist secret
+
+
+class _FakeResponse:
+    def __init__(
+        self,
+        *,
+        status: int,
+        payload: object | None = None,
+        json_exc: Exception | None = None,
+        headers: dict[str, str] | None = None,
+        text: str = "",
+    ) -> None:
+        self.status = status
+        self.headers = headers or {}
+        self._payload = payload
+        self._json_exc = json_exc
+        self._text = text
+
+    async def json(self) -> object | None:
+        if self._json_exc is not None:
+            raise self._json_exc
+        return self._payload
+
+    async def text(self) -> str:
+        return self._text
+
+
+class _FakeRequestContext:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> _FakeResponse:
+        return self._response
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _FakeSession:
+    def __init__(
+        self,
+        *,
+        response: _FakeResponse | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        self._response = response
+        self._exc = exc
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def get(self, url: str, **kwargs):
+        self.calls.append((url, kwargs))
+        if self._exc is not None:
+            raise self._exc
+        assert self._response is not None
+        return _FakeRequestContext(self._response)
+
+
+class _FakeClientSessionContext:
+    def __init__(self, session: _FakeSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> _FakeSession:
+        return self._session
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _reset_interaction_policy_env(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+    _reset_for_tests()
+    yield
+    _reset_for_tests()
+
+
+def _make_client(api_key: str | None = None) -> BackendIntegratedClient:
+    return BackendIntegratedClient(
+        api_key=api_key,
+        base_url="https://api.example.test",
+        timeout=12.0,
+    )
+
+
+def _assert_static_policy(result: dict[str, object]) -> None:
+    assert result == {
+        "schema_version": "traigent.agent_interaction.response.v1",
+        "profile": {
+            "control": "guided",
+            "expertise": "se",
+            "pace": "balanced",
+            "source": "default",
+            "confidence": 0.0,
+            "schema_version": "traigent.interaction_policy.v1",
+        },
+        "policy_text": STATIC_POLICY_TEXT,
+        "question_budget": 2,
+        "options_max": 3,
+        "jargon_level": "plain",
+        "next_skill_hint": None,
+        "fallback_policy": "static_v1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_interaction_policy_returns_backend_payload(monkeypatch) -> None:
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+    client = _make_client(api_key=FAKE_API_KEY)
+    payload = {
+        "schema_version": "traigent.agent_interaction.response.v1",
+        "profile": {
+            "control": "inspect",
+            "expertise": "ds",
+            "pace": "explore",
+            "source": "backend",
+            "confidence": 0.92,
+            "schema_version": "traigent.interaction_policy.v1",
+        },
+        "policy_text": "backend policy text",
+        "question_budget": 1,
+        "options_max": 3,
+        "jargon_level": "compact",
+        "next_skill_hint": "spine:feature",
+        "fallback_policy": "backend_v1",
+    }
+    response = _FakeResponse(
+        status=200,
+        payload=payload,
+        headers={"ETag": '"policy-v1"'},
+    )
+    fake_session = _FakeSession(response=response)
+    fake_aiohttp = SimpleNamespace(
+        ClientSession=Mock(return_value=_FakeClientSessionContext(fake_session)),
+        ClientTimeout=Mock(side_effect=lambda total=None: {"total": total}),
+        ClientError=type("FakeClientError", (Exception,), {}),
+    )
+
+    with (
+        patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
+        patch("traigent.cloud.backend_client.aiohttp", fake_aiohttp),
+    ):
+        result = await client.get_interaction_policy(
+            harness="codex",
+            skill="python",
+            signals={
+                "pace": "execute",
+                "control": "delegate",
+                "private_note": "raw-secret-signal",
+            },
+        )
+
+    assert result == payload
+    assert len(fake_session.calls) == 1
+    url, kwargs = fake_session.calls[0]
+    assert url == "https://api.example.test/api/v1/auth/me/interaction-policy"
+    assert kwargs["headers"]["X-API-Key"] == FAKE_API_KEY
+    assert kwargs["headers"]["User-Agent"]
+    assert "Authorization" not in kwargs["headers"]
+    assert kwargs["params"] == {
+        "harness": "codex",
+        "skill": "python",
+        "signals": (
+            '{"control":"delegate","pace":"execute","private_note":"raw-secret-signal"}'
+        ),
+    }
+    assert kwargs["timeout"] == {"total": 12.0}
+    cache_entry = client._interaction_policy_cache[("codex", "python")]
+    assert set(cache_entry) == {"etag", "policy_text", "profile"}
+    assert cache_entry["policy_text"] == "backend policy text"
+    assert cache_entry["etag"] == '"policy-v1"'
+    assert cache_entry["profile"] == payload["profile"]
+    assert "raw-secret-signal" not in repr(cache_entry)
+    assert "signals" not in repr(cache_entry)
+
+
+@pytest.mark.asyncio
+async def test_get_interaction_policy_offline_returns_static_without_network(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    client = _make_client(api_key=FAKE_API_KEY)
+
+    with patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_session:
+        result = await client.get_interaction_policy()
+
+    _assert_static_policy(result)
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_interaction_policy_without_api_key_returns_static_without_network() -> (
+    None
+):
+    client = _make_client()
+
+    with patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_session:
+        result = await client.get_interaction_policy()
+
+    _assert_static_policy(result)
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_interaction_policy_mock_mode_returns_static_without_network(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+    enable_mock_mode_for_quickstart()
+    client = _make_client(api_key=FAKE_API_KEY)
+
+    with patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_session:
+        result = await client.get_interaction_policy()
+
+    _assert_static_policy(result)
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_interaction_policy_legacy_mock_llm_returns_static_without_network(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    client = _make_client(api_key=FAKE_API_KEY)
+
+    with (
+        patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
+        patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_session,
+    ):
+        result = await client.get_interaction_policy(
+            signals={"private_note": "raw-secret-signal"}
+        )
+
+    _assert_static_policy(result)
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "transport_error"),
+    [
+        (_FakeResponse(status=503, text="backend unavailable"), None),
+        (None, TimeoutError("timed out")),
+        (_FakeResponse(status=200, json_exc=ValueError("not json")), None),
+        (
+            _FakeResponse(
+                status=200,
+                payload={
+                    "schema_version": "traigent.agent_interaction.response.v1",
+                    "profile": {
+                        "control": "inspect",
+                        "expertise": "ds",
+                        "pace": "explore",
+                        "source": "backend",
+                        "confidence": 0.92,
+                        "schema_version": "traigent.interaction_policy.v1",
+                    },
+                    "question_budget": 1,
+                    "options_max": 3,
+                    "jargon_level": "compact",
+                    "next_skill_hint": "spine:feature",
+                    "fallback_policy": "backend_v1",
+                },
+            ),
+            None,
+        ),
+    ],
+)
+async def test_get_interaction_policy_backend_failures_return_static(
+    monkeypatch,
+    response: _FakeResponse | None,
+    transport_error: Exception | None,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+    client = _make_client(api_key=FAKE_API_KEY)
+    fake_session = _FakeSession(response=response, exc=transport_error)
+    fake_aiohttp = SimpleNamespace(
+        ClientSession=Mock(return_value=_FakeClientSessionContext(fake_session)),
+        ClientTimeout=Mock(side_effect=lambda total=None: {"total": total}),
+        ClientError=type("FakeClientError", (Exception,), {}),
+    )
+
+    with (
+        patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
+        patch("traigent.cloud.backend_client.aiohttp", fake_aiohttp),
+    ):
+        result = await client.get_interaction_policy(harness="codex")
+
+    _assert_static_policy(result)
+    assert len(fake_session.calls) == 1

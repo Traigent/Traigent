@@ -347,6 +347,8 @@ class TestFunctionAnalysis:
 
     def _check_vacuous_pattern(self, assert_node: ast.Assert, code: str) -> dict | None:
         """Check if assertion matches vacuous patterns."""
+        code.lower()
+
         # Pattern: assert True
         if re.search(r"assert\s+True\s*(,|$|#)", code):
             return {

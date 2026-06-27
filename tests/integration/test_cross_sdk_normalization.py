@@ -131,7 +131,7 @@ def test_per_trial_normalized_values_match_fixture(case: dict) -> None:
         f"{case['id']}: trial count mismatch (got {len(actual)}, want {len(expected)})"
     )
 
-    for got, want in zip(actual, expected, strict=True):
+    for got, want in zip(actual, expected, strict=False):
         assert got["trial_id"] == want["trial_id"], (
             f"{case['id']}: trial order mismatch"
         )

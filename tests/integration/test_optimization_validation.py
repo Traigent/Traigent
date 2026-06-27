@@ -61,7 +61,7 @@ _write_jsonl(
     ],
 )
 
-import traigent  # noqa: E402
+import traigent  # noqa: E402  (intentional: imported after dataset fixture setup)
 
 
 @traigent.optimize(

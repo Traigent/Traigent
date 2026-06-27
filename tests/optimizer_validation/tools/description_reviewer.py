@@ -412,9 +412,9 @@ Read each test file to understand the actual test logic, then provide improved d
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input=prompt.encode()), timeout=timeout
             )
-        except TimeoutError as err:
+        except TimeoutError:
             process.kill()
-            raise TimeoutError(f"Claude CLI timed out after {timeout}s") from err
+            raise TimeoutError(f"Claude CLI timed out after {timeout}s") from None
 
         if process.returncode != 0:
             raise RuntimeError(f"Claude CLI failed: {stderr.decode()}")
