@@ -328,6 +328,7 @@ class SessionOperations:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        warm_start_from: str | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -430,6 +431,7 @@ class SessionOperations:
                 # fallback when the caller supplied none (legacy shape keeps
                 # reading objectives[0] as its optimization_goal).
                 objectives=list(objectives) if objectives else [optimization_goal],
+                warm_start_from=warm_start_from or None,
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
                     # Carry the dataset label (content is not submitted) so the

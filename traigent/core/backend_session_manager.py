@@ -660,6 +660,7 @@ class BackendSessionManager:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
+        warm_start_from: str | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -726,6 +727,8 @@ class BackendSessionManager:
                 session_metadata["strategy_preset"] = dict(
                     self._strategy_preset_metadata
                 )
+            if warm_start_from:
+                session_metadata["warm_start_from"] = warm_start_from
 
             # Build the portal display name.
             # When the user supplied an explicit experiment_name, honour it.
@@ -763,6 +766,7 @@ class BackendSessionManager:
                 objectives=objectives,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
+                warm_start_from=warm_start_from,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(

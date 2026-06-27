@@ -739,6 +739,11 @@ class OptimizedFunction(Generic[_P, _R]):
             kwargs, sentinel, "strategy_preset", None
         )
 
+        # Warm-start: seed a new run from a prior experiment's learned configs.
+        self.warm_start_from = self._store_optional_param(
+            kwargs, sentinel, "warm_start_from", None
+        )
+
         self.kwargs = kwargs
         excluded_runtime_keys = {
             "algorithm",
@@ -763,6 +768,7 @@ class OptimizedFunction(Generic[_P, _R]):
             # Safety constraints
             "safety_constraints",
             "strategy_preset",
+            "warm_start_from",
         }
         self._decorator_runtime_overrides = {
             key: value
@@ -1804,6 +1810,7 @@ class OptimizedFunction(Generic[_P, _R]):
             global_measures=getattr(self, "global_measures", None),
             promotion_gate=getattr(self, "promotion_gate", None),
             safety_constraints=getattr(self, "safety_constraints", None),
+            warm_start_from=getattr(self, "warm_start_from", None),
         )
 
         # Auto-initialize workflow traces tracker if backend is configured

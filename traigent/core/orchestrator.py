@@ -209,6 +209,7 @@ class OptimizationOrchestrator:
         self.strategy_preset: NormalizedStrategyPreset | None = kwargs.pop(
             "strategy_preset", None
         )
+        self._warm_start_from: str | None = kwargs.pop("warm_start_from", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
 
@@ -2196,6 +2197,7 @@ class OptimizationOrchestrator:
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
+            warm_start_from=self._warm_start_from,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -3321,6 +3323,12 @@ class OptimizationOrchestrator:
         # Flag offline mode so callbacks can show appropriate hints
         if is_offline_requested(policy_from_config(self.traigent_config)):
             metadata["offline_mode"] = True
+
+        # Warm-start provenance: surface the prior experiment id that seeded
+        # this run so users can query result.metadata["warm_start_from"].
+        # Only present for warm-started runs; absent otherwise.
+        if self._warm_start_from:
+            metadata["warm_start_from"] = self._warm_start_from
 
         return metadata
 

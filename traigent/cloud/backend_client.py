@@ -959,6 +959,7 @@ class BackendIntegratedClient:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        warm_start_from: str | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -972,6 +973,7 @@ class BackendIntegratedClient:
             objectives=objectives,
             promotion_policy=promotion_policy,
             tvl_governance=tvl_governance,
+            warm_start_from=warm_start_from,
         )
 
     async def create_hybrid_session(
