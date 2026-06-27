@@ -330,6 +330,46 @@ class TestWarmStartTransferMetadataPassthrough:
 
         assert "warm_start_transfer" not in result.metadata
 
+    def test_warm_start_transfer_extracted_from_finalization_response_object(self):
+        # Real cloud path: finalize_session returns an OptimizationFinalizationResponse
+        # dataclass that exposes ``.metadata`` as an ATTRIBUTE and has no ``.get()``.
+        # Regression: calling ``.get()`` on it raised AttributeError, which the
+        # persistence try/except swallowed as "persistence failed" on every cloud run
+        # (also nulling experiment_id). Must read ``.metadata`` via attribute instead.
+        transfer_metadata = {
+            "transfer_mode": "replay_only",
+            "final_warm_start_weight": "low",
+            "search_space_overlap": "high",
+            "n_seed_configs_applied": 3,
+            "refused_reason": None,
+        }
+        finalization_response = SimpleNamespace(
+            metadata={"warm_start_transfer": transfer_metadata}
+        )
+        assert not hasattr(finalization_response, "get")  # like the real dataclass
+        result = SimpleNamespace(metadata={})
+
+        self._manager().attach_session_metadata(
+            result=result,
+            session_id="session-123",
+            session_summary=finalization_response,
+        )
+
+        assert result.metadata["warm_start_transfer"] == transfer_metadata
+        assert result.metadata["warm_start_transfer"] is not transfer_metadata
+
+    def test_session_summary_object_without_metadata_attr_does_not_crash(self):
+        no_meta = SimpleNamespace()  # neither .get nor .metadata
+        result = SimpleNamespace(metadata={})
+
+        self._manager().attach_session_metadata(
+            result=result,
+            session_id="session-123",
+            session_summary=no_meta,
+        )
+
+        assert "warm_start_transfer" not in result.metadata
+
 
 # ---------------------------------------------------------------------------
 # Tests: EVERY SessionCreationRequest -> /sessions payload serializer must
