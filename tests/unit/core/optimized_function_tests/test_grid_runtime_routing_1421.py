@@ -198,6 +198,7 @@ class TestRuntimeGridSkipsCloud:
                 _GRID_SPACE,
                 {},
                 config,
+                {},  # artifact_fingerprint_payload — routing test, fingerprints not exercised
                 False,
                 None,
                 True,
@@ -257,6 +258,7 @@ class TestRuntimeGridSkipsCloud:
                     _GRID_SPACE,
                     {},
                     config,
+                    {},  # artifact_fingerprint_payload — routing test, fingerprints not exercised
                     False,
                     None,
                     True,
