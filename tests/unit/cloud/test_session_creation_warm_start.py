@@ -319,9 +319,7 @@ class TestWarmStartTransferMetadataPassthrough:
             {"metadata": {"warm_start_transfer": "opaque"}},
         ],
     )
-    def test_warm_start_transfer_absent_or_non_dict_adds_no_key(
-        self, session_summary
-    ):
+    def test_warm_start_transfer_absent_or_non_dict_adds_no_key(self, session_summary):
         result = SimpleNamespace(metadata={})
 
         self._manager().attach_session_metadata(
