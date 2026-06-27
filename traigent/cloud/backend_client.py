@@ -8,6 +8,7 @@ for better maintainability and adherence to software engineering principles.
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import secrets
 import sys
@@ -24,7 +25,7 @@ from urllib.parse import quote, urlparse, urlunparse
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations
-from traigent.cloud.auth import AuthenticationError
+from traigent.cloud.auth import AuthenticationError, _build_api_key_auth_headers
 from traigent.cloud.backend_bridges import SDKBackendBridge, SessionExperimentMapping
 from traigent.cloud.backend_bridges import bridge as _bridge
 from traigent.cloud.backend_components import (
@@ -116,6 +117,48 @@ _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
 _SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
+_INTERACTION_POLICY_REQUIRED_KEYS = frozenset(
+    {
+        "schema_version",
+        "profile",
+        "policy_text",
+        "question_budget",
+        "options_max",
+        "jargon_level",
+        "next_skill_hint",
+        "fallback_policy",
+    }
+)
+_INTERACTION_POLICY_PROFILE_REQUIRED_KEYS = frozenset(
+    {
+        "schema_version",
+        "control",
+        "expertise",
+        "pace",
+        "source",
+        "confidence",
+    }
+)
+_INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION = "traigent.agent_interaction.response.v1"
+_INTERACTION_POLICY_PROFILE_SCHEMA_VERSION = "traigent.interaction_policy.v1"
+
+STATIC_POLICY_TEXT = (
+    "Adapt to the user's interaction profile — persona "
+    "(control=delegate|guided|inspect, expertise=se|ds|unknown) and session "
+    "mood (pace=execute|balanced|explore); default guided,se,balanced; infer "
+    "from explicit statements first then behavior, corrections win. Always be "
+    "concise. Match terminology to expertise: plain words and define each term "
+    "once for se; compact statistics/optimization terms for ds. When asking, "
+    "show at most 3 options, mark one Recommended, give one short trade-off "
+    "each. For delegate/execute, proceed with the recommended reversible "
+    "action and ask only at hard gates (paid/provider calls, data egress, "
+    "destructive edits, service-owned decisions, missing required facts); for "
+    "inspect/explore, give brief rationale before asking. Always recommend "
+    "the next skill or action. Never weaken safety (dry-run before paid runs; "
+    "approval before cost or egress; service-returned plans are authoritative) "
+    "and never put persona or private content into telemetry, metadata, names, "
+    "logs, or provenance."
+)
 
 
 class _SyncBackendTransientError(RetryableError):
@@ -563,6 +606,10 @@ class BackendIntegratedClient:
         # Read-only analytics accessor (lazily exposed via the ``analytics``
         # property). Kept separate from the write paths above.
         self._analytics_ns: AnalyticsNamespace | None = None
+        self._interaction_policy_cache: dict[
+            tuple[str | None, str | None], dict[str, Any]
+        ] = {}
+        self._interaction_policy_fallback_logged = False
 
     @property
     def analytics(self) -> "AnalyticsNamespace":
@@ -577,11 +624,285 @@ class BackendIntegratedClient:
             self._analytics_ns = AnalyticsNamespace(self)
         return self._analytics_ns
 
+    def _log_local_interaction_policy_once(self) -> None:
+        if self._interaction_policy_fallback_logged:
+            return
+        logger.info("using local interaction policy")
+        self._interaction_policy_fallback_logged = True
+
+    def _static_interaction_policy(self) -> dict[str, Any]:
+        self._log_local_interaction_policy_once()
+        return {
+            "schema_version": _INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION,
+            "profile": {
+                "control": "guided",
+                "expertise": "se",
+                "pace": "balanced",
+                "source": "default",
+                "confidence": 0.0,
+                "schema_version": _INTERACTION_POLICY_PROFILE_SCHEMA_VERSION,
+            },
+            "policy_text": STATIC_POLICY_TEXT,
+            "question_budget": 2,
+            "options_max": 3,
+            "jargon_level": "plain",
+            "next_skill_hint": None,
+            "fallback_policy": "static_v1",
+        }
+
+    @staticmethod
+    def _interaction_policy_cache_key(
+        *,
+        harness: str | None,
+        skill: str | None,
+    ) -> tuple[str | None, str | None]:
+        def _normalize(value: str | None) -> str | None:
+            if not isinstance(value, str):
+                return value
+            cleaned = value.strip()
+            return cleaned or None
+
+        return (_normalize(harness), _normalize(skill))
+
+    @staticmethod
+    def _build_interaction_policy_params(
+        *,
+        harness: str | None,
+        skill: str | None,
+        signals: Any,
+    ) -> dict[str, str] | None:
+        params: dict[str, str] = {}
+        if isinstance(harness, str) and harness.strip():
+            params["harness"] = harness.strip()
+        if isinstance(skill, str) and skill.strip():
+            params["skill"] = skill.strip()
+        if signals is not None:
+            params["signals"] = json.dumps(
+                signals, separators=(",", ":"), sort_keys=True
+            )
+        return params or None
+
+    @staticmethod
+    def _normalize_interaction_policy_payload(payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise CloudServiceError(
+                "Interaction policy endpoint returned a non-JSON object response"
+            )
+
+        data = payload.get("data", payload)
+        if not isinstance(data, dict):
+            raise CloudServiceError(
+                "Interaction policy endpoint returned invalid response data"
+            )
+
+        missing = sorted(_INTERACTION_POLICY_REQUIRED_KEYS - data.keys())
+        if missing:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned malformed response: "
+                f"missing {', '.join(missing)}"
+            )
+
+        if data.get("schema_version") != _INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned unsupported response schema"
+            )
+
+        profile = data.get("profile")
+        if not isinstance(profile, dict):
+            raise CloudServiceError(
+                "Interaction policy endpoint returned malformed profile"
+            )
+
+        missing_profile = sorted(
+            _INTERACTION_POLICY_PROFILE_REQUIRED_KEYS - profile.keys()
+        )
+        if missing_profile:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned malformed profile: "
+                f"missing {', '.join(missing_profile)}"
+            )
+
+        if profile.get("schema_version") != _INTERACTION_POLICY_PROFILE_SCHEMA_VERSION:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned unsupported profile schema"
+            )
+
+        return {
+            "schema_version": data["schema_version"],
+            "profile": {
+                "control": profile["control"],
+                "expertise": profile["expertise"],
+                "pace": profile["pace"],
+                "source": profile["source"],
+                "confidence": profile["confidence"],
+                "schema_version": profile["schema_version"],
+            },
+            "policy_text": data["policy_text"],
+            "question_budget": data["question_budget"],
+            "options_max": data["options_max"],
+            "jargon_level": data["jargon_level"],
+            "next_skill_hint": data["next_skill_hint"],
+            "fallback_policy": data["fallback_policy"],
+        }
+
+    def _cache_interaction_policy(
+        self,
+        *,
+        cache_key: tuple[str | None, str | None],
+        policy: Mapping[str, Any],
+        etag: str | None,
+    ) -> None:
+        profile = policy.get("profile")
+        cached_profile: dict[str, Any] | None = None
+        if isinstance(profile, Mapping):
+            cached_profile = {
+                "control": profile.get("control"),
+                "expertise": profile.get("expertise"),
+                "pace": profile.get("pace"),
+                "source": profile.get("source"),
+                "confidence": profile.get("confidence"),
+                "schema_version": profile.get("schema_version"),
+            }
+        self._interaction_policy_cache[cache_key] = {
+            "etag": etag,
+            "policy_text": policy["policy_text"],
+            "profile": cached_profile,
+        }
+
+    def _cached_interaction_policy(
+        self, cache_key: tuple[str | None, str | None]
+    ) -> dict[str, Any] | None:
+        cached = self._interaction_policy_cache.get(cache_key)
+        if not isinstance(cached, dict):
+            return None
+
+        policy_text = cached.get("policy_text")
+        if not isinstance(policy_text, str):
+            return None
+
+        profile = cached.get("profile")
+        if not isinstance(profile, dict):
+            return None
+
+        restored = {
+            "schema_version": _INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION,
+            "profile": {
+                "control": profile.get("control"),
+                "expertise": profile.get("expertise"),
+                "pace": profile.get("pace"),
+                "source": profile.get("source"),
+                "confidence": profile.get("confidence"),
+                "schema_version": profile.get("schema_version"),
+            },
+            "policy_text": policy_text,
+            "question_budget": 2,
+            "options_max": 3,
+            "jargon_level": "plain",
+            "next_skill_hint": None,
+            "fallback_policy": "static_v1",
+        }
+        return restored
+
     @property
     def session_bridge(self) -> "SDKBackendBridge":
         """Return the shared session bridge (exposed for test patching)."""
 
         return bridge
+
+    async def get_interaction_policy(
+        self,
+        *,
+        harness: str | None = None,
+        skill: str | None = None,
+        signals: Any = None,
+    ) -> dict[str, Any]:
+        """Return the backend persona-interaction policy seed for this session.
+
+        The backend response is a seed for the agent's starting interaction
+        profile only. Explicit user corrections made in-conversation remain
+        authoritative and must override this seed.
+        """
+        from traigent.utils.env_config import is_mock_llm
+
+        if cloud_backend_egress_disabled(self.no_egress):
+            return self._static_interaction_policy()
+
+        api_key = os.getenv("TRAIGENT_API_KEY") or self._api_key_fallback
+        if not api_key or is_mock_llm() or not AIOHTTP_AVAILABLE:
+            return self._static_interaction_policy()
+
+        cache_key = self._interaction_policy_cache_key(
+            harness=harness,
+            skill=skill,
+        )
+        cached = self._interaction_policy_cache.get(cache_key)
+
+        headers = _build_api_key_auth_headers(api_key)
+        headers.setdefault("User-Agent", _SDK_USER_AGENT)
+        cached_etag = cached.get("etag") if isinstance(cached, dict) else None
+        if isinstance(cached_etag, str) and cached_etag:
+            headers["If-None-Match"] = cached_etag
+
+        try:
+            params = self._build_interaction_policy_params(
+                harness=harness,
+                skill=skill,
+                signals=signals,
+            )
+            backend_origin = (
+                self.backend_config.backend_base_url or BackendConfig.get_backend_url()
+            ).rstrip("/")
+            url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                ) as response:
+                    if response.status == 304:
+                        cached_policy = self._cached_interaction_policy(cache_key)
+                        if cached_policy is not None:
+                            return cached_policy
+                        raise CloudServiceError(
+                            "Interaction policy cache miss for backend 304 response"
+                        )
+
+                    if response.status >= 400:
+                        error_text = await response.text()
+                        raise CloudServiceError(
+                            "Interaction policy request failed with HTTP "
+                            f"{response.status}: {error_text[:200]}"
+                        )
+
+                    try:
+                        payload = await response.json()
+                    except Exception as exc:
+                        raise CloudServiceError(
+                            "Interaction policy endpoint returned non-JSON response"
+                        ) from exc
+
+                    policy = self._normalize_interaction_policy_payload(payload)
+                    self._cache_interaction_policy(
+                        cache_key=cache_key,
+                        policy=policy,
+                        etag=response.headers.get("ETag"),
+                    )
+                    return policy
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            CloudServiceError,
+            AuthenticationError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.debug(
+                "Interaction policy request failed; using local fallback: %s",
+                exc,
+            )
+            return self._static_interaction_policy()
 
     def _resolve_local_storage_path(self, override: str | None) -> Path:
         """Determine the root path for local fallback storage."""
