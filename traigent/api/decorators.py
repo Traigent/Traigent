@@ -536,6 +536,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "configuration_space": None,
     "experiment_name": None,
     "default_config": None,
+    "warm_start_from": None,
     "constraints": None,
     "safety_constraints": None,
     "tvl_spec": None,
@@ -725,6 +726,7 @@ class LegacyOptimizeArgs:
     experiment_name: str | None = None
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
+    warm_start_from: str | None = None
     constraints: list[Callable[..., Any]] | None = None
     safety_constraints: list[Any] | None = (
         None  # SafetyConstraint | CompoundSafetyConstraint
@@ -819,6 +821,7 @@ class LegacyOptimizeArgs:
             ("experiment_name", self.experiment_name),
             ("configuration_space", self.configuration_space),
             ("default_config", self.default_config),
+            ("warm_start_from", self.warm_start_from),
             ("constraints", self.constraints),
             ("safety_constraints", self.safety_constraints),
             ("tvl_spec", self.tvl_spec),
@@ -2014,6 +2017,7 @@ def optimize(  # NOSONAR(S107)
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     experiment_name: str | None = None,
     default_config: dict[str, Any] | None = None,
+    warm_start_from: str | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
     tvl_spec: str | Path | None = None,
@@ -2346,6 +2350,7 @@ def optimize(  # NOSONAR(S107)
         "configuration_space": configuration_space,
         "experiment_name": experiment_name,
         "default_config": default_config,
+        "warm_start_from": warm_start_from,
         "constraints": constraints,
         "safety_constraints": safety_constraints,
         "tvl_spec": tvl_spec,
@@ -2481,6 +2486,8 @@ def optimize(  # NOSONAR(S107)
         raise ValueError("max_trials must be a positive integer")
     # Experiment display name (decorator > env var > func.__name__ at decoration time)
     experiment_name_value = combined_settings["experiment_name"]
+    # Warm-start: prior experiment id to seed this run (empty string -> None).
+    warm_start_from_value: str | None = combined_settings.get("warm_start_from") or None
     # Tuned variable auto-detection
     auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
     auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
@@ -2814,6 +2821,8 @@ def optimize(  # NOSONAR(S107)
             _max_trials_explicit=max_trials_explicit,
             # Experiment display name (overrides func.__name__ in portal/storage)
             experiment_name=experiment_name_value,
+            # Warm-start: seed this run from a prior experiment's learned configs.
+            warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
             prompt_rewrite=prompt_rewrite,
             grow_dataset=grow_dataset,

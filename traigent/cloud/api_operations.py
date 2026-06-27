@@ -652,6 +652,8 @@ class ApiOperations:
         wire_governance = tvl_governance_to_wire(session_request.tvl_governance)
         if wire_governance:
             payload["tvl_governance"] = wire_governance
+        if getattr(session_request, "warm_start_from", None):
+            payload["warm_start_from"] = session_request.warm_start_from
         return payload
 
     def _build_legacy_session_payload(
@@ -668,7 +670,7 @@ class ApiOperations:
         if warn_boolean_config_values:
             _warn_boolean_config_values(session_request.configuration_space)
 
-        return {
+        payload: dict[str, Any] = {
             "problem_statement": session_request.function_name,
             "dataset": {
                 "examples": [],  # Privacy mode - no actual data sent
@@ -690,6 +692,12 @@ class ApiOperations:
                 **metadata,
             },
         }
+        # Warm-start: never silently drop a user-set prior experiment id, even
+        # on the legacy contract (empty string treated as absent). The legacy
+        # BE may not consume it yet; the SDK must still forward it.
+        if getattr(session_request, "warm_start_from", None):
+            payload["warm_start_from"] = session_request.warm_start_from
+        return payload
 
     def _build_connector(self) -> Any | None:
         """Create an aiohttp connector when custom transport settings are required."""

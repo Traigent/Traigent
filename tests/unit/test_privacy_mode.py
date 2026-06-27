@@ -106,6 +106,7 @@ class TestPrivacyCompliance:
             "budget",
             "constraints",
             "default_config",
+            "warm_start_from",  # Prior run/session id only; no raw examples leave the client
             "promotion_policy",
             "tvl_governance",
             "optimization_strategy",
@@ -325,16 +326,16 @@ class TestSubsetSelection:
             subset_sizes[i] for i in range(len(subset_sizes)) if i >= 10
         ]
 
-        assert all(
-            s <= 10 for s in early_sizes
-        ), "Early trials should use small subsets"
+        assert all(s <= 10 for s in early_sizes), (
+            "Early trials should use small subsets"
+        )
         if actual_late_trials:  # Only check if we have late trials
-            assert all(
-                s >= 15 for s in actual_late_trials
-            ), "Late trials should use larger subsets"
-        assert max(early_sizes) <= min(
-            subset_sizes[3:]
-        ), "Subset size should increase over time"
+            assert all(s >= 15 for s in actual_late_trials), (
+                "Late trials should use larger subsets"
+            )
+        assert max(early_sizes) <= min(subset_sizes[3:]), (
+            "Subset size should increase over time"
+        )
 
         # Verify different strategies are used
         assert "diverse_sampling" in strategies

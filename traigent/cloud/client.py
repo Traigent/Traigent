@@ -1854,6 +1854,9 @@ class TraigentCloudClient(BaseTraigentClient):
             payload["default_config"] = request.default_config
         if request.promotion_policy is not None:
             payload["promotion_policy"] = request.promotion_policy
+        # Warm-start: prior experiment id (empty string treated as absent).
+        if request.warm_start_from:
+            payload["warm_start_from"] = request.warm_start_from
         return payload
 
     @staticmethod
