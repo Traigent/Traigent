@@ -170,28 +170,9 @@ class FlagRegistry:
 class FlagNames:
     """Canonical flag identifiers used across the codebase."""
 
-    LOCAL_ADVANCED_OPTIMIZERS = "optimizers.local_advanced.enabled"
-
 
 # Global registry instance
 flag_registry = FlagRegistry()
-
-# Register built-in flags
-flag_registry.register(
-    Flag(
-        name=FlagNames.LOCAL_ADVANCED_OPTIMIZERS,
-        default=True,
-        env_var="TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED",
-        description="Toggle local advanced optimizer hooks globally.",
-        config_path="optimizers.local_advanced.enabled",
-    )
-)
-
-
-def is_local_advanced_optimizers_enabled() -> bool:
-    """Convenience accessor for the local advanced optimizer flag."""
-
-    return flag_registry.is_enabled(FlagNames.LOCAL_ADVANCED_OPTIMIZERS)
 
 
 __all__ = [
@@ -199,5 +180,4 @@ __all__ = [
     "FlagNames",
     "FlagRegistry",
     "flag_registry",
-    "is_local_advanced_optimizers_enabled",
 ]
