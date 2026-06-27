@@ -275,6 +275,32 @@ class TestBedrockChatClientInvoke:
         body = json.loads(mock_client.invoke_model.call_args.kwargs["body"])
         assert body["messages"] == messages
 
+    @pytest.mark.parametrize(
+        ("model_kwargs", "expected_model_id"),
+        [
+            ({"model": "model-alias"}, "model-alias"),
+            ({"model_id": "model-id"}, "model-id"),
+            (
+                {"model": "model-alias", "model_id": "explicit-model-id"},
+                "explicit-model-id",
+            ),
+        ],
+    )
+    def test_invoke_accepts_model_alias_and_model_id(
+        self, model_kwargs: dict[str, str], expected_model_id: str
+    ) -> None:
+        """Test invoke accepts model= as an alias while preserving model_id=."""
+        mock_client = _mock_invoke_client(
+            {"content": [{"type": "text", "text": "Alias response"}]}
+        )
+        client = BedrockChatClient(client=mock_client)
+
+        response = client.invoke(messages="test", **model_kwargs)
+
+        assert response.text == "Alias response"
+        assert response.model == expected_model_id
+        assert mock_client.invoke_model.call_args.kwargs["modelId"] == expected_model_id
+
     def test_invoke_with_temperature_and_top_p(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
