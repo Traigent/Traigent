@@ -765,7 +765,6 @@ class TestErrorHandling:
         assert "timed out" in send.body_json["error"]["message"].lower()
         assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
 
-
     @pytest.mark.asyncio
     async def test_evaluate_timeout_raises_request_timeout_error(self) -> None:
         """Evaluate handler exceeding timeout should raise RequestTimeoutError."""

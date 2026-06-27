@@ -439,9 +439,9 @@ async def test_ctd_execution_behavior(case, monkeypatch):
     client = TraigentClient(
         execution_mode=combo.get("explicit_mode", "auto"), api_key=api_key
     )
-    assert (
-        client.execution_mode == case["expected"]
-    ), f"Combination {case['id']} resolved to {client.execution_mode}"
+    assert client.execution_mode == case["expected"], (
+        f"Combination {case['id']} resolved to {client.execution_mode}"
+    )
 
     # Run behavior validation to ensure optimization meets expectations
     result = await _run_behavior_validation(case, client.execution_mode)
@@ -451,9 +451,9 @@ async def test_ctd_execution_behavior(case, monkeypatch):
         f"Expected {scenario.expected_trials} trials, got {len(result.trials)} "
         f"for {case['id']}"
     )
-    assert result.best_score == pytest.approx(
-        scenario.expected_best_score
-    ), f"Best score mismatch for {case['id']}"
+    assert result.best_score == pytest.approx(scenario.expected_best_score), (
+        f"Best score mismatch for {case['id']}"
+    )
     _assert_best_config(result.best_config, scenario.expected_best_config)
     assert result.success_rate == pytest.approx(1.0)
 
@@ -464,9 +464,9 @@ async def test_ctd_execution_behavior(case, monkeypatch):
             _grid_configurations(scenario.search_space), scenario.expected_trials
         )
     }
-    assert (
-        actual_configs == expected_configs
-    ), f"Config coverage mismatch for {case['id']}"
+    assert actual_configs == expected_configs, (
+        f"Config coverage mismatch for {case['id']}"
+    )
 
     for trial in result.trials:
         assert trial.metrics is not None

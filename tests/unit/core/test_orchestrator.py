@@ -26,7 +26,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.api.types import OptimizationStatus, TrialResult, TrialStatus
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.config.types import TraigentConfig
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -582,6 +587,99 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) >= 1  # At least one trial should complete
         assert result.duration >= 0.5  # Should take at least timeout duration
 
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)
+    async def test_keyboard_interrupt_returns_completed_partial_trials(
+        self, mock_optimizer, mock_function, sample_dataset
+    ):
+        """Ctrl-C during a trial returns completed partial results."""
+
+        class InterruptAfterOneCompletedTrialEvaluator(MockEvaluator):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            async def evaluate(self, *args, **kwargs) -> EvaluationResult:
+                self.calls += 1
+                if self.calls > 1:
+                    raise KeyboardInterrupt
+                return await super().evaluate(*args, **kwargs)
+
+        evaluator = InterruptAfterOneCompletedTrialEvaluator()
+        mock_optimizer.set_max_suggestions(5)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=evaluator,
+            max_trials=5,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        try:
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+        except KeyboardInterrupt as exc:
+            raise AssertionError(
+                "KeyboardInterrupt should return a partial OptimizationResult"
+            ) from exc
+
+        assert isinstance(result, OptimizationResult)
+        assert result.stop_reason == "user_cancelled"
+        assert result.status == OptimizationStatus.CANCELLED
+        assert len(result.trials) == 1
+        assert result.trials[0].status == TrialStatus.COMPLETED
+        assert result.trials[0].config["param1"] == 0
+        assert evaluator.calls == 2
+        assert evaluator.evaluation_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)
+    async def test_cancelled_error_returns_completed_partial_trials(
+        self, mock_optimizer, mock_function, sample_dataset
+    ):
+        """asyncio task cancellation returns completed partial results."""
+
+        class CancelDuringSecondTrialEvaluator(MockEvaluator):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+                self.second_trial_started = asyncio.Event()
+
+            async def evaluate(self, *args, **kwargs) -> EvaluationResult:
+                self.calls += 1
+                if self.calls > 1:
+                    self.second_trial_started.set()
+                    await asyncio.sleep(60)
+                return await super().evaluate(*args, **kwargs)
+
+        evaluator = CancelDuringSecondTrialEvaluator()
+        mock_optimizer.set_max_suggestions(5)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=evaluator,
+            max_trials=5,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        task = asyncio.create_task(orchestrator.optimize(mock_function, sample_dataset))
+        await asyncio.wait_for(evaluator.second_trial_started.wait(), timeout=1.0)
+        task.cancel()
+
+        try:
+            result = await task
+        except asyncio.CancelledError as exc:
+            raise AssertionError(
+                "CancelledError should return a partial OptimizationResult"
+            ) from exc
+
+        assert isinstance(result, OptimizationResult)
+        assert result.stop_reason == "user_cancelled"
+        assert result.status == OptimizationStatus.CANCELLED
+        assert result.metadata["persistence_status"] == "skipped"
+        assert len(result.trials) == 1
+        assert result.trials[0].status == TrialStatus.COMPLETED
+        assert result.trials[0].config["param1"] == 0
+        assert evaluator.calls == 2
+        assert evaluator.evaluation_count == 1
+
     def test_result_source_is_local_when_backend_degraded(self, orchestrator):
         """Issue #1265: when the backend becomes unreachable mid-run, the
         result is marked source='local_fallback' (top-level field and metadata) rather
@@ -661,7 +759,7 @@ class TestOptimizationOrchestrator:
 
         assert result.status == OptimizationStatus.COMPLETED
         assert len(result.trials) == 0
-        assert result.best_config == {}
+        assert result.best_config is None
         assert result.best_metrics == {}
         assert result.best_score is None
 
@@ -698,7 +796,8 @@ class TestOptimizationOrchestrator:
             result.status == OptimizationStatus.COMPLETED
         )  # Optimization completes even if all fail
         assert len(result.trials) == 3  # All trials are recorded, even if failed
-        assert result.best_config == {}  # No successful config
+        assert result.best_config is None  # No successful config
+        assert result.best_score is None
 
         # Check that failed trials are recorded
         failed_trials = [t for t in result.trials if t.status == TrialStatus.FAILED]
@@ -2253,8 +2352,10 @@ class TestStopReasonInResult:
         assert len(result.trials) == 0
 
     @pytest.mark.asyncio
-    async def test_stop_reason_cost_limit(self, sample_dataset, monkeypatch):
-        """stop_reason is 'cost_limit' when the spend guard stops the run."""
+    async def test_mid_run_cost_limit_gracefully_returns_result(
+        self, sample_dataset, monkeypatch
+    ):
+        """Mid-run cost stops return a partial result with stop_reason='cost_limit'."""
         # Disable mock-LLM bypass so CostEnforcer tracks real permits.
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
         config_space = {"param1": (0, 1)}
@@ -2275,6 +2376,7 @@ class TestStopReasonInResult:
 
         result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
 
+        assert isinstance(result, OptimizationResult)
         assert result.stop_reason == "cost_limit"
         assert orchestrator._stop_reason == "cost_limit"
         assert len(result.trials) >= 1
@@ -2308,6 +2410,35 @@ class TestStopReasonInResult:
         assert orchestrator._stop_reason == "cost_limit"
         assert 1 <= len(result.trials) <= 3
         assert orchestrator.cost_enforcer.get_status().limit_reached is True
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_cost_limit_precedes_max_trials(
+        self, sample_dataset, monkeypatch
+    ):
+        """If cost and trial limits are both true, report the binding cost guard."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_metrics({"accuracy": 0.5, "cost": 0.06})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=2,
+            config=TraigentConfig.edge_analytics_mode(),
+            cost_limit=0.12,
+            cost_approved=True,
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert len(result.trials) == 2
+        assert orchestrator.cost_enforcer.get_status().limit_reached is True
+        assert result.stop_reason == "cost_limit"
+        assert result.stop_reason != "max_trials_reached"
 
 
 class TestUsageAnalyticsSubmission:

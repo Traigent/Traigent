@@ -40,6 +40,7 @@ from traigent.cloud.auth import (
     AuthManager,
     InvalidCredentialsError,
 )
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import SIGNUP_URL, BackendConfig
 from traigent.config.project import PROJECT_ENV_VAR, read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
@@ -225,15 +226,22 @@ class TraigentAuthCLI:
             normalized = origin or BackendConfig.normalize_backend_origin(
                 backend_url_override
             )
-            self.backend_url = normalized or backend_url_override
-            self.backend_api_url = (
-                f"{normalized}{path or BackendConfig.get_default_api_path()}"
-                if normalized
-                else BackendConfig.build_api_base(self.backend_url)
+            backend_origin = normalized or backend_url_override
+            self.backend_url = validate_cloud_base_url(
+                backend_origin.rstrip("/"), purpose="auth CLI request"
+            )
+            api_base_candidate = (
+                f"{self.backend_url}{path or BackendConfig.get_default_api_path()}"
             )
         else:
-            self.backend_url = BackendConfig.get_cloud_backend_url()
-            self.backend_api_url = BackendConfig.get_cloud_api_url()
+            self.backend_url = validate_cloud_base_url(
+                BackendConfig.get_cloud_backend_url().rstrip("/"),
+                purpose="auth CLI request",
+            )
+            api_base_candidate = BackendConfig.get_cloud_api_url()
+        self.backend_api_url = validate_cloud_base_url(
+            api_base_candidate.rstrip("/"), purpose="auth CLI request"
+        )
 
         # Ensure config directory exists
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1856,6 +1864,10 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
         )
         return False
 
+    backend_api_url = validate_cloud_base_url(
+        _resolve_api_base_url(backend_api_url).rstrip("/"),
+        purpose="auth CLI request",
+    )
     url = _compose_api_url(backend_api_url, "keys/validate")
     headers = {
         "Accept": "application/json",

@@ -140,7 +140,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
 | **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
 | **Tunable Variable Language** | [TVL Guide](docs/user-guide/tuned_variables.md) |
-| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) |
+| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) |
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
 
 </details>
@@ -229,7 +229,7 @@ The default run uses Traigent's smart optimizer when portal credentials are avai
 ```python
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
+        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini/gemini-pro"],
         "temperature": [0.1, 0.5, 0.9],
     },
     objectives=["accuracy", "cost"],
@@ -313,7 +313,7 @@ for details.
 
 ### Evaluation
 
-Provide a JSONL dataset — Traigent scores outputs using semantic similarity by default:
+Provide a JSONL dataset — Traigent scores outputs by exact / case-insensitive match by default. For semantic scoring (paraphrases, summarization, translation), supply a `scoring_function` (embeddings or LLM-judge) or a `custom_evaluator`:
 
 ```jsonl
 {"input": {"question": "What is AI?"}, "output": "Artificial Intelligence"}

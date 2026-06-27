@@ -72,9 +72,7 @@ async def test_upload_example_features_does_not_post_when_backend_rejects():
     fake_post = MagicMock()
 
     try:
-        with _force_backend_reject(), patch(
-            "requests.post", new=fake_post
-        ):
+        with _force_backend_reject(), patch("requests.post", new=fake_post):
             result = client.upload_example_features(
                 experiment_run_id="run-123",
                 feature_kind="task_complexity",
@@ -153,9 +151,7 @@ async def test_get_sync_auth_headers_raises_cloud_service_error_on_unexpected():
         raise RuntimeError("simulated header failure")
 
     try:
-        with patch.object(
-            client.auth_manager.auth, "get_headers", new=_boom
-        ):
+        with patch.object(client.auth_manager.auth, "get_headers", new=_boom):
             with pytest.raises(CloudServiceError):
                 client._get_sync_auth_headers(target="backend")
     finally:
@@ -201,9 +197,10 @@ async def test_upload_example_features_skips_post_on_unexpected_failure():
         raise RuntimeError("simulated header failure")
 
     try:
-        with patch.object(
-            client.auth_manager.auth, "get_headers", new=_boom
-        ), patch("requests.post", new=fake_post):
+        with (
+            patch.object(client.auth_manager.auth, "get_headers", new=_boom),
+            patch("requests.post", new=fake_post),
+        ):
             result = client.upload_example_features(
                 experiment_run_id="run-456",
                 feature_kind="task_complexity",

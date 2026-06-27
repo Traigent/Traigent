@@ -1079,6 +1079,21 @@ class TestGenerateOptimizationReport:
         assert "learning_rate: 0.01" in report
         assert "batch_size: 32" in report
 
+    def test_report_handles_none_best_configuration(
+        self, plotter: PlotGenerator
+    ) -> None:
+        """All-fail optimization reports should not iterate a missing config."""
+        trials = [_make_trial("t1", 0.9, 0.5)]
+        result = _make_result(trials, {}, objectives=["accuracy"])
+        result.best_config = None
+
+        with patch.object(plotter, "plot_optimization_progress") as mock_progress:
+            mock_progress.return_value = "PROGRESS_PLOT_HERE"
+            report = plotter.generate_optimization_report(result)
+
+        assert "Best Configuration" in report
+        assert "No best configuration available" in report
+
 
 class TestCreateQuickPlot:
     """Tests for create_quick_plot function."""

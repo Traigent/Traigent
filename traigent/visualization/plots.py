@@ -608,8 +608,11 @@ class PlotGenerator:
         # Best configuration
         lines.append("🏆 Best Configuration")
         lines.append("-" * 30)
-        for param, value in result.best_config.items():
-            lines.append(f"{param}: {value}")
+        if result.best_config:
+            for param, value in result.best_config.items():
+                lines.append(f"{param}: {value}")
+        else:
+            lines.append("No best configuration available")
         lines.append("")
 
         return "\n".join(lines)

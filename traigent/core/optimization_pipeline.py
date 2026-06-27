@@ -31,6 +31,7 @@ from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_config_space
 
@@ -515,6 +516,18 @@ def create_effective_evaluator(
         decorator_custom_evaluator=decorator_custom_evaluator,
     )
 
+    # Warn once when mock LLM mode is active and an output-based scorer is supplied.
+    # Mock mode returns a canned constant string for every LLM call, so any evaluator
+    # that scores the LLM output (custom_evaluator / metric_functions / scoring_function)
+    # will produce identical scores for all trials — the best_config is meaningless.
+    if is_mock_llm() and (effective_evaluator or metric_functions or scoring_function):
+        logger.warning(
+            "Mock mode active — LLM outputs are canned, so output-based metrics are not "
+            "meaningful. Run with TRAIGENT_MOCK_LLM=false and a provider key for real "
+            "scores. See traigent/examples/providers/_demo.py for a synthetic scorer "
+            "pattern that produces a ranked mock board."
+        )
+
     if effective_evaluator:
         if not callable(effective_evaluator):
             raise ValueError("custom_evaluator must be callable") from None
@@ -611,6 +624,7 @@ def collect_orchestrator_kwargs(
     promotion_gate: Any | None,
     safety_constraints: list[Any] | None = None,
     invocations_per_example: int = 1,
+    warm_start_from: str | None = None,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -671,6 +685,7 @@ def collect_orchestrator_kwargs(
         ("global_measures", global_measures, None),
         ("promotion_gate", promotion_gate, None),
         ("safety_constraints", safety_constraints, None),
+        ("warm_start_from", warm_start_from, None),
     ]
     for attr_name, value, transform in optional_attrs:
         if value is not None:

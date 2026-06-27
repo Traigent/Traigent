@@ -115,8 +115,8 @@ def create_test_dataset(
         i = len(examples)
         examples.append(
             EvaluationExample(
-                input_data={"question": f"Generic question {i+1}"},
-                expected_output=f"Generic answer {i+1}",
+                input_data={"question": f"Generic question {i + 1}"},
+                expected_output=f"Generic answer {i + 1}",
             )
         )
 
@@ -197,18 +197,18 @@ def create_evaluation_examples(
     for i in range(count):
         input_data = {}
         for key in input_keys:
-            input_data[key] = f"Sample {key} {i+1}"
+            input_data[key] = f"Sample {key} {i + 1}"
 
         if output_type == "string":
-            expected_output = f"Sample output {i+1}"
+            expected_output = f"Sample output {i + 1}"
         elif output_type == "number":
             expected_output = str(i + 1)
         elif output_type == "boolean":
             expected_output = str(i % 2 == 0).lower()
         elif output_type == "list":
-            expected_output = [f"item_{i+1}_1", f"item_{i+1}_2"]
+            expected_output = [f"item_{i + 1}_1", f"item_{i + 1}_2"]
         else:
-            expected_output = {"result": f"structured_output_{i+1}"}
+            expected_output = {"result": f"structured_output_{i + 1}"}
 
         examples.append(
             EvaluationExample(input_data=input_data, expected_output=expected_output)
@@ -250,7 +250,7 @@ def create_mock_trial_results(
         latency = 1.0 + (i * 0.2) + (0.3 if config.get("model") == "gpt-4" else 0)
 
         trial_result = TrialResult(
-            trial_id=f"trial_{i+1}",
+            trial_id=f"trial_{i + 1}",
             config=config,
             metrics={
                 "accuracy": round(accuracy, 3),
@@ -260,7 +260,7 @@ def create_mock_trial_results(
             status=status,
             duration=latency,
             error_message=(
-                None if status == TrialStatus.COMPLETED else f"Error in trial {i+1}"
+                None if status == TrialStatus.COMPLETED else f"Error in trial {i + 1}"
             ),
         )
         results.append(trial_result)

@@ -110,9 +110,9 @@ class TestLangChainCost:
             notes="Using OpenAI via LangChain",
         )
 
-        assert (
-            result.cost_matches
-        ), f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        assert result.cost_matches, (
+            f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        )
 
         return result
 
@@ -191,9 +191,9 @@ class TestLangChainCost:
             notes="With Traigent callback handler",
         )
 
-        assert (
-            result.cost_matches
-        ), f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        assert result.cost_matches, (
+            f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        )
 
         return result
 

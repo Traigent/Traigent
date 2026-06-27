@@ -219,9 +219,9 @@ class TestPrivacyIntegration:
 
         # CRITICAL: Verify complete privacy compliance
         privacy_report = dummy_server.get_privacy_report()
-        assert (
-            privacy_report["compliant"] is True
-        ), f"Privacy violations: {privacy_report['violations']}"
+        assert privacy_report["compliant"] is True, (
+            f"Privacy violations: {privacy_report['violations']}"
+        )
         assert privacy_report["violation_count"] == 0
 
         # Verify no sensitive data fields were ever sent

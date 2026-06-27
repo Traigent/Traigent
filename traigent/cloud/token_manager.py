@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, cast
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
-from traigent.utils.url_security import UnsafeUrlError, validate_outbound_url
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -445,11 +444,10 @@ class TokenManager:
                 error_message=_GENERIC_REFRESH_ERROR,
             )
 
-    def _build_oauth2_token_url(self) -> str:
-        cloud_base_url = validate_outbound_url(
+    async def _build_oauth2_token_url(self) -> str:
+        cloud_base_url = await validate_cloud_base_url_async(
             self.config.cloud_base_url,
             purpose="OAuth2 cloud_base_url",
-            allow_private_hosts=False,
         )
         return f"{cloud_base_url}/oauth/token"
 
@@ -520,8 +518,8 @@ class TokenManager:
             )
 
         try:
-            token_url = self._build_oauth2_token_url()
-        except UnsafeUrlError as exc:
+            token_url = await self._build_oauth2_token_url()
+        except ValueError as exc:
             logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
             return AuthResult(
                 success=False,

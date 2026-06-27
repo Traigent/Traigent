@@ -269,7 +269,6 @@ class TestObjectiveSchemaIntegration:
             ) as mock_get_optimizer,
             patch("traigent.evaluators.local.LocalEvaluator.evaluate") as mock_evaluate,
         ):
-
             # Setup mocks
             mock_optimizer = MagicMock()
             mock_optimizer.optimize = MagicMock(return_value=[])

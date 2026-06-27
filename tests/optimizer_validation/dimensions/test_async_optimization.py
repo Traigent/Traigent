@@ -85,9 +85,9 @@ class TestAsyncFunctionOptimization:
             # Verify async execution completed successfully
             for trial in result.trials:
                 config = getattr(trial, "config", {})
-                assert (
-                    "model" in config or "temperature" in config
-                ), "Trial should have config parameters"
+                assert "model" in config or "temperature" in config, (
+                    "Trial should have config parameters"
+                )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -131,9 +131,9 @@ class TestAsyncFunctionOptimization:
 
         # Verify timeout stopped optimization early (max_trials=20, timeout=3s)
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) < 20
-            ), f"Timeout should stop optimization before max_trials, got {len(result.trials)}"
+            assert len(result.trials) < 20, (
+                f"Timeout should stop optimization before max_trials, got {len(result.trials)}"
+            )
         # Verify stop_reason is a valid value if available
         # Note: In mock mode, optimizer may complete before timeout triggers
         if hasattr(result, "stop_reason") and result.stop_reason is not None:
@@ -144,9 +144,9 @@ class TestAsyncFunctionOptimization:
                 "max_trials",
                 "converged",
             }
-            assert (
-                result.stop_reason in valid_stop_reasons
-            ), f"Unexpected stop_reason {result.stop_reason}, expected one of {valid_stop_reasons}"
+            assert result.stop_reason in valid_stop_reasons, (
+                f"Unexpected stop_reason {result.stop_reason}, expected one of {valid_stop_reasons}"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -193,20 +193,20 @@ class TestAsyncFunctionOptimization:
                 config = getattr(trial, "config", {})
                 if "temperature" in config:
                     temp = config["temperature"]
-                    assert isinstance(
-                        temp, (int, float)
-                    ), f"Temperature should be numeric, got {type(temp)}"
-                    assert (
-                        0.0 <= temp <= 2.0
-                    ), f"Temperature {temp} outside range [0.0, 2.0]"
+                    assert isinstance(temp, (int, float)), (
+                        f"Temperature should be numeric, got {type(temp)}"
+                    )
+                    assert 0.0 <= temp <= 2.0, (
+                        f"Temperature {temp} outside range [0.0, 2.0]"
+                    )
                 if "top_p" in config:
                     top_p = config["top_p"]
-                    assert isinstance(
-                        top_p, (int, float)
-                    ), f"top_p should be numeric, got {type(top_p)}"
-                    assert (
-                        0.5 <= top_p <= 1.0
-                    ), f"top_p {top_p} outside range [0.5, 1.0]"
+                    assert isinstance(top_p, (int, float)), (
+                        f"top_p should be numeric, got {type(top_p)}"
+                    )
+                    assert 0.5 <= top_p <= 1.0, (
+                        f"top_p {top_p} outside range [0.5, 1.0]"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -264,22 +264,22 @@ class TestConcurrentExecution:
 
         # Verify trials completed - should get multiple trials from parallel execution
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) >= 3
-            ), f"Parallel execution with 6 trials should complete at least 3, got {len(result.trials)}"
+            assert len(result.trials) >= 3, (
+                f"Parallel execution with 6 trials should complete at least 3, got {len(result.trials)}"
+            )
             # Verify each trial has valid config
             valid_models = {"gpt-3.5-turbo", "gpt-4", "gpt-4o"}
             valid_temps = {0.3, 0.5, 0.7}
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 if "model" in config:
-                    assert (
-                        config["model"] in valid_models
-                    ), f"Invalid model {config['model']}"
+                    assert config["model"] in valid_models, (
+                        f"Invalid model {config['model']}"
+                    )
                 if "temperature" in config:
-                    assert (
-                        config["temperature"] in valid_temps
-                    ), f"Invalid temperature {config['temperature']}"
+                    assert config["temperature"] in valid_temps, (
+                        f"Invalid temperature {config['temperature']}"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -329,18 +329,18 @@ class TestConcurrentExecution:
                 config = getattr(trial, "config", {})
                 # Verify model is valid
                 if "model" in config:
-                    assert (
-                        config["model"] in valid_models
-                    ), f"Invalid model {config['model']}"
+                    assert config["model"] in valid_models, (
+                        f"Invalid model {config['model']}"
+                    )
                 # Verify temperature is valid
                 if "temperature" in config:
-                    assert (
-                        config["temperature"] in valid_temps
-                    ), f"Invalid temperature {config['temperature']}"
+                    assert config["temperature"] in valid_temps, (
+                        f"Invalid temperature {config['temperature']}"
+                    )
                 # Verify complete config (both model and temperature present)
-                assert (
-                    "model" in config or "temperature" in config
-                ), "Trial should have at least one config parameter"
+                assert "model" in config or "temperature" in config, (
+                    "Trial should have at least one config parameter"
+                )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -455,14 +455,14 @@ class TestBatchProcessing:
                 config = getattr(trial, "config", {})
                 # Verify model is one of the valid options
                 if "model" in config:
-                    assert (
-                        config["model"] in valid_models
-                    ), f"Invalid model {config['model']}, expected one of {valid_models}"
+                    assert config["model"] in valid_models, (
+                        f"Invalid model {config['model']}, expected one of {valid_models}"
+                    )
                 # Verify temperature is the fixed value (using tolerance for float comparison)
                 if "temperature" in config:
-                    assert (
-                        abs(config["temperature"] - 0.5) < 1e-9
-                    ), f"Expected fixed temperature 0.5, got {config['temperature']}"
+                    assert abs(config["temperature"] - 0.5) < 1e-9, (
+                        f"Expected fixed temperature 0.5, got {config['temperature']}"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -628,15 +628,15 @@ class TestAsyncWithAllAlgorithms:
 
         _, result = await scenario_runner(scenario)
 
-        assert not isinstance(
-            result, Exception
-        ), f"Unexpected error with {optimizer}: {result}"
+        assert not isinstance(result, Exception), (
+            f"Unexpected error with {optimizer}: {result}"
+        )
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) >= 1
-            ), f"Should complete at least one trial with {optimizer}"
+            assert len(result.trials) >= 1, (
+                f"Should complete at least one trial with {optimizer}"
+            )
             valid_models = {"gpt-3.5-turbo", "gpt-4"}
             valid_temps = {0.3, 0.7}
             for trial in result.trials:

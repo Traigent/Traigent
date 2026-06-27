@@ -16,7 +16,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from functools import wraps
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 from traigent.config.ast_transformer import ConfigTransformer, SafeASTCompiler
 from traigent.config.context import (
@@ -80,8 +80,8 @@ class ConfigurationProvider:
 
         config = ctx_get_config()
         if isinstance(config, TraigentConfig):
-            return config.to_dict()
-        return config if config else None
+            return cast(dict[str, Any], config.to_dict())
+        return cast(dict[str, Any], config) if config else None
 
     def supports_function(self, func: Callable[..., Any]) -> bool:
         """Check if provider can handle this function.
@@ -220,9 +220,9 @@ class ContextBasedProvider(ConfigurationProvider):
         """Extract configuration from context."""
         config: TraigentConfig | dict[str, Any] = get_config()
         if isinstance(config, TraigentConfig):
-            return config.to_dict()
+            return cast(dict[str, Any], config.to_dict())
         # config is dict[str, Any] after isinstance narrowing
-        return config
+        return dict(config)
 
     def supports_function(self, func: Callable[..., Any]) -> bool:
         """Context injection works with any function."""
@@ -641,11 +641,20 @@ class SeamlessParameterProvider(ConfigurationProvider):
             self._stats["fallback_triggers"]["no_injection"].append(
                 sorted(active_config.keys())
             )
-        logger.debug(
-            f"Seamless provider found no injectable targets for {func.__name__}; "
-            "configuration keys were %s",
-            sorted(active_config.keys()),
-        )
+        if active_config:
+            logger.warning(
+                "Seamless provider found no injectable targets for %s; no local "
+                "assignment or parameter matched configuration keys %s, so the "
+                "function ran with original values.",
+                func.__name__,
+                sorted(active_config.keys()),
+            )
+        else:
+            logger.debug(
+                "Seamless provider found no injectable targets for %s with empty "
+                "configuration",
+                func.__name__,
+            )
         return func(*args, **kwargs)
 
     def _seamless_fallback(
@@ -988,8 +997,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
         """
         config: TraigentConfig | dict[str, Any] = get_config()
         if isinstance(config, TraigentConfig):
-            return config.to_dict()
-        return config
+            return cast(dict[str, Any], config.to_dict())
+        return dict(config)
 
     def supports_function(self, func: Callable[..., Any]) -> bool:
         """Check if function source is available for transformation.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -179,11 +179,14 @@ class TestSubmitTraces:
         mgr = _make_manager(tracker=tracker)
         mgr._collected_spans = [_FakeSpan()]
 
-        with caplog.at_level(
-            logging.DEBUG, logger="traigent.core.workflow_trace_manager"
-        ), patch(
-            "traigent.core.workflow_trace_manager.is_backend_offline",
-            return_value=False,
+        with (
+            caplog.at_level(
+                logging.DEBUG, logger="traigent.core.workflow_trace_manager"
+            ),
+            patch(
+                "traigent.core.workflow_trace_manager.is_backend_offline",
+                return_value=False,
+            ),
         ):
             await mgr.submit_traces(session_id="real-session")
 

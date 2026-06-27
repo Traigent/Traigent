@@ -13,6 +13,12 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+_SPEND_ACCUMULATING_STATUSES = {
+    TrialStatus.COMPLETED,
+    TrialStatus.PRUNED,
+    TrialStatus.FAILED,
+}
+
 
 @dataclass(slots=True)
 class MandatoryMetricsTotals:
@@ -43,7 +49,7 @@ class MandatoryMetricsCollector:
         self._totals = MandatoryMetricsTotals()
 
     def accumulate(self, trial: TrialResult) -> None:
-        if trial.status != TrialStatus.COMPLETED:
+        if trial.status not in _SPEND_ACCUMULATING_STATUSES:
             return
 
         try:

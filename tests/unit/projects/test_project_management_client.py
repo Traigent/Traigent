@@ -267,7 +267,7 @@ def test_project_management_client_maps_generic_http_failures(monkeypatch) -> No
 
 
 def test_project_management_config_rejects_non_http_backend_origin() -> None:
-    with pytest.raises(ValueError, match="absolute http or https URL"):
+    with pytest.raises(ValueError, match=r"must be http\(s\) with a host"):
         ProjectManagementConfig(backend_origin="file:///tmp/backend")
 
 

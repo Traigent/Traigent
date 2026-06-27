@@ -37,6 +37,7 @@ from traigent.core.execution_policy_runtime import (
     policy_is_cloud_brain,
     policy_requires_cloud,
     session_failure_is_connectivity,
+    session_failure_is_session_create_400,
 )
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
@@ -366,7 +367,9 @@ class BackendSessionManager:
         self._backend_tracking_enabled = False
         self._backend_disabled_reason = reason
 
-    def handle_session_creation_result(self, result: SessionCreationResult) -> str:
+    def handle_session_creation_result(
+        self, result: SessionCreationResult, *, governed_session: bool = False
+    ) -> str:
         """Consume a SessionCreationResult: flip breaker, emit warning, return session_id.
 
         Single place that interprets the structured result — ensures warning text
@@ -383,6 +386,21 @@ class BackendSessionManager:
             self.disable_backend_tracking(reason)
 
             if not was_enabled:
+                # Even when tracking was already disabled, an AUTH-reason failure
+                # must surface at WARNING so the user sees the remedy text
+                # (missing_permissions, re-auth hint, etc.) — issue #1373 Case 2.
+                # For non-auth reasons (NO_API_KEY, SESSION_FAILED) the normal
+                # message was already emitted on the first disable; stay silent.
+                if reason == SessionCreationFailureReason.AUTH:
+                    classification = _classify_session_creation_failure(
+                        reason, result.failure_response
+                    )
+                    logger.warning(
+                        "%s",
+                        _format_untracked_warning_block(
+                            result, classification, aborting=False
+                        ),
+                    )
                 return str(result.session_id)
 
             policy = policy_from_config(self._traigent_config)
@@ -392,10 +410,17 @@ class BackendSessionManager:
                     "Cloud execution is required, but backend session creation "
                     f"failed: {fallback_reason}"
                 )
+            if governed_session:
+                raise ConfigurationError(
+                    "Governed backend session creation failed; local fallback is "
+                    f"not allowed: {fallback_reason}"
+                )
             if policy_is_cloud_brain(policy):
-                if policy_allows_cloud_fallback(
-                    policy
-                ) and session_failure_is_connectivity(result):
+                cloud_fallback_allowed = policy_allows_cloud_fallback(policy)
+                if cloud_fallback_allowed and (
+                    session_failure_is_connectivity(result)
+                    or session_failure_is_session_create_400(result)
+                ):
                     self._fallback_reason = fallback_reason
                     mark_local_fallback(self._traigent_config, fallback_reason)
                     logger.warning(
@@ -635,6 +660,9 @@ class BackendSessionManager:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
+        warm_start_from: str | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -701,11 +729,34 @@ class BackendSessionManager:
                 session_metadata["strategy_preset"] = dict(
                     self._strategy_preset_metadata
                 )
+            if warm_start_from:
+                session_metadata["warm_start_from"] = warm_start_from
 
-            # Use human-readable name with disambiguating hash suffix
-            # e.g. "answer_question (f282c9de)" instead of the full slug
-            portal_name = function_display_name or function_identifier
+            # Build the portal display name.
+            # When the user supplied an explicit experiment_name, honour it.
+            # When no name was given, weave in objectives and knob names so the
+            # experiment is self-describing in the portal's Recent Experiments
+            # list (issue #1422): e.g. "opt:accuracy,cost · model,temperature".
             slug_hash = function_slug.rsplit("_", 1)[-1] if function_slug else ""
+            if experiment_display_name is None:
+                # Collect up to 3 objective names and up to 4 knob names to
+                # keep the label concise.
+                obj_names = (self._objectives or [])[:3]
+                knob_names = list(
+                    (getattr(self._optimizer, "config_space", {}) or {}).keys()
+                )[:4]
+                label_parts: list[str] = []
+                if obj_names:
+                    label_parts.append("opt:" + ",".join(obj_names))
+                if knob_names:
+                    label_parts.append(",".join(knob_names))
+                portal_name = (
+                    " · ".join(label_parts)
+                    if label_parts
+                    else (function_display_name or function_identifier)
+                )
+            else:
+                portal_name = function_display_name or function_identifier
             if slug_hash:
                 portal_name = f"{portal_name} ({slug_hash})"
 
@@ -717,9 +768,15 @@ class BackendSessionManager:
                 objectives=objectives,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
+                warm_start_from=warm_start_from,
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
             )
             result = self.normalize_session_creation_result(raw_result)
-            session_id = self.handle_session_creation_result(result)
+            session_id = self.handle_session_creation_result(
+                result,
+                governed_session=bool(promotion_policy or tvl_governance),
+            )
             if result.backend_connected:
                 owning_context = {
                     key: normalized
@@ -1510,6 +1567,19 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+            # session_summary may be a plain dict OR an OptimizationFinalizationResponse
+            # dataclass (the real cloud finalize path), which exposes ``.metadata`` as an
+            # attribute and has no ``.get()``. Calling ``.get()`` on the dataclass raised
+            # AttributeError, which the persistence try/except swallowed as
+            # "persistence failed" on every cloud run. Guard the type before extracting.
+            if isinstance(session_summary, dict):
+                summary_metadata = session_summary.get("metadata")
+            else:
+                summary_metadata = getattr(session_summary, "metadata", None)
+            if isinstance(summary_metadata, dict):
+                warm_start_transfer = summary_metadata.get("warm_start_transfer")
+                if isinstance(warm_start_transfer, dict):
+                    update_payload["warm_start_transfer"] = dict(warm_start_transfer)
         if owning_context := self._session_owning_context.get(session_id):
             update_payload.update(owning_context)
 

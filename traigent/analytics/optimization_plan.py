@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, cast
 
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.utils.logging import get_logger
 
@@ -78,7 +79,10 @@ class OptimizationPlanClient:
                 "Install with: pip install traigent[hybrid]"
             )
 
-        self.backend_url = backend_url.rstrip("/")
+        backend_url = backend_url.rstrip("/")
+        self.backend_url = validate_cloud_base_url(
+            backend_url, purpose="optimization plan request"
+        )
         self.timeout = timeout
 
         # Import here to avoid circular dependency

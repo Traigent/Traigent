@@ -244,9 +244,9 @@ class TestMockModeMetrics:
 
         for text, expected_tokens in test_cases:
             actual_tokens = estimate_tokens(text)
-            assert (
-                actual_tokens == expected_tokens
-            ), f"For text '{text}', expected {expected_tokens} tokens, got {actual_tokens}"
+            assert actual_tokens == expected_tokens, (
+                f"For text '{text}', expected {expected_tokens} tokens, got {actual_tokens}"
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("cost_preflight_approved")

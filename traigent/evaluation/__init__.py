@@ -4,6 +4,8 @@ from traigent.evaluation.client import EvaluationClient
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
     AnnotationQueueDTO,
+    AnnotationQueueItemCompleteResultDTO,
+    AnnotationQueueItemCreateResultDTO,
     AnnotationQueueItemDTO,
     AnnotationQueueItemListResponse,
     AnnotationQueueItemStatus,
@@ -26,12 +28,15 @@ from traigent.evaluation.dtos import (
     ScoreRecordDTO,
     ScoreRecordListResponse,
     ScoreSource,
+    TypedMeasureDTO,
 )
 
 __all__ = [
     "EvaluationClient",
     "EvaluationConfig",
     "AnnotationQueueDTO",
+    "AnnotationQueueItemCompleteResultDTO",
+    "AnnotationQueueItemCreateResultDTO",
     "AnnotationQueueItemDTO",
     "AnnotationQueueItemListResponse",
     "AnnotationQueueItemStatus",
@@ -54,4 +59,5 @@ __all__ = [
     "ScoreRecordDTO",
     "ScoreRecordListResponse",
     "ScoreSource",
+    "TypedMeasureDTO",
 ]

@@ -449,9 +449,7 @@ class TestMetricsComputer:
         ]
         expected_outputs = ["output1", "output2"]
 
-        result = default_computer.compute_metrics(
-            invocation_results, expected_outputs
-        )
+        result = default_computer.compute_metrics(invocation_results, expected_outputs)
 
         assert result.metrics["custom_metric"] == 1.0
 

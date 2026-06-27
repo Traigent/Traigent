@@ -364,15 +364,15 @@ class TestConnectionErrors:
 
             _, result = await scenario_runner(scenario)
 
-            assert not isinstance(
-                result, Exception
-            ), f"Unexpected error with {optimizer}: {result}"
+            assert not isinstance(result, Exception), (
+                f"Unexpected error with {optimizer}: {result}"
+            )
 
             # Verify trials were executed
             if hasattr(result, "trials"):
-                assert (
-                    len(result.trials) >= 1
-                ), f"{optimizer} should complete at least one trial"
+                assert len(result.trials) >= 1, (
+                    f"{optimizer} should complete at least one trial"
+                )
                 for trial in result.trials:
                     config = getattr(trial, "config", {})
                     assert config, f"Trial in {optimizer} should have config"

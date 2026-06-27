@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -201,6 +202,53 @@ class TestPromotionGateIntegration:
         )
 
         orchestrator._best_trial_cached = incumbent
+
+        assert orchestrator._simple_is_better(candidate) is True
+
+    @staticmethod
+    def _trial_with_accuracy(
+        trial_id: str, config: dict[str, int], accuracy: float
+    ) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config=config,
+            metrics={"accuracy": accuracy},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+        )
+
+    def test_best_trial_cache_skips_non_finite_first_score(self) -> None:
+        """A NaN first trial must not become the cached incumbent."""
+        orchestrator = OptimizationOrchestrator(
+            optimizer=_MockOptimizer(),
+            evaluator=_MockEvaluator(),
+            max_trials=3,
+        )
+        nan_trial = self._trial_with_accuracy("trial_nan", {"x": 1}, math.nan)
+        finite_trial = self._trial_with_accuracy("trial_finite", {"x": 2}, 0.9)
+
+        orchestrator._update_best_trial_cache(nan_trial)
+        assert orchestrator._best_trial_cached is None
+        assert orchestrator._incumbent_config_hash is None
+
+        orchestrator._update_best_trial_cache(finite_trial)
+
+        assert orchestrator._best_trial_cached is finite_trial
+        assert orchestrator._incumbent_config_hash is not None
+
+    def test_simple_is_better_replaces_non_finite_incumbent(self) -> None:
+        """A finite candidate should displace any legacy non-finite incumbent."""
+        orchestrator = OptimizationOrchestrator(
+            optimizer=_MockOptimizer(),
+            evaluator=_MockEvaluator(),
+            max_trials=3,
+        )
+        orchestrator._best_trial_cached = self._trial_with_accuracy(
+            "trial_nan", {"x": 1}, math.nan
+        )
+
+        candidate = self._trial_with_accuracy("trial_finite", {"x": 2}, 0.9)
 
         assert orchestrator._simple_is_better(candidate) is True
 

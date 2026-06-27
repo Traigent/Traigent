@@ -244,6 +244,18 @@ def session_failure_is_connectivity(result: SessionCreationResult) -> bool:
     return bool(_contains_any(text, CONNECTIVITY_PATTERNS))
 
 
+def session_failure_is_session_create_400(result: SessionCreationResult) -> bool:
+    """Return true for the auto-contract typed+legacy HTTP 400 failure."""
+
+    if not result.typed_legacy_session_create_400:
+        return False
+    detail = result.failure_response
+    if detail and detail.status_code == 400:
+        return True
+    text = _combined_session_text(result)
+    return "http 400" in text or "status 400" in text
+
+
 def exception_status(exc: BaseException) -> int | None:
     """Extract an HTTP status code from common cloud/backend exception shapes."""
 

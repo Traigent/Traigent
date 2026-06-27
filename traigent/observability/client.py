@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, cast
+from collections.abc import Iterator
 from urllib import error, request
 from urllib.parse import urlencode
 
@@ -45,6 +46,7 @@ from traigent.utils.exceptions import (
     TraigentConnectionError,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.pagination import iter_pages
 from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
 
 logger = get_logger(__name__)
@@ -733,6 +735,48 @@ class ObservabilityClient:
         payload = self._request_json("GET", f"/traces{query}")
         return TraceListResponse.from_dict(self._unwrap_data(payload, "trace list"))
 
+    def iter_traces(
+        self,
+        *,
+        per_page: int = 100,
+        search: str | None = None,
+        environment: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        tags: list[str] | str | None = None,
+        release: str | None = None,
+        model: str | None = None,
+        start_time_from: datetime | None = None,
+        start_time_to: datetime | None = None,
+    ) -> Iterator[TraceRecord]:
+        """Iterate over *all* traces across pages, fetching lazily.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        search, environment, status, user_id, session_id, tags, release,
+        model, start_time_from, start_time_to:
+            Same filter semantics as :meth:`list_traces`.
+        """
+        yield from iter_pages(
+            self.list_traces,
+            per_page=per_page,
+            search=search,
+            environment=environment,
+            status=status,
+            user_id=user_id,
+            session_id=session_id,
+            tags=tags,
+            release=release,
+            model=model,
+            start_time_from=start_time_from,
+            start_time_to=start_time_to,
+        )
+
     def get_trace(self, trace_id: str) -> TraceRecord:
         payload = self._request_json("GET", f"/traces/{trace_id}")
         return TraceRecord.from_dict(self._unwrap_data(payload, "trace detail"))
@@ -769,6 +813,42 @@ class ObservabilityClient:
         )
         payload = self._request_json("GET", f"/sessions{query}")
         return SessionListResponse.from_dict(self._unwrap_data(payload, "session list"))
+
+    def iter_sessions(
+        self,
+        *,
+        per_page: int = 100,
+        search: str | None = None,
+        environment: str | None = None,
+        user_id: str | None = None,
+        tags: list[str] | str | None = None,
+        release: str | None = None,
+        start_time_from: datetime | None = None,
+        start_time_to: datetime | None = None,
+    ) -> Iterator[SessionRecord]:
+        """Iterate over *all* sessions across pages, fetching lazily.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        search, environment, user_id, tags, release, start_time_from,
+        start_time_to:
+            Same filter semantics as :meth:`list_sessions`.
+        """
+        yield from iter_pages(
+            self.list_sessions,
+            per_page=per_page,
+            search=search,
+            environment=environment,
+            user_id=user_id,
+            tags=tags,
+            release=release,
+            start_time_from=start_time_from,
+            start_time_to=start_time_to,
+        )
 
     def get_session(self, session_id: str) -> SessionRecord:
         payload = self._request_json("GET", f"/sessions/{session_id}")

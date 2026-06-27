@@ -69,9 +69,9 @@ class MockOpenAI:
                 config_logger.log("openai", "chat.completions.create", kwargs, "call")
                 response = Mock()
                 response.choices = [Mock()]
-                response.choices[0].message.content = (
-                    f"OpenAI response with {kwargs.get('temperature', 'default')} temperature"
-                )
+                response.choices[
+                    0
+                ].message.content = f"OpenAI response with {kwargs.get('temperature', 'default')} temperature"
                 return response
 
     class Completions:
@@ -79,9 +79,9 @@ class MockOpenAI:
             config_logger.log("openai", "completions.create", kwargs, "call")
             response = Mock()
             response.choices = [Mock()]
-            response.choices[0].text = (
-                f"OpenAI completion with {kwargs.get('temperature', 'default')} temperature"
-            )
+            response.choices[
+                0
+            ].text = f"OpenAI completion with {kwargs.get('temperature', 'default')} temperature"
             return response
 
 
@@ -105,9 +105,9 @@ class MockAsyncOpenAI:
                 )
                 response = Mock()
                 response.choices = [Mock()]
-                response.choices[0].message.content = (
-                    f"Async OpenAI response with {kwargs.get('temperature', 'default')} temperature"
-                )
+                response.choices[
+                    0
+                ].message.content = f"Async OpenAI response with {kwargs.get('temperature', 'default')} temperature"
                 return response
 
     class Completions:
@@ -115,9 +115,9 @@ class MockAsyncOpenAI:
             config_logger.log("openai_async", "completions.create", kwargs, "call")
             response = Mock()
             response.choices = [Mock()]
-            response.choices[0].text = (
-                f"Async OpenAI completion with {kwargs.get('temperature', 'default')} temperature"
-            )
+            response.choices[
+                0
+            ].text = f"Async OpenAI completion with {kwargs.get('temperature', 'default')} temperature"
             return response
 
 
@@ -134,9 +134,9 @@ class MockAnthropic:
             config_logger.log("anthropic", "messages.create", kwargs, "call")
             response = Mock()
             response.content = [Mock()]
-            response.content[0].text = (
-                f"Anthropic response with {kwargs.get('temperature', 'default')} temperature"
-            )
+            response.content[
+                0
+            ].text = f"Anthropic response with {kwargs.get('temperature', 'default')} temperature"
             return response
 
         def stream(self, **kwargs):
@@ -162,9 +162,9 @@ class MockAsyncAnthropic:
             config_logger.log("anthropic_async", "messages.create", kwargs, "call")
             response = Mock()
             response.content = [Mock()]
-            response.content[0].text = (
-                f"Async Anthropic response with {kwargs.get('temperature', 'default')} temperature"
-            )
+            response.content[
+                0
+            ].text = f"Async Anthropic response with {kwargs.get('temperature', 'default')} temperature"
             return response
 
 
@@ -201,7 +201,9 @@ class MockCohere:
         config_logger.log("cohere", "generate", kwargs, "call")
         response = Mock()
         response.generations = [Mock()]
-        response.generations[0].text = (
+        response.generations[
+            0
+        ].text = (
             f"Cohere response with {kwargs.get('temperature', 'default')} temperature"
         )
         return response

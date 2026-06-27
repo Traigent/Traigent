@@ -90,6 +90,49 @@ def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
     return adjusted
 
 
+def bonferroni_adjust(p_values: Sequence[float]) -> list[float]:
+    """Apply Bonferroni multiple-testing correction.
+
+    Args:
+        p_values: Sequence of raw p-values.
+
+    Returns:
+        List of adjusted p-values (same order as input).
+    """
+    n = len(p_values)
+    if n == 0:
+        return []
+
+    return [min(p * n, 1.0) for p in p_values]
+
+
+def holm_bonferroni_adjust(p_values: Sequence[float]) -> list[float]:
+    """Apply step-down Holm-Bonferroni multiple-testing correction.
+
+    Args:
+        p_values: Sequence of raw p-values.
+
+    Returns:
+        List of adjusted p-values (same order as input).
+    """
+    n = len(p_values)
+    if n == 0:
+        return []
+
+    indexed = [(p, i) for i, p in enumerate(p_values)]
+    indexed.sort(key=lambda x: x[0])
+
+    adjusted = [0.0] * n
+    previous_adjusted = 0.0
+    for rank, (p, original_idx) in enumerate(indexed):
+        current_adjusted = min(p * (n - rank), 1.0)
+        current_adjusted = max(current_adjusted, previous_adjusted)
+        adjusted[original_idx] = current_adjusted
+        previous_adjusted = current_adjusted
+
+    return adjusted
+
+
 def clopper_pearson_lower_bound(
     successes: int,
     trials: int,

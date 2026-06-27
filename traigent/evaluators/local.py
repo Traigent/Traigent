@@ -19,6 +19,7 @@ from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
     EvaluationResult,
+    _accuracy_values_match,
     _example_correlation_key,
 )
 from traigent.evaluators.metrics_tracker import (
@@ -89,6 +90,22 @@ class _AggregatedResponses:
                 usage.get("output_tokens", 0),
                 usage.get("total_tokens", 0),
             )
+
+        usage_obj = getattr(resp, "usage", None)
+        if usage_obj is not None:
+            input_tokens = getattr(usage_obj, "prompt_tokens", 0) or 0
+            output_tokens = getattr(usage_obj, "completion_tokens", 0) or 0
+            total_tokens = getattr(usage_obj, "total_tokens", None)
+            if isinstance(input_tokens, (int, float)) and isinstance(
+                output_tokens, (int, float)
+            ):
+                if isinstance(total_tokens, (int, float)):
+                    return (int(input_tokens), int(output_tokens), int(total_tokens))
+                return (
+                    int(input_tokens),
+                    int(output_tokens),
+                    int(input_tokens + output_tokens),
+                )
 
         resp_meta = getattr(resp, "response_metadata", None)
         if not resp_meta or not isinstance(resp_meta, dict):
@@ -528,12 +545,8 @@ class LocalEvaluator(BaseEvaluator):
             return None
 
         if isinstance(actual_value, str) and isinstance(expected_output, str):
-            return (
-                1.0
-                if actual_value.strip().lower() == expected_output.strip().lower()
-                else 0.0
-            )
-        return 1.0 if actual_value == expected_output else 0.0
+            return 1.0 if _accuracy_values_match(actual_value, expected_output) else 0.0
+        return 1.0 if _accuracy_values_match(actual_value, expected_output) else 0.0
 
     def _transfer_token_metrics_to_example_result(
         self,
@@ -1175,10 +1188,7 @@ class LocalEvaluator(BaseEvaluator):
                 continue
 
             total += 1
-            if isinstance(value, str) and isinstance(expected, str):
-                if value.strip().lower() == expected.strip().lower():
-                    correct += 1
-            elif value == expected:
+            if _accuracy_values_match(value, expected):
                 correct += 1
 
         if total > 0:
@@ -1536,14 +1546,8 @@ class LocalEvaluator(BaseEvaluator):
             else actual_output
         )
 
-        # Exact match
-        if actual_to_compare == expected_output:
+        if _accuracy_values_match(actual_to_compare, expected_output):
             return 1.0
-
-        # Try case-insensitive comparison for string outputs
-        if isinstance(actual_to_compare, str) and isinstance(expected_output, str):
-            if actual_to_compare.lower().strip() == expected_output.lower().strip():
-                return 1.0
 
         return 0.0
 

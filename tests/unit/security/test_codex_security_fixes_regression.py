@@ -111,9 +111,9 @@ class TestFix1DeterministicFallbackKey:
         ]
 
         for pattern in vulnerable_patterns:
-            assert not re.search(
-                pattern, source
-            ), f"Found vulnerable pattern '{pattern}' in SecureCredentialManager.__init__"
+            assert not re.search(pattern, source), (
+                f"Found vulnerable pattern '{pattern}' in SecureCredentialManager.__init__"
+            )
 
 
 class TestFix2SensitivePayloadLogging:
@@ -251,9 +251,9 @@ class TestFix3ES256KeySizeValidation:
 
         # The old code used self.MIN_KEY_LENGTH directly
         # The new code should use self.MIN_KEY_SIZES.get(algorithm)
-        assert (
-            "MIN_KEY_LENGTH" not in source
-        ), "_validate_production still uses MIN_KEY_LENGTH instead of algorithm-aware MIN_KEY_SIZES"
+        assert "MIN_KEY_LENGTH" not in source, (
+            "_validate_production still uses MIN_KEY_LENGTH instead of algorithm-aware MIN_KEY_SIZES"
+        )
 
     def test_algorithm_aware_key_validation_pattern(self):
         """Verify the key validation uses algorithm from signing_key."""
@@ -288,9 +288,9 @@ class TestFix4CreateSessionDeadlock:
         source = inspect.getsource(SessionOperations.create_session)
 
         # The fix should use ThreadPoolExecutor (either directly or via helper)
-        assert (
-            "ThreadPoolExecutor" in source or "_get_session_executor" in source
-        ), "create_session should use ThreadPoolExecutor to avoid deadlock"
+        assert "ThreadPoolExecutor" in source or "_get_session_executor" in source, (
+            "create_session should use ThreadPoolExecutor to avoid deadlock"
+        )
 
     def test_create_session_creates_new_loop_in_thread(self):
         """Verify a new event loop is created in the thread."""
@@ -301,9 +301,9 @@ class TestFix4CreateSessionDeadlock:
         source = inspect.getsource(SessionOperations.create_session)
 
         # The fix should create a new event loop
-        assert (
-            "new_event_loop" in source
-        ), "create_session should create new_event_loop in thread"
+        assert "new_event_loop" in source, (
+            "create_session should create new_event_loop in thread"
+        )
 
     def test_no_run_coroutine_threadsafe_result_pattern(self):
         """Verify the deadlock-prone pattern is removed."""
@@ -438,9 +438,9 @@ class TestFix5ClosedAiohttpSession:
                                                 found_proper_nesting = True
                                                 break
 
-        assert (
-            found_proper_nesting
-        ), "session.post is not properly nested inside ClientSession context manager"
+        assert found_proper_nesting, (
+            "session.post is not properly nested inside ClientSession context manager"
+        )
 
     def test_no_session_usage_after_context_exit(self):
         """Verify there's no session usage after the context manager exits."""
@@ -488,9 +488,9 @@ class TestFix5ClosedAiohttpSession:
                 found_post_outside = True
                 break
 
-        assert (
-            not found_post_outside
-        ), "Found session.post outside of ClientSession context manager"
+        assert not found_post_outside, (
+            "Found session.post outside of ClientSession context manager"
+        )
 
 
 class TestRegressionSummary:

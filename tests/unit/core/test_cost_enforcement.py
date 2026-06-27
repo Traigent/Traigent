@@ -31,6 +31,7 @@ from traigent.core.cost_enforcement import (
     normalize_cost_approved,
 )
 from traigent.core.stop_conditions import CostLimitStopCondition
+from traigent.utils.exceptions import OptimizationError
 
 
 def _create_mock_permit(amount: float = 0.0) -> Permit:
@@ -85,9 +86,7 @@ class _StopConditionSink:
 def _setup_orchestrator_cost_enforcer(cost_approved: object) -> CostEnforcer:
     from traigent.core.orchestrator import OptimizationOrchestrator
 
-    orchestrator = cast(
-        Any, OptimizationOrchestrator.__new__(OptimizationOrchestrator)
-    )
+    orchestrator = cast(Any, OptimizationOrchestrator.__new__(OptimizationOrchestrator))
     orchestrator.config = {"cost_limit": 1.0, "cost_approved": cost_approved}
     orchestrator.parallel_execution_manager = _CostEnforcerSink()
     orchestrator._stop_condition_manager = _StopConditionSink()
@@ -191,6 +190,14 @@ class TestCostEnforcerBasic:
         enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
         with pytest.raises(ValueError, match="non-negative"):
             enforcer.track_cost(-0.5, permit=_create_mock_permit())
+
+    @pytest.mark.parametrize("cost", [float("nan"), float("inf"), -float("inf")])
+    def test_track_cost_rejects_non_finite(self, cost: float) -> None:
+        """track_cost rejects non-finite costs before accumulation."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+        with pytest.raises(ValueError, match="finite"):
+            enforcer.track_cost(cost, permit=_create_mock_permit())
+        assert enforcer.accumulated_cost == 0.0
 
     def test_limit_reached_detection(self) -> None:
         """is_limit_reached returns True when limit exceeded."""
@@ -581,6 +588,15 @@ class TestCostEnforcerAsync:
         assert enforcer.accumulated_cost == 3.0
         assert enforcer.trial_count == 2
 
+    @pytest.mark.parametrize("cost", [float("nan"), float("inf"), -float("inf")])
+    @pytest.mark.asyncio
+    async def test_track_cost_async_rejects_non_finite(self, cost: float) -> None:
+        """track_cost_async rejects non-finite costs before accumulation."""
+        enforcer = CostEnforcer()
+        with pytest.raises(ValueError, match="finite"):
+            await enforcer.track_cost_async(cost, permit=_create_mock_permit())
+        assert enforcer.accumulated_cost == 0.0
+
     @pytest.mark.asyncio
     async def test_concurrent_async_tracking(self) -> None:
         """Concurrent async track_cost calls are safe."""
@@ -837,7 +853,12 @@ class TestCostEnforcerExceptions:
         assert "5.00" in str(exc)
         assert "2.00" in str(exc)
         assert exc.accumulated == 5.0
+        assert exc.spent == 5.0
         assert exc.limit == 2.0
+
+    def test_cost_limit_exceeded_is_optimization_error(self) -> None:
+        """CostLimitExceeded remains catchable by OptimizationError handlers."""
+        assert issubclass(CostLimitExceeded, OptimizationError)
 
     def test_optimization_aborted(self) -> None:
         """OptimizationAborted can be raised."""

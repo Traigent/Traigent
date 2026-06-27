@@ -36,6 +36,10 @@ from traigent.core.session_types import (
 )
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
+from traigent.utils.artifact_fingerprints import (
+    artifact_fingerprints_to_wire,
+    fingerprint_meta_to_wire,
+)
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_numeric_metric
 
@@ -217,6 +221,52 @@ def map_status_to_wire(status: str, *, endpoint: str = "experiment_run") -> str:
     return mapped
 
 
+def _choice_sequence_contains_bool(values: Any) -> bool:
+    """Return True when a categorical choice container contains a bool."""
+
+    if not isinstance(values, (list, tuple)):
+        return False
+    return any(isinstance(value, bool) for value in values)
+
+
+def _configuration_space_entry_uses_bool(entry: Any) -> bool:
+    """Detect bool-valued knobs without changing their wire representation."""
+
+    # bool is a subclass of int, so detect it before any numeric handling.
+    if isinstance(entry, bool):
+        return True
+    if isinstance(entry, (list, tuple)):
+        return _choice_sequence_contains_bool(entry)
+    if isinstance(entry, dict):
+        return _choice_sequence_contains_bool(
+            entry.get("choices")
+        ) or _choice_sequence_contains_bool(entry.get("values"))
+    return False
+
+
+def _warn_boolean_config_values(space: Any) -> None:
+    """Warn when configuration_space contains bools the cloud API rejects."""
+
+    if not isinstance(space, dict):
+        return
+
+    offending_parameters = [
+        str(name)
+        for name, entry in space.items()
+        if _configuration_space_entry_uses_bool(entry)
+    ]
+    if not offending_parameters:
+        return
+
+    logger.warning(
+        "configuration_space parameter(s) %s use boolean values, which the "
+        "cloud session API does not accept and will reject with a generic "
+        "HTTP 400. Encode boolean knobs as strings (e.g. ['with','without']) "
+        "or integers (0/1) and map back at the call site. See issue #1488.",
+        offending_parameters,
+    )
+
+
 def _typed_configuration_space(space: Any) -> Any:
     """Normalize shorthand configuration space to the typed wire contract.
 
@@ -229,6 +279,7 @@ def _typed_configuration_space(space: Any) -> Any:
     """
     if not isinstance(space, dict):
         return space
+    _warn_boolean_config_values(space)
     normalized: dict[str, Any] = {}
     for name, entry in space.items():
         if isinstance(entry, (list, tuple)):
@@ -445,7 +496,7 @@ class ApiOperations:
                 return await self._post_session_creation(
                     session_payload, headers, connector
                 )
-            except CloudServiceError:
+            except CloudServiceError as typed_exc:
                 # auto-contract fallback: a failed TYPED create may retry the
                 # legacy shape ONCE — and only for NON-governed sessions
                 # (governed sessions must fail loudly; the legacy contract
@@ -461,11 +512,24 @@ class ApiOperations:
                     "TRAIGENT_SESSION_CONTRACT=auto)"
                 )
                 legacy_payload = self._build_legacy_session_payload(
-                    session_request, max_trials_value
+                    session_request,
+                    max_trials_value,
+                    warn_boolean_config_values=False,
                 )
-                return await self._post_session_creation(
-                    legacy_payload, headers, connector
-                )
+                try:
+                    return await self._post_session_creation(
+                        legacy_payload, headers, connector
+                    )
+                except CloudServiceError as legacy_exc:
+                    typed_detail = getattr(typed_exc, "session_creation_failure", None)
+                    legacy_detail = getattr(
+                        legacy_exc, "session_creation_failure", None
+                    )
+                    typed_status = getattr(typed_detail, "status_code", None)
+                    legacy_status = getattr(legacy_detail, "status_code", None)
+                    if typed_status == 400 and legacy_status == 400:
+                        cast(Any, legacy_exc).typed_legacy_session_create_400 = True
+                    raise
         except SessionContractError:
             # Review round 3: contract failures must reach the caller AS
             # THEMSELVES — the generic wrap below would demote them to a
@@ -481,6 +545,10 @@ class ApiOperations:
             # BACKEND_UNREACHABLE ("check your network/URL") instead of an
             # auth/permission error (MISSING_PERMISSION / INVALID_OR_REVOKED_KEY).
             raise
+        except CloudServiceError as e:
+            if getattr(e, "typed_legacy_session_create_400", False):
+                raise
+            self._handle_generic_session_exception(e)
         except aiohttp.ClientConnectorError as e:
             self._handle_connector_error(e)
         except aiohttp.ClientError as e:
@@ -588,17 +656,26 @@ class ApiOperations:
         wire_governance = tvl_governance_to_wire(session_request.tvl_governance)
         if wire_governance:
             payload["tvl_governance"] = wire_governance
+        if getattr(session_request, "warm_start_from", None):
+            payload["warm_start_from"] = session_request.warm_start_from
+        self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
     def _build_legacy_session_payload(
-        self, session_request: SessionCreationRequest, max_trials: int
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        *,
+        warn_boolean_config_values: bool = True,
     ) -> dict[str, Any]:
         """The pre-Phase-8 legacy shape (problem_statement/search_space) —
         non-governed compatibility only."""
         metadata = session_request.metadata or {}
         evaluation_set = metadata.get("evaluation_set", "default")
+        if warn_boolean_config_values:
+            _warn_boolean_config_values(session_request.configuration_space)
 
-        return {
+        payload: dict[str, Any] = {
             "problem_statement": session_request.function_name,
             "dataset": {
                 "examples": [],  # Privacy mode - no actual data sent
@@ -620,6 +697,30 @@ class ApiOperations:
                 **metadata,
             },
         }
+        # Warm-start: never silently drop a user-set prior experiment id, even
+        # on the legacy contract (empty string treated as absent). The legacy
+        # BE may not consume it yet; the SDK must still forward it.
+        if getattr(session_request, "warm_start_from", None):
+            payload["warm_start_from"] = session_request.warm_start_from
+        self._attach_artifact_fingerprint_payload(payload, session_request)
+        return payload
+
+    @staticmethod
+    def _attach_artifact_fingerprint_payload(
+        payload: dict[str, Any],
+        session_request: SessionCreationRequest,
+    ) -> None:
+        artifact_fingerprints = artifact_fingerprints_to_wire(
+            getattr(session_request, "artifact_fingerprints", None)
+        )
+        if artifact_fingerprints is not None:
+            payload["artifact_fingerprints"] = artifact_fingerprints
+
+        fingerprint_meta = fingerprint_meta_to_wire(
+            getattr(session_request, "fingerprint_meta", None)
+        )
+        if fingerprint_meta is not None:
+            payload["fingerprint_meta"] = fingerprint_meta
 
     def _build_connector(self) -> Any | None:
         """Create an aiohttp connector when custom transport settings are required."""

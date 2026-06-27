@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from traigent.core.result_selection import (
@@ -59,7 +61,7 @@ def test_returns_default_when_no_successful_trials():
         aggregate_configs=False,
     )
     assert result == SelectionResult(
-        best_config={},
+        best_config=None,
         best_score=None,
         session_summary={
             "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
@@ -80,7 +82,7 @@ def test_returns_default_when_no_successful_trials():
 def test_trial_completed_with_zero_successful_examples_yields_no_winner():
     """Regression: a trial that completes but had 0 successful examples
     (e.g. every provider call inside it 404'd on a deprecated model) is not
-    a valid winner. best_score must be None, best_config must be {}."""
+    a valid winner. best_score must be None, best_config must be None."""
     trials = [
         FakeTrial(metrics={"accuracy": 0.0}, config={"model": "deprecated-a"}),
         FakeTrial(metrics={"accuracy": 0.0}, config={"model": "deprecated-b"}),
@@ -98,7 +100,7 @@ def test_trial_completed_with_zero_successful_examples_yields_no_winner():
     )
 
     assert result.best_score is None
-    assert result.best_config == {}
+    assert result.best_config is None
     assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
 
 
@@ -139,6 +141,47 @@ def test_selects_best_trial_without_aggregation():
     assert result.session_summary["ranking"]["eligible_count"] == 2
 
 
+@pytest.mark.parametrize(
+    ("primary_objective", "finite_score", "worse_score", "winner_config"),
+    [
+        ("accuracy", 0.9, 0.7, {"model": "finite"}),
+        ("cost", 0.1, 0.5, {"model": "finite"}),
+    ],
+)
+@pytest.mark.parametrize("nan_position", ["first", "last"])
+def test_single_trial_selection_ignores_nan_scores(
+    primary_objective, finite_score, worse_score, winner_config, nan_position
+):
+    nan_trial = FakeTrial(
+        metrics={primary_objective: math.nan},
+        config={"model": "nan"},
+    )
+    finite_trial = FakeTrial(
+        metrics={primary_objective: finite_score},
+        config=winner_config,
+    )
+    worse_trial = FakeTrial(
+        metrics={primary_objective: worse_score},
+        config={"model": "worse"},
+    )
+    trials = (
+        [nan_trial, finite_trial, worse_trial]
+        if nan_position == "first"
+        else [finite_trial, worse_trial, nan_trial]
+    )
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective=primary_objective,
+        config_space_keys={"model"},
+        aggregate_configs=False,
+        comparability_mode="legacy",
+    )
+
+    assert result.best_config == winner_config
+    assert result.best_score == pytest.approx(finite_score)
+
+
 def test_minimization_objective_is_respected():
     trials = [
         FakeTrial(metrics={"cost_per_call": 0.5}, config={"model": "cheap"}),
@@ -175,6 +218,26 @@ def test_banded_primary_objective_selects_closest_single_trial():
     assert result.best_score == pytest.approx(500.0)
 
 
+def test_banded_primary_objective_ignores_nan_score():
+    trials = [
+        FakeTrial(metrics={"accuracy": math.nan}, config={"model": "nan"}),
+        FakeTrial(metrics={"accuracy": 0.81}, config={"model": "center"}),
+        FakeTrial(metrics={"accuracy": 0.50}, config={"model": "far"}),
+    ]
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+        band_target=0.80,
+        comparability_mode="legacy",
+    )
+
+    assert result.best_config == {"model": "center"}
+    assert result.best_score == pytest.approx(0.81)
+
+
 def test_banded_primary_objective_selects_closest_aggregated_config():
     trials = [
         FakeTrial(metrics={"accuracy": 0.95}, config={"model": "high"}),
@@ -193,6 +256,64 @@ def test_banded_primary_objective_selects_closest_aggregated_config():
 
     assert result.best_config == {"model": "center"}
     assert result.best_score == pytest.approx(0.695)
+
+
+@pytest.mark.parametrize(
+    ("primary_objective", "finite_score", "worse_score", "winner_config"),
+    [
+        ("accuracy", 0.9, 0.7, {"model": "finite"}),
+        ("cost", 0.1, 0.5, {"model": "finite"}),
+    ],
+)
+@pytest.mark.parametrize("nan_position", ["first", "last"])
+def test_aggregated_selection_ignores_nan_scores(
+    primary_objective, finite_score, worse_score, winner_config, nan_position
+):
+    nan_trial = FakeTrial(
+        metrics={primary_objective: math.nan},
+        config={"model": "nan"},
+    )
+    finite_trial = FakeTrial(
+        metrics={primary_objective: finite_score},
+        config=winner_config,
+    )
+    worse_trial = FakeTrial(
+        metrics={primary_objective: worse_score},
+        config={"model": "worse"},
+    )
+    trials = (
+        [nan_trial, finite_trial, worse_trial]
+        if nan_position == "first"
+        else [finite_trial, worse_trial, nan_trial]
+    )
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective=primary_objective,
+        config_space_keys={"model"},
+        aggregate_configs=True,
+        comparability_mode="legacy",
+    )
+
+    assert result.best_config == winner_config
+    assert result.best_score == pytest.approx(finite_score)
+
+
+def test_aggregated_selection_all_nan_returns_no_eligible_reason():
+    result = select_best_configuration(
+        trials=[
+            FakeTrial(metrics={"accuracy": math.nan}, config={"model": "nan-a"}),
+            FakeTrial(metrics={"accuracy": math.nan}, config={"model": "nan-b"}),
+        ],
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=True,
+        comparability_mode="legacy",
+    )
+
+    assert result.best_config is None
+    assert result.best_score is None
+    assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
 
 
 def test_aggregated_selection_computes_means_and_metadata():
@@ -649,7 +770,7 @@ def test_execute_only_quality_objective_is_ineligible():
         aggregate_configs=False,
     )
 
-    assert result.best_config == {}
+    assert result.best_config is None
     assert result.best_score is None
     assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
 
@@ -665,7 +786,7 @@ def test_unknown_comparability_is_excluded_by_default():
         aggregate_configs=False,
     )
 
-    assert result.best_config == {}
+    assert result.best_config is None
     assert result.best_score is None
     assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
     assert result.session_summary is not None

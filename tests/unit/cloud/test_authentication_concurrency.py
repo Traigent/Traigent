@@ -58,9 +58,9 @@ class TestConcurrentSessionCreation:
                     await asyncio.gather(*tasks)
 
                     # Verify only one session was created
-                    assert (
-                        session_creation_count == 1
-                    ), f"Expected 1 session, but {session_creation_count} were created"
+                    assert session_creation_count == 1, (
+                        f"Expected 1 session, but {session_creation_count} were created"
+                    )
 
     @pytest.mark.asyncio
     async def test_concurrent_http_methods_share_session(self):
@@ -130,9 +130,9 @@ class TestConcurrentSessionCreation:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
                     # Verify only one session was created
-                    assert (
-                        len(sessions_created) == 1
-                    ), f"Expected 1 unique session, but {len(sessions_created)} were created"
+                    assert len(sessions_created) == 1, (
+                        f"Expected 1 unique session, but {len(sessions_created)} were created"
+                    )
 
     @pytest.mark.asyncio
     async def test_race_condition_in_session_initialization(self):
@@ -182,18 +182,18 @@ class TestConcurrentSessionCreation:
                     session_creates = [
                         op for op in operations if op == "session_create"
                     ]
-                    assert (
-                        len(session_creates) == 1
-                    ), f"Session created {len(session_creates)} times"
+                    assert len(session_creates) == 1, (
+                        f"Session created {len(session_creates)} times"
+                    )
 
                     # Verify get_headers was called appropriately
                     get_headers_starts = [
                         op for op in operations if op == "get_headers_start"
                     ]
                     # Due to our implementation, get_headers should only be called once
-                    assert (
-                        len(get_headers_starts) <= 1
-                    ), "get_headers called multiple times unnecessarily"
+                    assert len(get_headers_starts) <= 1, (
+                        "get_headers called multiple times unnecessarily"
+                    )
 
     @pytest.mark.asyncio
     async def test_session_recreation_after_failure(self):
@@ -433,9 +433,7 @@ class TestBackendClientConcurrency:
                         # Launch concurrent calls - every caller must see
                         # the auth failure surfaced as CloudServiceError.
                         tasks = [client._ensure_session() for _ in range(5)]
-                        results = await asyncio.gather(
-                            *tasks, return_exceptions=True
-                        )
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
 
                         # All concurrent attempts must have failed closed.
                         assert len(results) == 5
@@ -667,9 +665,9 @@ class TestHeaderConsistencyUnderLoad:
                     # Verify all requests used the same correct header
                     assert len(headers_used) == 100
                     for header in headers_used:
-                        assert (
-                            header == expected_header
-                        ), f"Inconsistent header: {header}"
+                        assert header == expected_header, (
+                            f"Inconsistent header: {header}"
+                        )
 
     @pytest.mark.asyncio
     async def test_no_header_mutation_during_concurrent_access(self):
@@ -720,6 +718,6 @@ class TestHeaderConsistencyUnderLoad:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
                     # Verify no mutations were detected
-                    assert (
-                        len(mutations_detected) == 0
-                    ), f"Header mutations detected: {mutations_detected}"
+                    assert len(mutations_detected) == 0, (
+                        f"Header mutations detected: {mutations_detected}"
+                    )

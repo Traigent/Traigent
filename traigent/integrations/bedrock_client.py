@@ -164,7 +164,8 @@ class BedrockChatClient:
     def invoke(
         self,
         *,
-        model_id: str,
+        model_id: str | None = None,
+        model: str | None = None,
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
@@ -174,8 +175,17 @@ class BedrockChatClient:
     ) -> BedrockChatResponse:
         """Perform a non-streaming chat invocation.
 
+        `model` is accepted as an alias for `model_id`; when both are supplied,
+        `model_id` is used.
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
+        resolved_model_id = model_id if model_id is not None else model
+        if resolved_model_id is None:
+            raise TypeError(
+                "BedrockChatClient.invoke() missing required model_id/model"
+            )
+        model_id = resolved_model_id
+
         if self._is_mock_enabled():
             return self._mock_response(model_id)
 

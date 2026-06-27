@@ -199,9 +199,9 @@ class TestLangfuseTraceMetrics:
 
         pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
         for key in measures:
-            assert re.match(
-                pattern, key
-            ), f"Key '{key}' is not a valid Python identifier"
+            assert re.match(pattern, key), (
+                f"Key '{key}' is not a valid Python identifier"
+            )
 
     def test_empty_metrics(self):
         """Test metrics with no per-agent data."""

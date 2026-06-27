@@ -570,7 +570,7 @@ Legacy `execution_mode=` inputs are deprecated compatibility shims. Use
 Run controls such as `max_trials` and `timeout` are passed to `.optimize()`:
 
 ```python
-result = await my_agent.optimize(max_trials=50, timeout=3600)
+result = await my_agent.optimize(max_trials=10, timeout=3600)
 ```
 
 **Cost Controls**:

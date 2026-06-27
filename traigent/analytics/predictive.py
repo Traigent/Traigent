@@ -206,7 +206,9 @@ class CostForecaster:
         alert_level = (
             "critical"
             if projected_overage > budget_limit * 0.1
-            else "warning" if projected_overage > 0 else "none"
+            else "warning"
+            if projected_overage > 0
+            else "none"
         )
 
         return {
@@ -455,7 +457,9 @@ class CostForecaster:
             "trend": (
                 "improving"
                 if efficiency_change < 0
-                else "degrading" if efficiency_change > 0 else "stable"
+                else "degrading"
+                if efficiency_change > 0
+                else "stable"
             ),
         }
 

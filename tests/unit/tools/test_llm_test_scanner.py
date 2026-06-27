@@ -393,7 +393,8 @@ class TestLLMTestScanner:
 
     def test_scan_file_produces_all_sections(self, tmp_path: Path):
         test_file = tmp_path / "test_sample.py"
-        test_file.write_text(textwrap.dedent("""\
+        test_file.write_text(
+            textwrap.dedent("""\
         def test_with_assert():
             assert len(result.trials) >= 1
 
@@ -404,7 +405,8 @@ class TestLLMTestScanner:
             assert not isinstance(result, Exception)
             validation = result_validator(scenario, result)
             assert validation.passed
-        """))
+        """)
+        )
 
         scanner = LLMTestScanner(enable_llm=False)
         result = scanner.scan_file(test_file)

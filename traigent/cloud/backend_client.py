@@ -8,11 +8,15 @@ for better maintainability and adherence to software engineering principles.
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import secrets
 import sys
 import time
+import weakref
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -21,7 +25,7 @@ from urllib.parse import quote, urlparse, urlunparse
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations
-from traigent.cloud.auth import AuthenticationError
+from traigent.cloud.auth import AuthenticationError, _build_api_key_auth_headers
 from traigent.cloud.backend_bridges import SDKBackendBridge, SessionExperimentMapping
 from traigent.cloud.backend_bridges import bridge as _bridge
 from traigent.cloud.backend_components import (
@@ -32,6 +36,8 @@ from traigent.cloud.backend_components import (
 )
 from traigent.cloud.client import (
     CloudServiceError,
+    _finalize_aiohttp_session,
+    _is_real_aiohttp_session,
     cloud_backend_egress_disabled,
     raise_if_cloud_egress_disabled,
 )
@@ -58,11 +64,15 @@ from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import TrialOperations
+from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
+from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
+from traigent.utils.retry import RetryConfig, RetryHandler
 
 # Type alias for aiohttp session, falling back to Any at runtime if unavailable
 if TYPE_CHECKING:
@@ -105,7 +115,127 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
-_SDK_USER_AGENT = "Traigent-SDK/1.0"
+_SDK_USER_AGENT = get_sdk_user_agent()
+_SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
+_INTERACTION_POLICY_REQUIRED_KEYS = frozenset(
+    {
+        "schema_version",
+        "profile",
+        "policy_text",
+        "question_budget",
+        "options_max",
+        "jargon_level",
+        "next_skill_hint",
+        "fallback_policy",
+    }
+)
+_INTERACTION_POLICY_PROFILE_REQUIRED_KEYS = frozenset(
+    {
+        "schema_version",
+        "control",
+        "expertise",
+        "pace",
+        "source",
+        "confidence",
+    }
+)
+_INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION = "traigent.agent_interaction.response.v1"
+_INTERACTION_POLICY_PROFILE_SCHEMA_VERSION = "traigent.interaction_policy.v1"
+
+STATIC_POLICY_TEXT = (
+    "Adapt to the user's interaction profile — persona "
+    "(control=delegate|guided|inspect, expertise=se|ds|unknown) and session "
+    "mood (pace=execute|balanced|explore); default guided,se,balanced; infer "
+    "from explicit statements first then behavior, corrections win. Always be "
+    "concise. Match terminology to expertise: plain words and define each term "
+    "once for se; compact statistics/optimization terms for ds. When asking, "
+    "show at most 3 options, mark one Recommended, give one short trade-off "
+    "each. For delegate/execute, proceed with the recommended reversible "
+    "action and ask only at hard gates (paid/provider calls, data egress, "
+    "destructive edits, service-owned decisions, missing required facts); for "
+    "inspect/explore, give brief rationale before asking. Always recommend "
+    "the next skill or action. Never weaken safety (dry-run before paid runs; "
+    "approval before cost or egress; service-returned plans are authoritative) "
+    "and never put persona or private content into telemetry, metadata, names, "
+    "logs, or provenance."
+)
+
+
+class _SyncBackendTransientError(RetryableError):
+    """Retryable wrapper for transient sync backend transport failures."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message, retry_after=retry_after)
+        self.status_code = status_code
+
+
+_SYNC_BACKEND_RETRY_CONFIG = RetryConfig(
+    max_attempts=3,
+    initial_delay=0.25,
+    max_delay=2.0,
+    jitter=False,
+    retry_on_exception={_SyncBackendTransientError},
+    retry_on_status=set(_SYNC_BACKEND_TRANSIENT_STATUSES),
+    respect_retry_after=True,
+)
+
+
+def _parse_retry_after(headers: Any) -> float | None:
+    if not headers:
+        return None
+    try:
+        value = headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(str(value))
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+def _raise_for_transient_backend_response(response: Any, operation: str) -> None:
+    status_code = getattr(response, "status_code", None)
+    if status_code not in _SYNC_BACKEND_TRANSIENT_STATUSES:
+        return
+
+    response_text = getattr(response, "text", "")
+    raise _SyncBackendTransientError(
+        f"{operation} returned transient HTTP {status_code}: {str(response_text)[:200]}",
+        status_code=status_code,
+        retry_after=_parse_retry_after(getattr(response, "headers", None)),
+    )
+
+
+def _run_sync_backend_request_with_retry(
+    operation: str,
+    request_call: Callable[[], Any],
+) -> Any:
+    retry = RetryHandler(_SYNC_BACKEND_RETRY_CONFIG)
+    result = retry.execute_with_result(request_call)
+    if result.success:
+        return result.result
+
+    error = result.error
+    if isinstance(error, AuthenticationError):
+        raise error
+    raise CloudServiceError(f"{operation} failed: {error}") from error
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -118,9 +248,169 @@ def _session_is_closed(session: Any) -> bool:
 
 # Export public API
 __all__ = [
+    "AnalyticsNamespace",
     "BackendClientConfig",
     "BackendIntegratedClient",
 ]
+
+
+class AnalyticsNamespace:
+    """Read-only ``client.analytics`` accessor for backend analytics.
+
+    A thin facade over :class:`traigent.cloud.analytics_client.BackendAnalyticsClient`.
+    Each call opens and closes a short-lived async read client that reuses the
+    owning client's resolved backend URL and the SDK's existing credential
+    resolution. It is READ-only: there are no write methods here, and tenancy is
+    owned by the backend (no caller-supplied ``tenant_id``).
+    """
+
+    def __init__(self, client: "BackendIntegratedClient") -> None:
+        self._client = client
+
+    async def _new_read_client(self) -> Any:
+        from traigent.cloud.analytics_auth import (
+            resolve_analytics_read_client_credentials,
+        )
+        from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+        credential_kwargs = await resolve_analytics_read_client_credentials(
+            self._client.auth_manager.auth,
+            api_key_fallback=self._client._api_key_fallback,
+        )
+        return BackendAnalyticsClient(
+            backend_url=self._client.base_url,
+            timeout=self._client.timeout,
+            **credential_kwargs,
+        )
+
+    async def get_run_report(self, project_id: str, run_id: str) -> dict[str, Any]:
+        """Return the backend's full analytics report for one run."""
+        async with await self._new_read_client() as reader:
+            return cast(dict[str, Any], await reader.get_run_report(project_id, run_id))
+
+    async def get_project_overview(self, project_id: str) -> dict[str, Any]:
+        """Return the backend's cross-run overview for a project."""
+        async with await self._new_read_client() as reader:
+            return cast(dict[str, Any], await reader.get_project_overview(project_id))
+
+    async def compare_runs(self, project_id: str, run_ids: list[str]) -> dict[str, Any]:
+        """Compare two or more runs within a project."""
+        async with await self._new_read_client() as reader:
+            return cast(dict[str, Any], await reader.compare_runs(project_id, run_ids))
+
+    async def get_run_decision_brief(
+        self,
+        project_id: str,
+        run_id: str,
+        intent: str = "iterate",
+    ) -> dict[str, Any]:
+        """Return the backend's decision brief (decision_payload v0) for a run."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_run_decision_brief(project_id, run_id, intent),
+            )
+
+    async def get_single_run_pareto(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        x_measure: str = "cost",
+        y_measure: str = "quality",
+        request_count: int = 1,
+    ) -> dict[str, Any]:
+        """Return the backend's Pareto frontier for one run."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_single_run_pareto(
+                    project_id,
+                    run_id,
+                    x_measure=x_measure,
+                    y_measure=y_measure,
+                    request_count=request_count,
+                ),
+            )
+
+    async def get_correlation_matrix(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        method: str = "pearson",
+        min_sample: int = 3,
+    ) -> dict[str, Any]:
+        """Return the backend's correlation matrix for one run."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_correlation_matrix(
+                    project_id,
+                    run_id,
+                    method=method,
+                    min_sample=min_sample,
+                ),
+            )
+
+    async def get_run_leaderboard(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        objective: str = "weighted",
+        weights: Mapping[str, object] | str | None = None,
+        constraints: Mapping[str, object] | str | None = None,
+        request_count: int = 1,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return the backend's ranked configuration leaderboard for one run."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_run_leaderboard(
+                    project_id,
+                    run_id,
+                    objective=objective,
+                    weights=weights,
+                    constraints=constraints,
+                    request_count=request_count,
+                    limit=limit,
+                ),
+            )
+
+    async def get_parameter_insights(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        target_measure: str = "quality",
+        min_trials: int = 10,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """Return the backend's parameter-importance insights for one run."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_parameter_insights(
+                    project_id,
+                    run_id,
+                    target_measure=target_measure,
+                    min_trials=min_trials,
+                    top_k=top_k,
+                ),
+            )
+
+    async def get_example_insights(
+        self, project_id: str, run_id: str
+    ) -> dict[str, Any]:
+        """Return the backend's privacy-bounded example insights for one run."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_example_insights(project_id, run_id),
+            )
+
 
 # Backwards compatibility: expose shared bridge instance at this module scope so
 # existing tests patching ``traigent.cloud.backend_client.bridge`` continue to
@@ -203,11 +493,17 @@ class BackendIntegratedClient:
             effective_base_url = BackendConfig.get_backend_url()
 
         # Validate and sanitize URLs
+        effective_base_url = validate_cloud_base_url(
+            effective_base_url, purpose="backend client"
+        )
         self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
 
         backend_base_url = self.base_url
         if not explicit_base_origin:
             backend_base_url = self.backend_config.backend_base_url or self.base_url
+        backend_base_url = validate_cloud_base_url(
+            backend_base_url, purpose="backend client"
+        )
         self.backend_config.backend_base_url = self._api_ops.validate_and_sanitize_url(
             backend_base_url
         )
@@ -221,6 +517,13 @@ class BackendIntegratedClient:
                 self.backend_config.api_base_url
                 or BackendConfig.build_api_base(self.backend_config.backend_base_url)
             )
+        api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
+        if api_origin is None:
+            raise ValueError("backend client API base URL must include an origin")
+        api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
+        api_base_candidate = (
+            f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
+        )
         self.api_base_url = self._api_ops.validate_and_sanitize_url(api_base_candidate)
         self.backend_config.api_base_url = self.api_base_url
 
@@ -251,6 +554,7 @@ class BackendIntegratedClient:
         # Initialize session
         self._session: AioClientSession | None = None
         self._session_lock: asyncio.Lock = asyncio.Lock()
+        self._session_finalizer: weakref.finalize | None = None
 
         # Initialize remaining components
         self.subset_selector = SmartSubsetSelector()
@@ -299,11 +603,306 @@ class BackendIntegratedClient:
         self._session_ops = SessionOperations(self)
         self._trial_ops = TrialOperations(self)
 
+        # Read-only analytics accessor (lazily exposed via the ``analytics``
+        # property). Kept separate from the write paths above.
+        self._analytics_ns: AnalyticsNamespace | None = None
+        self._interaction_policy_cache: dict[
+            tuple[str | None, str | None], dict[str, Any]
+        ] = {}
+        self._interaction_policy_fallback_logged = False
+
+    @property
+    def analytics(self) -> "AnalyticsNamespace":
+        """Read-only ``client.analytics`` namespace for backend analytics.
+
+        Provides cloud-READ access to optimization-results analytics
+        (run reports, project overviews, run comparisons, decision briefs)
+        using this client's resolved backend URL and the SDK's existing
+        credentials. This namespace performs no writes.
+        """
+        if self._analytics_ns is None:
+            self._analytics_ns = AnalyticsNamespace(self)
+        return self._analytics_ns
+
+    def _log_local_interaction_policy_once(self) -> None:
+        if self._interaction_policy_fallback_logged:
+            return
+        logger.info("using local interaction policy")
+        self._interaction_policy_fallback_logged = True
+
+    def _static_interaction_policy(self) -> dict[str, Any]:
+        self._log_local_interaction_policy_once()
+        return {
+            "schema_version": _INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION,
+            "profile": {
+                "control": "guided",
+                "expertise": "se",
+                "pace": "balanced",
+                "source": "default",
+                "confidence": 0.0,
+                "schema_version": _INTERACTION_POLICY_PROFILE_SCHEMA_VERSION,
+            },
+            "policy_text": STATIC_POLICY_TEXT,
+            "question_budget": 2,
+            "options_max": 3,
+            "jargon_level": "plain",
+            "next_skill_hint": None,
+            "fallback_policy": "static_v1",
+        }
+
+    @staticmethod
+    def _interaction_policy_cache_key(
+        *,
+        harness: str | None,
+        skill: str | None,
+    ) -> tuple[str | None, str | None]:
+        def _normalize(value: str | None) -> str | None:
+            if not isinstance(value, str):
+                return value
+            cleaned = value.strip()
+            return cleaned or None
+
+        return (_normalize(harness), _normalize(skill))
+
+    @staticmethod
+    def _build_interaction_policy_params(
+        *,
+        harness: str | None,
+        skill: str | None,
+        signals: Any,
+    ) -> dict[str, str] | None:
+        params: dict[str, str] = {}
+        if isinstance(harness, str) and harness.strip():
+            params["harness"] = harness.strip()
+        if isinstance(skill, str) and skill.strip():
+            params["skill"] = skill.strip()
+        if signals is not None:
+            params["signals"] = json.dumps(
+                signals, separators=(",", ":"), sort_keys=True
+            )
+        return params or None
+
+    @staticmethod
+    def _normalize_interaction_policy_payload(payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise CloudServiceError(
+                "Interaction policy endpoint returned a non-JSON object response"
+            )
+
+        data = payload.get("data", payload)
+        if not isinstance(data, dict):
+            raise CloudServiceError(
+                "Interaction policy endpoint returned invalid response data"
+            )
+
+        missing = sorted(_INTERACTION_POLICY_REQUIRED_KEYS - data.keys())
+        if missing:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned malformed response: "
+                f"missing {', '.join(missing)}"
+            )
+
+        if data.get("schema_version") != _INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned unsupported response schema"
+            )
+
+        profile = data.get("profile")
+        if not isinstance(profile, dict):
+            raise CloudServiceError(
+                "Interaction policy endpoint returned malformed profile"
+            )
+
+        missing_profile = sorted(
+            _INTERACTION_POLICY_PROFILE_REQUIRED_KEYS - profile.keys()
+        )
+        if missing_profile:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned malformed profile: "
+                f"missing {', '.join(missing_profile)}"
+            )
+
+        if profile.get("schema_version") != _INTERACTION_POLICY_PROFILE_SCHEMA_VERSION:
+            raise CloudServiceError(
+                "Interaction policy endpoint returned unsupported profile schema"
+            )
+
+        return {
+            "schema_version": data["schema_version"],
+            "profile": {
+                "control": profile["control"],
+                "expertise": profile["expertise"],
+                "pace": profile["pace"],
+                "source": profile["source"],
+                "confidence": profile["confidence"],
+                "schema_version": profile["schema_version"],
+            },
+            "policy_text": data["policy_text"],
+            "question_budget": data["question_budget"],
+            "options_max": data["options_max"],
+            "jargon_level": data["jargon_level"],
+            "next_skill_hint": data["next_skill_hint"],
+            "fallback_policy": data["fallback_policy"],
+        }
+
+    def _cache_interaction_policy(
+        self,
+        *,
+        cache_key: tuple[str | None, str | None],
+        policy: Mapping[str, Any],
+        etag: str | None,
+    ) -> None:
+        profile = policy.get("profile")
+        cached_profile: dict[str, Any] | None = None
+        if isinstance(profile, Mapping):
+            cached_profile = {
+                "control": profile.get("control"),
+                "expertise": profile.get("expertise"),
+                "pace": profile.get("pace"),
+                "source": profile.get("source"),
+                "confidence": profile.get("confidence"),
+                "schema_version": profile.get("schema_version"),
+            }
+        self._interaction_policy_cache[cache_key] = {
+            "etag": etag,
+            "policy_text": policy["policy_text"],
+            "profile": cached_profile,
+        }
+
+    def _cached_interaction_policy(
+        self, cache_key: tuple[str | None, str | None]
+    ) -> dict[str, Any] | None:
+        cached = self._interaction_policy_cache.get(cache_key)
+        if not isinstance(cached, dict):
+            return None
+
+        policy_text = cached.get("policy_text")
+        if not isinstance(policy_text, str):
+            return None
+
+        profile = cached.get("profile")
+        if not isinstance(profile, dict):
+            return None
+
+        restored = {
+            "schema_version": _INTERACTION_POLICY_RESPONSE_SCHEMA_VERSION,
+            "profile": {
+                "control": profile.get("control"),
+                "expertise": profile.get("expertise"),
+                "pace": profile.get("pace"),
+                "source": profile.get("source"),
+                "confidence": profile.get("confidence"),
+                "schema_version": profile.get("schema_version"),
+            },
+            "policy_text": policy_text,
+            "question_budget": 2,
+            "options_max": 3,
+            "jargon_level": "plain",
+            "next_skill_hint": None,
+            "fallback_policy": "static_v1",
+        }
+        return restored
+
     @property
     def session_bridge(self) -> "SDKBackendBridge":
         """Return the shared session bridge (exposed for test patching)."""
 
         return bridge
+
+    async def get_interaction_policy(
+        self,
+        *,
+        harness: str | None = None,
+        skill: str | None = None,
+        signals: Any = None,
+    ) -> dict[str, Any]:
+        """Return the backend persona-interaction policy seed for this session.
+
+        The backend response is a seed for the agent's starting interaction
+        profile only. Explicit user corrections made in-conversation remain
+        authoritative and must override this seed.
+        """
+        from traigent.utils.env_config import is_mock_llm
+
+        if cloud_backend_egress_disabled(self.no_egress):
+            return self._static_interaction_policy()
+
+        api_key = os.getenv("TRAIGENT_API_KEY") or self._api_key_fallback
+        if not api_key or is_mock_llm() or not AIOHTTP_AVAILABLE:
+            return self._static_interaction_policy()
+
+        cache_key = self._interaction_policy_cache_key(
+            harness=harness,
+            skill=skill,
+        )
+        cached = self._interaction_policy_cache.get(cache_key)
+
+        headers = _build_api_key_auth_headers(api_key)
+        headers.setdefault("User-Agent", _SDK_USER_AGENT)
+        cached_etag = cached.get("etag") if isinstance(cached, dict) else None
+        if isinstance(cached_etag, str) and cached_etag:
+            headers["If-None-Match"] = cached_etag
+
+        try:
+            params = self._build_interaction_policy_params(
+                harness=harness,
+                skill=skill,
+                signals=signals,
+            )
+            backend_origin = (
+                self.backend_config.backend_base_url or BackendConfig.get_backend_url()
+            ).rstrip("/")
+            url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                ) as response:
+                    if response.status == 304:
+                        cached_policy = self._cached_interaction_policy(cache_key)
+                        if cached_policy is not None:
+                            return cached_policy
+                        raise CloudServiceError(
+                            "Interaction policy cache miss for backend 304 response"
+                        )
+
+                    if response.status >= 400:
+                        error_text = await response.text()
+                        raise CloudServiceError(
+                            "Interaction policy request failed with HTTP "
+                            f"{response.status}: {error_text[:200]}"
+                        )
+
+                    try:
+                        payload = await response.json()
+                    except Exception as exc:
+                        raise CloudServiceError(
+                            "Interaction policy endpoint returned non-JSON response"
+                        ) from exc
+
+                    policy = self._normalize_interaction_policy_payload(payload)
+                    self._cache_interaction_policy(
+                        cache_key=cache_key,
+                        policy=policy,
+                        etag=response.headers.get("ETag"),
+                    )
+                    return policy
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            CloudServiceError,
+            AuthenticationError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.debug(
+                "Interaction policy request failed; using local fallback: %s",
+                exc,
+            )
+            return self._static_interaction_policy()
 
     def _resolve_local_storage_path(self, override: str | None) -> Path:
         """Determine the root path for local fallback storage."""
@@ -448,6 +1047,7 @@ class BackendIntegratedClient:
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
             )
+            self._register_session_finalizer(self._session)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -504,6 +1104,7 @@ class BackendIntegratedClient:
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
             )
+            self._register_session_finalizer(self._session)
 
             return cast(AioClientSession, self._session)
 
@@ -520,6 +1121,7 @@ class BackendIntegratedClient:
 
         session = self._session
         self._session = None
+        self._detach_session_finalizer()
         try:
             if _session_is_closed(session):
                 return
@@ -544,6 +1146,22 @@ class BackendIntegratedClient:
         """Close any active HTTP session to avoid resource leaks."""
 
         await self._reset_http_session(_reason)
+
+    def _register_session_finalizer(self, session: AioClientSession) -> None:
+        self._detach_session_finalizer()
+        if _is_real_aiohttp_session(session):
+            self._session_finalizer = weakref.finalize(
+                self,
+                _finalize_aiohttp_session,
+                session,
+                self.__class__.__name__,
+            )
+
+    def _detach_session_finalizer(self) -> None:
+        finalizer = getattr(self, "_session_finalizer", None)
+        if finalizer is not None:
+            finalizer.detach()
+            self._session_finalizer = None
 
     # === Delegated Operations ===
     # The following methods delegate to the refactored sub-modules
@@ -662,6 +1280,9 @@ class BackendIntegratedClient:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        warm_start_from: str | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -675,6 +1296,9 @@ class BackendIntegratedClient:
             objectives=objectives,
             promotion_policy=promotion_policy,
             tvl_governance=tvl_governance,
+            warm_start_from=warm_start_from,
+            artifact_fingerprints=artifact_fingerprints,
+            fingerprint_meta=fingerprint_meta,
         )
 
     async def create_hybrid_session(
@@ -943,17 +1567,30 @@ class BackendIntegratedClient:
         if environment:
             payload["environment"] = environment
 
-        try:
-            response = requests.post(  # nosec B113 - timeout is provided
-                url,
-                json=payload,
-                headers=headers,
-                timeout=min(self.timeout, 30.0),
-            )
-        except AuthenticationError:
-            raise
-        except Exception as exc:
-            raise CloudServiceError(f"Best-config publish failed: {exc}") from exc
+        def _post_best_config() -> Any:
+            try:
+                response = requests.post(  # nosec B113 - timeout is provided
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Best-config publish transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Best-config publish")
+            return response
+
+        response = _run_sync_backend_request_with_retry(
+            "Best-config publish",
+            _post_best_config,
+        )
 
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -993,17 +1630,30 @@ class BackendIntegratedClient:
             if value
         }
 
-        try:
-            response = requests.get(  # nosec B113 - timeout is provided
-                url,
-                params=params or None,
-                headers=headers,
-                timeout=min(self.timeout, 30.0),
-            )
-        except AuthenticationError:
-            raise
-        except Exception as exc:
-            raise CloudServiceError(f"Best-config fetch failed: {exc}") from exc
+        def _get_best_config() -> Any:
+            try:
+                response = requests.get(  # nosec B113 - timeout is provided
+                    url,
+                    params=params or None,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Best-config fetch transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Best-config fetch")
+            return response
+
+        response = _run_sync_backend_request_with_retry(
+            "Best-config fetch",
+            _get_best_config,
+        )
 
         if response.status_code in {304, 404}:
             return None
@@ -1066,12 +1716,30 @@ class BackendIntegratedClient:
             return False
         payload = {"feature_kind": feature_kind, "features": features}
 
+        def _post_example_features() -> Any:
+            try:
+                response = requests.post(  # nosec B113 - timeout is provided
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Example feature upload transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Example feature upload")
+            return response
+
         try:
-            response = requests.post(  # nosec B113 — timeout is provided
-                url,
-                json=payload,
-                headers=headers,
-                timeout=min(self.timeout, 30.0),
+            response = _run_sync_backend_request_with_retry(
+                "Example feature upload",
+                _post_example_features,
             )
         except Exception as exc:
             logger.debug(

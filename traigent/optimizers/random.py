@@ -5,15 +5,22 @@
 from __future__ import annotations
 
 import random
+from itertools import product
 from typing import Any
 
 from traigent.api.types import TrialResult
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils.discrete_domains import (
+    discrete_values_for_config_param,
+    stepped_float_values,
+    stepped_int_values,
+)
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import Validators
 
 logger = get_logger(__name__)
+MAX_COMPLEMENT_SCAN_CONFIGS = 100_000
 
 
 class RandomSearchOptimizer(BaseOptimizer):
@@ -99,9 +106,10 @@ class RandomSearchOptimizer(BaseOptimizer):
                 "unique configurations have been tried"
             )
 
-        # For discrete spaces, avoid duplicates by retrying
-        max_attempts = 100  # Prevent infinite loops
+        # For discrete spaces, avoid duplicates by retrying, then fall back to a
+        # lazy complement scan so collision streaks do not masquerade as exhaustion.
         cardinality = self.config_space_cardinality
+        max_attempts = self._max_unique_sampling_attempts(cardinality)
 
         for _attempt in range(max_attempts):
             config = {}
@@ -124,27 +132,78 @@ class RandomSearchOptimizer(BaseOptimizer):
                 self.register_tried_config(config)
                 break
         else:
-            # Exhausted retry attempts (shouldn't happen with proper cardinality)
-            raise OptimizationError(
-                f"Failed to find unique config after {max_attempts} attempts"
-            )
-
+            fallback_config = self._find_untried_discrete_config()
+            if fallback_config is None:
+                # Exhausted retry attempts (shouldn't happen with proper cardinality)
+                raise OptimizationError(
+                    f"Failed to find unique config after {max_attempts} attempts"
+                )
+            config = fallback_config
         self._trial_count += 1
 
         logger.debug(f"Suggesting random trial {self._trial_count}: {config}")
 
         return config
 
+    def _max_unique_sampling_attempts(self, cardinality: int | None) -> int:
+        """Scale retry effort with finite search-space size."""
+
+        if cardinality is None:
+            return 100
+        return min(max(cardinality * 2, 100), 10_000)
+
+    def _find_untried_discrete_config(self) -> dict[str, Any] | None:
+        """Lazily scan a finite discrete space for an untried configuration."""
+
+        cardinality = self.config_space_cardinality
+        if cardinality is None or cardinality > MAX_COMPLEMENT_SCAN_CONFIGS:
+            return None
+
+        value_domains: list[tuple[Any, ...]] = []
+        param_names = list(self.config_space)
+        for param_name in param_names:
+            values = discrete_values_for_config_param(self.config_space[param_name])
+            if values is None:
+                return None
+            if not values:
+                raise OptimizationError("Config space exhausted: no values to sample")
+            value_domains.append(values)
+
+        for combination in product(*value_domains):
+            config = dict(zip(param_names, combination, strict=True))
+            if self.register_tried_config(config):
+                return config
+
+        if cardinality is not None:
+            raise OptimizationError(
+                f"Config space exhausted: all {cardinality} "
+                "unique configurations have been tried"
+            )
+        return None
+
     def _sample_range_int(self, param_name: str, param_def: dict) -> int:
         """Sample an integer value from a range-dict definition."""
-        low_f, high_f = float(param_def["low"]), float(param_def["high"])
+        try:
+            low_f, high_f = float(param_def["low"]), float(param_def["high"])
+        except (TypeError, ValueError) as exc:
+            raise OptimizationError(
+                f"Invalid integer range for parameter '{param_name}': "
+                "low/high must be numeric"
+            ) from exc
         if not low_f.is_integer() or not high_f.is_integer():
             raise OptimizationError(
                 f"Integer parameter '{param_name}' requires integral low/high bounds"
             )
 
-        step_raw = param_def.get("step", 1) or 1
-        step_f = float(step_raw)
+        step_raw = param_def.get("step", 1)
+        if step_raw is None:
+            step_raw = 1
+        try:
+            step_f = float(step_raw)
+        except (TypeError, ValueError) as exc:
+            raise OptimizationError(
+                f"Invalid step for integer parameter '{param_name}': {step_raw}"
+            ) from exc
         if step_f <= 0 or not step_f.is_integer():
             raise OptimizationError(
                 f"Invalid step for integer parameter '{param_name}': {step_raw}"
@@ -157,26 +216,46 @@ class RandomSearchOptimizer(BaseOptimizer):
                 f"low ({low_i}) must be <= high ({high_i})"
             )
 
-        values = list(range(low_i, high_i + 1, int_step))
+        values = stepped_int_values(low_i, high_i, int_step)
         if not values:
-            values = [low_i]
-        elif values[-1] != high_i:
-            values.append(high_i)
+            raise OptimizationError(
+                f"Invalid integer range for parameter '{param_name}': no values"
+            )
         return self._random.choice(values)
 
     def _sample_range_float(self, param_name: str, param_def: dict) -> float:
         """Sample a float value from a range-dict definition."""
-        low_f, high_f = float(param_def["low"]), float(param_def["high"])
-        val = self._random.uniform(low_f, high_f)
+        try:
+            low_f, high_f = float(param_def["low"]), float(param_def["high"])
+        except (TypeError, ValueError) as exc:
+            raise OptimizationError(
+                f"Invalid float range for parameter '{param_name}': "
+                "low/high must be numeric"
+            ) from exc
+        if low_f > high_f:
+            raise OptimizationError(
+                f"Invalid float range for parameter '{param_name}': "
+                f"low ({low_f}) must be <= high ({high_f})"
+            )
         step_raw = param_def.get("step")
         if step_raw is not None:
-            step = float(step_raw)
+            try:
+                step = float(step_raw)
+            except (TypeError, ValueError) as exc:
+                raise OptimizationError(
+                    f"Invalid step for float parameter '{param_name}': {step_raw}"
+                ) from exc
             if step <= 0:
                 raise OptimizationError(
                     f"Invalid step for float parameter '{param_name}': {step}"
                 )
-            snapped = round((val - low_f) / step) * step + low_f
-            val = min(max(snapped, low_f), high_f)
+            values = stepped_float_values(low_f, high_f, step)
+            if not values:
+                raise OptimizationError(
+                    f"Invalid float range for parameter '{param_name}': no values"
+                )
+            return self._random.choice(values)
+        val = self._random.uniform(low_f, high_f)
         return round(val, 6)
 
     def _sample_parameter(self, param_name: str, param_def: Any) -> Any:
@@ -250,7 +329,7 @@ class RandomSearchOptimizer(BaseOptimizer):
     @property
     def progress(self) -> float:
         """Get optimization progress as a fraction (0.0 to 1.0)."""
-        return min(self._trial_count / self.max_trials, 1.0)
+        return float(min(self._trial_count / self.max_trials, 1.0))
 
     def set_max_trials(self, max_trials: int) -> None:
         """Update maximum number of trials.
@@ -269,7 +348,7 @@ class RandomSearchOptimizer(BaseOptimizer):
 
     def get_algorithm_info(self) -> dict[str, Any]:
         """Get information about this optimization algorithm."""
-        info = super().get_algorithm_info()
+        info: dict[str, Any] = super().get_algorithm_info()
         info.update(
             {
                 "max_trials": self.max_trials,

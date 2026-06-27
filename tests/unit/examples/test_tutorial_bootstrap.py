@@ -100,7 +100,9 @@ def test_explicit_mock_true_is_respected_even_with_provider_key(value: str) -> N
     assert should_auto_enable_mock_mode(("ANTHROPIC_API_KEY",), env=env) is True
 
 
-def test_production_guard_still_blocks_auto_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_production_guard_still_blocks_auto_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
 
     with pytest.raises(RuntimeError, match="ENVIRONMENT=production"):

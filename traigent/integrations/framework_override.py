@@ -20,11 +20,13 @@ Key Features:
 
 from __future__ import annotations
 
+import ast
 import functools
+import importlib
 import inspect
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
-from typing import Any, cast
+from typing import Any, cast, get_type_hints
 
 from ..config.context import get_config
 from ..config.types import TraigentConfig
@@ -326,14 +328,8 @@ class FrameworkOverrideManager(BaseOverrideManager):
             method_path: Dot-separated path to the method (e.g., "messages.create")
         """
         try:
-            # Navigate to the method location
-            current_obj = target_class
             path_parts = method_path.split(".")
-
-            # Navigate to the parent object containing the method
-            for part in path_parts[:-1]:
-                current_obj = getattr(current_obj, part)
-
+            current_obj = self._resolve_method_parent(target_class, path_parts[:-1])
             method_name = path_parts[-1]
             original_method = getattr(current_obj, method_name)
 
@@ -350,20 +346,149 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             # Track for cleanup
             method_key = f"{class_name}.{method_path}"
-            self._original_methods[method_key] = (
-                current_obj,
-                method_name,
+            self.store_original_method(
+                method_key,
                 original_method,
+                target=current_obj,
+                attribute=method_name,
             )
 
-        except (AttributeError, TypeError):
-            # Method not found or not accessible, skip silently
-            logger.debug(
-                "Skipping override for %s because %s.%s is unavailable",
+        except (AttributeError, TypeError) as exc:
+            logger.warning(
+                "Skipping override for %s because %s.%s is unavailable: %s",
                 method_path,
                 class_name,
                 method_path,
+                exc,
             )
+
+    def _resolve_method_parent(self, target_class: type, path_parts: list[str]) -> Any:
+        """Resolve a dotted method parent, including cached-property resources."""
+
+        current_obj: Any = target_class
+        for part in path_parts:
+            descriptor = inspect.getattr_static(current_obj, part, None)
+            if isinstance(descriptor, functools.cached_property):
+                resource_class = self._cached_property_return_class(descriptor)
+                if resource_class is None:
+                    raise AttributeError(
+                        f"cached property '{part}' has no resolvable return class"
+                    )
+                current_obj = resource_class
+                continue
+            current_obj = getattr(current_obj, part)
+        return current_obj
+
+    def _cached_property_return_class(
+        self, descriptor: functools.cached_property[Any]
+    ) -> type | None:
+        """Resolve a cached_property resource accessor's annotated return class."""
+
+        func = getattr(descriptor, "func", None)
+        if func is None:
+            return None
+        try:
+            return_type = get_type_hints(func).get("return")
+        except (NameError, TypeError, AttributeError):
+            return_type = getattr(func, "__annotations__", {}).get("return")
+        return self._annotation_to_class(return_type, func)
+
+    def _annotation_to_class(
+        self, annotation: Any, func: Callable[..., Any]
+    ) -> type | None:
+        """Resolve a direct class annotation, including SDK string annotations."""
+
+        if isinstance(annotation, type):
+            return annotation
+        if not isinstance(annotation, str):
+            return None
+
+        annotation_name = self._normalize_annotation_string(annotation)
+        if not annotation_name:
+            return None
+
+        raw_globalns = getattr(func, "__globals__", {})
+        globalns = (
+            cast(dict[str, Any], raw_globalns) if isinstance(raw_globalns, dict) else {}
+        )
+        resolved = self._resolve_annotation_name(annotation_name, globalns)
+        if isinstance(resolved, type):
+            return cast(type, resolved)
+        for module_name in self._annotation_candidate_modules(func):
+            try:
+                module = importlib.import_module(module_name)
+            except (ImportError, ValueError):
+                continue
+            module_globals = vars(module)
+            if module_globals is globalns:
+                continue
+            resolved = self._resolve_annotation_name(annotation_name, module_globals)
+            if isinstance(resolved, type):
+                return cast(type, resolved)
+        return None
+
+    def _annotation_candidate_modules(self, func: Callable[..., Any]) -> list[str]:
+        """Return modules that commonly expose SDK resource annotation names."""
+
+        module_name = getattr(func, "__module__", "")
+        if not module_name:
+            return []
+
+        candidate_names = [module_name]
+        package_name = module_name.split(".", 1)[0]
+        if package_name:
+            candidate_names.append(f"{package_name}.resources")
+
+        seen: set[str] = set()
+        unique_candidate_names = []
+        for candidate_name in candidate_names:
+            if candidate_name and candidate_name not in seen:
+                seen.add(candidate_name)
+                unique_candidate_names.append(candidate_name)
+        return unique_candidate_names
+
+    def _normalize_annotation_string(self, annotation: str) -> str:
+        """Normalize quoted forward-reference annotation strings."""
+
+        annotation = annotation.strip()
+        try:
+            literal_value = ast.literal_eval(annotation)
+        except (SyntaxError, ValueError):
+            return annotation
+        if isinstance(literal_value, str):
+            return literal_value.strip()
+        return annotation
+
+    def _resolve_annotation_name(
+        self, annotation_name: str, globalns: dict[str, Any]
+    ) -> Any:
+        """Resolve an identifier or dotted annotation name without broad eval."""
+
+        parts = annotation_name.split(".")
+        if not parts or not all(part.isidentifier() for part in parts):
+            return None
+
+        if parts[0] in globalns:
+            resolved = globalns[parts[0]]
+            for part in parts[1:]:
+                resolved = getattr(resolved, part, None)
+                if resolved is None:
+                    return None
+            return resolved
+
+        for module_end in range(len(parts) - 1, 0, -1):
+            module_name = ".".join(parts[:module_end])
+            try:
+                resolved = importlib.import_module(module_name)
+            except (ImportError, ValueError):
+                continue
+            for part in parts[module_end:]:
+                resolved = getattr(resolved, part, None)
+                if resolved is None:
+                    break
+            else:
+                return resolved
+        return None
 
     def activate_overrides(self, framework_targets: list[str]) -> None:
         """Activate framework overrides for specified targets.
@@ -613,7 +738,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
                 package, version
             )
             if version_mapping:
-                return version_mapping
+                return cast(dict[str, str], version_mapping)
 
         # Discover parameters dynamically
         if self.discovery is not None:

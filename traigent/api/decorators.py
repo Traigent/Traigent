@@ -26,7 +26,7 @@ Examples:
     ...     eval_dataset="customer_support.jsonl",
     ...     objectives=["accuracy", "cost", "latency"],
     ...     configuration_space={
-    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-2"],
+    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-haiku-4-5-20251001"],
     ...         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
     ...         "max_tokens": [100, 500, 1000]
     ...     },
@@ -46,7 +46,7 @@ import inspect
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -64,6 +64,7 @@ from traigent.api.parameter_ranges import (
 )
 from traigent.api.strategy_presets import (
     NormalizedStrategyPreset,
+    UnknownStrategyPresetError,
     is_strategy_preset_name,
     normalize_strategy_preset,
 )
@@ -88,6 +89,7 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
@@ -100,6 +102,17 @@ from traigent.utils.exceptions import (
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+__all__ = [
+    "EvaluationOptions",
+    "InjectionOptions",
+    "HybridAPIOptions",
+    "ExternalServiceEvaluator",
+    "ExecutionOptions",
+    "MockModeOptions",
+    "optimize",
+]
 
 
 class EvaluationOptions(BaseModel):
@@ -337,6 +350,9 @@ class MockModeOptions(BaseModel):
 
 
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
+# ParamSpec / TypeVar for the @optimize decorator's generic return type.
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 def _coerce_bundle(
@@ -437,6 +453,80 @@ def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
         )
 
 
+def _warn_context_mode_param_shadowing(
+    func: Callable[..., Any],
+    configuration_space: Any,
+    injection_mode: Any,
+    config_param: str | None,
+) -> None:
+    """Warn when CONTEXT-mode tuned knobs shadow the wrapped function's params.
+
+    In the default ``injection_mode=InjectionMode.CONTEXT`` the optimizer does
+    **not** override function parameters — the per-trial config lives in
+    contextvars and must be read via ``traigent.get_config()``. If a function
+    already declares the tuned knobs as parameters (the common "wrap a pre-existing
+    agent function" shape) and never reads ``get_config()``, every trial silently
+    receives the signature defaults, so the optimizer reports a "best config" for a
+    sweep that never actually varied those parameters (see issue #1372). This emits
+    a loud warning so the no-op is not silent. It is advisory (never raises): a
+    function that intentionally reads ``get_config()`` is detected and skipped.
+    """
+    # Only CONTEXT mode shadows parameters; PARAMETER/SEAMLESS inject explicitly.
+    if injection_mode not in (InjectionMode.CONTEXT, "context"):
+        return
+    if not configuration_space:
+        return
+    try:
+        config_keys = set(configuration_space.keys())
+    except AttributeError:
+        return
+    if not config_keys:
+        return
+
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):  # pragma: no cover - unintrospectable callable
+        return
+
+    param_names = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    }
+    if config_param:
+        param_names.discard(config_param)
+
+    shadowed = sorted(config_keys & param_names)
+    if not shadowed:
+        return
+
+    # Best-effort: if the body already reads the per-trial config, the knobs are
+    # honored and the overlap is intentional — do not warn.
+    try:
+        source = inspect.getsource(func)
+        if "get_config" in source or "current_config" in source:
+            return
+    except (OSError, TypeError):  # pragma: no cover - source unavailable
+        pass
+
+    import warnings
+
+    func_name = getattr(func, "__name__", repr(func))
+    message = (
+        f"@traigent.optimize: the tuned variable(s) {shadowed} are declared as "
+        f"parameters of '{func_name}', but injection_mode is CONTEXT (the default), "
+        f"which does NOT override function parameters. Unless the body reads "
+        f"traigent.get_config(), every trial will run with the signature defaults "
+        f"and the optimization will silently sweep nothing (a false-positive 'best "
+        f"config'). To actually vary {shadowed}: read them via traigent.get_config() "
+        f'inside the function, or use injection_mode="seamless" (zero code change) / '
+        f'injection_mode="parameter".'
+    )
+    warnings.warn(message, UserWarning, stacklevel=3)
+    logger.warning("%s", message)
+
+
 _DEFAULT_SENTINEL = object()
 _AUTO_DETECT_TVARS_MODES = frozenset({"off", "suggest", "apply"})
 
@@ -446,6 +536,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "configuration_space": None,
     "experiment_name": None,
     "default_config": None,
+    "warm_start_from": None,
     "constraints": None,
     "safety_constraints": None,
     "tvl_spec": None,
@@ -472,7 +563,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
-    "max_trials": 50,
+    "max_trials": DEFAULT_MAX_TRIALS,
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
     "plateau_epsilon": None,  # Improvement threshold for plateau detection
@@ -635,6 +726,7 @@ class LegacyOptimizeArgs:
     experiment_name: str | None = None
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
+    warm_start_from: str | None = None
     constraints: list[Callable[..., Any]] | None = None
     safety_constraints: list[Any] | None = (
         None  # SafetyConstraint | CompoundSafetyConstraint
@@ -729,6 +821,7 @@ class LegacyOptimizeArgs:
             ("experiment_name", self.experiment_name),
             ("configuration_space", self.configuration_space),
             ("default_config", self.default_config),
+            ("warm_start_from", self.warm_start_from),
             ("constraints", self.constraints),
             ("safety_constraints", self.safety_constraints),
             ("tvl_spec", self.tvl_spec),
@@ -969,11 +1062,7 @@ def _resolve_strategy_argument(
     if is_strategy_preset_name(strategy) or strategy_params is not None:
         return strategy, runtime_overrides
 
-    raise ValueError(
-        f"Unknown strategy preset: {strategy!r}. "
-        "Use 'algorithm' to select an optimizer by name, or provide a valid "
-        "strategy preset name."
-    )
+    raise UnknownStrategyPresetError(strategy)
 
 
 def _apply_strategy_preset_to_options(
@@ -1928,6 +2017,7 @@ def optimize(  # NOSONAR(S107)
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     experiment_name: str | None = None,
     default_config: dict[str, Any] | None = None,
+    warm_start_from: str | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
     tvl_spec: str | Path | None = None,
@@ -1965,7 +2055,7 @@ def optimize(  # NOSONAR(S107)
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
-    [Callable[..., Any]], Any
+    [Callable[_P, _R]], OptimizedFunction[_P, _R]
 ]:  # NOSONAR - stable public API intentionally exposes broad options
     """Decorator to make functions optimizable with Traigent.
 
@@ -2200,7 +2290,7 @@ def optimize(  # NOSONAR(S107)
         ...         "minimal_logging": True,
         ...     },
         ...     configuration_space={
-        ...         "model": ["gpt-4", "claude-2"],
+        ...         "model": ["gpt-4", "claude-haiku-4-5-20251001"],
         ...         "temperature": [0.1, 0.3, 0.5],
         ...         "safety_filter": ["strict", "moderate"]
         ...     }
@@ -2218,15 +2308,25 @@ def optimize(  # NOSONAR(S107)
     if is_traigent_disabled():
         logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
 
-        def passthrough_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        def passthrough_decorator(
+            func: Callable[_P, _R],
+        ) -> OptimizedFunction[_P, _R]:
             """No-op decorator that returns the function unchanged when Traigent is disabled."""
-            return func
+            # Cast so the disabled path satisfies the declared return type without
+            # wrapping: the caller only cares that the result is callable with the
+            # same signature and exposes .optimize().
+            return func  # type: ignore[return-value]
 
         return passthrough_decorator
 
     legacy_args = _parse_legacy_args(legacy)
+    max_trials_explicit = runtime_overrides.get("max_trials") is not None
+    if legacy_args is not None and legacy_args.max_trials is not None:
+        max_trials_explicit = True
 
     combined_settings = dict(_OPTIMIZE_DEFAULTS)
+    if "execution_mode" in _GLOBAL_CONFIG:
+        combined_settings["execution_mode"] = _GLOBAL_CONFIG["execution_mode"]
     provided_sources: dict[str, str] = {}
     record_option = _build_settings_recorder(combined_settings, provided_sources)
 
@@ -2250,6 +2350,7 @@ def optimize(  # NOSONAR(S107)
         "configuration_space": configuration_space,
         "experiment_name": experiment_name,
         "default_config": default_config,
+        "warm_start_from": warm_start_from,
         "constraints": constraints,
         "safety_constraints": safety_constraints,
         "tvl_spec": tvl_spec,
@@ -2385,6 +2486,8 @@ def optimize(  # NOSONAR(S107)
         raise ValueError("max_trials must be a positive integer")
     # Experiment display name (decorator > env var > func.__name__ at decoration time)
     experiment_name_value = combined_settings["experiment_name"]
+    # Warm-start: prior experiment id to seed this run (empty string -> None).
+    warm_start_from_value: str | None = combined_settings.get("warm_start_from") or None
     # Tuned variable auto-detection
     auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
     auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
@@ -2568,7 +2671,7 @@ def optimize(  # NOSONAR(S107)
         external_service_evaluator,
     )
 
-    def decorator(func: Callable[..., Any]) -> OptimizedFunction:
+    def decorator(func: Callable[_P, _R]) -> OptimizedFunction[_P, _R]:
         """Actual decorator function.
 
         Args:
@@ -2648,7 +2751,16 @@ def optimize(  # NOSONAR(S107)
                         **(resolved_default_config or {}),
                     }
 
-        optimized_func = OptimizedFunction(
+        # #1372: loudly warn if CONTEXT-mode tuned knobs shadow the wrapped
+        # function's own parameters (silent no-op sweep otherwise).
+        _warn_context_mode_param_shadowing(
+            func,
+            resolved_configuration_space,
+            actual_injection_mode,
+            config_param,
+        )
+
+        optimized_func: OptimizedFunction[_P, _R] = OptimizedFunction(  # type: ignore[assignment]
             func=func,
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
@@ -2706,8 +2818,11 @@ def optimize(  # NOSONAR(S107)
             strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
+            _max_trials_explicit=max_trials_explicit,
             # Experiment display name (overrides func.__name__ in portal/storage)
             experiment_name=experiment_name_value,
+            # Warm-start: seed this run from a prior experiment's learned configs.
+            warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
             prompt_rewrite=prompt_rewrite,
             grow_dataset=grow_dataset,
@@ -2724,6 +2839,10 @@ def optimize(  # NOSONAR(S107)
             f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})"
         )
 
-        return optimized_func
+        # cast so mypy sees OptimizedFunction[_P, _R] rather than
+        # OptimizedFunction[Any, Any] (the constructor takes Callable[..., Any]
+        # to stay compatible with diverse callers; the generic parameters are
+        # threaded through the factory, not the __init__ signature).
+        return cast(OptimizedFunction[_P, _R], optimized_func)
 
     return decorator

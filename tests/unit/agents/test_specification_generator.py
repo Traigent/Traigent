@@ -616,6 +616,35 @@ import requests.auth
         assert updated_spec.metadata["optimized"] is True
         assert "last_optimization" in updated_spec.metadata
 
+    def test_update_agent_specification_skips_none_best_config(self, spec_generator):
+        """All-fail optimization results should not be treated as a dict config."""
+        spec = AgentSpecification(
+            id="test-agent",
+            name="Test Agent",
+            agent_type="conversational",
+            agent_platform="openai",
+            prompt_template="Test",
+            model_parameters={"model": "gpt-4o-mini", "temperature": 0.7},
+            metadata={},
+        )
+
+        optimization_results = {
+            "best_config": None,
+            "best_score": None,
+            "iterations": 3,
+        }
+
+        updated_spec = spec_generator.update_agent_specification(
+            spec, optimization_results
+        )
+
+        assert updated_spec.model_parameters == {
+            "model": "gpt-4o-mini",
+            "temperature": 0.7,
+        }
+        assert updated_spec.metadata["optimization_results"] == optimization_results
+        assert updated_spec.metadata["optimized"] is True
+
     def test_extract_optimization_config_from_traigent_config(
         self, spec_generator, sample_traigent_config
     ):

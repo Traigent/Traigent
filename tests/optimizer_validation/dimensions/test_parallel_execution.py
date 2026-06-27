@@ -54,9 +54,9 @@ class TestInvocationBudgeting:
 
         # Verify exact trial count
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == max_trials
-            ), f"Expected {max_trials} trials, got {len(result.trials)}"
+            assert len(result.trials) == max_trials, (
+                f"Expected {max_trials} trials, got {len(result.trials)}"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -114,9 +114,9 @@ class TestInvocationBudgeting:
         assert result.stop_reason is not None, "Should have a stop reason"
 
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == max_trials
-            ), f"Expected {max_trials} trials, got {len(result.trials)}"
+            assert len(result.trials) == max_trials, (
+                f"Expected {max_trials} trials, got {len(result.trials)}"
+            )
 
         # Emit evidence
         validation = result_validator(scenario, result)
@@ -162,9 +162,9 @@ class TestInvocationBudgeting:
         assert result.stop_reason is not None, "Should have a stop reason"
 
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 4
-            ), f"Grid should stop at 4 trials (space exhaustion), got {len(result.trials)}"
+            assert len(result.trials) == 4, (
+                f"Grid should stop at 4 trials (space exhaustion), got {len(result.trials)}"
+            )
 
         # Emit evidence
         validation = result_validator(scenario, result)
@@ -199,9 +199,9 @@ class TestInvocationBudgeting:
             assert len(result.trials) >= 1, "Should complete at least one trial"
             if hasattr(result, "trials"):
                 # Should have stopped early due to timeout
-                assert (
-                    len(result.trials) < 1000
-                ), "Should have stopped before 1000 trials"
+                assert len(result.trials) < 1000, (
+                    "Should have stopped before 1000 trials"
+                )
 
             # Check stop reason if available
             stop_reason = getattr(result, "stop_reason", None)
@@ -467,9 +467,9 @@ class TestBudgetWithConstraints:
 
         # Should have at most max_trials completed trials
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) <= 5
-            ), f"Expected at most 5 trials, got {len(result.trials)}"
+            assert len(result.trials) <= 5, (
+                f"Expected at most 5 trials, got {len(result.trials)}"
+            )
 
         # Emit evidence
         validation = result_validator(scenario, result)
@@ -572,9 +572,9 @@ class TestStopConditionPriority:
 
         if hasattr(result, "trials"):
             # Grid should stop at 4
-            assert (
-                len(result.trials) == 4
-            ), f"Grid should stop at 4 trials, got {len(result.trials)}"
+            assert len(result.trials) == 4, (
+                f"Grid should stop at 4 trials, got {len(result.trials)}"
+            )
 
         # Emit evidence
         validation = result_validator(scenario, result)

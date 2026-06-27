@@ -119,6 +119,139 @@ def get_current_node_name() -> str | None:
     return _current_node_name.get()
 
 
+def _token_value(source: Any, *names: str) -> int | None:
+    for name in names:
+        if isinstance(source, dict):
+            value = source.get(name)
+        else:
+            value = getattr(source, name, None)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return int(value)
+    return None
+
+
+def _tokens_from_usage(source: Any) -> tuple[int, int, int] | None:
+    if source is None:
+        return None
+
+    input_tokens = _token_value(
+        source,
+        "prompt_tokens",
+        "input_tokens",
+        "input_token_count",
+        "prompt_token_count",
+        "num_input_tokens",
+        "inputTokens",
+    )
+    output_tokens = _token_value(
+        source,
+        "completion_tokens",
+        "output_tokens",
+        "output_token_count",
+        "candidates_token_count",
+        "num_output_tokens",
+        "outputTokens",
+    )
+    total_tokens = _token_value(source, "total_tokens", "total_token_count")
+
+    input_count = input_tokens or 0
+    output_count = output_tokens or 0
+    total_count = (
+        total_tokens if total_tokens is not None else input_count + output_count
+    )
+    if input_count > 0 or output_count > 0 or total_count > 0:
+        return input_count, output_count, total_count
+    return None
+
+
+def _iter_generation_payloads(response: Any) -> list[Any]:
+    generations = getattr(response, "generations", None)
+    if not isinstance(generations, list):
+        return []
+
+    payloads: list[Any] = []
+    for row in generations:
+        if isinstance(row, list):
+            payloads.extend(row)
+        else:
+            payloads.append(row)
+    return payloads
+
+
+def _extract_response_token_usage(response: Any) -> tuple[int, int, int]:
+    llm_output = getattr(response, "llm_output", None)
+    if isinstance(llm_output, dict):
+        for key in ("token_usage", "usage", "usage_metadata"):
+            tokens = _tokens_from_usage(llm_output.get(key))
+            if tokens is not None:
+                return tokens
+
+    for source in (
+        getattr(response, "usage_metadata", None),
+        getattr(response, "usage", None),
+    ):
+        tokens = _tokens_from_usage(source)
+        if tokens is not None:
+            return tokens
+
+    response_metadata = getattr(response, "response_metadata", None)
+    if isinstance(response_metadata, dict):
+        for key in ("token_usage", "usage", "usage_metadata"):
+            tokens = _tokens_from_usage(response_metadata.get(key))
+            if tokens is not None:
+                return tokens
+
+    for generation in _iter_generation_payloads(response):
+        for candidate in (getattr(generation, "message", None), generation):
+            for source in (
+                getattr(candidate, "usage_metadata", None),
+                getattr(candidate, "usage", None),
+            ):
+                tokens = _tokens_from_usage(source)
+                if tokens is not None:
+                    return tokens
+
+            metadata = getattr(candidate, "response_metadata", None)
+            if isinstance(metadata, dict):
+                for key in ("token_usage", "usage", "usage_metadata"):
+                    tokens = _tokens_from_usage(metadata.get(key))
+                    if tokens is not None:
+                        return tokens
+
+    return 0, 0, 0
+
+
+def _extract_response_model(response: Any) -> str | None:
+    llm_output = getattr(response, "llm_output", None)
+    if isinstance(llm_output, dict):
+        model = llm_output.get("model_name") or llm_output.get("model")
+        if isinstance(model, str) and model:
+            return model
+
+    response_metadata = getattr(response, "response_metadata", None)
+    if isinstance(response_metadata, dict):
+        model = response_metadata.get("model_name") or response_metadata.get("model")
+        if isinstance(model, str) and model:
+            return model
+
+    model = getattr(response, "model", None)
+    if isinstance(model, str) and model:
+        return model
+
+    for generation in _iter_generation_payloads(response):
+        for candidate in (getattr(generation, "message", None), generation):
+            metadata = getattr(candidate, "response_metadata", None)
+            if isinstance(metadata, dict):
+                model = metadata.get("model_name") or metadata.get("model")
+                if isinstance(model, str) and model:
+                    return model
+            model = getattr(candidate, "model", None)
+            if isinstance(model, str) and model:
+                return model
+
+    return None
+
+
 # =============================================================================
 # Data Models
 # =============================================================================
@@ -398,15 +531,13 @@ class TraigentHandler(BaseCallbackHandler):
             call.end_time = time.time()
 
             # Extract token usage from response
-            if response.llm_output:
-                token_usage = response.llm_output.get("token_usage", {})
-                call.input_tokens = token_usage.get("prompt_tokens", 0)
-                call.output_tokens = token_usage.get("completion_tokens", 0)
-                call.total_tokens = token_usage.get("total_tokens", 0)
+            call.input_tokens, call.output_tokens, call.total_tokens = (
+                _extract_response_token_usage(response)
+            )
 
-                # Try to get model info if not already set
-                if call.model is None:
-                    call.model = response.llm_output.get("model_name")
+            # Try to get model info if not already set
+            if call.model is None:
+                call.model = _extract_response_model(response)
 
             # Calculate cost (uses litellm if available)
             if call.total_tokens > 0 and call.model:
@@ -467,15 +598,13 @@ class TraigentHandler(BaseCallbackHandler):
             call.end_time = time.time()
 
             # Extract token usage
-            if response.llm_output:
-                token_usage = response.llm_output.get("token_usage", {})
-                call.input_tokens = token_usage.get("prompt_tokens", 0)
-                call.output_tokens = token_usage.get("completion_tokens", 0)
-                call.total_tokens = token_usage.get("total_tokens", 0)
+            call.input_tokens, call.output_tokens, call.total_tokens = (
+                _extract_response_token_usage(response)
+            )
 
-                # Try to get model info if not already set
-                if call.model is None:
-                    call.model = response.llm_output.get("model_name")
+            # Try to get model info if not already set
+            if call.model is None:
+                call.model = _extract_response_model(response)
 
             # Calculate cost (simplified - uses litellm if available)
             if call.total_tokens > 0 and call.model:

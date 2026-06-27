@@ -133,15 +133,10 @@ class TestExecutionModes:
 
         assert client.execution_mode == ExecutionMode.HYBRID
 
-    def test_cloud_mode_deprecated_resolves_to_edge_analytics(self):
-        """Test that 'cloud' mode (deprecated) emits DeprecationWarning and resolves to edge_analytics."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            client = TraigentClient(execution_mode="cloud", api_key="test_key")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_cloud_mode_deprecated_fails_closed(self):
+        """Test that 'cloud' mode raises before backend initialization."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentClient(execution_mode="cloud", api_key="test_key")
 
     def test_execution_mode_auto_detection(self):
         """Test automatic execution mode detection.
@@ -185,8 +180,11 @@ class TestExecutionModes:
         assert mode == "edge_analytics"
 
     @pytest.mark.asyncio
-    async def test_metric_submission_batching(self):
+    async def test_metric_submission_batching(self, monkeypatch):
         """Test metric submission batching in optimizer client."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        monkeypatch.setenv("ENVIRONMENT", "development")
         with patch("aiohttp.ClientSession") as MockSession:
             # Setup mock session
             mock_session = AsyncMock()

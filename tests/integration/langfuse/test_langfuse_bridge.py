@@ -48,12 +48,12 @@ class TestLangfuseTraceMetrics:
 
         # Verify no dots in keys (MeasuresDict constraint)
         for key in measures:
-            assert (
-                "." not in key
-            ), f"Key '{key}' contains dot (invalid for MeasuresDict)"
-            assert (
-                "-" not in key
-            ), f"Key '{key}' contains hyphen (invalid for MeasuresDict)"
+            assert "." not in key, (
+                f"Key '{key}' contains dot (invalid for MeasuresDict)"
+            )
+            assert "-" not in key, (
+                f"Key '{key}' contains hyphen (invalid for MeasuresDict)"
+            )
 
         # Verify expected keys exist
         assert "total_cost" in measures

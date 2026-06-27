@@ -481,7 +481,8 @@ class TestCostTrackerIntegration:
     async def test_full_workflow(self):
         """Test a complete cost tracking workflow."""
         config = CostTrackingConfig(
-            enable_server_sync=False, cache_costs_locally=False  # Disable for testing
+            enable_server_sync=False,
+            cache_costs_locally=False,  # Disable for testing
         )
         tracker = CostTracker(config)
 

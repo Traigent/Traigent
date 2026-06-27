@@ -17,6 +17,7 @@ from urllib.parse import quote, urlencode
 import requests  # Always needed for synchronous operations
 
 from traigent.cloud.client import raise_if_cloud_egress_disabled
+from traigent.cloud.url_security import validate_cloud_base_url
 
 try:
     import aiohttp  # noqa: F401 - Import check only
@@ -50,6 +51,7 @@ def build_experiment_url(
     base_url: str,
     experiment_id: str,
     *,
+    run_id: str | None = None,
     project_id: str | None = None,
     tenant_id: str | None = None,
 ) -> str:
@@ -63,7 +65,11 @@ def build_experiment_url(
     )
     query_params = {
         key: normalized
-        for key, value in (("project_id", project_id), ("tenant_id", tenant_id))
+        for key, value in (
+            ("run_id", run_id),
+            ("project_id", project_id),
+            ("tenant_id", tenant_id),
+        )
         if value is not None and (normalized := str(value).strip())
     }
     if not query_params:
@@ -105,15 +111,12 @@ class SyncManager:
         self.storage = LocalStorageManager(config.get_local_storage_path())
         self.api_key = api_key
         self.no_egress = bool(no_egress)
-        self.base_url = BackendConfig.get_cloud_api_url().rstrip("/")
+        backend_api_url = BackendConfig.get_cloud_api_url().rstrip("/")
+        self.base_url = validate_cloud_base_url(backend_api_url, purpose="sync request")
 
         # Setup HTTP client - always create a requests session for sync operations
-        # Include both X-API-Key and Authorization for backward compatibility
-        self.headers = (
-            {"X-API-Key": api_key, "Authorization": f"Bearer {api_key}"}
-            if api_key
-            else {}
-        )
+        # X-API-Key only — Authorization: Bearer is reserved for JWTs.
+        self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
         self._session = requests.Session()
         if api_key:
@@ -804,6 +807,7 @@ class SyncManager:
             sync_result["cloud_url"] = build_experiment_url(
                 BackendConfig.get_cloud_web_url(),
                 experiment_id,
+                run_id=experiment_run_id,
                 project_id=project_id,
                 tenant_id=tenant_id,
             )

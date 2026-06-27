@@ -809,7 +809,8 @@ class TestBooleanFilterLogic:
         )
 
         result = resolver.resolve(
-            "models", filter_expr="a == 'x' AND a == 'y'"  # Impossible
+            "models",
+            filter_expr="a == 'x' AND a == 'y'",  # Impossible
         )
         assert result == []
 

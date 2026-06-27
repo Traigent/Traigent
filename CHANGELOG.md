@@ -6,6 +6,55 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-27
+
+### Added
+- Warm-start cross-run transfer: opaque `metadata.warm_start_transfer` block (fail-closed transfer-mode + confidence), the `warm_start_from` contract, the SDK passthrough, and the per-(config, example, evaluator, output) cell-store foundation. Fixed the cloud-finalize persistence regression so `experiment_id` and `warm_start_transfer` surface on cloud runs.
+
+## [0.18.0] - 2026-06-27
+
+### Added
+- Added a no-content-egress cloud-brain canary test that captures serialized
+  session, next-trial, metrics, and finalize payloads and asserts dataset
+  example content never crosses the backend boundary.
+
+### Changed
+- Rewrote execution-mode guidance around `algorithm` and `offline`: cloud-first
+  `auto`, explicit local `grid`/`random`, zero-egress offline mode, result
+  provenance, and legacy selector deprecations.
+
+### Removed
+- Removed public pruner exports: `CeilingPruner`, `CeilingPrunerConfig`,
+  `StatisticalInferiorityPruner`, and `StatisticalInferiorityPrunerConfig`.
+- Dropped the `optuna` runtime dependency.
+- Removed `register_optuna_optimizers` and the legacy Optuna feature flag/env
+  var (`OPTUNA_ROLLOUT`, renamed during the managed-routing migration).
+- Smart algorithms (`bayesian` and the Optuna family) now route to the Traigent
+  cloud; the local SDK supports `grid` and `random` only.
+- Removed 7 production-dead internal modules (`config_builder`,
+  `llm_processor`, `refactoring_utils`, `service_registry`, `event_manager`,
+  `langchain/discovery`, empty `telemetry` package) and their tests.
+
+### Fixed
+- Per-config `cost` metric is now wired to the authoritative `total_cost`, so
+  the `minimize cost` objective is no longer inert and the portal no longer
+  shows `$0` per config on a real paid run; a model unpriced at runtime is
+  surfaced on the result (and fails closed under
+  `TRAIGENT_STRICT_COST_ACCOUNTING`).
+- `traigent sync` / `traigent local sync` no longer fail every completed
+  session with `409 EXPERIMENT_HAS_NO_RUNS`; sync now creates the experiment
+  `PENDING`, uploads runs, finalizes to `COMPLETED`, resumes idempotently, and
+  returns a non-zero exit on failure.
+- Runtime `optimize(algorithm="grid"|"random")` with a portal key now stays
+  local and exhaustive instead of routing to the cloud sampler.
+- `traigent quickstart` runs on a bare install (uses base `litellm`, not the
+  `integrations` LangChain extra) and fails closed when no trial succeeds.
+- `ObjectiveDefinition` fails closed on unimplemented normalization strategies
+  (`z_score`/`robust`) instead of silently behaving like `min_max`.
+
+### Dependencies
+- Bumped `langsmith` 0.8.3 → 0.8.18 and `pydantic-settings` 2.14.1 → 2.14.2.
+
 ## [0.17.0] - 2026-06-23
 
 ### Added

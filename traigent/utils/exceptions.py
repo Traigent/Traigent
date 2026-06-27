@@ -308,13 +308,42 @@ class RateLimitError(RetryableError):
         super().__init__(message, retry_after=retry_after)
 
 
-class CostLimitExceeded(TraigentError):
-    """Raised when accumulated cost exceeds the configured limit."""
+class CostLimitExceeded(OptimizationError):
+    """Raised when a pre-run cost approval decline prevents optimization.
 
-    def __init__(self, accumulated: float, limit: float) -> None:
-        super().__init__(f"Cost limit exceeded: ${accumulated:.2f} >= ${limit:.2f} USD")
+    The mid-run cost-limit contract is intentionally graceful: optimization
+    returns a partial result and callers should inspect
+    ``result.stop_reason == "cost_limit"``.
+    """
+
+    def __init__(
+        self,
+        accumulated: float,
+        limit: float,
+        *,
+        estimated: float | None = None,
+        message: str | None = None,
+    ) -> None:
+        spent = accumulated
+        if message is None:
+            message = f"Cost limit exceeded: ${spent:.2f} >= ${limit:.2f} USD"
+            if estimated is not None:
+                message = (
+                    f"Cost limit exceeded: estimated ${estimated:.2f} >= "
+                    f"${limit:.2f} USD; spent ${spent:.2f}"
+                )
+        details: dict[str, Any] = {
+            "accumulated": accumulated,
+            "spent": spent,
+            "limit": limit,
+        }
+        if estimated is not None:
+            details["estimated"] = estimated
+        super().__init__(message, details=details)
         self.accumulated = accumulated
+        self.spent = spent
         self.limit = limit
+        self.estimated = estimated
 
 
 class VendorPauseError(TraigentError):

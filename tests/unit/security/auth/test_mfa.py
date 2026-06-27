@@ -208,7 +208,10 @@ class TestVerifyMFA:
         mfa.totp_provider = mock_totp_provider
 
         result = mfa.verify_mfa(
-            user_id=None, method="totp", code="123456", secret="TESTSECRET"  # type: ignore
+            user_id=None,
+            method="totp",
+            code="123456",
+            secret="TESTSECRET",  # type: ignore
         )
 
         assert result is False
@@ -221,7 +224,10 @@ class TestVerifyMFA:
         mfa.totp_provider = mock_totp_provider
 
         result = mfa.verify_mfa(
-            user_id=12345, method="totp", code="123456", secret="TESTSECRET"  # type: ignore
+            user_id=12345,
+            method="totp",
+            code="123456",
+            secret="TESTSECRET",  # type: ignore
         )
 
         assert result is False
@@ -262,7 +268,10 @@ class TestVerifyMFA:
         mfa.totp_provider = mock_totp_provider
 
         result = mfa.verify_mfa(
-            user_id="user123", method="totp", code=None, secret="TESTSECRET"  # type: ignore
+            user_id="user123",
+            method="totp",
+            code=None,
+            secret="TESTSECRET",  # type: ignore
         )
 
         assert result is False

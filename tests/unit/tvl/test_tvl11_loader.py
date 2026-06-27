@@ -109,7 +109,9 @@ def test_require_calibration_rejects_core_keys(tmp_path):
         "hash_covered_context: [model_versions]",
         "hash_covered_context: [tuned_parent_values]",
     )
-    with pytest.raises(TVLValidationError, match="not extension keys|Invalid promotion_policy"):
+    with pytest.raises(
+        TVLValidationError, match="not extension keys|Invalid promotion_policy"
+    ):
         load_tvl_spec(spec_path=_write(tmp_path, bad))
 
 

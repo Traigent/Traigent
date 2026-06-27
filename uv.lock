@@ -6030,7 +6030,7 @@ wheels = [
 
 [[package]]
 name = "traigent"
-version = "0.17.0"
+version = "0.19.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -6341,7 +6341,7 @@ requires-dist = [
     { name = "langchain-google-genai", marker = "extra == 'integrations'", specifier = ">=2.1.4" },
     { name = "langchain-openai", marker = "extra == 'integrations'", specifier = ">=1.1.14" },
     { name = "langchain-text-splitters", marker = "extra == 'integrations'", specifier = ">=0.3.8" },
-    { name = "litellm", specifier = "==1.87.1" },
+    { name = "litellm", specifier = ">=1.87.1,<2" },
     { name = "matplotlib", marker = "extra == 'analytics'", specifier = ">=3.5.0" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.5.0" },
     { name = "mcp", marker = "extra == 'hybrid'", specifier = ">=1.27.0" },

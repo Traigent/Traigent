@@ -536,15 +536,15 @@ class TestOpenAIAgentExecutor:
         assert cost > 0, "Known model should return positive cost"
         input_cost, output_cost = calc._calculate_from_tokens(100, 50, "gpt-4o")
         expected = float(input_cost + output_cost)
-        assert (
-            abs(cost - expected) < 1e-10
-        ), f"_calculate_cost should match CostCalculator: {cost} vs {expected}"
+        assert abs(cost - expected) < 1e-10, (
+            f"_calculate_cost should match CostCalculator: {cost} vs {expected}"
+        )
 
         # Test with model alias (GPT-4o → gpt-4o via MODEL_ALIASES)
         cost_alias = executor._calculate_cost("GPT-4o", MockUsage())
-        assert (
-            abs(cost_alias - expected) < 1e-10
-        ), "Aliased model should produce same cost as canonical name"
+        assert abs(cost_alias - expected) < 1e-10, (
+            "Aliased model should produce same cost as canonical name"
+        )
 
     def test_calculate_cost_zero_cost_warning(self):
         """Test _calculate_cost warns when cost is 0 for nonzero tokens."""
@@ -765,7 +765,8 @@ class TestPlatformRegistry:
 
         # OpenAI executor with config
         executor = get_executor_for_platform(
-            "openai", {"api_key": "test-key"}  # pragma: allowlist secret
+            "openai",
+            {"api_key": "test-key"},  # pragma: allowlist secret
         )
         assert isinstance(executor, OpenAIAgentExecutor)
         assert (

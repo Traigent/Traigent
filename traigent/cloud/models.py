@@ -193,6 +193,7 @@ class SessionCreationRequest:
     budget: dict[str, Any] | None = None
     constraints: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
+    warm_start_from: str | None = None
     promotion_policy: dict[str, Any] | None = None
     # Content-free TVL governance summary (RFC 0001 P8): cvar names/types/
     # governed flags only — built by traigent.cloud.governance, never ad hoc.
@@ -201,6 +202,8 @@ class SessionCreationRequest:
     user_id: str | None = None
     billing_tier: str = "standard"
     metadata: dict[str, Any] = field(default_factory=dict)
+    artifact_fingerprints: dict[str, str | None] | None = None
+    fingerprint_meta: dict[str, Any] | None = None
     # Alternative parameter names for test compatibility
     problem_type: str | None = None
 

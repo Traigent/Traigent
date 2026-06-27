@@ -107,7 +107,6 @@ def test_presence_penalty_rejects_invalid_range(penalty):
         [
             "edge_analytics",
             "local",
-            "privacy",
             "hybrid",
             "hybrid_api",
             ExecutionMode.EDGE_ANALYTICS,
@@ -118,23 +117,26 @@ def test_presence_penalty_rejects_invalid_range(penalty):
 )
 def test_execution_mode_accepts_valid_values(mode):
     """Property: Supported execution modes should be accepted."""
-    if isinstance(mode, str) and mode in {"local", "privacy"}:
+    if isinstance(mode, str) and mode == "local":
         with pytest.warns(DeprecationWarning):
             config = TraigentConfig(execution_mode=mode)
     else:
         config = TraigentConfig(execution_mode=mode)
-    # Privacy mode should be converted to hybrid with privacy_enabled
-    if isinstance(mode, str) and mode == "privacy":
-        assert config.execution_mode == "hybrid"
-        assert config.privacy_enabled is True
-    elif isinstance(mode, str) and mode == "local":
+    if isinstance(mode, str) and mode == "local":
         assert config.execution_mode == "edge_analytics"
     else:
         expected = mode.value if isinstance(mode, ExecutionMode) else mode
         assert config.execution_mode == expected
 
 
-@given(st.sampled_from(["local", "privacy", "standard", "cloud"]))
+@pytest.mark.parametrize("mode", ["privacy", "cloud"])
+def test_execution_mode_fails_closed_on_legacy_egress_selectors(mode):
+    """Fail-closed: legacy selectors that can route to cloud egress must raise ConfigurationError."""
+    with pytest.raises(ConfigurationError):
+        TraigentConfig(execution_mode=mode)
+
+
+@given(st.sampled_from(["local", "standard"]))
 def test_execution_mode_deprecated_values_warn_and_resolve(mode):
     """Property: Deprecated string aliases emit DeprecationWarning and resolve to a canonical mode."""
     import warnings
@@ -143,7 +145,7 @@ def test_execution_mode_deprecated_values_warn_and_resolve(mode):
         warnings.simplefilter("always")
         config = TraigentConfig(execution_mode=mode)
 
-    expected = "edge_analytics" if mode in {"local", "cloud"} else "hybrid"
+    expected = "edge_analytics" if mode == "local" else "hybrid"
     assert config.execution_mode == expected
     assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
@@ -282,11 +284,9 @@ def test_custom_params_preserved(custom_params):
         [
             "edge_analytics",
             "local",
-            "privacy",
             "hybrid",
             "hybrid_api",
             "standard",
-            "cloud",
             "",
             "  ",
             None,
@@ -297,9 +297,7 @@ def test_resolve_execution_mode_handles_all_valid_inputs(mode_str):
     """Property: resolve_execution_mode should handle all valid inputs."""
     if isinstance(mode_str, str) and mode_str.strip().lower() in {
         "local",
-        "privacy",
         "standard",
-        "cloud",
     }:
         with pytest.warns(DeprecationWarning):
             result = resolve_execution_mode(mode_str)
@@ -310,6 +308,13 @@ def test_resolve_execution_mode_handles_all_valid_inputs(mode_str):
     # Empty strings and None should use default
     if not mode_str or (isinstance(mode_str, str) and not mode_str.strip()):
         assert result == ExecutionMode.EDGE_ANALYTICS  # default
+
+
+@pytest.mark.parametrize("mode", ["privacy", "cloud"])
+def test_resolve_execution_mode_fails_closed_on_legacy_egress_selectors(mode):
+    """Fail-closed: resolve_execution_mode raises ValueError for legacy egress selectors."""
+    with pytest.raises(ValueError, match="fails closed"):
+        resolve_execution_mode(mode)
 
 
 @given(

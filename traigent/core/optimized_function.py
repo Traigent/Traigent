@@ -37,7 +37,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.strategy_presets import (
     NormalizedStrategyPreset,
@@ -94,6 +94,7 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator
+from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
@@ -108,6 +109,7 @@ from traigent.utils.cost_calculator import (
     UnknownModelError,
     find_models_missing_price_coverage,
 )
+from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -125,6 +127,11 @@ from traigent.utils.validation import (
 )
 
 logger = get_logger(__name__)
+
+# Type parameters for the @optimize decorator's generic return type.
+# _P captures the wrapped function's parameter spec; _R captures its return type.
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 def _resolve_callbacks(
@@ -327,11 +334,16 @@ def _emit_cost_warning_once() -> None:
     sys.stderr.flush()
 
 
-class OptimizedFunction:
+class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
     This class provides the optimization interface for decorated functions,
     including methods to run optimization, get results, and analyze performance.
+
+    The class is generic over the wrapped function's parameter spec (*_P*) and
+    return type (*_R*), so static type-checkers can preserve the original
+    function signature through the decorator and still expose the
+    :meth:`optimize` / :meth:`optimize_sync` method surface.
     """
 
     _csm: ConfigStateManager
@@ -382,6 +394,13 @@ class OptimizedFunction:
             **kwargs: Additional configuration
         """
         # Extract decorator-provided metadata before core storage
+        max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
+        self._max_trials_uses_sdk_default = (
+            "max_trials" not in kwargs
+            if max_trials_explicit is None
+            else not bool(max_trials_explicit)
+        )
+        self._max_trials_default_notice_logged = False
         self._requested_execution_mode = kwargs.pop("requested_execution_mode", None)
         provided_execution_policy = kwargs.pop("execution_policy", None)
         self.execution_policy = (
@@ -497,8 +516,6 @@ class OptimizedFunction:
                 execution_mode=execution_mode,
                 source_hint="optimized_function",
             )
-        else:
-            execution_mode = self._requested_execution_mode or execution_mode
 
         try:
             effective_mode_enum = validate_execution_mode(execution_mode)
@@ -595,7 +612,7 @@ class OptimizedFunction:
         self.algorithm = kwargs.pop("algorithm", "random")
         kwargs["algorithm"] = self.algorithm
 
-        self.max_trials = kwargs.pop("max_trials", 50)
+        self.max_trials = kwargs.pop("max_trials", DEFAULT_MAX_TRIALS)
         kwargs["max_trials"] = self.max_trials
 
         # Experiment display name: decorator param > TRAIGENT_EXPERIMENT_NAME > func.__name__
@@ -723,6 +740,11 @@ class OptimizedFunction:
             kwargs, sentinel, "strategy_preset", None
         )
 
+        # Warm-start: seed a new run from a prior experiment's learned configs.
+        self.warm_start_from = self._store_optional_param(
+            kwargs, sentinel, "warm_start_from", None
+        )
+
         self.kwargs = kwargs
         excluded_runtime_keys = {
             "algorithm",
@@ -747,6 +769,7 @@ class OptimizedFunction:
             # Safety constraints
             "safety_constraints",
             "strategy_preset",
+            "warm_start_from",
         }
         self._decorator_runtime_overrides = {
             key: value
@@ -972,15 +995,19 @@ class OptimizedFunction:
             self.func, self._current_config, self.config_param
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """Make the optimized function callable."""
+    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        """Make the optimized function callable.
+
+        The signature is typed generically so that a decorated function
+        preserves its original parameter / return types under mypy/pyright.
+        """
         wrapped_func = self._wrapped_func
         # If framework overrides are enabled, use them during function call
         if self.auto_override_frameworks and self.framework_targets:
             with override_context(self.framework_targets):
-                return wrapped_func(*args, **kwargs)
+                return cast(_R, wrapped_func(*args, **kwargs))
         else:
-            return wrapped_func(*args, **kwargs)
+            return cast(_R, wrapped_func(*args, **kwargs))
 
     def _trial_callable_for_config_space(
         self,
@@ -1759,6 +1786,33 @@ class OptimizedFunction:
         )
         return evaluator
 
+    def _build_artifact_fingerprint_payload(
+        self,
+        *,
+        dataset: Dataset,
+        configuration_space: dict[str, Any],
+        custom_evaluator: Callable[..., Any] | None,
+    ) -> dict[str, dict[str, Any]]:
+        """Build privacy-safe artifact fingerprints for session creation."""
+        external: Any = None
+        if self.execution_mode == ExecutionMode.HYBRID_API.value:
+            external = {
+                "kind": "hybrid_api",
+                "endpoint": getattr(self, "hybrid_api_endpoint", None),
+            }
+        elif getattr(self, "external_service_evaluator", None) is not None:
+            external = getattr(self, "external_service_evaluator", None)
+
+        return build_artifact_fingerprints(
+            dataset=dataset,
+            func=self.func,
+            custom_evaluator=custom_evaluator or self.custom_evaluator,
+            scoring_function=self.scoring_function,
+            metric_functions=self.metric_functions,
+            external=external,
+            configuration_space=configuration_space,
+        )
+
     def _build_optimization_orchestrator(
         self,
         optimizer: Any,
@@ -1771,6 +1825,7 @@ class OptimizedFunction:
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
+        artifact_fingerprint_payload: dict[str, dict[str, Any]],
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -1784,6 +1839,7 @@ class OptimizedFunction:
             global_measures=getattr(self, "global_measures", None),
             promotion_gate=getattr(self, "promotion_gate", None),
             safety_constraints=getattr(self, "safety_constraints", None),
+            warm_start_from=getattr(self, "warm_start_from", None),
         )
 
         # Auto-initialize workflow traces tracker if backend is configured
@@ -1806,6 +1862,12 @@ class OptimizedFunction:
         )
 
         orchestrator.samples_include_pruned = samples_include_pruned_value
+        orchestrator.artifact_fingerprints = artifact_fingerprint_payload.get(
+            "artifact_fingerprints"
+        )
+        orchestrator.fingerprint_meta = artifact_fingerprint_payload.get(
+            "fingerprint_meta"
+        )
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -1946,6 +2008,7 @@ class OptimizedFunction:
         effective_config_space: dict[str, Any],
         algorithm_kwargs: dict[str, Any],
         traigent_config: TraigentConfig,
+        artifact_fingerprint_payload: dict[str, dict[str, Any]],
         effective_privacy_enabled: bool,
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
@@ -2006,6 +2069,10 @@ class OptimizedFunction:
                     "algorithm": policy.algorithm,
                     "source": SOURCE_CLOUD_BRAIN,
                 },
+                artifact_fingerprints=artifact_fingerprint_payload.get(
+                    "artifact_fingerprints"
+                ),
+                fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
                 context=traigent_config,
                 **optimizer_kwargs,
             )
@@ -2027,6 +2094,7 @@ class OptimizedFunction:
                 effective_parallel_trials=effective_parallel_trials,
                 samples_include_pruned_value=samples_include_pruned_value,
                 algorithm_kwargs=algorithm_kwargs,
+                artifact_fingerprint_payload=artifact_fingerprint_payload,
             )
             orchestrator._cloud_guidance_client = cloud_client
             return await self._run_and_finalize_optimization(
@@ -2315,6 +2383,7 @@ Remediation:
             configuration_space = discovered_config_space
 
         # Phase 1: Resolve and validate parameters
+        requested_max_trials = max_trials
         algorithm, max_trials, effective_config_space = resolve_execution_parameters(
             algorithm,
             max_trials,
@@ -2323,6 +2392,20 @@ Remediation:
             fallback_algorithm=cast(str, getattr(self, "algorithm", "grid")),
             fallback_max_trials=getattr(self, "max_trials", None),
         )
+        used_implicit_default_max_trials = (
+            requested_max_trials is None
+            and getattr(self, "_max_trials_uses_sdk_default", False)
+            and max_trials == DEFAULT_MAX_TRIALS
+        )
+        if (
+            used_implicit_default_max_trials
+            and not self._max_trials_default_notice_logged
+        ):
+            logger.info(
+                "Using default max_trials=%d; pass max_trials=... to change.",
+                max_trials,
+            )
+            self._max_trials_default_notice_logged = True
 
         stored_policy = getattr(self, "execution_policy", None)
         if not isinstance(stored_policy, ResolvedExecutionPolicy):
@@ -2380,6 +2463,12 @@ Remediation:
             ),
         )
 
+        artifact_fingerprint_payload = self._build_artifact_fingerprint_payload(
+            dataset=dataset,
+            configuration_space=effective_config_space,
+            custom_evaluator=custom_evaluator,
+        )
+
         # Phase 4: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
             resolve_effective_parallel_config(
@@ -2398,6 +2487,7 @@ Remediation:
             effective_config_space,
             algorithm_kwargs,
             traigent_config,
+            artifact_fingerprint_payload,
             effective_privacy_enabled,
             effective_parallel_trials,
             samples_include_pruned_value,
@@ -2459,6 +2549,7 @@ Remediation:
             effective_parallel_trials=effective_parallel_trials,
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
+            artifact_fingerprint_payload=artifact_fingerprint_payload,
         )
 
         # Phase 9: Run optimization and finalize
@@ -2572,7 +2663,7 @@ Remediation:
                 dataset=dataset,
                 configuration_space=effective_config_space,
                 objectives=self.objectives,
-                max_trials=max_trials if max_trials is not None else 50,
+                max_trials=max_trials if max_trials is not None else DEFAULT_MAX_TRIALS,
                 local_function=self.func,
             )
             return await self._resolve_awaitable_value(cloud_candidate)

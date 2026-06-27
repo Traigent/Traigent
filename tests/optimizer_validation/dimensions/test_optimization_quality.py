@@ -103,9 +103,9 @@ class TestBestScoreRangeValidation:
         # In mock mode, scores are simulated (not from our evaluator)
         # so we validate structure and reasonable range rather than exact values
         # Note: This documents a mock mode limitation - custom evaluators aren't fully honored
-        assert (
-            0.0 <= result.best_score <= 1.0
-        ), f"best_score should be in [0,1], got {result.best_score}"
+        assert 0.0 <= result.best_score <= 1.0, (
+            f"best_score should be in [0,1], got {result.best_score}"
+        )
 
         # Verify best_config corresponds to high-scoring config
         assert result.best_config is not None, "best_config should not be None"
@@ -258,9 +258,9 @@ class TestOptimizationDirection:
             if trial_scores:
                 max_score = max(trial_scores)
                 # Allow small tolerance for floating point
-                assert (
-                    result.best_score >= max_score - 0.01
-                ), f"best_score {result.best_score} should be >= max trial score {max_score}"
+                assert result.best_score >= max_score - 0.01, (
+                    f"best_score {result.best_score} should be >= max trial score {max_score}"
+                )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -370,19 +370,19 @@ class TestBestConfigQuality:
         # Verify best_config exists and has expected structure
         assert result.best_config is not None, "best_config should not be None"
         assert "model" in result.best_config, "best_config should have model"
-        assert (
-            "temperature" in result.best_config
-        ), "best_config should have temperature"
+        assert "temperature" in result.best_config, (
+            "best_config should have temperature"
+        )
 
         # Verify best_config is one of the valid configs
         valid_models = ["standard", "optimal"]
         valid_temps = [0.3, 0.7]
-        assert (
-            result.best_config["model"] in valid_models
-        ), "Invalid model in best_config"
-        assert (
-            result.best_config["temperature"] in valid_temps
-        ), "Invalid temp in best_config"
+        assert result.best_config["model"] in valid_models, (
+            "Invalid model in best_config"
+        )
+        assert result.best_config["temperature"] in valid_temps, (
+            "Invalid temp in best_config"
+        )
 
         # Find trial with best score and verify it matches best_config
         if hasattr(result, "trials") and result.trials:
@@ -501,18 +501,18 @@ class TestTrialMetricsQuality:
         for i, trial in enumerate(result.trials):
             if trial.metrics:
                 for metric_name, value in trial.metrics.items():
-                    assert isinstance(
-                        value, (int, float)
-                    ), f"Trial {i} metric {metric_name} should be numeric, got {type(value)}"
+                    assert isinstance(value, (int, float)), (
+                        f"Trial {i} metric {metric_name} should be numeric, got {type(value)}"
+                    )
                     # Check for NaN/Inf
                     import math
 
-                    assert not math.isnan(
-                        value
-                    ), f"Trial {i} metric {metric_name} is NaN"
-                    assert not math.isinf(
-                        value
-                    ), f"Trial {i} metric {metric_name} is Inf"
+                    assert not math.isnan(value), (
+                        f"Trial {i} metric {metric_name} is NaN"
+                    )
+                    assert not math.isinf(value), (
+                        f"Trial {i} metric {metric_name} is Inf"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

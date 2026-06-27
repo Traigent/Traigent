@@ -12,10 +12,13 @@ from traigent.api.strategy_presets import (
     MAX_ACCURACY_THEN_CHEAPEST,
     PARETO_FRONTIER,
     QUALITY_FLOOR_MIN_COST,
+    VALID_PRESET_NAMES,
+    UnknownStrategyPresetError,
 )
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
+from traigent.utils.exceptions import ConfigurationError
 
 
 def _write_environment_tvl_spec(tmp_path: Path) -> Path:
@@ -113,14 +116,15 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_deprecated_cloud_resolves_to_edge_analytics_mode(self):
-        """Deprecated cloud keeps cloud-first policy with edge_analytics compat mode."""
-        import warnings
-
+    def test_execution_bundle_deprecated_cloud_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Deprecated cloud fails closed even when the old env override is set."""
         from traigent.api.decorators import ExecutionOptions
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -131,11 +135,6 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
-
-        assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.execution_mode == "edge_analytics"
-        assert sample_function.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
         """Direct runtime options should accept hybrid_api_transport."""
@@ -193,7 +192,7 @@ class TestOptimizeDecorator:
         """Regression: max_trials from decorator must reach OptimizedFunction.
 
         Bug: max_trials went into combined_settings via record_option but was
-        never extracted, so OptimizedFunction always got the default of 50.
+        never extracted, so OptimizedFunction always got the SDK default.
         """
 
         @optimize(
@@ -207,6 +206,18 @@ class TestOptimizeDecorator:
         assert sample_function.max_trials == 10, (
             f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
         )
+
+    def test_decorator_omitted_max_trials_uses_sdk_default(self):
+        """Omitting max_trials on the decorator should use the shared default."""
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.max_trials == 10
 
     def test_decorator_accepts_algorithm_runtime_default(self):
         """Decorator-level algorithm should become the optimize() default."""
@@ -222,8 +233,8 @@ class TestOptimizeDecorator:
         assert sample_function.algorithm == "grid"
 
     def test_decorator_rejects_unknown_strategy_name(self):
-        """Non-preset strategy values should raise ValueError."""
-        with pytest.raises(ValueError, match="Unknown strategy preset"):
+        """Non-preset strategy values should list valid presets."""
+        with pytest.raises(ValueError) as exc_info:
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -231,6 +242,15 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
+
+        assert isinstance(exc_info.value, UnknownStrategyPresetError)
+        message = str(exc_info.value)
+        assert message == (
+            f"Unknown strategy preset 'grid'. Valid presets: "
+            f"{', '.join(VALID_PRESET_NAMES)}."
+        )
+        for preset_name in VALID_PRESET_NAMES:
+            assert preset_name in message
 
     def test_decorator_accepts_strategy_preset(self):
         """Registered strategy names should configure advisory preset metadata."""
@@ -442,12 +462,13 @@ class TestOptimizeDecorator:
         result = complex_function("test", 10, "extra", key="value")
         assert "test-10-1-1" in result
 
-    def test_decorator_with_cloud_execution_mode_deprecated(self):
-        """Deprecated cloud mode warns and keeps edge_analytics compat mode."""
-        import warnings
+    def test_decorator_with_cloud_execution_mode_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Deprecated cloud mode raises before decorator construction."""
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 configuration_space={"model": ["claude", "gpt-4"]},
@@ -455,11 +476,6 @@ class TestOptimizeDecorator:
             )
             def ai_function(model: str) -> str:
                 return f"Using {model}"
-
-        assert isinstance(ai_function, OptimizedFunction)
-        assert ai_function.execution_mode == "edge_analytics"
-        assert ai_function.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_decorator_accepts_cost_limit_runtime_override(self):
         """cost_limit should be accepted as a runtime override key."""

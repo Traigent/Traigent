@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import time
 from typing import Any, Literal, cast, overload
+from collections.abc import Iterator
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
     AnnotationQueueDTO,
+    AnnotationQueueItemCompleteResultDTO,
+    AnnotationQueueItemCreateResultDTO,
     AnnotationQueueItemDTO,
     AnnotationQueueItemListResponse,
     AnnotationQueueItemStatus,
@@ -29,6 +32,7 @@ from traigent.evaluation.dtos import (
     JudgeConfigDTO,
     ScoreRecordDTO,
     ScoreRecordListResponse,
+    TypedMeasureDTO,
 )
 from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
@@ -36,6 +40,7 @@ from traigent.utils.exceptions import (
     ClientError,
     TraigentConnectionError,
 )
+from traigent.utils.pagination import iter_pages
 
 
 class EvaluationClient:
@@ -79,6 +84,37 @@ class EvaluationClient:
         payload = self._request_json("GET", path)
         return EvaluatorListResponse.from_dict(
             self._unwrap_data(payload, "evaluator list")
+        )
+
+    def iter_evaluators(
+        self,
+        *,
+        per_page: int = 100,
+        search: str | None = None,
+        measure_id: str | None = None,
+        target_type: EvaluationTargetType | str | None = None,
+        is_active: bool | None = None,
+    ) -> Iterator[EvaluatorDefinitionDTO]:
+        """Iterate over *all* evaluators across pages, fetching lazily.
+
+        Equivalent to calling :meth:`list_evaluators` in a ``while has_next``
+        loop, but without the boilerplate.  Filter arguments are forwarded
+        unchanged on every page request.
+
+        Parameters
+        ----------
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        search, measure_id, target_type, is_active:
+            Same filter semantics as :meth:`list_evaluators`.
+        """
+        yield from iter_pages(
+            self.list_evaluators,
+            per_page=per_page,
+            search=search,
+            measure_id=measure_id,
+            target_type=target_type,
+            is_active=is_active,
         )
 
     def get_evaluator(self, evaluator_id: str) -> EvaluatorDefinitionDTO:
@@ -216,6 +252,35 @@ class EvaluationClient:
         payload = self._request_json("GET", path)
         return EvaluatorRunListResponse.from_dict(
             self._unwrap_data(payload, "evaluator run list")
+        )
+
+    def iter_evaluator_runs(
+        self,
+        *,
+        per_page: int = 100,
+        evaluator_id: str | None = None,
+        target_type: EvaluationTargetType | str | None = None,
+        target_id: str | None = None,
+        status: EvaluatorRunStatus | str | None = None,
+    ) -> Iterator[EvaluatorRunDTO]:
+        """Iterate over *all* evaluator runs across pages, fetching lazily.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        evaluator_id, target_type, target_id, status:
+            Same filter semantics as :meth:`list_evaluator_runs`.
+        """
+        yield from iter_pages(
+            self.list_evaluator_runs,
+            per_page=per_page,
+            evaluator_id=evaluator_id,
+            target_type=target_type,
+            target_id=target_id,
+            status=status,
         )
 
     def get_evaluator_run(self, run_id: str) -> EvaluatorRunDTO:
@@ -367,6 +432,33 @@ class EvaluationClient:
             self._unwrap_data(payload, "score list")
         )
 
+    def iter_scores(
+        self,
+        *,
+        target: EvaluationTargetRefDTO | dict[str, Any],
+        measure_id: str | None = None,
+        per_page: int = 100,
+    ) -> Iterator[ScoreRecordDTO]:
+        """Iterate over *all* score records for *target* across pages.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        target:
+            The evaluation target to fetch scores for (required).
+        measure_id:
+            Optional measure filter.
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        """
+        yield from iter_pages(
+            self.list_scores,
+            per_page=per_page,
+            target=target,
+            measure_id=measure_id,
+        )
+
     def list_annotation_queues(
         self,
         *,
@@ -391,6 +483,33 @@ class EvaluationClient:
         payload = self._request_json("GET", path)
         return AnnotationQueueListResponse.from_dict(
             self._unwrap_data(payload, "annotation queue list")
+        )
+
+    def iter_annotation_queues(
+        self,
+        *,
+        per_page: int = 100,
+        search: str | None = None,
+        target_type: EvaluationTargetType | str | None = None,
+        status: AnnotationQueueStatus | str | None = None,
+    ) -> Iterator[AnnotationQueueDTO]:
+        """Iterate over *all* annotation queues across pages, fetching lazily.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        search, target_type, status:
+            Same filter semantics as :meth:`list_annotation_queues`.
+        """
+        yield from iter_pages(
+            self.list_annotation_queues,
+            per_page=per_page,
+            search=search,
+            target_type=target_type,
+            status=status,
         )
 
     def get_annotation_queue(self, queue_id: str) -> AnnotationQueueDTO:
@@ -446,7 +565,7 @@ class EvaluationClient:
         *,
         targets: list[EvaluationTargetRefDTO | dict[str, Any]],
         assigned_user_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> AnnotationQueueItemCreateResultDTO:
         normalized_targets = [
             (
                 item.to_dict()
@@ -455,16 +574,18 @@ class EvaluationClient:
             )
             for item in targets
         ]
-        return self._unwrap_data(
-            self._request_json(
-                "POST",
-                f"/annotation-queues/{queue_id}/items",
-                {
-                    "targets": normalized_targets,
-                    "assigned_user_id": assigned_user_id,
-                },
-            ),
-            "annotation queue item create",
+        return AnnotationQueueItemCreateResultDTO.from_dict(
+            self._unwrap_data(
+                self._request_json(
+                    "POST",
+                    f"/annotation-queues/{queue_id}/items",
+                    {
+                        "targets": normalized_targets,
+                        "assigned_user_id": assigned_user_id,
+                    },
+                ),
+                "annotation queue item create",
+            )
         )
 
     def list_annotation_queue_items(
@@ -490,6 +611,37 @@ class EvaluationClient:
         payload = self._request_json("GET", path)
         return AnnotationQueueItemListResponse.from_dict(
             self._unwrap_data(payload, "annotation queue item list")
+        )
+
+    def iter_annotation_queue_items(
+        self,
+        queue_id: str,
+        *,
+        per_page: int = 100,
+        status: AnnotationQueueItemStatus | str | None = None,
+        assigned_user_id: str | None = None,
+        target_id: str | None = None,
+    ) -> Iterator[AnnotationQueueItemDTO]:
+        """Iterate over *all* items in an annotation queue across pages.
+
+        Filter arguments are forwarded unchanged on every page request.
+
+        Parameters
+        ----------
+        queue_id:
+            The annotation queue to iterate over.
+        per_page:
+            Items per page.  Defaults to 100 to minimise round-trips.
+        status, assigned_user_id, target_id:
+            Same filter semantics as :meth:`list_annotation_queue_items`.
+        """
+        yield from iter_pages(
+            self.list_annotation_queue_items,
+            queue_id,
+            per_page=per_page,
+            status=status,
+            assigned_user_id=assigned_user_id,
+            target_id=target_id,
         )
 
     def get_next_annotation_queue_item(
@@ -529,7 +681,7 @@ class EvaluationClient:
         *,
         scores: list[dict[str, Any]],
         note: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> AnnotationQueueItemCompleteResultDTO:
         response = self._request_json(
             "POST",
             f"/annotation-queues/items/{item_id}/complete",
@@ -538,20 +690,26 @@ class EvaluationClient:
                 "note": note,
             },
         )
-        return self._unwrap_data(response, "annotation queue completion")
+        return AnnotationQueueItemCompleteResultDTO.from_dict(
+            self._unwrap_data(response, "annotation queue completion")
+        )
 
     def create_typed_measure(
         self,
         measure_data: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._request_measure_json("POST", "", measure_data)
+    ) -> TypedMeasureDTO:
+        return TypedMeasureDTO.from_dict(
+            self._request_measure_json("POST", "", measure_data)
+        )
 
     def update_typed_measure(
         self,
         measure_id: str,
         measure_data: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._request_measure_json("PUT", f"/{measure_id}", measure_data)
+    ) -> TypedMeasureDTO:
+        return TypedMeasureDTO.from_dict(
+            self._request_measure_json("PUT", f"/{measure_id}", measure_data)
+        )
 
     def judge_config_from_benchmark_payload(
         self,

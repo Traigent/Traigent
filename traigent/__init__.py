@@ -64,9 +64,16 @@ def _is_quickstart_invocation() -> bool:
     if not sys.argv:
         return False
     argv0 = sys.argv[0] or ""
-    # ``python -m traigent.examples.quickstart`` — argv[0] is the path
-    # to the quickstart's __main__.py
-    if argv0.endswith(("quickstart/__main__.py", "quickstart\\__main__.py")):
+    # ``python -m traigent.examples.quickstart`` and quickstart companion
+    # modules — argv[0] is the path to the module's .py file.
+    if argv0.endswith(
+        (
+            "quickstart/__main__.py",
+            "quickstart\\__main__.py",
+            "quickstart/publish_and_verify.py",
+            "quickstart\\publish_and_verify.py",
+        )
+    ):
         return True
     # ``traigent quickstart`` — argv[0] is the venv's bin/traigent script
     # and argv[1] is the subcommand name. Gate on argv[0] basename being
@@ -310,6 +317,14 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TenantSSOConfigDTO": ("traigent.admin", "TenantSSOConfigDTO"),
     # Evaluation DTOs
     "AnnotationQueueDTO": ("traigent.evaluation", "AnnotationQueueDTO"),
+    "AnnotationQueueItemCompleteResultDTO": (
+        "traigent.evaluation",
+        "AnnotationQueueItemCompleteResultDTO",
+    ),
+    "AnnotationQueueItemCreateResultDTO": (
+        "traigent.evaluation",
+        "AnnotationQueueItemCreateResultDTO",
+    ),
     "AnnotationQueueItemDTO": ("traigent.evaluation", "AnnotationQueueItemDTO"),
     "AnnotationQueueItemListResponse": (
         "traigent.evaluation",
@@ -339,6 +354,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ScoreRecordDTO": ("traigent.evaluation", "ScoreRecordDTO"),
     "ScoreRecordListResponse": ("traigent.evaluation", "ScoreRecordListResponse"),
     "ScoreSource": ("traigent.evaluation", "ScoreSource"),
+    "TypedMeasureDTO": ("traigent.evaluation", "TypedMeasureDTO"),
     # Observability DTOs and helpers
     "CorrelationIds": ("traigent.observability", "CorrelationIds"),
     "ObserveContext": ("traigent.observability", "ObserveContext"),
@@ -560,6 +576,8 @@ __all__ = [
     "TenantMembershipStatus",
     "TenantSSOConfigDTO",
     "AnnotationQueueDTO",
+    "AnnotationQueueItemCompleteResultDTO",
+    "AnnotationQueueItemCreateResultDTO",
     "AnnotationQueueItemDTO",
     "AnnotationQueueItemListResponse",
     "AnnotationQueueItemStatus",
@@ -578,6 +596,7 @@ __all__ = [
     "ScoreRecordDTO",
     "ScoreRecordListResponse",
     "ScoreSource",
+    "TypedMeasureDTO",
     "CorrelationIds",
     "ObserveContext",
     "ObservationDTO",

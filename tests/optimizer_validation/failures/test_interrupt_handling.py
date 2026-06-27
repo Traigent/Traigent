@@ -517,15 +517,15 @@ class TestResourceCleanup:
 
             _, result = await scenario_runner(scenario)
 
-            assert not isinstance(
-                result, Exception
-            ), f"Unexpected error on iteration {i}: {result}"
+            assert not isinstance(result, Exception), (
+                f"Unexpected error on iteration {i}: {result}"
+            )
 
             # Verify trials were executed
             if hasattr(result, "trials"):
-                assert (
-                    len(result.trials) >= 1
-                ), f"Sequential run {i} should complete at least one trial"
+                assert len(result.trials) >= 1, (
+                    f"Sequential run {i} should complete at least one trial"
+                )
                 for trial in result.trials:
                     config = getattr(trial, "config", {})
                     assert config, f"Trial in run {i} should have config"
@@ -589,9 +589,9 @@ class TestResourceCleanup:
         assert not isinstance(result2, Exception), f"Unexpected error: {result2}"
 
         if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) == 2
-            ), f"Expected 2 trials, got {len(result2.trials)}"
+            assert len(result2.trials) == 2, (
+                f"Expected 2 trials, got {len(result2.trials)}"
+            )
             # Verify trial configs are valid
             for trial in result2.trials:
                 config = getattr(trial, "config", {})
@@ -639,15 +639,15 @@ class TestResourceCleanup:
 
             _, result = await scenario_runner(scenario)
 
-            assert not isinstance(
-                result, Exception
-            ), f"Unexpected error with {algo_name}: {result}"
+            assert not isinstance(result, Exception), (
+                f"Unexpected error with {algo_name}: {result}"
+            )
 
             # Verify trials were executed
             if hasattr(result, "trials"):
-                assert (
-                    len(result.trials) >= 1
-                ), f"{algo_name} should complete at least one trial"
+                assert len(result.trials) >= 1, (
+                    f"{algo_name} should complete at least one trial"
+                )
                 for trial in result.trials:
                     config = getattr(trial, "config", {})
                     assert config, f"Trial in {algo_name} should have config"

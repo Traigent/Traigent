@@ -70,6 +70,12 @@ def _print_next_steps_table(payload: dict[str, Any]) -> None:
     experiment_run_id = payload.get("experiment_run_id", "unknown")
     console.print(f"\n[bold blue]Next Steps for {experiment_run_id}[/bold blue]\n")
 
+    posture = payload.get("posture")
+    if isinstance(posture, dict):
+        summary_text = posture.get("summary_text")
+        if summary_text:
+            console.print(f"[bold]Posture:[/bold] {summary_text}\n")
+
     rows = payload.get("next_steps") or []
     if rows:
         table = Table(show_header=True, header_style="bold magenta")

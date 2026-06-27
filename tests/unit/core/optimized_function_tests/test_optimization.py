@@ -12,6 +12,7 @@ import pytest
 
 from traigent.api.strategy_presets import QUALITY_FLOOR_MIN_COST
 from traigent.api.types import (
+    ExampleResult,
     OptimizationResult,
     OptimizationStatus,
     TrialResult,
@@ -19,9 +20,10 @@ from traigent.api.types import (
 )
 from traigent.core.objectives import create_default_objectives
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.spec_loader import TVLBudget, TVLSpecArtifact
 from traigent.utils.callbacks import ResultsTableCallback
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import ConfigurationError, OptimizationError
 
 from .test_fixtures import create_simple_evaluator
 
@@ -116,6 +118,53 @@ class TestOptimization:
 
             require(result == mock_result)
             require(result.best_config["temperature"] == pytest.approx(0.7))
+
+    def test_optimize_sync_returns_partial_result_after_keyboard_interrupt(self):
+        """optimize_sync returns partial trials when Ctrl-C interrupts a trial."""
+        calls = 0
+        dataset = Dataset([EvaluationExample({"text": "hello"}, "ok")])
+
+        def target_function(text: str, **_config) -> str:
+            return f"ok:{text}"
+
+        def interrupting_evaluator(func, config, example):
+            nonlocal calls
+            calls += 1
+            if calls > 1:
+                raise KeyboardInterrupt
+            output = func(example.input_data["text"], **config)
+            return ExampleResult(
+                example_id=f"example-{calls}",
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=output,
+                metrics={"accuracy": 1.0},
+                execution_time=0.0,
+                success=True,
+                error_message=None,
+            )
+
+        opt_func = OptimizedFunction(
+            func=target_function,
+            configuration_space={"temperature": [0.0, 0.5, 1.0]},
+            objectives=["accuracy"],
+            eval_dataset=dataset,
+            custom_evaluator=interrupting_evaluator,
+            max_trials=5,
+        )
+
+        result = opt_func.optimize_sync(
+            algorithm="grid",
+            max_trials=5,
+            progress_bar=False,
+        )
+
+        require(isinstance(result, OptimizationResult))
+        require(result.stop_reason == "user_cancelled")
+        require(result.status == OptimizationStatus.CANCELLED)
+        require(len(result.trials) == 1)
+        require(result.trials[0].status == TrialStatus.COMPLETED)
+        require(calls == 2)
 
     @pytest.mark.asyncio
     async def test_runtime_optimize_accepts_strategy_preset(
@@ -828,24 +877,25 @@ class TestOptimization:
             opt_func.apply_best_config()
 
     @pytest.mark.asyncio
-    async def test_optimization_with_deprecated_cloud_resolves_to_edge_analytics(
-        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    async def test_optimization_with_deprecated_cloud_fails_closed(
+        self,
+        simple_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+        monkeypatch,
     ):
-        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
-        import warnings
+        """Deprecated cloud mode raises before optimization setup."""
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            opt_func = OptimizedFunction(
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == "edge_analytics"
-        assert opt_func.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_get_optimization_results(
         self, simple_function, sample_config_space, sample_objectives

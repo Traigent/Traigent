@@ -214,6 +214,35 @@ class TestGetNextSteps:
         )
 
     @pytest.mark.asyncio
+    async def test_get_next_steps_preserves_optional_posture(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        payload_with_posture = {
+            **valid_next_steps_payload,
+            "posture": {
+                "summary_text": "Evidence is sufficient for a cautious promotion.",
+                "generated_at": "2026-06-27T09:30:00Z",
+            },
+        }
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload_with_posture
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_next_steps("run_123")
+
+        assert result == payload_with_posture
+        assert result["posture"] == payload_with_posture["posture"]
+
+    @pytest.mark.asyncio
     async def test_get_next_steps_404_mentions_backend_feature(self) -> None:
         from traigent.analytics.next_steps import NextStepsClient
 

@@ -84,6 +84,81 @@ record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
 
+_ACCURACY_REL_TOL = 1e-9
+_ACCURACY_ABS_TOL = 1e-12
+
+
+def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bool]:
+    """Coerce string outputs for scalar typed expected values."""
+    stripped = actual.strip()
+    if isinstance(expected, bool):
+        lowered = stripped.lower()
+        if lowered in {"true", "false"}:
+            return lowered == "true", True
+        return actual, False
+
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        try:
+            return float(stripped), True
+        except ValueError:
+            return actual, False
+
+    if isinstance(expected, float):
+        try:
+            return float(stripped), True
+        except ValueError:
+            return actual, False
+
+    return actual, False
+
+
+def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
+    """Return direct equality, treating bool as distinct from plain numerics.
+
+    Python's ``bool`` is an ``int`` subclass, so ``True == 1`` and ``False == 0``.
+    For typed exact-match accuracy that conflation silently scores a numeric
+    output as a boolean match (and vice versa). When exactly one side is a bool
+    and the other is a non-bool number, the values do not match.
+    """
+    if isinstance(actual, bool) != isinstance(expected, bool):
+        if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+            return False
+    return cast(bool, actual == expected)
+
+
+def _accuracy_values_match(actual: Any, expected: Any) -> bool:
+    """Return whether two accuracy values match under SDK exact-match semantics."""
+    original_actual = actual
+    if isinstance(actual, str) and not isinstance(expected, str):
+        actual, coerced = _coerce_string_to_expected_type(actual, expected)
+        if coerced:
+            logger.warning(
+                "Coercing string output %r to %s for exact-match accuracy comparison",
+                original_actual,
+                type(expected).__name__,
+            )
+
+    if isinstance(actual, str) and isinstance(expected, str):
+        return actual.strip().lower() == expected.strip().lower()
+
+    if (
+        (isinstance(actual, float) or isinstance(expected, float))
+        and not isinstance(actual, bool)
+        and not isinstance(expected, bool)
+    ):
+        try:
+            return math.isclose(
+                float(actual),
+                float(expected),
+                rel_tol=_ACCURACY_REL_TOL,
+                abs_tol=_ACCURACY_ABS_TOL,
+            )
+        except (TypeError, ValueError):
+            return _typed_accuracy_equality(actual, expected)
+
+    return _typed_accuracy_equality(actual, expected)
+
+
 try:  # pragma: no cover - import guard for optional dependency
     from traigent.metrics.ragas_metrics import (
         POPULAR_RAGAS_METRICS,
@@ -199,6 +274,40 @@ def _is_empty_expected_output(value: Any) -> bool:
     return False
 
 
+def _is_empty_input(value: Any) -> bool:
+    """Check if an input value is effectively empty."""
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if isinstance(value, CollectionsMapping) and not value:
+        return True
+    return False
+
+
+def _warn_if_inputs_missing(examples: list[EvaluationExample], source: str) -> None:
+    """Warn when examples have empty inputs."""
+    missing_count = sum(1 for ex in examples if _is_empty_input(ex.input_data))
+    if missing_count <= 0:
+        return
+
+    if missing_count == len(examples):
+        logger.warning(
+            "Dataset '%s' has no input values (input field missing or empty in all "
+            "%d examples). Evaluation prompts may not be meaningful.",
+            source,
+            len(examples),
+        )
+        return
+
+    logger.warning(
+        "Dataset '%s' has %d/%d examples with missing or empty input values.",
+        source,
+        missing_count,
+        len(examples),
+    )
+
+
 def _warn_if_expected_outputs_missing(
     examples: list[EvaluationExample], source: str
 ) -> None:
@@ -263,6 +372,7 @@ def _build_dataset(
     if not examples:
         raise ValidationError(f"No valid examples found in {source}")
 
+    _warn_if_inputs_missing(examples, source)
     _warn_if_expected_outputs_missing(examples, source)
     metadata_out = _build_dataset_metadata(
         resolved_path,
@@ -944,7 +1054,7 @@ class BaseEvaluator(ABC):
         for output, exp, error in zip(outputs, expected, errors, strict=False):
             # Skip if error occurred or expected output is missing/empty
             if error is None and not _is_empty_expected_output(exp):
-                if output == exp:
+                if _accuracy_values_match(output, exp):
                     correct += 1
                 total += 1
 
@@ -2118,7 +2228,11 @@ class BaseEvaluator(ABC):
         if error is None and example.expected_output is not None:
             try:
                 metrics_payload["accuracy"] = (
-                    1.0 if result.actual_output == example.expected_output else 0.0
+                    1.0
+                    if _accuracy_values_match(
+                        result.actual_output, example.expected_output
+                    )
+                    else 0.0
                 )
             except Exception as exc:
                 logger.warning(

@@ -152,6 +152,81 @@ class TestSessionFinalization:
         ]
 
     @pytest.mark.asyncio
+    async def test_finalize_session_surfaces_backend_warm_start_transfer(self, client):
+        """The opaque, IP-safe metadata.warm_start_transfer block from the backend
+        finalize response must be carried onto the SDK response metadata (it was
+        previously dropped, so result.metadata.warm_start_transfer stayed None)."""
+        session_id = "test-session-warmstart"
+        client.session_bridge.create_session_mapping(
+            session_id=session_id,
+            experiment_id="exp-ws",
+            experiment_run_id="run-ws",
+            function_name="ws_func",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+        transfer = {
+            "transfer_mode": "cold",
+            "final_warm_start_weight": "none",
+            "search_space_overlap": "unknown",
+            "n_seed_configs_applied": 0,
+            "refused_reason": "no_seed_configs",
+        }
+        backend_payload = {
+            "best_config": {"model": "gpt-4o"},
+            "best_metrics": {"accuracy": 0.9},
+            "metadata": {
+                "stop_reason": "max_trials_reached",
+                "warm_start_transfer": transfer,
+            },
+        }
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value=backend_payload)
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            response = await client._session_ops.finalize_session(session_id)
+
+        assert response.metadata["warm_start_transfer"] == transfer
+
+    @pytest.mark.asyncio
+    async def test_finalize_session_omits_warm_start_transfer_when_absent(self, client):
+        """No warm_start_transfer in backend metadata -> key absent (no synthetic)."""
+        session_id = "test-session-no-ws"
+        client.session_bridge.create_session_mapping(
+            session_id=session_id,
+            experiment_id="exp-nows",
+            experiment_run_id="run-nows",
+            function_name="nows_func",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"stop_reason": "timeout", "metadata": {}}
+        )
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            response = await client._session_ops.finalize_session(session_id)
+
+        assert "warm_start_transfer" not in response.metadata
+
+    @pytest.mark.asyncio
     async def test_finalize_session_partial_summary_lists_preserved_fields(
         self, client
     ):

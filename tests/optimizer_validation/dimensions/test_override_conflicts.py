@@ -72,9 +72,9 @@ class TestTVLOverrideConflicts:
                 for trial in result.trials:
                     if "model" in trial.config:
                         # Model should be locked to gpt-4o
-                        assert (
-                            trial.config["model"] == "gpt-4o"
-                        ), "TVL should lock model value"
+                        assert trial.config["model"] == "gpt-4o", (
+                            "TVL should lock model value"
+                        )
 
         # Emit evidence
 
@@ -130,9 +130,9 @@ class TestTVLOverrideConflicts:
         # All trials should have model locked to gpt-4
         if hasattr(result, "trials"):
             for trial in result.trials:
-                assert (
-                    trial.config.get("model") == "gpt-4"
-                ), "TVL should lock model to gpt-4"
+                assert trial.config.get("model") == "gpt-4", (
+                    "TVL should lock model to gpt-4"
+                )
 
         # Emit evidence
         validation = result_validator(scenario, result)

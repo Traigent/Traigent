@@ -74,6 +74,7 @@ _LEGACY_CONFIG_EXECUTION_MODE_VALUES = frozenset(
 _EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
     "local": ExecutionMode.EDGE_ANALYTICS,
 }
+_FAIL_CLOSED_LEGACY_EXECUTION_MODES = frozenset({"privacy", "cloud"})
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 _CONFIG_VALUE_UNSET = object()
@@ -165,10 +166,8 @@ def validate_algorithm_name(algorithm: str | None) -> str:
         or normalized in _SMART_ALGORITHMS
     ):
         return normalized
-    raise ValueError(
-        "algorithm must be 'auto', 'grid', 'random', or a known smart optimizer "
-        f"name, got {algorithm!r}"
-    )
+    valid = ", ".join(accepted_algorithm_values())
+    raise ValueError(f"algorithm must be one of: {valid}; got {algorithm!r}")
 
 
 def accepted_execution_mode_values() -> tuple[str, ...]:
@@ -183,6 +182,36 @@ def _accepted_execution_mode_message() -> str:
     return (
         "use algorithm='auto', 'grid', or 'random'; set offline=True for "
         "local-only, zero-egress optimization"
+    )
+
+
+def _raw_execution_mode_token(mode: ExecutionMode | str) -> str:
+    return mode.value if isinstance(mode, ExecutionMode) else str(mode)
+
+
+def _normalized_execution_mode_token(mode: ExecutionMode | str) -> str:
+    return _raw_execution_mode_token(mode).strip().lower()
+
+
+def is_fail_closed_legacy_execution_mode(mode: ExecutionMode | str | None) -> bool:
+    """Return whether a raw legacy selector must fail closed."""
+
+    return isinstance(mode, str) and (
+        _normalized_execution_mode_token(mode) in _FAIL_CLOSED_LEGACY_EXECUTION_MODES
+    )
+
+
+def fail_closed_legacy_execution_mode_message(mode: ExecutionMode | str) -> str:
+    """Actionable error for legacy selectors that can otherwise hide egress."""
+
+    raw_mode = _raw_execution_mode_token(mode)
+    return (
+        f"execution_mode={raw_mode!r} is a legacy selector and now fails closed "
+        "at the public API boundary because compatibility normalization can route "
+        "it to cloud egress. Remove execution_mode and use the supported execution "
+        "surface instead: algorithm='auto' for managed/cloud-first optimization; "
+        "offline=True, algorithm='grid', or algorithm='random' for local no-egress "
+        "optimization."
     )
 
 
@@ -269,21 +298,8 @@ def resolve_execution_mode(
                 "automatic optimization.",
             )
             return ExecutionMode.HYBRID
-        if normalized == "privacy":
-            _warn_deprecated_execution_mode_alias(
-                mode,
-                "It now maps to cloud-first automatic optimization. Use "
-                "offline=True for a no-egress local run.",
-            )
-            return ExecutionMode.HYBRID
-        if normalized == "cloud":
-            _warn_deprecated_execution_mode_alias(
-                mode,
-                "Use resolve_execution_policy() for the new cloud-first policy. "
-                "This deprecated compatibility helper still maps it to "
-                "edge_analytics.",
-            )
-            return ExecutionMode.EDGE_ANALYTICS
+        if normalized in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
+            raise ValueError(fail_closed_legacy_execution_mode_message(mode))
         if normalized == "local":
             _warn_deprecated_execution_mode_alias(
                 mode,
@@ -309,7 +325,9 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
 
     try:
         resolved = resolve_execution_mode(mode)
-    except ValueError:
+    except ValueError as exc:
+        if is_fail_closed_legacy_execution_mode(mode):
+            raise ConfigurationError(str(exc)) from None
         raise ConfigurationError(
             f"Unsupported execution selector {mode!r}; "
             f"{_accepted_execution_mode_message()}."
@@ -369,6 +387,10 @@ def resolve_execution_policy(
         normalized_mode = raw_mode.strip().lower()
         hint_parts.append(f"legacy_execution_mode={normalized_mode}")
 
+        if normalized_mode in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
+            raise ConfigurationError(
+                fail_closed_legacy_execution_mode_message(raw_mode)
+            )
         if normalized_mode in {"", "edge_analytics", "local"}:
             warnings.warn(
                 f"execution_mode={raw_mode!r} is deprecated. Mapping to "
@@ -383,23 +405,6 @@ def resolve_execution_policy(
                 f"execution_mode={raw_mode!r} is deprecated. Omit "
                 "execution_mode and use algorithm='auto' for cloud-first "
                 "automatic optimization.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        elif normalized_mode == "privacy":
-            warnings.warn(
-                "execution_mode='privacy' is deprecated and no longer means "
-                "no egress. Mapping to cloud-first automatic optimization; use "
-                "offline=True for no egress.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        elif normalized_mode == "cloud":
-            warnings.warn(
-                "execution_mode='cloud' is deprecated and now maps to "
-                "cloud-first automatic optimization. This is a semantic flip "
-                "from the historical local edge_analytics mapping; audit callers "
-                "and use offline=True for no egress.",
                 DeprecationWarning,
                 stacklevel=3,
             )
@@ -639,10 +644,7 @@ class TraigentConfig:
             _warn_deprecated_config_privacy_enabled()
 
         # Validate deprecated compatibility selector against supported runtime modes.
-        requested_mode = resolve_execution_mode(self.execution_mode)
-        mode_enum = validate_execution_mode(requested_mode)
-        if isinstance(self.execution_mode, str) and self.execution_mode == "privacy":
-            object.__setattr__(self, "privacy_enabled", True)
+        mode_enum = validate_execution_mode(self.execution_mode)
         object.__setattr__(self, "execution_mode", cast(str, mode_enum.value))
         object.__setattr__(self, "_warn_legacy_config_assignments", True)
 
@@ -934,11 +936,7 @@ class TraigentConfig:
             and value is not None
             and value is not _CONFIG_VALUE_UNSET
         ):
-            requested_mode = resolve_execution_mode(value)
-            resolved_mode = validate_execution_mode(requested_mode)
-            if isinstance(value, str) and value.strip().lower() == "privacy":
-                object.__setattr__(self, "privacy_enabled", True)
-                object.__setattr__(self, "_privacy_enforced_by_execution_mode", True)
+            resolved_mode = validate_execution_mode(value)
             value = resolved_mode.value
         elif key == "local_storage_path" and value:
             value = str(Path(value).expanduser().resolve())

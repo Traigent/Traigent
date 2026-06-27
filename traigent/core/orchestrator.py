@@ -8,6 +8,7 @@ import asyncio
 import copy
 import inspect
 import math
+import os
 import sys
 import time
 import uuid
@@ -112,7 +113,10 @@ from traigent.utils.function_identity import (
 )
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
-from traigent.utils.objectives import is_minimization_objective
+from traigent.utils.objectives import (
+    coerce_finite_objective_score,
+    is_minimization_objective,
+)
 from traigent.utils.optimization_logger import OptimizationLogger
 
 from .tracing import optimization_session_span, record_optimization_complete
@@ -205,6 +209,7 @@ class OptimizationOrchestrator:
         self.strategy_preset: NormalizedStrategyPreset | None = kwargs.pop(
             "strategy_preset", None
         )
+        self._warm_start_from: str | None = kwargs.pop("warm_start_from", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
 
@@ -237,6 +242,8 @@ class OptimizationOrchestrator:
         self._backend_client: BackendIntegratedClient | None = None
         self.backend_client = self._initialize_backend_client()
         self._initialize_runtime_state()
+        self.artifact_fingerprints: dict[str, str | None] | None = None
+        self.fingerprint_meta: dict[str, Any] | None = None
 
         # Interactive pause prompt adapter (None in non-interactive environments)
         from traigent.core.exception_handler import (
@@ -697,6 +704,10 @@ class OptimizationOrchestrator:
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
         self._stop_reason: StopReason | None = None
+        # #1404: bounded auto-retry budget for transient vendor errors (429/503)
+        # before the run loop gives up. Cumulative per category so the run always
+        # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
+        self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
         self._logger: OptimizationLogger | None = None
         self._logger_v2: Any | None = None
         self._logger_facade = LoggerFacade()
@@ -768,16 +779,22 @@ class OptimizationOrchestrator:
         if self.optimizer.objectives:
             primary_objective = self.optimizer.objectives[0]
             minimization = is_minimization_objective(primary_objective)
+            scored_trials = [
+                (trial, score)
+                for trial in rankable_trials
+                if (
+                    score := coerce_finite_objective_score(
+                        trial.metrics.get(primary_objective)
+                    )
+                )
+                is not None
+            ]
+            if not scored_trials:
+                return None
             if minimization:
-                best_trial = min(
-                    rankable_trials,
-                    key=lambda t: t.metrics.get(primary_objective, float("inf")),
-                )
+                best_trial = min(scored_trials, key=lambda item: item[1])[0]
             else:
-                best_trial = max(
-                    rankable_trials,
-                    key=lambda t: t.metrics.get(primary_objective, float("-inf")),
-                )
+                best_trial = max(scored_trials, key=lambda item: item[1])[0]
             self._best_trial_cached = best_trial
             return best_trial
 
@@ -1101,32 +1118,30 @@ class OptimizationOrchestrator:
 
     def _simple_is_better(self, trial_result: TrialResult) -> bool:
         """Check if trial_result is better than current best using simple comparison."""
-        if self._best_trial_cached is None:
-            return True
-
         if not self.optimizer.objectives:
             return True
 
         primary_objective = self.optimizer.objectives[0]
-        new_score = (
+        new_score_value = coerce_finite_objective_score(
             trial_result.get_metric(primary_objective)
             if hasattr(trial_result, "get_metric")
-            else ((trial_result.metrics or {}).get(primary_objective))
+            else (trial_result.metrics or {}).get(primary_objective)
         )
-        if new_score is None:
+        if new_score_value is None:
             return False
 
-        current_score = (
+        if self._best_trial_cached is None:
+            return True
+
+        current_score_value = coerce_finite_objective_score(
             self._best_trial_cached.get_metric(primary_objective)
             if hasattr(self._best_trial_cached, "get_metric")
             else (self._best_trial_cached.metrics or {}).get(primary_objective)
         )
-        if current_score is None:
+        if current_score_value is None:
             return True
 
         minimization = is_minimization_objective(primary_objective)
-        new_score_value = cast(float, new_score)
-        current_score_value = cast(float, current_score)
         if _primary_scores_tied(new_score_value, current_score_value):
             return self._secondary_tie_breaks_incumbent(trial_result, primary_objective)
         if minimization:
@@ -1157,6 +1172,13 @@ class OptimizationOrchestrator:
     def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
         if not self.optimizer.objectives:
             self._best_trial_cached = trial_result
+            return
+
+        primary_objective = self.optimizer.objectives[0]
+        if (
+            coerce_finite_objective_score(trial_result.get_metric(primary_objective))
+            is None
+        ):
             return
 
         # Track metrics for this trial
@@ -2086,19 +2108,23 @@ class OptimizationOrchestrator:
 
     @staticmethod
     def _populate_experiment_cloud_url(result: OptimizationResult) -> None:
-        """Populate result experiment_id/cloud_url from backend session metadata."""
+        """Populate backend experiment/run ids and portal URL from session metadata."""
         metadata = result.metadata or {}
         exp_id = metadata.get("experiment_id")
         if not exp_id:
             return
-        result.experiment_id = exp_id
+        run_id = metadata.get("experiment_run_id")
+        result.experiment_id = str(exp_id)
+        if run_id:
+            result.experiment_run_id = str(run_id)
         try:
             from traigent.cloud.sync_manager import build_experiment_url
             from traigent.config.backend_config import BackendConfig
 
             result.cloud_url = build_experiment_url(
                 BackendConfig.get_cloud_web_url(),
-                exp_id,
+                str(exp_id),
+                run_id=str(run_id) if run_id else None,
                 project_id=metadata.get("project_id"),
                 tenant_id=metadata.get("tenant_id"),
             )
@@ -2173,6 +2199,9 @@ class OptimizationOrchestrator:
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
+            warm_start_from=self._warm_start_from,
+            artifact_fingerprints=self.artifact_fingerprints,
+            fingerprint_meta=self.fingerprint_meta,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -2340,6 +2369,8 @@ class OptimizationOrchestrator:
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
                 metadata=metadata,
+                artifact_fingerprints=self.artifact_fingerprints,
+                fingerprint_meta=self.fingerprint_meta,
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -2402,8 +2433,19 @@ class OptimizationOrchestrator:
             )
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
-        """Check cost approval before optimization. Delegates to CostEstimator."""
+        """Check pre-run cost approval before optimization.
+
+        Delegates to CostEstimator, which raises CostLimitExceeded (an
+        OptimizationError subclass) when cost approval is declined. Mid-run
+        cost limits are handled separately as graceful ``stop_reason="cost_limit"``
+        results.
+        """
         self._cost_estimator.check_cost_approval(dataset)
+
+    def _is_cost_limit_reached(self) -> bool:
+        """Return whether the shared cost enforcer has hit its run limit."""
+        cost_enforcer = getattr(self, "cost_enforcer", None)
+        return bool(cost_enforcer is not None and cost_enforcer.is_limit_reached)
 
     def _check_budget_limits(
         self, trial_count: int
@@ -2416,6 +2458,10 @@ class OptimizationOrchestrator:
         remaining = (
             float("inf") if self.max_trials is None else self.max_trials - trial_count
         )
+
+        if self._is_cost_limit_reached():
+            logger.info("Cost limit reached")
+            return remaining, 0, "cost_limit"
 
         if remaining <= 0:
             logger.info(f"Trial limit reached: {self.max_trials}")
@@ -2434,7 +2480,7 @@ class OptimizationOrchestrator:
         """Record a budget stop reason and return True if the loop should break."""
         if not budget_stop:
             return False
-        if not self._stop_reason:
+        if budget_stop == "cost_limit" or not self._stop_reason:
             self._stop_reason = budget_stop
         return True
 
@@ -2535,12 +2581,96 @@ class OptimizationOrchestrator:
                 return trial_count, "break"
             return trial_count, "continue"  # User chose to resume
 
+    @staticmethod
+    def _vendor_retry_settings() -> tuple[int, float]:
+        """Resolve bounded vendor-retry budget and base backoff from env (#1404).
+
+        Returns ``(max_retries, base_backoff_seconds)``. Defaults to ``0``
+        (opt-in) so the documented graceful fail-stop contract is unchanged
+        unless the operator sets ``TRAIGENT_VENDOR_MAX_RETRIES``. A malformed
+        value also yields the default.
+        """
+
+        def _read(name: str, default: float, *, minimum: float) -> float:
+            raw = os.environ.get(name)
+            if raw is None or not raw.strip():
+                return default
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return default
+            return value if value >= minimum else default
+
+        max_retries = int(_read("TRAIGENT_VENDOR_MAX_RETRIES", 0.0, minimum=0.0))
+        base_backoff = _read("TRAIGENT_VENDOR_RETRY_BACKOFF", 1.0, minimum=0.0)
+        return max_retries, base_backoff
+
+    async def _maybe_auto_retry_vendor_error(self, exc: VendorPauseError) -> str | None:
+        """Bounded auto-retry/backoff for transient vendor errors (#1404).
+
+        For *recoverable* categories (rate limit / service unavailable) a single
+        transient ``429``/``503`` should not auto-stop an entire unattended run.
+        Sleeps with bounded backoff (honoring ``Retry-After`` when the vendor
+        exposes it) and returns ``"continue"`` up to ``TRAIGENT_VENDOR_MAX_RETRIES``
+        times per category. Returns ``None`` when no auto-retry applies, so the
+        caller falls back to the existing resume/stop prompt path. The budget is
+        cumulative per category, guaranteeing the loop always terminates.
+        """
+        category = exc.category
+        recoverable = {
+            VendorErrorCategory.RATE_LIMIT,
+            VendorErrorCategory.SERVICE_UNAVAILABLE,
+        }
+        if category not in recoverable:
+            return None
+
+        max_retries, base_backoff = self._vendor_retry_settings()
+        if max_retries <= 0:
+            return None
+
+        used = self._vendor_retry_counts.get(category, 0)
+        if used >= max_retries:
+            logger.warning(
+                "traigent.vendor_auto_retry exhausted category=%s attempts=%s/%s",
+                category.value,
+                used,
+                max_retries,
+            )
+            return None
+
+        self._vendor_retry_counts[category] = used + 1
+
+        # Honor a vendor-provided Retry-After when available, else exponential.
+        retry_after = getattr(exc.original_error, "retry_after", None)
+        try:
+            delay = float(retry_after) if retry_after is not None else None
+        except (TypeError, ValueError):
+            delay = None
+        if delay is None or delay < 0:
+            delay = base_backoff * (2**used)
+
+        logger.warning(
+            "traigent.vendor_auto_retry category=%s attempt=%s/%s backoff=%.2fs "
+            "(set TRAIGENT_VENDOR_MAX_RETRIES=0 to disable)",
+            category.value,
+            used + 1,
+            max_retries,
+            delay,
+        )
+        if delay > 0:
+            await asyncio.sleep(delay)
+        return "continue"
+
     async def _handle_vendor_pause(self, exc: VendorPauseError) -> str:
         """Prompt user to resume or stop after a vendor error.
 
         Returns:
             ``"continue"`` to retry the trial, ``"break"`` to stop.
         """
+        if exc.category is not None:
+            auto = await self._maybe_auto_retry_vendor_error(exc)
+            if auto is not None:
+                return auto
         if self._prompt_adapter is None or exc.category is None:
             return "break"
         decision = self._prompt_adapter.prompt_vendor_pause(
@@ -2766,6 +2896,40 @@ class OptimizationOrchestrator:
             f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
         )
 
+    async def _finalize_user_cancelled_optimization(
+        self,
+        session_id: str | None,
+        session_span: Any,
+        interrupt: BaseException,
+    ) -> OptimizationResult:
+        """Finalize completed trials after a user interrupt."""
+        self._stop_reason = "user_cancelled"
+        self._status = OptimizationStatus.CANCELLED
+        logger.warning(
+            "Optimization %s interrupted by user (%s); stopping and finalizing "
+            "with %d completed trial(s).",
+            self._optimization_id,
+            type(interrupt).__name__,
+            len(self._trials),
+        )
+        result = self._create_optimization_result()
+        try:
+            await self._finalize_optimization(result, session_id, session_span)
+        except Exception as finalize_error:
+            logger.warning(
+                "Finalization failed after user interrupt; returning partial "
+                "optimization result with %d completed trial(s): %s",
+                len(self._trials),
+                finalize_error,
+                exc_info=True,
+            )
+        # asyncio.run() delivers Ctrl-C to the running coroutine as
+        # CancelledError before it can re-raise KeyboardInterrupt. This public
+        # optimize() boundary intentionally returns the same cancelled partial
+        # result as the direct KeyboardInterrupt path; a second cancellation
+        # during finalization is not caught above and still propagates.
+        return result
+
     async def _run_optimization_with_tracing(
         self,
         func: Callable[..., Any],
@@ -2831,6 +2995,11 @@ class OptimizationOrchestrator:
             result = self._create_optimization_result()
             await self._finalize_optimization(result, session_id, session_span)
             return result
+
+        except (KeyboardInterrupt, asyncio.CancelledError) as interrupt:
+            return await self._finalize_user_cancelled_optimization(
+                session_id, session_span, interrupt
+            )
 
         except OptimizationError:
             self._status = OptimizationStatus.FAILED
@@ -3032,18 +3201,19 @@ class OptimizationOrchestrator:
         # Evaluate reusable stop conditions first
         stop_triggered, reason = self._stop_condition_manager.should_stop(self._trials)
         if stop_triggered:
-            if not self._stop_reason:
-                # Map stop condition reasons to StopReason literals
-                reason_mapping: dict[str | None, StopReason] = {
-                    "max_samples": "max_samples_reached",
-                    "max_trials": "max_trials_reached",
-                    "plateau": "plateau",
-                    "cost_limit": "cost_limit",
-                    "timeout": "timeout",
-                    "metric_limit": "metric_limit",
-                    "convergence": "convergence",
-                }
-                self._stop_reason = reason_mapping.get(reason, "condition")
+            # Map stop condition reasons to StopReason literals
+            reason_mapping: dict[str | None, StopReason] = {
+                "max_samples": "max_samples_reached",
+                "max_trials": "max_trials_reached",
+                "plateau": "plateau",
+                "cost_limit": "cost_limit",
+                "timeout": "timeout",
+                "metric_limit": "metric_limit",
+                "convergence": "convergence",
+            }
+            mapped_reason = reason_mapping.get(reason, "condition")
+            if mapped_reason == "cost_limit" or not self._stop_reason:
+                self._stop_reason = mapped_reason
             logger.info("Stopping: %s condition triggered", self._stop_reason)
             return True
 
@@ -3159,6 +3329,12 @@ class OptimizationOrchestrator:
         # Flag offline mode so callbacks can show appropriate hints
         if is_offline_requested(policy_from_config(self.traigent_config)):
             metadata["offline_mode"] = True
+
+        # Warm-start provenance: surface the prior experiment id that seeded
+        # this run so users can query result.metadata["warm_start_from"].
+        # Only present for warm-started runs; absent otherwise.
+        if self._warm_start_from:
+            metadata["warm_start_from"] = self._warm_start_from
 
         return metadata
 

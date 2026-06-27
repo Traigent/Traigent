@@ -202,7 +202,8 @@ class TestBackendBridgeValidation:
         )
 
         large_dataset = Dataset(
-            examples=[large_example] * 100, name="large_dataset"  # 1GB+ dataset
+            examples=[large_example] * 100,
+            name="large_dataset",  # 1GB+ dataset
         )
 
         # Should either handle gracefully or reject
@@ -359,9 +360,9 @@ class TestErrorHandling:
             examples, metadata = converter.sdk_dataset_to_backend_examples(test_dataset)
         except (ValueError, RecursionError) as e:
             msg = str(e).lower()
-            assert (
-                "circular" in msg or "recursion" in msg
-            ), f"Exception does not identify circular reference: {e!r}"
+            assert "circular" in msg or "recursion" in msg, (
+                f"Exception does not identify circular reference: {e!r}"
+            )
         else:
             assert len(examples) in (0, 1), (
                 f"Expected 0 or 1 examples after handling circular input, "

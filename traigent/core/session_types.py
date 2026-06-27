@@ -114,6 +114,7 @@ class SessionCreationResult:
     failure_response: SessionCreationFailureDetail | None = None
     project_id: str | None = None
     tenant_id: str | None = None
+    typed_legacy_session_create_400: bool = False
 
     def __str__(self) -> str:
         """Return the session ID string for backwards compatibility.
@@ -153,6 +154,7 @@ class SessionCreationResult:
         reason: SessionCreationFailureReason,
         detail: str | None = None,
         failure_response: SessionCreationFailureDetail | None = None,
+        typed_legacy_session_create_400: bool = False,
     ) -> SessionCreationResult:
         """Factory for a local-fallback session after backend failure."""
         return cls(
@@ -161,4 +163,5 @@ class SessionCreationResult:
             failure_reason=reason,
             failure_detail=detail,
             failure_response=failure_response,
+            typed_legacy_session_create_400=typed_legacy_session_create_400,
         )

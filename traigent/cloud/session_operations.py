@@ -328,6 +328,9 @@ class SessionOperations:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        warm_start_from: str | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -430,6 +433,7 @@ class SessionOperations:
                 # fallback when the caller supplied none (legacy shape keeps
                 # reading objectives[0] as its optimization_goal).
                 objectives=list(objectives) if objectives else [optimization_goal],
+                warm_start_from=warm_start_from or None,
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
                     # Carry the dataset label (content is not submitted) so the
@@ -444,6 +448,8 @@ class SessionOperations:
                 user_id=None,  # Privacy preserving
                 billing_tier="privacy",
                 metadata=metadata or {},
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
             )
 
             try:
@@ -570,7 +576,7 @@ class SessionOperations:
                 await self._reset_client_session("create_session auth_failure")
                 if _must_fail_loud(e):
                     raise
-                logger.debug("Backend auth failed for '%s': %s", function_name, e)
+                logger.warning("Backend auth failed for '%s': %s", function_name, e)
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
@@ -605,6 +611,9 @@ class SessionOperations:
                     reason=SessionCreationFailureReason.SESSION_FAILED,
                     detail=detail,
                     failure_response=failure_response,
+                    typed_legacy_session_create_400=bool(
+                        getattr(e, "typed_legacy_session_create_400", False)
+                    ),
                 )
 
         # Run async method in sync context
@@ -633,7 +642,15 @@ class SessionOperations:
         except AuthenticationError as exc:
             if _must_fail_loud(exc):
                 raise
-            logger.debug(
+            # Issue #1373 (the "outer create_session swallow"): an auth/scope
+            # failure that ESCAPES _create_session_async (e.g. from the
+            # has_api_key preflight, or the async-runner machinery) on a
+            # non-governed run must NOT fall to debug-only — a failed publish
+            # would be invisible at the default log level. Mirror the inner
+            # sibling (~:573) and surface at WARNING. The two sites are
+            # mutually exclusive per failure (a single AuthenticationError is
+            # caught by exactly one handler), so this does not double-log.
+            logger.warning(
                 "Backend auth failed for '%s': %s",
                 function_name,
                 exc,
@@ -1016,6 +1033,12 @@ class SessionOperations:
         backend_stop_reason = backend_summary.get("stop_reason")
         backend_convergence_history = backend_summary.get("convergence_history")
         backend_full_history = backend_summary.get("full_history")
+        backend_metadata = backend_summary.get("metadata")
+        backend_warm_start_transfer = (
+            backend_metadata.get("warm_start_transfer")
+            if isinstance(backend_metadata, dict)
+            else None
+        )
 
         summary_fields: list[str] = []
 
@@ -1116,6 +1139,14 @@ class SessionOperations:
                 # before treating best_config/best_metrics as authoritative.
                 "summary_available": summary_available,
                 "summary_fields": summary_fields,
+                # Pass the backend's opaque, IP-safe warm-start transfer block
+                # (transfer_mode / refused_reason / search_space_overlap / ...)
+                # through so the SDK can surface result.metadata.warm_start_transfer.
+                **(
+                    {"warm_start_transfer": backend_warm_start_transfer}
+                    if isinstance(backend_warm_start_transfer, dict)
+                    else {}
+                ),
             },
         )
 

@@ -30,6 +30,15 @@ from traigent.cloud.auth import AuthManager
 def _enable_backend_validation(monkeypatch):
     """These tests mock backend validation and must override CI offline mode."""
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    def _resolve_public_backend(_host, _port, *_args, **_kwargs):
+        return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_public_backend,
+    )
 
 
 class _FakeResponse:
@@ -112,6 +121,8 @@ def _clear_backend_validation_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "ENVIRONMENT",
         "TRAIGENT_ENV",
         "TRAIGENT_ENVIRONMENT",
+        "APP_ENV",
+        "FLASK_ENV",
         "TRAIGENT_ALLOW_INSECURE_BACKEND",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -229,11 +240,13 @@ async def test_validate_rejects_invalid_backend_validation_url():
     manager = AuthManager()
     manager.config.backend_base_url = "ftp://backend.example"
 
-    with patch("requests.post") as post:
-        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+    with (
+        patch("traigent.cloud.auth.aiohttp.ClientSession") as session,
+        pytest.raises(ValueError, match="must be http\\(s\\) with a host"),
+    ):
+        await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason == "backend validation URL is invalid"
-    post.assert_not_called()
+    session.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -243,111 +256,111 @@ async def test_validate_rejects_plaintext_backend_validation_url():
     manager.config.backend_base_url = "http://backend.example.test"
 
     with (
-        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
-        patch("requests.post") as post,
+        patch("traigent.cloud.auth.aiohttp.ClientSession") as session,
+        pytest.raises(ValueError, match="must use https in production"),
     ):
-        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+        await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason == "backend validation URL must use HTTPS"
-    post.assert_not_called()
+    session.assert_not_called()
 
 
-def test_backend_validation_url_default_denies_http_localhost(
+@pytest.mark.asyncio
+async def test_validate_rejects_http_localhost_backend_in_production(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Loopback HTTP remains denied by default."""
     _clear_backend_validation_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    manager = AuthManager()
+    manager.config.backend_base_url = "http://localhost:8006"
 
-    reason = AuthManager._validate_backend_validation_url(
-        "http://localhost:8006/api/v1/keys/validate"
-    )
+    with (
+        _patch_aiohttp({"valid": True}),
+        pytest.raises(ValueError, match="must use https in production"),
+    ):
+        await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason is not None
-    assert "ENVIRONMENT=development" in reason
-    assert "TRAIGENT_ALLOW_INSECURE_BACKEND=true" in reason
+    assert _FakeSession.last_post_kwargs is None
 
 
-def test_backend_validation_url_override_without_environment_still_denies(
+@pytest.mark.asyncio
+async def test_validate_rejects_https_localhost_backend_in_production(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Policy surface fails closed when the insecure override is set outside explicit dev."""
+    """Production backend validation must reject localhost even over HTTPS."""
     _clear_backend_validation_env(monkeypatch)
-    monkeypatch.setenv("TRAIGENT_ALLOW_INSECURE_BACKEND", "true")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    manager = AuthManager()
+    manager.config.backend_base_url = "https://localhost:8006"
 
-    reason = AuthManager._validate_backend_validation_url(
-        "http://localhost:8006/api/v1/keys/validate"
-    )
+    with (
+        _patch_aiohttp({"valid": True}),
+        pytest.raises(ValueError, match="not allowed in production"),
+    ):
+        await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason is not None
-    assert "TRAIGENT_ALLOW_INSECURE_BACKEND=true" in reason
+    assert _FakeSession.last_post_kwargs is None
 
 
-def test_backend_validation_url_dev_override_allows_loopback_http(
+@pytest.mark.asyncio
+async def test_validate_allows_localhost_backend_in_development(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Explicit non-production plus override allows only loopback HTTP."""
-    _clear_backend_validation_env(monkeypatch)
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("TRAIGENT_ALLOW_INSECURE_BACKEND", "true")
-
-    assert (
-        AuthManager._validate_backend_validation_url(
-            "http://localhost:8006/api/v1/keys/validate"
-        )
-        is None
-    )
-    assert (
-        AuthManager._validate_backend_validation_url(
-            "http://127.42.0.1:8006/api/v1/keys/validate"
-        )
-        is None
-    )
-
-
-def test_backend_validation_url_dev_override_does_not_allow_non_loopback_http(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The insecure dev override does not widen private-range or public HTTP URLs."""
+    """Explicit development mode may validate API keys against local backends."""
     _clear_backend_validation_env(monkeypatch)
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("TRAIGENT_ALLOW_INSECURE_BACKEND", "true")
+    manager = AuthManager()
+    manager.config.backend_base_url = "http://localhost:8006"
+    api_key = "tg_" + "x" * 61  # pragma: allowlist secret
 
+    with _patch_aiohttp({"valid": True}):
+        reason = await manager._validate_api_key_with_backend(api_key)
+
+    assert reason is None
+    assert _FakeSession.last_post_kwargs is not None
     assert (
-        AuthManager._validate_backend_validation_url(
-            "http://192.168.1.10:8006/api/v1/keys/validate"
-        )
-        == "backend validation URL host is not allowed"
+        _FakeSession.last_post_kwargs["url"]
+        == "http://localhost:8006/api/v1/keys/validate"
     )
-    assert (
-        AuthManager._validate_backend_validation_url(
-            "http://example.com/api/v1/keys/validate"
-        )
-        == "backend validation URL must use HTTPS"
-    )
+    assert _FakeSession.last_post_kwargs["headers"]["X-API-Key"] == api_key
 
 
-def test_backend_validation_url_https_global_hosts_unaffected(
+@pytest.mark.asyncio
+async def test_validate_rejects_dns_rebind_hostname_before_sending_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HTTPS global hosts remain valid without the loopback override."""
+    """HTTPS hostnames resolving to loopback must fail before X-API-Key is sent."""
     _clear_backend_validation_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "production")
 
-    assert (
-        AuthManager._validate_backend_validation_url(
-            "https://example.com/api/v1/keys/validate"
-        )
-        is None
+    def _resolve_to_loopback(host, _port, *_args, **_kwargs):
+        assert host == "rebind.example.test"
+        return [(0, 0, 0, "", ("127.0.0.1", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_to_loopback,
     )
+    manager = AuthManager()
+    manager.config.backend_base_url = "https://rebind.example.test"
+
+    with (
+        _patch_aiohttp({"valid": True}),
+        pytest.raises(ValueError, match="must not resolve to private"),
+    ):
+        await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert _FakeSession.last_post_kwargs is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "backend_url",
     [
-        "http://169.254.169.254/latest/meta-data",
+        "https://169.254.169.254/latest/meta-data",
         "https://10.0.0.1",
-        "http://127.0.0.1:5000",
-        "http://localhost:5000",
+        "https://127.0.0.1:5000",
+        "https://metadata.google.internal",
     ],
 )
 async def test_validate_rejects_non_global_backend_validation_hosts(backend_url):
@@ -356,14 +369,9 @@ async def test_validate_rejects_non_global_backend_validation_hosts(backend_url)
     manager.config.backend_base_url = backend_url
 
     with (
-        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
-        patch("requests.post") as post,
+        _patch_aiohttp({"valid": True}),
+        pytest.raises(ValueError),
     ):
-        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+        await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    if "127.0.0.1" in backend_url or "localhost" in backend_url:
-        assert reason is not None
-        assert "TRAIGENT_ALLOW_INSECURE_BACKEND=true" in reason
-    else:
-        assert reason == "backend validation URL host is not allowed"
-    post.assert_not_called()
+    assert _FakeSession.last_post_kwargs is None
