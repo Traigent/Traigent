@@ -328,12 +328,12 @@ class TestMCPRequestHandling:
 
                 # The client handles timeout gracefully - returns MCPResponse with success=False
                 result = await self.client.call_tool("test_tool", {})
-                assert (
-                    result.success is False
-                ), "Timeout should result in failed response"
-                assert (
-                    "timeout" in result.error_message.lower()
-                ), "Error message should mention timeout"
+                assert result.success is False, (
+                    "Timeout should result in failed response"
+                )
+                assert "timeout" in result.error_message.lower(), (
+                    "Error message should mention timeout"
+                )
 
 
 class TestMCPRetryMechanism:
@@ -1182,7 +1182,6 @@ class TestGlobalMCPClientFunctions:
         """Test get_production_mcp_client creates new client."""
         from traigent.cloud import production_mcp_client
         from traigent.cloud.production_mcp_client import (
-            _production_client,
             get_production_mcp_client,
         )
 
@@ -1237,9 +1236,7 @@ class TestGlobalMCPClientFunctions:
 
     def test_get_production_mcp_client_returns_existing(self):
         """Test get_production_mcp_client returns existing client."""
-        from traigent.cloud import production_mcp_client
         from traigent.cloud.production_mcp_client import (
-            MCPServerConfig,
             get_production_mcp_client,
         )
 
@@ -1931,9 +1928,9 @@ class TestCreateAgent:
                 await self.client.create_agent(spec)
 
             _, arguments = mock_call_tool.call_args.args
-            assert (
-                "agent_id" not in arguments
-            ), f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+            assert "agent_id" not in arguments, (
+                f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+            )
 
 
 class TestUploadDataset:

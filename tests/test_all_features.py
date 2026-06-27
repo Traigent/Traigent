@@ -28,9 +28,9 @@ def test_imports():
     print("✅ All imports successful")
     # Verify key imports are available
     assert traigent is not None, "traigent module should be importable"
-    assert (
-        OptimizationOrchestrator is not None
-    ), "OptimizationOrchestrator should be importable"
+    assert OptimizationOrchestrator is not None, (
+        "OptimizationOrchestrator should be importable"
+    )
 
 
 def test_basic_decorator():

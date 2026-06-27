@@ -296,7 +296,7 @@ class TestMeasuresDictValidation:
         measures = MeasuresDict({"a": 1, "b": 2, "c": 3})
 
         # Iterate over keys
-        keys = [k for k in measures]
+        keys = list(measures)
         assert set(keys) == {"a", "b", "c"}
 
         # Iterate over items

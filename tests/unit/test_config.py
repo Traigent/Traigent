@@ -460,9 +460,9 @@ class TestParameterValidation:
                 # Should log deprecation warning (check it was called with expected message)
                 assert mock_warning.called, "Expected warning to be logged"
                 warning_calls = [call[0][0] for call in mock_warning.call_args_list]
-                assert any(
-                    "Use new_param instead" in call for call in warning_calls
-                ), f"Expected deprecation message in: {warning_calls}"
+                assert any("Use new_param instead" in call for call in warning_calls), (
+                    f"Expected deprecation message in: {warning_calls}"
+                )
 
     def test_validate_parameter_multiple_issues(self):
         """Test validation with multiple issues (early return on type error)."""
@@ -516,12 +516,12 @@ class TestGlobalConfiguration:
 
             # Should warn about invalid options
             warning_calls = [call[0][0] for call in mock_warning.call_args_list]
-            assert any(
-                "invalid_option" in call for call in warning_calls
-            ), f"Expected warning about 'invalid_option' in: {warning_calls}"
-            assert any(
-                "another_invalid" in call for call in warning_calls
-            ), f"Expected warning about 'another_invalid' in: {warning_calls}"
+            assert any("invalid_option" in call for call in warning_calls), (
+                f"Expected warning about 'invalid_option' in: {warning_calls}"
+            )
+            assert any("another_invalid" in call for call in warning_calls), (
+                f"Expected warning about 'another_invalid' in: {warning_calls}"
+            )
 
     def test_configure_integrations_type_safety(self):
         """Test that configuration maintains type safety."""

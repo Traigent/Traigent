@@ -376,8 +376,10 @@ class TestConfigMapperPlatforms:
                 ),
             ],
             validation_rules=[
-                lambda spec: spec.model_parameters.get("model_identifier") is not None
-                or ValueError("Model required")
+                lambda spec: (
+                    spec.model_parameters.get("model_identifier") is not None
+                    or ValueError("Model required")
+                )
             ],
         )
 

@@ -202,6 +202,8 @@ class SessionCreationRequest:
     user_id: str | None = None
     billing_tier: str = "standard"
     metadata: dict[str, Any] = field(default_factory=dict)
+    artifact_fingerprints: dict[str, str | None] | None = None
+    fingerprint_meta: dict[str, Any] | None = None
     # Alternative parameter names for test compatibility
     problem_type: str | None = None
 

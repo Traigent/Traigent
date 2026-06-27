@@ -109,6 +109,7 @@ from traigent.utils.cost_calculator import (
     UnknownModelError,
     find_models_missing_price_coverage,
 )
+from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -1785,6 +1786,33 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         return evaluator
 
+    def _build_artifact_fingerprint_payload(
+        self,
+        *,
+        dataset: Dataset,
+        configuration_space: dict[str, Any],
+        custom_evaluator: Callable[..., Any] | None,
+    ) -> dict[str, dict[str, Any]]:
+        """Build privacy-safe artifact fingerprints for session creation."""
+        external: Any = None
+        if self.execution_mode == ExecutionMode.HYBRID_API.value:
+            external = {
+                "kind": "hybrid_api",
+                "endpoint": getattr(self, "hybrid_api_endpoint", None),
+            }
+        elif getattr(self, "external_service_evaluator", None) is not None:
+            external = getattr(self, "external_service_evaluator", None)
+
+        return build_artifact_fingerprints(
+            dataset=dataset,
+            func=self.func,
+            custom_evaluator=custom_evaluator or self.custom_evaluator,
+            scoring_function=self.scoring_function,
+            metric_functions=self.metric_functions,
+            external=external,
+            configuration_space=configuration_space,
+        )
+
     def _build_optimization_orchestrator(
         self,
         optimizer: Any,
@@ -1797,6 +1825,7 @@ class OptimizedFunction(Generic[_P, _R]):
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
+        artifact_fingerprint_payload: dict[str, dict[str, Any]],
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -1833,6 +1862,12 @@ class OptimizedFunction(Generic[_P, _R]):
         )
 
         orchestrator.samples_include_pruned = samples_include_pruned_value
+        orchestrator.artifact_fingerprints = artifact_fingerprint_payload.get(
+            "artifact_fingerprints"
+        )
+        orchestrator.fingerprint_meta = artifact_fingerprint_payload.get(
+            "fingerprint_meta"
+        )
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -1973,6 +2008,7 @@ class OptimizedFunction(Generic[_P, _R]):
         effective_config_space: dict[str, Any],
         algorithm_kwargs: dict[str, Any],
         traigent_config: TraigentConfig,
+        artifact_fingerprint_payload: dict[str, dict[str, Any]],
         effective_privacy_enabled: bool,
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
@@ -2033,6 +2069,10 @@ class OptimizedFunction(Generic[_P, _R]):
                     "algorithm": policy.algorithm,
                     "source": SOURCE_CLOUD_BRAIN,
                 },
+                artifact_fingerprints=artifact_fingerprint_payload.get(
+                    "artifact_fingerprints"
+                ),
+                fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
                 context=traigent_config,
                 **optimizer_kwargs,
             )
@@ -2054,6 +2094,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 effective_parallel_trials=effective_parallel_trials,
                 samples_include_pruned_value=samples_include_pruned_value,
                 algorithm_kwargs=algorithm_kwargs,
+                artifact_fingerprint_payload=artifact_fingerprint_payload,
             )
             orchestrator._cloud_guidance_client = cloud_client
             return await self._run_and_finalize_optimization(
@@ -2422,6 +2463,12 @@ Remediation:
             ),
         )
 
+        artifact_fingerprint_payload = self._build_artifact_fingerprint_payload(
+            dataset=dataset,
+            configuration_space=effective_config_space,
+            custom_evaluator=custom_evaluator,
+        )
+
         # Phase 4: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
             resolve_effective_parallel_config(
@@ -2440,6 +2487,7 @@ Remediation:
             effective_config_space,
             algorithm_kwargs,
             traigent_config,
+            artifact_fingerprint_payload,
             effective_privacy_enabled,
             effective_parallel_trials,
             samples_include_pruned_value,
@@ -2501,6 +2549,7 @@ Remediation:
             effective_parallel_trials=effective_parallel_trials,
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
+            artifact_fingerprint_payload=artifact_fingerprint_payload,
         )
 
         # Phase 9: Run optimization and finalize

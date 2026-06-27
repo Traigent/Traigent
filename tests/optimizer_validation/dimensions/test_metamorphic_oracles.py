@@ -97,9 +97,9 @@ class TestDirectionChangeMetamorphic:
                 max_best = max(max_scores)
                 min_best = min(min_scores)
                 # The "best" for max should be >= "best" for min (unless they're equal)
-                assert (
-                    max_best >= min_best
-                ), "Metamorphic violation: maximize best should be >= minimize best"
+                assert max_best >= min_best, (
+                    "Metamorphic violation: maximize best should be >= minimize best"
+                )
 
         validation_max = result_validator(scenario_max, result_max)
         validation_min = result_validator(scenario_min, result_min)
@@ -160,19 +160,19 @@ class TestConstraintMetamorphic:
 
         # Both should succeed
         assert not isinstance(result_free, Exception), f"Free failed: {result_free}"
-        assert not isinstance(
-            result_constrained, Exception
-        ), f"Constrained failed: {result_constrained}"
+        assert not isinstance(result_constrained, Exception), (
+            f"Constrained failed: {result_constrained}"
+        )
 
         # Explicit behavior assertions on results
         assert hasattr(result_free, "trials"), "Free result should have trials"
-        assert hasattr(
-            result_constrained, "trials"
-        ), "Constrained result should have trials"
+        assert hasattr(result_constrained, "trials"), (
+            "Constrained result should have trials"
+        )
         assert len(result_free.trials) >= 1, "Free result should have at least 1 trial"
-        assert (
-            len(result_constrained.trials) >= 1
-        ), "Constrained result should have at least 1 trial"
+        assert len(result_constrained.trials) >= 1, (
+            "Constrained result should have at least 1 trial"
+        )
         for trial in result_free.trials:
             assert trial.config, "Each free trial should have a config"
         for trial in result_constrained.trials:
@@ -185,9 +185,9 @@ class TestConstraintMetamorphic:
 
             # With the constraint, we should have fewer or equal trials
             # (In practice, constrained should have 3 trials vs 9)
-            assert (
-                constrained_count <= free_count
-            ), f"Metamorphic violation: constrained ({constrained_count}) > free ({free_count})"
+            assert constrained_count <= free_count, (
+                f"Metamorphic violation: constrained ({constrained_count}) > free ({free_count})"
+            )
 
             # Note: In mock mode, constraints may not be fully enforced
             # This documents a mock mode limitation - constraint enforcement varies
@@ -259,12 +259,12 @@ class TestSpaceSizeMetamorphic:
         # Explicit behavior assertions on results
         assert hasattr(result_small, "trials"), "Small result should have trials"
         assert hasattr(result_large, "trials"), "Large result should have trials"
-        assert (
-            len(result_small.trials) >= 1
-        ), "Small result should have at least 1 trial"
-        assert (
-            len(result_large.trials) >= 1
-        ), "Large result should have at least 1 trial"
+        assert len(result_small.trials) >= 1, (
+            "Small result should have at least 1 trial"
+        )
+        assert len(result_large.trials) >= 1, (
+            "Large result should have at least 1 trial"
+        )
         for trial in result_small.trials:
             assert trial.config, "Each small-space trial should have a config"
         for trial in result_large.trials:
@@ -275,14 +275,14 @@ class TestSpaceSizeMetamorphic:
             small_count = len(result_small.trials)
             large_count = len(result_large.trials)
 
-            assert (
-                small_count <= large_count
-            ), f"Metamorphic violation: small space ({small_count}) > large space ({large_count})"
+            assert small_count <= large_count, (
+                f"Metamorphic violation: small space ({small_count}) > large space ({large_count})"
+            )
 
             # Small space should exhaust at 2 trials
-            assert (
-                small_count <= 2
-            ), f"Small space should exhaust at 2, got {small_count}"
+            assert small_count <= 2, (
+                f"Small space should exhaust at 2, got {small_count}"
+            )
 
         validation_small = result_validator(scenario_small, result_small)
         validation_large = result_validator(scenario_large, result_large)
@@ -329,9 +329,9 @@ class TestSeedDeterminismMetamorphic:
         # METAMORPHIC PROPERTY: Same results with same seed
         if hasattr(result1, "trials") and hasattr(result2, "trials"):
             # Same number of trials
-            assert len(result1.trials) == len(
-                result2.trials
-            ), f"Metamorphic violation: different trial counts {len(result1.trials)} vs {len(result2.trials)}"
+            assert len(result1.trials) == len(result2.trials), (
+                f"Metamorphic violation: different trial counts {len(result1.trials)} vs {len(result2.trials)}"
+            )
 
             # In deterministic mode, configs should match
             # (Note: mock mode may not preserve full determinism)
@@ -408,15 +408,15 @@ class TestTrialCountMetamorphic:
         if result_few.best_score is not None and result_many.best_score is not None:
             # For maximize, more trials should find >= score
             # Using a small tolerance for floating point comparison
-            assert (
-                result_many.best_score >= result_few.best_score - 0.01
-            ), f"Metamorphic violation: many trials ({result_many.best_score}) < few trials ({result_few.best_score})"
+            assert result_many.best_score >= result_few.best_score - 0.01, (
+                f"Metamorphic violation: many trials ({result_many.best_score}) < few trials ({result_few.best_score})"
+            )
 
         # Verify trial counts - this should always hold
         if hasattr(result_few, "trials") and hasattr(result_many, "trials"):
-            assert len(result_few.trials) <= len(
-                result_many.trials
-            ), f"Metamorphic violation: few has more trials ({len(result_few.trials)}) than many ({len(result_many.trials)})"
+            assert len(result_few.trials) <= len(result_many.trials), (
+                f"Metamorphic violation: few has more trials ({len(result_few.trials)}) than many ({len(result_many.trials)})"
+            )
 
         validation_few = result_validator(scenario_few, result_few)
         validation_many = result_validator(scenario_many, result_many)

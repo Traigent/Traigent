@@ -711,9 +711,9 @@ class TestFrameworkRegistration:
         disable_framework_overrides()
 
         # Verify overrides were properly disabled
-        assert (
-            not override_manager.is_override_active()
-        ), "Override manager should be inactive after disable"
+        assert not override_manager.is_override_active(), (
+            "Override manager should be inactive after disable"
+        )
 
 
 class TestCompatibilityScenarios:

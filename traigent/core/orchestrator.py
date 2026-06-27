@@ -242,6 +242,8 @@ class OptimizationOrchestrator:
         self._backend_client: BackendIntegratedClient | None = None
         self.backend_client = self._initialize_backend_client()
         self._initialize_runtime_state()
+        self.artifact_fingerprints: dict[str, str | None] | None = None
+        self.fingerprint_meta: dict[str, Any] | None = None
 
         # Interactive pause prompt adapter (None in non-interactive environments)
         from traigent.core.exception_handler import (
@@ -2198,6 +2200,8 @@ class OptimizationOrchestrator:
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
             warm_start_from=self._warm_start_from,
+            artifact_fingerprints=self.artifact_fingerprints,
+            fingerprint_meta=self.fingerprint_meta,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -2365,6 +2369,8 @@ class OptimizationOrchestrator:
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
                 metadata=metadata,
+                artifact_fingerprints=self.artifact_fingerprints,
+                fingerprint_meta=self.fingerprint_meta,
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(

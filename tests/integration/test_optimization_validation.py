@@ -61,7 +61,7 @@ _write_jsonl(
     ],
 )
 
-import traigent
+import traigent  # noqa: E402
 
 
 @traigent.optimize(
@@ -83,7 +83,9 @@ def analyze_sentiment(
     sentiment = (
         "positive"
         if "good" in text.lower()
-        else "negative" if "bad" in text.lower() else "neutral"
+        else "negative"
+        if "bad" in text.lower()
+        else "neutral"
     )
 
     return {
@@ -106,9 +108,7 @@ def answer_question(
     question: str, max_tokens: int = 100, temperature: float = 0.0
 ) -> str:
     """Answer questions with configurable parameters."""
-    return (
-        f"Answer for {question!r} (tokens={max_tokens}, temp={temperature})"
-    )
+    return f"Answer for {question!r} (tokens={max_tokens}, temp={temperature})"
 
 
 def unoptimized_function(text: str) -> str:

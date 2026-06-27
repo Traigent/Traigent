@@ -166,9 +166,9 @@ class TestCrossAlgorithmParity:
         )
 
         _, result_random = await scenario_runner(random_scenario)
-        assert not isinstance(
-            result_random, Exception
-        ), f"Random search failed: {result_random}"
+        assert not isinstance(result_random, Exception), (
+            f"Random search failed: {result_random}"
+        )
 
         # Verify trials were executed with valid configs
         if hasattr(result_random, "trials"):
@@ -191,9 +191,9 @@ class TestCrossAlgorithmParity:
         )
 
         _, result_grid = await scenario_runner(grid_scenario)
-        assert not isinstance(
-            result_grid, Exception
-        ), f"Grid search failed: {result_grid}"
+        assert not isinstance(result_grid, Exception), (
+            f"Grid search failed: {result_grid}"
+        )
         validation = result_validator(grid_scenario, result_grid)
         assert validation.passed, validation.summary()
 
@@ -240,9 +240,9 @@ class TestCrossAlgorithmParity:
             )
 
             _, result = await scenario_runner(scenario)
-            assert not isinstance(
-                result, Exception
-            ), f"{optimizer}/{sampler} failed: {result}"
+            assert not isinstance(result, Exception), (
+                f"{optimizer}/{sampler} failed: {result}"
+            )
             assert hasattr(result, "trials"), f"{optimizer} has no trials"
             assert len(result.trials) > 0, f"{optimizer} completed with no trials"
             validation = result_validator(scenario, result)
@@ -298,9 +298,9 @@ class TestAlgorithmSpecificBehavior:
         assert hasattr(result, "trials"), "Result should have trials"
 
         # Grid should stop at exactly 4 trials (space exhaustion)
-        assert (
-            len(result.trials) == 4
-        ), f"Grid should stop at 4 trials (space exhausted), got {len(result.trials)}"
+        assert len(result.trials) == 4, (
+            f"Grid should stop at 4 trials (space exhausted), got {len(result.trials)}"
+        )
 
         # Collect and verify all 4 unique configurations were tried
         unique_configs = set()
@@ -308,9 +308,9 @@ class TestAlgorithmSpecificBehavior:
             config_tuple = tuple(sorted(trial.config.items()))
             unique_configs.add(config_tuple)
 
-        assert (
-            len(unique_configs) == 4
-        ), f"Grid should explore all 4 unique combinations, got {len(unique_configs)}"
+        assert len(unique_configs) == 4, (
+            f"Grid should explore all 4 unique combinations, got {len(unique_configs)}"
+        )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -352,9 +352,9 @@ class TestAlgorithmSpecificBehavior:
             # Should have at least 2 unique configurations with high probability
             # (With 15 possible combinations and 5 trials,
             # very unlikely to get all same)
-            assert (
-                len(unique_configs) >= 2
-            ), f"Random search should explore variety, got {len(unique_configs)} unique"
+            assert len(unique_configs) >= 2, (
+                f"Random search should explore variety, got {len(unique_configs)} unique"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

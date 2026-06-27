@@ -30,7 +30,8 @@ class TestSecureToken:
     def test_token_creation(self):
         """Test secure token creation and validation."""
         token = SecureToken(
-            _value="x" * 100, _expires_at=time.time() + 3600  # Long enough token
+            _value="x" * 100,
+            _expires_at=time.time() + 3600,  # Long enough token
         )
         assert not token.is_expired
         assert token.time_until_expiry > 0
@@ -39,7 +40,8 @@ class TestSecureToken:
         """Test token expiry detection."""
         # Create expired token
         token = SecureToken(
-            _value="x" * 100, _expires_at=time.time() - 1  # Already expired
+            _value="x" * 100,
+            _expires_at=time.time() - 1,  # Already expired
         )
         assert token.is_expired
         assert token.time_until_expiry == 0

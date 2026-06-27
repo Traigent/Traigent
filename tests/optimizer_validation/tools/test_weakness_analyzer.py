@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    pass
 
 
 class IssueType(Enum):
@@ -152,7 +152,7 @@ class TestASTVisitor(ast.NodeVisitor):
     def _check_validator_reliance_only(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
-        analysis: "TestFunctionAnalysis",
+        analysis: TestFunctionAnalysis,
     ) -> list[TestIssue]:
         """Check for IT-VRO: tests that only rely on result_validator."""
         issues = []
@@ -199,7 +199,7 @@ class TestASTVisitor(ast.NodeVisitor):
     def _check_vacuous_assertions(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
-        analysis: "TestFunctionAnalysis",
+        analysis: TestFunctionAnalysis,
     ) -> list[TestIssue]:
         """Check for IT-VTA: Vacuous Truth Assertions."""
         issues = []
@@ -224,7 +224,7 @@ class TestASTVisitor(ast.NodeVisitor):
     def _check_condition_behavior_mismatch(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
-        analysis: "TestFunctionAnalysis",
+        analysis: TestFunctionAnalysis,
     ) -> list[TestIssue]:
         """Check for IT-CBM: Condition-Behavior Mismatch."""
         issues = []
@@ -292,7 +292,7 @@ class TestASTVisitor(ast.NodeVisitor):
     def _check_missing_verifications(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
-        analysis: "TestFunctionAnalysis",
+        analysis: TestFunctionAnalysis,
     ) -> list[TestIssue]:
         """Check for missing specific verifications."""
         issues = []
@@ -347,8 +347,6 @@ class TestFunctionAnalysis:
 
     def _check_vacuous_pattern(self, assert_node: ast.Assert, code: str) -> dict | None:
         """Check if assertion matches vacuous patterns."""
-        code_lower = code.lower()
-
         # Pattern: assert True
         if re.search(r"assert\s+True\s*(,|$|#)", code):
             return {
@@ -420,7 +418,7 @@ class TestFunctionAnalysis:
             ):
                 line = self.source_lines[i]
                 if "result_validator" in line:
-                    self.validator_call_lines.append(f"L{i+1}: {line.strip()}")
+                    self.validator_call_lines.append(f"L{i + 1}: {line.strip()}")
 
         if "validation.passed" in source_block or ".passed" in source_block:
             self.has_validation_passed_assert = True
@@ -529,7 +527,7 @@ def analyze_file(file_path: Path) -> AnalysisResult:
 
     try:
         tree = ast.parse(source)
-    except SyntaxError as e:
+    except SyntaxError:
         return AnalysisResult(file_path=str(file_path), total_tests=0, issues=[])
 
     visitor = TestASTVisitor(str(file_path), source)

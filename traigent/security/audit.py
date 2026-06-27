@@ -22,8 +22,7 @@ from .redaction import redact_sensitive_data, redact_sensitive_text
 logger = get_logger(__name__)
 
 _COMPLIANCE_NOT_IMPLEMENTED = (
-    "Compliance reporting is not yet implemented. "
-    "Track progress at internal tracking"
+    "Compliance reporting is not yet implemented. Track progress at internal tracking"
 )
 
 

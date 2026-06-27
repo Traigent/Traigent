@@ -115,7 +115,7 @@ class MockDetailedEvaluator(MockEvaluator):
         example_results = []
         for i, example in enumerate(dataset.examples):
             # Simulate function call and evaluation
-            predicted_output = f"Mock prediction {i+1}"
+            predicted_output = f"Mock prediction {i + 1}"
 
             # Generate per-example metrics
             example_accuracy = random.uniform(0.6, 1.0)
@@ -159,7 +159,7 @@ class MockStreamingEvaluator(MockEvaluator):
         for i in range(0, len(examples), self.batch_size):
             batch_examples = examples[i : i + self.batch_size]
             batch_dataset = Dataset(
-                name=f"{dataset.name}_batch_{i//self.batch_size}",
+                name=f"{dataset.name}_batch_{i // self.batch_size}",
                 examples=batch_examples,
             )
 
@@ -273,7 +273,7 @@ def create_realistic_evaluation_sequence(
         # Capture loop variable properly
         idx = i
         result = evaluator.evaluate(
-            function=lambda x, _idx=idx: f"Mock output {_idx+1}",
+            function=lambda x, _idx=idx: f"Mock output {_idx + 1}",
             dataset=dataset,
             config=config,
         )

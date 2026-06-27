@@ -53,15 +53,15 @@ class TestTokenEstimationPerformance:
         execution_time = end_time - start_time
 
         # Should be very fast for token estimation
-        assert (
-            execution_time < 0.1
-        ), f"Token estimation took {execution_time:.3f}s for {text_size} chars"
+        assert execution_time < 0.1, (
+            f"Token estimation took {execution_time:.3f}s for {text_size} chars"
+        )
 
         # Should give reasonable token count (approximately 1 token per 4 characters)
         expected_tokens = max(1, text_size // 4)
-        assert (
-            abs(token_count - expected_tokens) < 5
-        ), f"Expected ~{expected_tokens}, got {token_count}"
+        assert abs(token_count - expected_tokens) < 5, (
+            f"Expected ~{expected_tokens}, got {token_count}"
+        )
 
     def test_bulk_token_estimation_performance(self):
         """Test performance of estimating tokens for many inputs."""
@@ -78,9 +78,9 @@ class TestTokenEstimationPerformance:
         execution_time = end_time - start_time
 
         # Should process 100 texts quickly
-        assert (
-            execution_time < 1.0
-        ), f"Bulk estimation took {execution_time:.3f}s for 100 texts"
+        assert execution_time < 1.0, (
+            f"Bulk estimation took {execution_time:.3f}s for 100 texts"
+        )
         assert len(token_counts) == 100
         assert all(count > 0 for count in token_counts)
 
@@ -126,7 +126,9 @@ class TestMetricsCollectionPerformance:
                     expected_output=(
                         "positive"
                         if i % 3 == 0
-                        else "negative" if i % 3 == 1 else "neutral"
+                        else "negative"
+                        if i % 3 == 1
+                        else "neutral"
                     ),
                 )
             )
@@ -172,9 +174,9 @@ class TestMetricsCollectionPerformance:
             time_ratio = times[i] / times[i - 1]
 
             # Time ratio should not be dramatically higher than size ratio (very relaxed for CI)
-            assert (
-                time_ratio < size_ratio * 25
-            ), f"Performance degradation: size {sizes[i]} took {time_ratio:.2f}x longer than expected"
+            assert time_ratio < size_ratio * 25, (
+                f"Performance degradation: size {sizes[i]} took {time_ratio:.2f}x longer than expected"
+            )
 
     @pytest.mark.asyncio
     async def test_memory_usage_during_evaluation(self):
@@ -240,9 +242,9 @@ class TestMetricsCollectionPerformance:
         execution_time = end_time - start_time
 
         # Should complete in reasonable time
-        assert (
-            execution_time < 30.0
-        ), f"Evaluation with summary stats took {execution_time:.1f}s"
+        assert execution_time < 30.0, (
+            f"Evaluation with summary stats took {execution_time:.1f}s"
+        )
 
         # Should have result data
         assert result.total_examples == 200
@@ -524,9 +526,9 @@ class TestOptimizationPerformance:
             # rather than delay * number_of_examples
             expected_time = delay * 1.5  # Allow some overhead
             # Be more lenient with timing expectations for CI environments
-            assert (
-                execution_time < expected_time * 5
-            ), f"Concurrent execution with {delay}s delay took {execution_time:.3f}s, expected ~{expected_time:.3f}s"
+            assert execution_time < expected_time * 5, (
+                f"Concurrent execution with {delay}s delay took {execution_time:.3f}s, expected ~{expected_time:.3f}s"
+            )
 
             # Results should be complete
             assert result.total_examples == 5
@@ -577,9 +579,9 @@ class TestResourceUsageMonitoring:
         execution_time = end_time - start_time
 
         # Should complete in reasonable time
-        assert (
-            execution_time < 30.0
-        ), f"CPU intensive evaluation took {execution_time:.1f}s"
+        assert execution_time < 30.0, (
+            f"CPU intensive evaluation took {execution_time:.1f}s"
+        )
 
         # Should have processed all examples with metrics
         assert result.total_examples == 50
@@ -631,9 +633,9 @@ class TestResourceUsageMonitoring:
         )
 
         # Metrics overhead should be reasonable (less than 500% overhead in test environment)
-        assert (
-            overhead_percentage < 500
-        ), f"Metrics overhead is {overhead_percentage:.1f}% of baseline execution time"
+        assert overhead_percentage < 500, (
+            f"Metrics overhead is {overhead_percentage:.1f}% of baseline execution time"
+        )
 
         # Results should be the same
         assert len(results_no_metrics) == len(results_with_metrics)
@@ -683,9 +685,9 @@ class TestResourceUsageMonitoring:
 
         # Allow some overhead but should be reasonably close to sequential time
         # In test environments, "parallel" processing may not show significant speedup
-        assert (
-            execution_time < sequential_time * 2.0
-        ), f"Parallel execution took {execution_time:.3f}s vs expected sequential {sequential_time:.3f}s"
+        assert execution_time < sequential_time * 2.0, (
+            f"Parallel execution took {execution_time:.3f}s vs expected sequential {sequential_time:.3f}s"
+        )
 
         # Results should be complete with metrics
         assert result.total_examples == 10
@@ -727,9 +729,9 @@ class TestLargeScalePerformance:
         execution_time = end_time - start_time
 
         # Should handle 1000 examples efficiently
-        assert (
-            execution_time < 120.0
-        ), f"Large scale evaluation took {execution_time:.1f}s"
+        assert execution_time < 120.0, (
+            f"Large scale evaluation took {execution_time:.1f}s"
+        )
 
         # Results should be complete
         assert result.total_examples == 1000
@@ -785,8 +787,8 @@ class TestLargeScalePerformance:
         memory_growth = final_memory - initial_memory
 
         # Memory growth should be reasonable for creating 500 objects
-        assert (
-            memory_growth < 100
-        ), f"Memory grew by {memory_growth:.1f}MB for {total_objects_created} objects"
+        assert memory_growth < 100, (
+            f"Memory grew by {memory_growth:.1f}MB for {total_objects_created} objects"
+        )
         # Should have created the expected number of objects
         assert total_objects_created == 500

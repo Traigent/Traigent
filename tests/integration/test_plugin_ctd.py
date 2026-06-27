@@ -626,9 +626,9 @@ class TestPluginCTD:
         if not all_plugins:
             pytest.skip("No plugins registered")
 
-        generator.print_progress(f"\n{'='*60}")
+        generator.print_progress(f"\n{'=' * 60}")
         generator.print_progress(f"Running CTD tests with k={k}")
-        generator.print_progress(f"{'='*60}\n")
+        generator.print_progress(f"{'=' * 60}\n")
 
         # Estimate total tests
         total_estimated = sum(
@@ -734,14 +734,14 @@ class TestPluginCTD:
             total_failed += plugin_failed
 
         # Overall summary
-        generator.print_progress(f"\n{'='*60}")
+        generator.print_progress(f"\n{'=' * 60}")
         generator.print_progress(f"CTD Test Summary (k={k})")
-        generator.print_progress(f"{'='*60}")
+        generator.print_progress(f"{'=' * 60}")
         generator.print_progress(f"Total tests run: {total_passed + total_failed}")
         generator.print_progress(f"Passed: {total_passed}")
         generator.print_progress(f"Failed: {total_failed}")
         generator.print_progress(
-            f"Success rate: {total_passed/(total_passed+total_failed)*100:.1f}%"
+            f"Success rate: {total_passed / (total_passed + total_failed) * 100:.1f}%"
         )
 
         # Assert all tests passed

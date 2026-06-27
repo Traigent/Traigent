@@ -460,7 +460,9 @@ class TestValidateParameter:
         Note: Anthropic's current API supports up to 200000 tokens for Claude 3.5 models.
         """
         issues = FrameworkConstraints.validate_parameter(
-            "anthropic", "max_tokens", 250000  # Above the 200000 limit
+            "anthropic",
+            "max_tokens",
+            250000,  # Above the 200000 limit
         )
 
         assert len(issues) == 1

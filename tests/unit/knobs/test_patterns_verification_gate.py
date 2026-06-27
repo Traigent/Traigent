@@ -307,9 +307,7 @@ def test_validate_program_rejects_missing_tvar_parent_coverage():
     with pytest.raises(ValueError) as exc:
         validate_program(
             _program(
-                cvar_depends_on={
-                    _THRESHOLD: frozenset(_TVARS - {"revision_policy"})
-                }
+                cvar_depends_on={_THRESHOLD: frozenset(_TVARS - {"revision_policy"})}
             )
         )
     assert _code(exc) == "missing_composite_parent"

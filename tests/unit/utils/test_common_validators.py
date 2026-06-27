@@ -297,7 +297,7 @@ class CoreValidators:
         wrapped = ValidationResult(valid=True)
 
         if schemes:
-            pattern = f'^({"|".join(schemes)})://'
+            pattern = f"^({'|'.join(schemes)})://"
             if not re.match(pattern, value):
                 wrapped._result.add_error(
                     param_name,
@@ -549,15 +549,15 @@ class DatasetValidator:
                         json.loads(line.strip())
                     except json.JSONDecodeError:
                         wrapped._result.add_error(
-                            f"line_{i+1}",
-                            f"Invalid JSON on line {i+1}",
+                            f"line_{i + 1}",
+                            f"Invalid JSON on line {i + 1}",
                             error_code="INVALID_JSON",
                         )
                         wrapped.errors.append(
                             ValidationError(
-                                f"line_{i+1}",
+                                f"line_{i + 1}",
                                 line,
-                                f"Invalid JSON on line {i+1}",
+                                f"Invalid JSON on line {i + 1}",
                                 None,
                                 "INVALID_JSON",
                             )

@@ -74,7 +74,9 @@ def _plan(items: list[GuidancePlanItem], kind: PlanKind) -> GuidancePlan:
 
 def test_require_backend_plan_propagates_error() -> None:
     """No offline fallback: a provider failure aborts rather than fabricating."""
-    loop = GuidanceLoop(provider=_RaisingProvider(), rewriter=PromptRewriter(_FakeLLM("[]")))
+    loop = GuidanceLoop(
+        provider=_RaisingProvider(), rewriter=PromptRewriter(_FakeLLM("[]"))
+    )
     scores = iter([_Result(0.5)])
     with pytest.raises(RuntimeError, match="backend unavailable"):
         loop.run(

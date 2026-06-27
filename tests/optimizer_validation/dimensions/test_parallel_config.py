@@ -238,12 +238,12 @@ class TestParallelBudgetClamping:
         valid_temps = {0.3, 0.5, 0.7}
         for config in unique_configs:
             config_dict = dict(config)
-            assert (
-                config_dict["model"] in valid_models
-            ), f"Invalid model: {config_dict['model']}"
-            assert (
-                config_dict["temperature"] in valid_temps
-            ), f"Invalid temperature: {config_dict['temperature']}"
+            assert config_dict["model"] in valid_models, (
+                f"Invalid model: {config_dict['model']}"
+            )
+            assert config_dict["temperature"] in valid_temps, (
+                f"Invalid temperature: {config_dict['temperature']}"
+            )
 
         # Emit evidence
         validation = result_validator(scenario, result)
@@ -561,9 +561,9 @@ class TestParallelTrialOrdering:
         # Verify trials are properly ordered and have valid configs
         for i, trial in enumerate(result.trials):
             assert "model" in trial.config, f"Trial {i} should have model config"
-            assert (
-                "temperature" in trial.config
-            ), f"Trial {i} should have temperature config"
+            assert "temperature" in trial.config, (
+                f"Trial {i} should have temperature config"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

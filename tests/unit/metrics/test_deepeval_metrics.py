@@ -418,9 +418,9 @@ class TestSignatureCompatibility:
         for name, param in sig.parameters.items():
             if name == "output":
                 continue
-            assert (
-                param.default is not inspect.Parameter.empty
-            ), f"Parameter {name!r} should have a default value"
+            assert param.default is not inspect.Parameter.empty, (
+                f"Parameter {name!r} should have a default value"
+            )
 
 
 class TestThreadSafety:

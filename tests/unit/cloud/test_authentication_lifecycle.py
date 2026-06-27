@@ -22,7 +22,9 @@ async def _stub_validate(self, api_key):  # noqa: ARG001
 
 
 def _patch_backend_validate():
-    return patch.object(AuthManager, "_validate_api_key_with_backend", new=_stub_validate)
+    return patch.object(
+        AuthManager, "_validate_api_key_with_backend", new=_stub_validate
+    )
 
 
 def require(condition: bool, message: str = "Assertion failed") -> None:
@@ -59,8 +61,9 @@ class TestSessionExpiryAndRefresh:
             session.close = AsyncMock()
             return session
 
-        with _patch_backend_validate(), patch(
-            "traigent.cloud.client.AIOHTTP_AVAILABLE", True
+        with (
+            _patch_backend_validate(),
+            patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True),
         ):
             with patch(
                 "traigent.cloud.client.aiohttp.ClientSession",
@@ -762,8 +765,9 @@ class TestBackendClientAuthLifecycle:
                         # The raw fallback key MUST NOT appear in any session.
                         for entry in session_data:
                             require(entry["headers"].get("X-API-Key") != "key-2")
-                            require(entry["headers"].get("Authorization")
-                                    != "Bearer key-2")
+                            require(
+                                entry["headers"].get("Authorization") != "Bearer key-2"
+                            )
 
                         # Client 2's task must have raised, not silently
                         # produced a session.

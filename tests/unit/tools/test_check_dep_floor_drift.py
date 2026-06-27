@@ -39,7 +39,8 @@ def drift_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def _write_pyproject(root: Path, *extras_by_name: tuple[str, list[str]]) -> None:
     extras_block = "\n".join(
-        f'{name} = [{", ".join(repr(s) for s in specs)}]' for name, specs in extras_by_name
+        f"{name} = [{', '.join(repr(s) for s in specs)}]"
+        for name, specs in extras_by_name
     )
     (root / "pyproject.toml").write_text(
         textwrap.dedent(
@@ -93,9 +94,7 @@ def test_requirements_lagging_behind_pyproject_is_detected(
 def test_requirements_equal_to_pyproject_is_clean(drift_module) -> None:
     module, root = drift_module
     _write_pyproject(root)
-    (root / "requirements" / "requirements.txt").write_text(
-        "cryptography>=46.0.7\n"
-    )
+    (root / "requirements" / "requirements.txt").write_text("cryptography>=46.0.7\n")
 
     assert module.main() == 0
 
@@ -104,9 +103,7 @@ def test_requirements_ahead_of_pyproject_is_clean(drift_module) -> None:
     """A requirements file tighter than pyproject is safer than required, not drift."""
     module, root = drift_module
     _write_pyproject(root)
-    (root / "requirements" / "requirements.txt").write_text(
-        "cryptography>=46.0.8\n"
-    )
+    (root / "requirements" / "requirements.txt").write_text("cryptography>=46.0.8\n")
 
     assert module.main() == 0
 
@@ -148,8 +145,7 @@ def test_ignores_loose_specs_without_floor(drift_module) -> None:
     module, root = drift_module
     _write_pyproject(root)
     (root / "requirements" / "requirements.txt").write_text(
-        "cryptography>=46.0.7\n"
-        "rank-bm25\n"  # no pin
+        "cryptography>=46.0.7\nrank-bm25\n"  # no pin
     )
 
     assert module.main() == 0
@@ -160,9 +156,7 @@ def test_ignores_option_lines(drift_module) -> None:
     module, root = drift_module
     _write_pyproject(root)
     (root / "requirements" / "requirements-security.txt").write_text(
-        "-r requirements.txt\n"
-        "-e .\n"
-        "cryptography>=46.0.7\n"
+        "-r requirements.txt\n-e .\ncryptography>=46.0.7\n"
     )
 
     assert module.main() == 0

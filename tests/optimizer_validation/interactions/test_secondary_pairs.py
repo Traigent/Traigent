@@ -68,9 +68,9 @@ class TestParallelModeStopConditionPairs:
 
         # Verify trial count matches config space size (2 configs)
         config_space_size = 2
-        assert (
-            len(result.trials) <= config_space_size
-        ), f"Config exhaustion should limit trials to {config_space_size}, got {len(result.trials)}"
+        assert len(result.trials) <= config_space_size, (
+            f"Config exhaustion should limit trials to {config_space_size}, got {len(result.trials)}"
+        )
 
         # Verify each trial used a unique configuration
         seen_configs = set()
@@ -78,9 +78,9 @@ class TestParallelModeStopConditionPairs:
         for trial in result.trials:
             config = getattr(trial, "config", {})
             if "model" in config:
-                assert (
-                    config["model"] in valid_models
-                ), f"Invalid model {config['model']}"
+                assert config["model"] in valid_models, (
+                    f"Invalid model {config['model']}"
+                )
                 config_key = config["model"]
                 # Each config should appear at most once with exhaustion
                 if config_key in seen_configs:
@@ -96,9 +96,9 @@ class TestParallelModeStopConditionPairs:
                 "optimizer",
                 "converged",
             }
-            assert (
-                result.stop_reason in valid_stop_reasons
-            ), f"Unexpected stop_reason: {result.stop_reason}"
+            assert result.stop_reason in valid_stop_reasons, (
+                f"Unexpected stop_reason: {result.stop_reason}"
+            )
 
         # Emit evidence
         validation = result_validator(scenario, result)
@@ -211,9 +211,9 @@ class TestObjectiveConstraintPairs:
             for trial in result.trials:
                 # Check trial has config
                 config = getattr(trial, "config", {})
-                assert (
-                    "model" in config or "temperature" in config
-                ), "Trial should have config parameters"
+                assert "model" in config or "temperature" in config, (
+                    "Trial should have config parameters"
+                )
 
                 # Verify objectives are tracked if available
                 objectives_data = getattr(trial, "objectives", None)
@@ -330,9 +330,9 @@ class TestAlgorithmFailureModePairs:
                     error = getattr(trial, "error", None)
                     config = getattr(trial, "config", {})
                     # Trial should have some identifying info
-                    assert (
-                        status is not None or error is not None or config
-                    ), "Trial should have status, error, or config"
+                    assert status is not None or error is not None or config, (
+                        "Trial should have status, error, or config"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -393,15 +393,15 @@ class TestExecutionParallelModePairs:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 if "model" in config:
-                    assert (
-                        config["model"] in valid_models
-                    ), f"Invalid model {config['model']}"
+                    assert config["model"] in valid_models, (
+                        f"Invalid model {config['model']}"
+                    )
 
         # Verify execution mode was applied (check via result metadata if available)
         if hasattr(result, "execution_mode"):
-            assert (
-                result.execution_mode == execution_mode
-            ), f"Expected execution_mode {execution_mode}, got {result.execution_mode}"
+            assert result.execution_mode == execution_mode, (
+                f"Expected execution_mode {execution_mode}, got {result.execution_mode}"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

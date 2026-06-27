@@ -576,7 +576,9 @@ class TestTenantManager:
         manager = TenantManager()
 
         tenant = manager.create_tenant(
-            "Test Company", "admin@test.com", TenantTier.FREE  # Very limited quotas
+            "Test Company",
+            "admin@test.com",
+            TenantTier.FREE,  # Very limited quotas
         )
 
         manager.context.set_tenant(tenant.tenant_id)

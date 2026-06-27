@@ -329,6 +329,8 @@ class SessionOperations:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         warm_start_from: str | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -446,6 +448,8 @@ class SessionOperations:
                 user_id=None,  # Privacy preserving
                 billing_tier="privacy",
                 metadata=metadata or {},
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
             )
 
             try:

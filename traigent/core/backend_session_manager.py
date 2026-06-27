@@ -661,6 +661,8 @@ class BackendSessionManager:
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
         warm_start_from: str | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -767,6 +769,8 @@ class BackendSessionManager:
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
                 warm_start_from=warm_start_from,
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(

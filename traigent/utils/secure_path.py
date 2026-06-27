@@ -254,9 +254,7 @@ def safe_write_text(
     validated_path = _resolve_path_in_base(path, resolved_base)
     # Ensure parent directory exists
     validated_path.parent.mkdir(parents=True, exist_ok=True)
-    validated_path.write_text(
-        content, encoding=encoding
-    )  # nosec - path resolved within base_dir
+    validated_path.write_text(content, encoding=encoding)  # nosec - path resolved within base_dir
 
 
 def safe_write_bytes(

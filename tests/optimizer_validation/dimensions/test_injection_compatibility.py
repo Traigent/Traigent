@@ -285,9 +285,9 @@ class TestNestedConfigCompatibility:
         else:
             # Mock mode may accept nested config
             assert hasattr(result, "trials"), "Result should have trials"
-            assert (
-                len(result.trials) == 2
-            ), f"Expected 2 trials, got {len(result.trials)}"
+            assert len(result.trials) == 2, (
+                f"Expected 2 trials, got {len(result.trials)}"
+            )
 
             # Verify nested config is accessible
             for trial in result.trials:
