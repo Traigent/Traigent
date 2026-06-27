@@ -6,7 +6,6 @@ from unittest.mock import patch
 import pytest
 
 from traigent.api.types import TrialResult
-from traigent.config.feature_flags import flag_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.registry import (
     _OPTIMIZER_REGISTRY,
@@ -50,18 +49,6 @@ class NotAnOptimizer:
     """Class that doesn't inherit from BaseOptimizer."""
 
     pass
-
-
-@pytest.fixture(autouse=True)
-def reset_local_advanced_optimizer_flag(monkeypatch):
-    """Reset local advanced optimizer flag state for registry tests.
-
-    The flag is enabled by default, so we just ensure consistent state.
-    """
-    monkeypatch.delenv("TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED", raising=False)
-    flag_registry.reset()
-    yield
-    flag_registry.reset()
 
 
 class TestOptimizerRegistry:
