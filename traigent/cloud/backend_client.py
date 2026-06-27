@@ -1281,6 +1281,8 @@ class BackendIntegratedClient:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         warm_start_from: str | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1295,6 +1297,8 @@ class BackendIntegratedClient:
             promotion_policy=promotion_policy,
             tvl_governance=tvl_governance,
             warm_start_from=warm_start_from,
+            artifact_fingerprints=artifact_fingerprints,
+            fingerprint_meta=fingerprint_meta,
         )
 
     async def create_hybrid_session(

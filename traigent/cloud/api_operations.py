@@ -36,6 +36,10 @@ from traigent.core.session_types import (
 )
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
+from traigent.utils.artifact_fingerprints import (
+    artifact_fingerprints_to_wire,
+    fingerprint_meta_to_wire,
+)
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_numeric_metric
 
@@ -654,6 +658,7 @@ class ApiOperations:
             payload["tvl_governance"] = wire_governance
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
+        self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
     def _build_legacy_session_payload(
@@ -697,7 +702,25 @@ class ApiOperations:
         # BE may not consume it yet; the SDK must still forward it.
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
+        self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
+
+    @staticmethod
+    def _attach_artifact_fingerprint_payload(
+        payload: dict[str, Any],
+        session_request: SessionCreationRequest,
+    ) -> None:
+        artifact_fingerprints = artifact_fingerprints_to_wire(
+            getattr(session_request, "artifact_fingerprints", None)
+        )
+        if artifact_fingerprints is not None:
+            payload["artifact_fingerprints"] = artifact_fingerprints
+
+        fingerprint_meta = fingerprint_meta_to_wire(
+            getattr(session_request, "fingerprint_meta", None)
+        )
+        if fingerprint_meta is not None:
+            payload["fingerprint_meta"] = fingerprint_meta
 
     def _build_connector(self) -> Any | None:
         """Create an aiohttp connector when custom transport settings are required."""

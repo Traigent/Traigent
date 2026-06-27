@@ -150,6 +150,8 @@ class InteractiveOptimizer(BaseOptimizer):
         dataset_metadata: dict[str, Any] | None = None,
         optimization_strategy: dict[str, Any] | None = None,
         context: TraigentConfig | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -172,6 +174,8 @@ class InteractiveOptimizer(BaseOptimizer):
         self.remote_service = remote_service
         self.dataset_metadata = dataset_metadata or {}
         self.optimization_strategy = optimization_strategy
+        self.artifact_fingerprints = artifact_fingerprints
+        self.fingerprint_meta = fingerprint_meta
 
         # Session management
         self.session: OptimizationSession | None = None
@@ -213,6 +217,8 @@ class InteractiveOptimizer(BaseOptimizer):
                 optimization_strategy=self.optimization_strategy,
                 user_id=user_id,
                 billing_tier=billing_tier,
+                artifact_fingerprints=self.artifact_fingerprints,
+                fingerprint_meta=self.fingerprint_meta,
             )
 
             response = await self.remote_service.create_session(request)

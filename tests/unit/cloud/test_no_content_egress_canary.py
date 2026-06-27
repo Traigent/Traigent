@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,14 +13,17 @@ import pytest
 
 from traigent import optimize
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.utils.artifact_fingerprints import artifact_fingerprints_to_wire
 
 
 CANARY_INPUT = "CANARY_INPUT_a1b2"
 CANARY_OUTPUT = "CANARY_OUTPUT_c3d4"
 CANARY_PROMPT = "CANARY_PROMPT_e5f6"
 CANARY_META = "CANARY_META_g7h8"
-CANARIES = (CANARY_INPUT, CANARY_OUTPUT, CANARY_PROMPT, CANARY_META)
+CANARY_SOURCE = "CANARY_SOURCE_i9j0"
+CANARIES = (CANARY_INPUT, CANARY_OUTPUT, CANARY_PROMPT, CANARY_META, CANARY_SOURCE)
 FAKE_TRAIGENT_API_KEY = "uk_" + ("a" * 43)
+FP_WIRE_PATTERN = r"fp1:[0-9a-f]{64}"
 
 
 _MISSING = object()
@@ -523,6 +527,8 @@ def _run_canary_optimization(
 
     @optimize(**kwargs)
     def canary_app(example: dict[str, Any]) -> str:
+        source_marker = "CANARY_SOURCE_i9j0"
+        assert source_marker
         assert CANARY_INPUT in example["question"]
         assert CANARY_PROMPT in example["prompt"]
         return "safe-local-output"
@@ -551,6 +557,39 @@ def _assert_no_canaries_crossed_wire(capture: _OutboundCapture) -> None:
         )
 
 
+def _assert_session_create_has_artifact_fingerprints(
+    capture: _OutboundCapture,
+) -> None:
+    session_bodies = [
+        entry["body"] for entry in capture.calls if entry["stage"] == "session-create"
+    ]
+    assert len(session_bodies) == 1
+    body = session_bodies[0]
+    assert isinstance(body, dict)
+
+    artifact_fingerprints = body["artifact_fingerprints"]
+    assert set(artifact_fingerprints) == {
+        "dataset",
+        "agent",
+        "evaluator",
+        "config_space",
+    }
+    assert all(
+        value is None
+        or (isinstance(value, str) and re.fullmatch(FP_WIRE_PATTERN, value))
+        for value in artifact_fingerprints.values()
+    )
+    assert re.fullmatch(FP_WIRE_PATTERN, artifact_fingerprints["dataset"])
+    assert re.fullmatch(FP_WIRE_PATTERN, artifact_fingerprints["agent"])
+    assert re.fullmatch(FP_WIRE_PATTERN, artifact_fingerprints["evaluator"])
+    assert re.fullmatch(FP_WIRE_PATTERN, artifact_fingerprints["config_space"])
+    assert body["fingerprint_meta"] == {
+        "algorithm": "fp1",
+        "dataset_example_count": 2,
+        "source_available": True,
+    }
+
+
 def test_cloud_brain_auto_does_not_egress_dataset_content(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -565,7 +604,26 @@ def test_cloud_brain_auto_does_not_egress_dataset_content(
     assert result.source == "cloud_brain"
     _assert_required_production_bodies_were_captured(capture)
     assert "upload_dataset" not in stages
+    _assert_session_create_has_artifact_fingerprints(capture)
     _assert_no_canaries_crossed_wire(capture)
+
+
+def test_artifact_fingerprint_wire_serializer_rejects_raw_content_smuggling() -> None:
+    wire = artifact_fingerprints_to_wire(
+        {
+            "dataset": f"fp1:{CANARY_SOURCE}",
+            "agent": "fp1:" + ("a" * 64),
+            "evaluator": "fp1:" + ("F" * 64),
+            "config_space": "fp1:" + ("0" * 63),
+        }
+    )
+
+    assert wire == {
+        "dataset": None,
+        "agent": "fp1:" + ("a" * 64),
+        "evaluator": None,
+        "config_space": None,
+    }
 
 
 def test_offline_and_legacy_local_modes_construct_no_backend_clients(

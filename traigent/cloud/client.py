@@ -36,6 +36,10 @@ from traigent.evaluators.base import Dataset
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.error_handler import OfflineModeError
 from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
+from traigent.utils.artifact_fingerprints import (
+    artifact_fingerprints_to_wire,
+    fingerprint_meta_to_wire,
+)
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
@@ -1570,6 +1574,8 @@ class TraigentCloudClient(BaseTraigentClient):
         optimization_strategy: dict[str, Any] | None = None,
         user_id: str | None = None,
         billing_tier: str = "standard",
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionCreationResponse:
         """Create a new optimization session for interactive optimization.
 
@@ -1611,6 +1617,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 optimization_strategy=optimization_strategy,
                 user_id=user_id,
                 billing_tier=billing_tier,
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
             )
 
         if self._aio_session is None:
@@ -1857,6 +1865,16 @@ class TraigentCloudClient(BaseTraigentClient):
         # Warm-start: prior experiment id (empty string treated as absent).
         if request.warm_start_from:
             payload["warm_start_from"] = request.warm_start_from
+        artifact_fingerprints = artifact_fingerprints_to_wire(
+            getattr(request, "artifact_fingerprints", None)
+        )
+        if artifact_fingerprints is not None:
+            payload["artifact_fingerprints"] = artifact_fingerprints
+        fingerprint_meta = fingerprint_meta_to_wire(
+            getattr(request, "fingerprint_meta", None)
+        )
+        if fingerprint_meta is not None:
+            payload["fingerprint_meta"] = fingerprint_meta
         return payload
 
     @staticmethod

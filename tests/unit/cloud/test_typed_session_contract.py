@@ -98,6 +98,44 @@ class TestContractGate:
         )
         assert payload["dataset_metadata"]["size"] == 1
 
+    def test_typed_payload_includes_content_free_artifact_fingerprints(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(
+            _request(
+                artifact_fingerprints={
+                    "dataset": "fp1:" + ("a" * 64),
+                    "agent": "fp1:" + ("b" * 64),
+                    "evaluator": "raw evaluator source",
+                    "config_space": None,
+                    "extra": "fp1:" + ("c" * 64),
+                },
+                fingerprint_meta={
+                    "algorithm": "ignored",
+                    "dataset_example_count": 12,
+                    "source_available": True,
+                    "raw": "SECRET_PROMPT_b7e1",
+                },
+            ),
+            5,
+        )
+
+        assert payload["artifact_fingerprints"] == {
+            "dataset": "fp1:" + ("a" * 64),
+            "agent": "fp1:" + ("b" * 64),
+            "evaluator": None,
+            "config_space": None,
+        }
+        assert payload["fingerprint_meta"] == {
+            "algorithm": "fp1",
+            "dataset_example_count": 12,
+            "source_available": True,
+        }
+        blob = json.dumps(payload)
+        assert "raw evaluator source" not in blob
+        assert "SECRET_PROMPT_b7e1" not in blob
+
 
 class TestAutoFallback:
     @pytest.mark.asyncio

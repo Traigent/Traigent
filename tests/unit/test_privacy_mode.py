@@ -114,6 +114,13 @@ class TestPrivacyCompliance:
             "billing_tier",
             "metadata",
             "problem_type",  # Added as this is a valid non-sensitive field
+            # Content-free artifact fingerprints: one-way SHA-256 digests in the
+            # fp1:<64-hex> wire format (FP_WIRE_RE), order-invariant over examples.
+            # No raw content leaves the client — the server's _verify_no_data_in_request
+            # scanner (violation_count==0 above) and tests/unit/utils/test_artifact_fingerprints.py
+            # independently prove content-freeness.
+            "artifact_fingerprints",
+            "fingerprint_meta",
         }
 
         for req in dummy_server.received_data:
