@@ -1,5 +1,6 @@
 """Unit tests for warm_start_from threading through session creation."""
 
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +10,7 @@ import pytest
 from traigent.cloud.api_operations import ApiOperations
 from traigent.cloud.models import OptimizationSession, SessionCreationRequest
 from traigent.cloud.session_operations import SessionOperations
-
+from traigent.core.backend_session_manager import BackendSessionManager
 
 # ---------------------------------------------------------------------------
 # Shared FakeClient infrastructure (mirrors test_session_operations_validation.py)
@@ -274,6 +275,60 @@ class TestResultMetadataWarmStartProvenance:
     def test_metadata_omits_warm_start_when_empty(self, monkeypatch):
         metadata = self._call_build(monkeypatch, "")
         assert "warm_start_from" not in metadata
+
+
+class TestWarmStartTransferMetadataPassthrough:
+    def _manager(self):
+        manager = BackendSessionManager.__new__(BackendSessionManager)
+        manager._backend_client = None
+        manager._egress_disabled = lambda: False
+        manager._session_owning_context = {}
+        return manager
+
+    def test_backend_warm_start_transfer_metadata_copied_verbatim(self):
+        transfer_metadata = {
+            "transfer_mode": "accepted",
+            "final_warm_start_weight": "medium",
+            "search_space_overlap": "partial",
+            "n_seed_configs_applied": 2,
+            "refused_reason": None,
+        }
+        result = SimpleNamespace(metadata={"warm_start_from": "exp_prior_99"})
+
+        self._manager().attach_session_metadata(
+            result=result,
+            session_id="session-123",
+            session_summary={"metadata": {"warm_start_transfer": transfer_metadata}},
+        )
+
+        assert result.metadata["warm_start_transfer"] == transfer_metadata
+        assert result.metadata["warm_start_transfer"] is not transfer_metadata
+        assert result.metadata["warm_start_from"] == "exp_prior_99"
+        field_names = json.dumps(
+            sorted(result.metadata["warm_start_transfer"].keys())
+        ).lower()
+        assert "score" not in field_names
+        assert "signal" not in field_names
+
+    @pytest.mark.parametrize(
+        "session_summary",
+        [
+            {},
+            {"metadata": {}},
+            {"metadata": {"warm_start_transfer": None}},
+            {"metadata": {"warm_start_transfer": "opaque"}},
+        ],
+    )
+    def test_warm_start_transfer_absent_or_non_dict_adds_no_key(self, session_summary):
+        result = SimpleNamespace(metadata={})
+
+        self._manager().attach_session_metadata(
+            result=result,
+            session_id="session-123",
+            session_summary=session_summary,
+        )
+
+        assert "warm_start_transfer" not in result.metadata
 
 
 # ---------------------------------------------------------------------------

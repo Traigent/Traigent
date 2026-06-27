@@ -1567,6 +1567,11 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+            summary_metadata = session_summary.get("metadata")
+            if isinstance(summary_metadata, dict):
+                warm_start_transfer = summary_metadata.get("warm_start_transfer")
+                if isinstance(warm_start_transfer, dict):
+                    update_payload["warm_start_transfer"] = dict(warm_start_transfer)
         if owning_context := self._session_owning_context.get(session_id):
             update_payload.update(owning_context)
 
