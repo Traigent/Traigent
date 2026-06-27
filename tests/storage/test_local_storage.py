@@ -476,7 +476,9 @@ class TestLocalStorageManager:
     def test_edge_case_empty_values(self):
         """Test handling of empty and None values."""
         session_id = self.storage.create_session(
-            "", optimization_config={}, metadata={}  # Empty function name
+            "",
+            optimization_config={},
+            metadata={},  # Empty function name
         )
 
         # Add trial with empty config

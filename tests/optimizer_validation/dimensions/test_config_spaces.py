@@ -888,9 +888,9 @@ class TestParameterExplorationOrder:
                     # Verify temperatures differ
                     first_temp = configs[0].get("temperature")
                     second_temp = configs[1].get("temperature")
-                    assert (
-                        first_temp != second_temp
-                    ), "Temperature should vary fastest when model is first"
+                    assert first_temp != second_temp, (
+                        "Temperature should vary fastest when model is first"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -952,9 +952,9 @@ class TestParameterExplorationOrder:
                     # Verify models differ
                     first_model = configs[0].get("model")
                     second_model = configs[1].get("model")
-                    assert (
-                        first_model != second_model
-                    ), "Model should vary fastest when temperature is first"
+                    assert first_model != second_model, (
+                        "Model should vary fastest when temperature is first"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

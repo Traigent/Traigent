@@ -501,7 +501,8 @@ class TestBillingManager:
             manager.current_plan = "standard"
 
             result = await manager.check_usage_limits(
-                trials_count=200, dataset_size=500  # Exceeds standard limit of 100
+                trials_count=200,
+                dataset_size=500,  # Exceeds standard limit of 100
             )
 
             assert result["allowed"] is False
@@ -519,7 +520,8 @@ class TestBillingManager:
             manager.current_plan = "standard"
 
             result = await manager.check_usage_limits(
-                trials_count=50, dataset_size=2000  # Exceeds standard limit of 1000
+                trials_count=50,
+                dataset_size=2000,  # Exceeds standard limit of 1000
             )
 
             assert result["allowed"] is False
@@ -593,7 +595,9 @@ class TestBillingManager:
         manager = BillingManager(tracker)
 
         for upgrade_target in ("standard", "professional", "enterprise"):
-            with pytest.raises(ConfigurationError, match="Cannot upgrade billing plan locally"):
+            with pytest.raises(
+                ConfigurationError, match="Cannot upgrade billing plan locally"
+            ):
                 manager.upgrade_plan(upgrade_target)
             assert manager.current_plan == "free", (
                 f"upgrade_plan('{upgrade_target}') must not mutate "
@@ -623,7 +627,9 @@ class TestBillingManager:
         assert result is True
         assert manager.current_plan == "free"
 
-    def test_upgrade_plan_unknown_target_in_billing_plans_but_missing_tier_order_raises(self):
+    def test_upgrade_plan_unknown_target_in_billing_plans_but_missing_tier_order_raises(
+        self,
+    ):
         """Regression: a plan registered in billing_plans
         but absent from _TIER_ORDER must raise ConfigurationError.
         Pre-fix this fell back to index 0 (free) and silently allowed

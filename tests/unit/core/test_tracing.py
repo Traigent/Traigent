@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from traigent.core import tracing
 from traigent.core.tracing import (
@@ -559,9 +558,7 @@ class TestPIITelemetryScrubbing:
                 pass
 
         input_call = next(
-            c
-            for c in span.set_attribute.call_args_list
-            if c.args[0] == "example.input"
+            c for c in span.set_attribute.call_args_list if c.args[0] == "example.input"
         )
         exported = input_call.args[1]
         assert "jane@example.org" not in exported
@@ -637,4 +634,6 @@ class TestPIITelemetryScrubbing:
         span = MagicMock()
         record_example_result(span, success=True, actual_output="Generated response")
 
-        span.set_attribute.assert_any_call("example.actual_output", "Generated response")
+        span.set_attribute.assert_any_call(
+            "example.actual_output", "Generated response"
+        )

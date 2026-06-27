@@ -36,7 +36,9 @@ def test_framework_param_wrap_callable_returns_same_callable() -> None:
     assert effect.emit_events() == []
 
 
-def test_catalog_value_entries_are_only_marked_executable_when_strategy_exists() -> None:
+def test_catalog_value_entries_are_only_marked_executable_when_strategy_exists() -> (
+    None
+):
     value_entries = [entry for entry in load_catalog() if entry["kind"] == "value"]
 
     for entry in value_entries:

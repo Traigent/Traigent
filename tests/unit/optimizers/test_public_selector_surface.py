@@ -75,9 +75,9 @@ class TestPublicOptimizerSelectorSurface:
         Mirrors the user-facing pattern ``from traigent.optimizers import X``.
         """
         complete = _complete_batch_implementations()
-        assert (
-            complete
-        ), "Expected at least one complete batch optimizer in feature matrix"
+        assert complete, (
+            "Expected at least one complete batch optimizer in feature matrix"
+        )
         missing = [
             impl["class_name"]
             for impl in complete

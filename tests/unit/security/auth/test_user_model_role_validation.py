@@ -53,9 +53,7 @@ class TestUserRoleValidation_SDK939:
             [{"role": "admin"}],  # dict, not string
         ]
         for invalid in invalid_inputs:
-            with pytest.raises(
-                ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE
-            ) as exc_info:
+            with pytest.raises(ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE) as exc_info:
                 User(**_VALID_USER_KWARGS, roles=invalid)
             assert "fail-closed" in str(exc_info.value)
             assert "sanitize_roles strict mode" in str(exc_info.value)
@@ -72,9 +70,7 @@ class TestUserRoleValidation_SDK939:
             ["valid", {"role": "x"}],
         ]
         for invalid in invalid_mixed:
-            with pytest.raises(
-                ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE
-            ) as exc_info:
+            with pytest.raises(ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE) as exc_info:
                 User(**_VALID_USER_KWARGS, roles=invalid)
             assert "fail-closed" in str(exc_info.value)
             assert "sanitize_roles strict mode" in str(exc_info.value)
@@ -92,9 +88,7 @@ class TestUserRoleValidation_SDK939:
         in sanitize_roles(strict=True). Now User delegates to the
         strict sanitizer so both paths agree."""
         for invalid in (["!!!hack!!!"], ["super admin"], ["role with spaces"]):
-            with pytest.raises(
-                ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE
-            ) as exc_info:
+            with pytest.raises(ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE) as exc_info:
                 User(**_VALID_USER_KWARGS, roles=invalid)
             assert "fail-closed" in str(exc_info.value)
             assert "sanitize_roles strict mode" in str(exc_info.value)

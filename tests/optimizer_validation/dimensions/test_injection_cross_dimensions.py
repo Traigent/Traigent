@@ -108,9 +108,9 @@ class TestInjectionModeWithAlgorithms:
 
         # Explicit behavior assertions for grid search
         assert hasattr(result, "trials"), "Result must have trials attribute"
-        assert (
-            len(result.trials) == 4
-        ), f"Grid should run 4 trials, got {len(result.trials)}"
+        assert len(result.trials) == 4, (
+            f"Grid should run 4 trials, got {len(result.trials)}"
+        )
         for trial in result.trials:
             assert getattr(trial, "config", None), "Each trial must have a config"
 
@@ -666,9 +666,9 @@ class TestInjectionModeWithStopConditions:
 
         # Explicit behavior assertions for config exhaustion
         assert hasattr(result, "trials"), "Result must have trials attribute"
-        assert (
-            len(result.trials) >= 4
-        ), f"Should complete at least 4 trials (exhaustion), got {len(result.trials)}"
+        assert len(result.trials) >= 4, (
+            f"Should complete at least 4 trials (exhaustion), got {len(result.trials)}"
+        )
         for trial in result.trials:
             assert getattr(trial, "config", None), "Each trial must have a config"
 

@@ -367,8 +367,7 @@ def main() -> int:
 
     print()
     print(
-        f"Found {len(errors)} errors, {len(warnings)} warnings, "
-        f"and {len(infos)} info"
+        f"Found {len(errors)} errors, {len(warnings)} warnings, and {len(infos)} info"
     )
 
     if errors:

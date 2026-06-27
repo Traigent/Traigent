@@ -327,7 +327,7 @@ class TestRetryWithRateLimitSimulator:
         # First two should succeed, third should hit limit but retry after reset
         for i in range(3):
             result = handler.execute_with_result(burst_limited_operation)
-            assert result.success, f"Call {i+1} should succeed after retry"
+            assert result.success, f"Call {i + 1} should succeed after retry"
 
 
 class TestRateLimitRecoveryPatterns:

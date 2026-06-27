@@ -63,7 +63,9 @@ def _load_json_object(path: Path, description: str) -> JsonObject:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise AssertionError(f"{description} at {path} is not valid JSON: {exc}") from exc
+        raise AssertionError(
+            f"{description} at {path} is not valid JSON: {exc}"
+        ) from exc
 
     if not isinstance(payload, dict):
         raise AssertionError(f"{description} at {path} must be a JSON object.")
@@ -71,7 +73,9 @@ def _load_json_object(path: Path, description: str) -> JsonObject:
     return payload
 
 
-def _object_at(payload: JsonObject, path: tuple[str, ...], description: str) -> JsonObject:
+def _object_at(
+    payload: JsonObject, path: tuple[str, ...], description: str
+) -> JsonObject:
     value: Any = payload
     for key in path:
         if not isinstance(value, dict) or key not in value:
@@ -96,22 +100,30 @@ def _string_at(payload: JsonObject, path: tuple[str, ...], description: str) -> 
 
     if not isinstance(value, str) or not value:
         dotted = ".".join(path)
-        raise AssertionError(f"{description} field `{dotted}` must be a non-empty string.")
+        raise AssertionError(
+            f"{description} field `{dotted}` must be a non-empty string."
+        )
 
     return value
 
 
-def _string_list_at(payload: JsonObject, path: tuple[str, ...], description: str) -> list[str]:
+def _string_list_at(
+    payload: JsonObject, path: tuple[str, ...], description: str
+) -> list[str]:
     value: Any = payload
     for key in path:
         if not isinstance(value, dict) or key not in value:
             dotted = ".".join(path)
-            raise AssertionError(f"{description} must define string-list field `{dotted}`.")
+            raise AssertionError(
+                f"{description} must define string-list field `{dotted}`."
+            )
         value = value[key]
 
     dotted = ".".join(path)
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise AssertionError(f"{description} field `{dotted}` must be a list of strings.")
+        raise AssertionError(
+            f"{description} field `{dotted}` must be a list of strings."
+        )
 
     return value
 
@@ -152,10 +164,14 @@ def _load_js_surface() -> JsonObject:
 
 
 def _classified_symbols(manifest: JsonObject) -> set[str]:
-    classifications = _object_at(manifest, ("classifications",), "Python/JS parity manifest")
+    classifications = _object_at(
+        manifest, ("classifications",), "Python/JS parity manifest"
+    )
     classified: set[str] = set()
     for classification, symbols in classifications.items():
-        if not isinstance(symbols, list) or not all(isinstance(symbol, str) for symbol in symbols):
+        if not isinstance(symbols, list) or not all(
+            isinstance(symbol, str) for symbol in symbols
+        ):
             raise AssertionError(
                 "Python/JS parity manifest classification "
                 f"`classifications.{classification}` must be a list of strings."
@@ -167,7 +183,9 @@ def _classified_symbols(manifest: JsonObject) -> set[str]:
 
 def test_parity_manifest_declares_python_target() -> None:
     manifest = _load_parity_manifest()
-    target_sha = _string_at(manifest, ("python", "targetSha"), "Python/JS parity manifest")
+    target_sha = _string_at(
+        manifest, ("python", "targetSha"), "Python/JS parity manifest"
+    )
     expected_sha = os.environ.get("TRAIGENT_PARITY_EXPECTED_PYTHON_SHA")
 
     assert len(target_sha) == 40 and set(target_sha) <= set("0123456789abcdef"), (
@@ -181,7 +199,9 @@ def test_parity_manifest_declares_python_target() -> None:
 def test_python_public_clients_are_represented_in_js_api_surface() -> None:
     manifest = _load_parity_manifest()
     js_surface = _load_js_surface()
-    js_root = set(_non_empty_string_list_at(js_surface, ("root",), "JS API surface snapshot"))
+    js_root = set(
+        _non_empty_string_list_at(js_surface, ("root",), "JS API surface snapshot")
+    )
 
     required = set(
         _non_empty_string_list_at(

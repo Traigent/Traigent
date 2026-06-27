@@ -114,9 +114,9 @@ class TestSequentialExecutionAllAlgorithms:
 
         # Grid should complete all combinations
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 4
-            ), f"Grid should run exactly 4 trials, got {len(result.trials)}"
+            assert len(result.trials) == 4, (
+                f"Grid should run exactly 4 trials, got {len(result.trials)}"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

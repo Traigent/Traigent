@@ -113,9 +113,9 @@ class TestBuildModelCandidates:
         self, raw_input: str, expected_candidate: str
     ) -> None:
         candidates = _build_model_candidates(raw_input)
-        assert any(
-            c.lower() == expected_candidate.lower() for c in candidates
-        ), f"Expected '{expected_candidate}' in candidates {candidates}"
+        assert any(c.lower() == expected_candidate.lower() for c in candidates), (
+            f"Expected '{expected_candidate}' in candidates {candidates}"
+        )
 
     def test_candidates_are_deduplicated(self) -> None:
         candidates = _build_model_candidates("gpt-4o")

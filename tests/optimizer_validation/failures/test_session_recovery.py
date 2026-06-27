@@ -83,15 +83,15 @@ class TestTrialHistoryTracking:
 
         # Verify all trials are in history
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 4
-            ), f"Expected 4 trials in history, got {len(result.trials)}"
+            assert len(result.trials) == 4, (
+                f"Expected 4 trials in history, got {len(result.trials)}"
+            )
 
             # Each trial should have a config
             for i, trial in enumerate(result.trials):
-                assert hasattr(trial, "config") or isinstance(
-                    trial, dict
-                ), f"Trial {i} missing config"
+                assert hasattr(trial, "config") or isinstance(trial, dict), (
+                    f"Trial {i} missing config"
+                )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

@@ -273,9 +273,9 @@ class TestFunctionTimeout:
         # May have completed some trials before timeout or optimizer stopped
         # Valid stop reasons include timeout, max_trials, or optimizer decision
         valid_stop_reasons = ("timeout", "max_trials_reached", "optimizer", None)
-        assert (
-            result.stop_reason in valid_stop_reasons
-        ), f"Unexpected stop_reason: {result.stop_reason}"
+        assert result.stop_reason in valid_stop_reasons, (
+            f"Unexpected stop_reason: {result.stop_reason}"
+        )
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 

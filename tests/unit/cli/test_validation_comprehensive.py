@@ -193,7 +193,6 @@ class TestOptimizationValidator:
                     return_value=({"accuracy": 0.9}, {"model": "optimized"}),
                 ),
             ):
-
                 result = await validator.validate_optimization(valid_function_info)
 
                 assert result.is_superior is True

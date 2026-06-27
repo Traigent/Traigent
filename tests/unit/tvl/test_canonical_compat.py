@@ -70,9 +70,7 @@ class TestPythonExpressionCompatibilityPreserved:
     """The SDK's own `params.x ==` dialect must keep working unchanged."""
 
     def test_params_prefixed_double_equals(self):
-        rule = compile_constraint_expression(
-            'params.model == "gpt-4o"', label="compat"
-        )
+        rule = compile_constraint_expression('params.model == "gpt-4o"', label="compat")
         assert rule({"model": "gpt-4o"}, None) is True
         assert rule({"model": "other"}, None) is False
 

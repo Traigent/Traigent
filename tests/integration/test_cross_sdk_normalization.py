@@ -10,6 +10,7 @@ fails its own suite; agreement on the fixture is the cross-SDK contract.
 
 Contract source: TraigentSchema/optimization/multi_objective_semantics_schema.json v1.0.0.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,7 +35,11 @@ def _locate_fixture() -> Path:
     if override and Path(override).exists():
         return Path(override)
 
-    local = Path(__file__).resolve().parent.parent / "fixtures" / "multi_objective_normalization.json"
+    local = (
+        Path(__file__).resolve().parent.parent
+        / "fixtures"
+        / "multi_objective_normalization.json"
+    )
     if local.exists():
         return local
 
@@ -126,7 +131,7 @@ def test_per_trial_normalized_values_match_fixture(case: dict) -> None:
         f"{case['id']}: trial count mismatch (got {len(actual)}, want {len(expected)})"
     )
 
-    for got, want in zip(actual, expected):
+    for got, want in zip(actual, expected, strict=False):
         assert got["trial_id"] == want["trial_id"], (
             f"{case['id']}: trial order mismatch"
         )

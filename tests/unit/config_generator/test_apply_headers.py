@@ -51,7 +51,7 @@ def test_adds_imports_after_module_docstring(
     apply_config(src, result_with_tvars, "my_func", backup=False)
 
     assert src.read_text().startswith(
-        '"""Agent module."""\n' "import traigent\n" "from traigent import Range\n\n"
+        '"""Agent module."""\nimport traigent\nfrom traigent import Range\n\n'
     )
 
 

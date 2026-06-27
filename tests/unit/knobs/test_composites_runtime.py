@@ -20,6 +20,7 @@ prove:
 """
 
 from __future__ import annotations
+from typing import Any
 
 import math
 
@@ -396,7 +397,6 @@ class TestPerGateTelemetryIndexed:
         threshold NAME collapses duplicated refs (legal in n_cascade) — a
         3-arm cascade reusing 'theta' lost the first gate's 0.0. Per-gate
         measures are keyed by GATE INDEX (§3.10: per-gate)."""
-        from traigent.knobs.patterns import n_cascade
 
         knob = n_cascade(
             "tri",
@@ -711,7 +711,10 @@ class TestLoopSignalAccept:
         node = self._sr(max_iters=4)
         # quality rises 0.2, 0.5, 0.95; theta 0.9 -> accepts on iteration 3.
         body = _stateful_body([0.2, 0.5, 0.95])
-        quality = lambda state: state["draft"]
+
+        def quality(state):
+            return state["draft"]
+
         result = execute_composite(
             node,
             {"body": body},
@@ -727,7 +730,10 @@ class TestLoopSignalAccept:
     def test_exhausts_without_acceptance_yields_no_accept(self):
         node = self._sr(max_iters=2)
         body = _stateful_body([0.1, 0.2])
-        quality = lambda state: state["draft"]
+
+        def quality(state):
+            return state["draft"]
+
         result = execute_composite(
             node,
             {"body": body},
@@ -1049,9 +1055,7 @@ def _mv_ensemble(name, *, stage_name, accept_threshold=None):
         kind=CompositeKind.ENSEMBLE,
         body=EnsembleBody(
             arms=(StageArm(stage_name),),
-            aggregate=AggregateDecl(
-                kind=AggregateKind.MAJORITY_VOTE, accept=accept
-            ),
+            aggregate=AggregateDecl(kind=AggregateKind.MAJORITY_VOTE, accept=accept),
             cardinality="k",
         ),
     )
@@ -1588,7 +1592,9 @@ class TestKChainExecutionBasics:
 
             return LoopBodyRunner(run=run)
 
-        signal = lambda s: s["draft"]
+        def signal(s):
+            return s["draft"]
+
         loop = execute_composite(
             knob.structure,
             {"body": err_body()},
@@ -1631,7 +1637,9 @@ def test_kchain_trace_equals_live_loop_under_conditions_1_3(k, values, theta):
     knob = _refine_knob(max_iters=k)
     node = knob.structure
     chain = knob.unroll(k)
-    signal = lambda s: s["draft"]
+
+    def signal(s):
+        return s["draft"]
 
     loop = execute_composite(
         node,
@@ -1700,7 +1708,9 @@ def test_kchain_trace_equals_live_loop_with_error_result_kind_bodies(
     knob = _refine_knob(max_iters=k)
     node = knob.structure
     chain = knob.unroll(k)
-    signal = lambda s: s["draft"]
+
+    def signal(s):
+        return s["draft"]
 
     loop = execute_composite(
         node,
@@ -2130,9 +2140,7 @@ class TestPreCascadeDispatch:
     def test_preflight_missing_signal_in_unreached_nested_pre_arm_is_error(self):
         # The deep preflight reaches a nested PRE-cascade arm too: a missing
         # dispatch signal inside an unselected nested arm fails closed up front.
-        inner = _pre_cascade(
-            ("ia0", "ia1"), (("it0", "needed_sig"),), name="inner"
-        )
+        inner = _pre_cascade(("ia0", "ia1"), (("it0", "needed_sig"),), name="inner")
         outer = _pre_cascade((CompositeArm("inner"), "a1"), (("t0", "s0"),))
         result = execute_composite(
             outer,
@@ -2368,9 +2376,7 @@ class TestPreCascadeDispatch:
         a future "bubble up nested telemetry" change must touch both.
         """
         # --- PRE: outer routes to a NESTED PRE-cascade arm. ---
-        inner = _pre_cascade(
-            ("ia0", "ia1"), (("it0", "is0"),), name="inner"
-        )
+        inner = _pre_cascade(("ia0", "ia1"), (("it0", "is0"),), name="inner")
         outer = _pre_cascade((CompositeArm("inner"), "a1"), (("t0", "s0"),))
         pre_result = execute_composite(
             outer,
@@ -2397,9 +2403,7 @@ class TestPreCascadeDispatch:
         assert "dispatch_signal_margin" in pre_result.measures  # outer gated route
 
         # --- POST: outer escalates into a nested ensemble arm (parity probe). ---
-        inner_ens = self_consistency(
-            "inner_ens", stage="ie", cardinality="k"
-        ).structure
+        inner_ens = self_consistency("inner_ens", stage="ie", cardinality="k").structure
         post = CompositeNode(
             name="post",
             kind=CompositeKind.CASCADE,
