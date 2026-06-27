@@ -1033,6 +1033,12 @@ class SessionOperations:
         backend_stop_reason = backend_summary.get("stop_reason")
         backend_convergence_history = backend_summary.get("convergence_history")
         backend_full_history = backend_summary.get("full_history")
+        backend_metadata = backend_summary.get("metadata")
+        backend_warm_start_transfer = (
+            backend_metadata.get("warm_start_transfer")
+            if isinstance(backend_metadata, dict)
+            else None
+        )
 
         summary_fields: list[str] = []
 
@@ -1133,6 +1139,14 @@ class SessionOperations:
                 # before treating best_config/best_metrics as authoritative.
                 "summary_available": summary_available,
                 "summary_fields": summary_fields,
+                # Pass the backend's opaque, IP-safe warm-start transfer block
+                # (transfer_mode / refused_reason / search_space_overlap / ...)
+                # through so the SDK can surface result.metadata.warm_start_transfer.
+                **(
+                    {"warm_start_transfer": backend_warm_start_transfer}
+                    if isinstance(backend_warm_start_transfer, dict)
+                    else {}
+                ),
             },
         )
 

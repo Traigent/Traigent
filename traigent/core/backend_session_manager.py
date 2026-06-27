@@ -1567,7 +1567,15 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
-            summary_metadata = session_summary.get("metadata")
+            # session_summary may be a plain dict OR an OptimizationFinalizationResponse
+            # dataclass (the real cloud finalize path), which exposes ``.metadata`` as an
+            # attribute and has no ``.get()``. Calling ``.get()`` on the dataclass raised
+            # AttributeError, which the persistence try/except swallowed as
+            # "persistence failed" on every cloud run. Guard the type before extracting.
+            if isinstance(session_summary, dict):
+                summary_metadata = session_summary.get("metadata")
+            else:
+                summary_metadata = getattr(session_summary, "metadata", None)
             if isinstance(summary_metadata, dict):
                 warm_start_transfer = summary_metadata.get("warm_start_transfer")
                 if isinstance(warm_start_transfer, dict):
