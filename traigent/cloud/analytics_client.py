@@ -276,7 +276,7 @@ class BackendAnalyticsClient:
         """
         from traigent.cloud.auth import _build_api_key_auth_headers
 
-        api_key_headers = _build_api_key_auth_headers(self.api_key)
+        api_key_headers: dict[str, str] = _build_api_key_auth_headers(self.api_key)
         if api_key_headers:
             return api_key_headers
         if self.jwt_token:
@@ -547,7 +547,14 @@ class BackendAnalyticsClient:
         project_id: str,
         run_id: str,
     ) -> dict[str, Any]:
-        """Return the backend's privacy-bounded example insights for one run."""
+        """Return the backend's privacy-bounded example insights for one run.
+
+        The payload is passed through unchanged after validating the stable
+        top-level contract. Backends may include coarse "examples to review"
+        rows with opaque example refs plus enum-only review metadata such as
+        review priority, difficulty bucket, suspicious flags, and recommended
+        action. Raw signal values and scores are never exposed here.
+        """
         path = (
             "/api/v1/analytics/runs/"
             f"{_quote_segment(run_id, field='run_id')}/example-insights"

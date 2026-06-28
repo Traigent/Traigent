@@ -577,6 +577,35 @@ class TestWave2SingleRunAnalytics:
         )
 
     @pytest.mark.asyncio
+    async def test_get_example_insights_preserves_forward_compatible_fields(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        extended_payload = dict(example_insights_payload)
+        summary = example_insights_payload["summary"]
+        assert isinstance(summary, dict)
+        extended_payload["summary"] = {
+            **summary,
+            "suspicious_example_count": 1,
+            "notable_example_count": 2,
+            "stable_example_count": 7,
+        }
+        extended_payload["example_rows"] = [
+            {
+                "safe_example_ref": "exref_a1b2c3d4",
+                "review_priority": "high",
+                "difficulty_bucket": "hard",
+                "suspicious_flags": ["label_conflict", "format_drift"],
+                "recommended_action": "review_before_promotion",
+            }
+        ]
+        _, _ = _mock_get_response(client, extended_payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        assert result == extended_payload
+
+    @pytest.mark.asyncio
     async def test_get_example_insights_rejects_empty_ids(
         self, example_insights_payload: dict[str, object]
     ) -> None:

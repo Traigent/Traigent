@@ -464,6 +464,50 @@ class TestWave2AnalyticsTools:
         reader.get_example_insights.assert_awaited_once_with("proj_abc", "run_123")
 
     @pytest.mark.asyncio
+    async def test_example_insights_tool_preserves_forward_compatible_fields(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_example_insights_tool
+
+        extended_payload = {
+            "run_id": "run_123",
+            "privacy_mode": "safe_agent_projection",
+            "summary": {
+                "example_count": 10,
+                "weak_example_count": 2,
+                "unstable_example_count": 1,
+                "dataset_quality": "medium",
+                "suspicious_example_count": 1,
+                "notable_example_count": 2,
+                "stable_example_count": 7,
+            },
+            "cohorts": [],
+            "recommendations": [],
+            "redactions": {
+                "raw_proprietary_signals_hidden": True,
+                "raw_prompt_text_hidden_by_default": True,
+            },
+            "example_rows": [
+                {
+                    "safe_example_ref": "exref_a1b2c3d4",
+                    "review_priority": "high",
+                    "difficulty_bucket": "hard",
+                    "suspicious_flags": ["label_conflict", "format_drift"],
+                    "recommended_action": "review_before_promotion",
+                }
+            ],
+        }
+        reader = AsyncMock()
+        reader.get_example_insights.return_value = extended_payload
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_example_insights_tool("proj_abc", "run_123")
+
+        assert result["ok"] is True
+        assert result["example_insights"] == extended_payload
+        reader.get_example_insights.assert_awaited_once_with("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
     async def test_missing_project_id_is_rejected_for_new_tools(
         self, monkeypatch
     ) -> None:
