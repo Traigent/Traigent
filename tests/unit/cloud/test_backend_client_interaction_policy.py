@@ -305,3 +305,72 @@ async def test_get_interaction_policy_backend_failures_return_static(
 
     _assert_static_policy(result)
     assert len(fake_session.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: unreachable/invalid backend URL must not raise from __init__,
+# and get_interaction_policy() must return the static default without a
+# network call.  (Bug: ValueError from validate_cloud_base_url was raised
+# in __init__ before get_interaction_policy()'s try/except could catch it.)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        # Unresolvable hostname (DNS lookup raises socket.gaierror → ValueError)
+        "https://does-not-exist.traigent.invalid",
+        # Private-network IP blocked in production
+        "https://192.168.1.1",
+        # Non-http scheme
+        "ftp://bad-scheme.example.com",
+        # URL with credentials (explicitly forbidden)
+        "https://user:pass@api.example.com",  # pragma: allowlist secret
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_url_init_does_not_raise_and_returns_static_policy(
+    monkeypatch,
+    bad_url: str,
+) -> None:
+    """BackendIntegratedClient must not raise on an unusable URL.
+
+    get_interaction_policy() must return the static default (guided/se/balanced)
+    when the backend URL was rejected during __init__ — it must never propagate
+    the ValueError to the caller.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+
+    # __init__ must succeed even with a bad URL
+    client = BackendIntegratedClient(api_key=FAKE_API_KEY, base_url=bad_url)
+
+    assert client._url_invalid is True, (
+        "Expected _url_invalid=True for an unusable URL"
+    )
+
+    # get_interaction_policy() must return the static fallback without any
+    # network call
+    with patch(
+        "traigent.cloud.backend_client.aiohttp.ClientSession"
+    ) as mock_session:
+        result = await client.get_interaction_policy()
+
+    _assert_static_policy(result)
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_valid_url_does_not_set_url_invalid(monkeypatch) -> None:
+    """A well-formed, routable URL must leave _url_invalid=False."""
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+
+    client = BackendIntegratedClient(
+        api_key=FAKE_API_KEY,
+        base_url="https://api.example.test",
+    )
+
+    assert client._url_invalid is False, (
+        "Expected _url_invalid=False for a valid URL"
+    )

@@ -35,6 +35,7 @@ from traigent.cloud.backend_components import (
     BackendTrialManager,
 )
 from traigent.cloud.client import (
+    CloudEgressBlockedError,
     CloudServiceError,
     _finalize_aiohttp_session,
     _is_real_aiohttp_session,
@@ -492,40 +493,65 @@ class BackendIntegratedClient:
         if effective_base_url is None:
             effective_base_url = BackendConfig.get_backend_url()
 
-        # Validate and sanitize URLs
-        effective_base_url = validate_cloud_base_url(
-            effective_base_url, purpose="backend client"
-        )
-        self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
-
-        backend_base_url = self.base_url
-        if not explicit_base_origin:
-            backend_base_url = self.backend_config.backend_base_url or self.base_url
-        backend_base_url = validate_cloud_base_url(
-            backend_base_url, purpose="backend client"
-        )
-        self.backend_config.backend_base_url = self._api_ops.validate_and_sanitize_url(
-            backend_base_url
-        )
-
-        if explicit_api_base and not getattr(
-            self.backend_config, "api_explicitly_set", False
-        ):
-            api_base_candidate = explicit_api_base
-        else:
-            api_base_candidate = (
-                self.backend_config.api_base_url
-                or BackendConfig.build_api_base(self.backend_config.backend_base_url)
+        # Validate and sanitize URLs.  If the supplied URL is unreachable or
+        # structurally invalid (e.g. unresolvable hostname, private-IP target),
+        # mark _url_invalid so get_interaction_policy() can fall back to the
+        # static policy without raising.  The live validation path is entirely
+        # unchanged — only the fallback branch activates when the URL is
+        # genuinely unusable.
+        self._url_invalid = False
+        try:
+            effective_base_url = validate_cloud_base_url(
+                effective_base_url, purpose="backend client"
             )
-        api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
-        if api_origin is None:
-            raise ValueError("backend client API base URL must include an origin")
-        api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
-        api_base_candidate = (
-            f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
-        )
-        self.api_base_url = self._api_ops.validate_and_sanitize_url(api_base_candidate)
-        self.backend_config.api_base_url = self.api_base_url
+            self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
+
+            backend_base_url = self.base_url
+            if not explicit_base_origin:
+                backend_base_url = self.backend_config.backend_base_url or self.base_url
+            backend_base_url = validate_cloud_base_url(
+                backend_base_url, purpose="backend client"
+            )
+            self.backend_config.backend_base_url = (
+                self._api_ops.validate_and_sanitize_url(backend_base_url)
+            )
+
+            if explicit_api_base and not getattr(
+                self.backend_config, "api_explicitly_set", False
+            ):
+                api_base_candidate = explicit_api_base
+            else:
+                api_base_candidate = (
+                    self.backend_config.api_base_url
+                    or BackendConfig.build_api_base(
+                        self.backend_config.backend_base_url
+                    )
+                )
+            api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
+            if api_origin is None:
+                raise ValueError("backend client API base URL must include an origin")
+            api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
+            api_base_candidate = (
+                f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
+            )
+            self.api_base_url = self._api_ops.validate_and_sanitize_url(
+                api_base_candidate
+            )
+            self.backend_config.api_base_url = self.api_base_url
+        except ValueError:
+            # URL is structurally invalid or the hostname could not be resolved.
+            # Store a safe inert placeholder so the rest of __init__ completes;
+            # get_interaction_policy() will short-circuit to _static_interaction_policy.
+            self._url_invalid = True
+            _placeholder = "https://backend.invalid"
+            self.base_url = _placeholder
+            self.backend_config.backend_base_url = _placeholder
+            self.api_base_url = _placeholder
+            self.backend_config.api_base_url = _placeholder
+            logger.debug(
+                "BackendIntegratedClient: URL validation failed; "
+                "falling back to static interaction policy"
+            )
 
         self.enable_fallback = enable_fallback
         self.no_egress = bool(no_egress)
@@ -827,6 +853,9 @@ class BackendIntegratedClient:
         if cloud_backend_egress_disabled(self.no_egress):
             return self._static_interaction_policy()
 
+        if getattr(self, "_url_invalid", False):
+            return self._static_interaction_policy()
+
         api_key = os.getenv("TRAIGENT_API_KEY") or self._api_key_fallback
         if not api_key or is_mock_llm() or not AIOHTTP_AVAILABLE:
             return self._static_interaction_policy()
@@ -1111,6 +1140,8 @@ class BackendIntegratedClient:
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
+        if getattr(self, "_url_invalid", False):
+            raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
