@@ -374,3 +374,53 @@ async def test_valid_url_does_not_set_url_invalid(monkeypatch) -> None:
     assert client._url_invalid is False, (
         "Expected _url_invalid=False for a valid URL"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression (fail-CLOSED counterpart): an unusable backend URL must NOT make
+# real cloud operations silently target the inert placeholder. Every cloud op
+# must fail closed with CloudEgressBlockedError and emit ZERO transport calls.
+# (Policy reads fall back to static; everything else is denied.)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_invalid_url_cloud_ops_fail_closed_with_zero_transport(
+    monkeypatch,
+) -> None:
+    from traigent.cloud.client import CloudEgressBlockedError
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+
+    client = BackendIntegratedClient(
+        api_key=FAKE_API_KEY,
+        base_url="https://does-not-exist.traigent.invalid",
+    )
+    assert client._url_invalid is True
+
+    # Each component's fail-closed chokepoint must deny when the URL is invalid.
+    for guard_owner in (
+        client,
+        client._api_ops,
+        client._session_ops,
+        client._trial_ops,
+    ):
+        with pytest.raises(CloudEgressBlockedError):
+            guard_owner._raise_if_backend_egress_disabled("probe")
+
+    # Representative high-level cloud ops must fail closed end-to-end with no
+    # network session ever constructed.
+    with patch(
+        "traigent.cloud.backend_client.aiohttp.ClientSession"
+    ) as mock_session:
+        with pytest.raises(CloudEgressBlockedError):
+            await client.create_hybrid_session(
+                "guarded_problem",
+                {"temperature": [0.1]},
+                {"objectives": ["accuracy"], "max_trials": 1},
+            )
+        with pytest.raises(CloudEgressBlockedError):
+            await client.request_trial_slot("sess-invalid-url")
+
+    mock_session.assert_not_called()
