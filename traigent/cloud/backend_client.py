@@ -20,7 +20,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import quote, unquote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
@@ -535,6 +535,23 @@ class BackendIntegratedClient:
             if api_origin is None:
                 raise ValueError("backend client API base URL must include an origin")
             api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
+            # validate_cloud_base_url only saw the origin; the API path is
+            # reattached below, so re-check the (decoded) path for traversal
+            # here — otherwise an explicit api_base_url like ".../../admin" would
+            # bypass the traversal guard that validate_cloud_base_url applies to
+            # full URLs.
+            _decoded_api_path = api_path or ""
+            for _ in range(2):
+                _next = unquote(_decoded_api_path)
+                if _next == _decoded_api_path:
+                    break
+                _decoded_api_path = _next
+            if any(
+                seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg
+            ):
+                raise ValueError(
+                    "backend client API base URL must not contain path traversal"
+                )
             api_base_candidate = (
                 f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
             )

@@ -7,7 +7,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from traigent.cloud.backend_client import STATIC_POLICY_TEXT, BackendIntegratedClient
+from traigent.cloud.backend_client import (
+    STATIC_POLICY_TEXT,
+    BackendClientConfig,
+    BackendIntegratedClient,
+)
 from traigent.testing import _reset_for_tests, enable_mock_mode_for_quickstart
 
 FAKE_API_KEY = "tg_" + "x" * 61  # pragma: allowlist secret
@@ -387,6 +391,38 @@ async def test_unsafe_url_still_fails_loud_and_is_not_swallowed(
 
     with pytest.raises(ValueError):
         BackendIntegratedClient(api_key=FAKE_API_KEY, base_url=unsafe_url)
+
+
+@pytest.mark.parametrize(
+    "traversal_path",
+    [
+        "/api/../../admin",
+        "/%2e%2e/secret",
+        "/v1/./../..",
+    ],
+)
+@pytest.mark.asyncio
+async def test_explicit_api_base_path_traversal_is_rejected(
+    monkeypatch,
+    traversal_path: str,
+) -> None:
+    """An explicitly configured api_base_url with path traversal must fail loud.
+
+    __init__ validates only the api ORIGIN and re-attaches the configured path,
+    so the decoded path is independently traversal-checked — otherwise a crafted
+    api_base_url could reach an unintended path past the origin guard (the path
+    on this config field is NOT run through validate_cloud_base_url's full check).
+    """
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+
+    config = BackendClientConfig(
+        backend_base_url="https://api.example.test",
+        api_base_url=f"https://api.example.test{traversal_path}",
+    )
+
+    with pytest.raises(ValueError, match="traversal"):
+        BackendIntegratedClient(api_key=FAKE_API_KEY, backend_config=config)
 
 
 @pytest.mark.asyncio
