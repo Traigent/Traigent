@@ -316,37 +316,34 @@ async def test_get_interaction_policy_backend_failures_return_static(
 
 
 @pytest.mark.parametrize(
-    "bad_url",
+    "unreachable_url",
     [
-        # Unresolvable hostname (DNS lookup raises socket.gaierror → ValueError)
+        # Unresolvable hostname (DNS lookup raises socket.gaierror →
+        # CloudUrlUnreachableError). This is the ONLY fallback-eligible case:
+        # a backend that is simply not reachable, not an unsafe origin.
         "https://does-not-exist.traigent.invalid",
-        # Private-network IP blocked in production
-        "https://192.168.1.1",
-        # Non-http scheme
-        "ftp://bad-scheme.example.com",
-        # URL with credentials (explicitly forbidden)
-        "https://user:pass@api.example.com",  # pragma: allowlist secret
+        "https://api.unreachable.traigent.invalid",
     ],
 )
 @pytest.mark.asyncio
-async def test_invalid_url_init_does_not_raise_and_returns_static_policy(
+async def test_unreachable_url_init_does_not_raise_and_returns_static_policy(
     monkeypatch,
-    bad_url: str,
+    unreachable_url: str,
 ) -> None:
-    """BackendIntegratedClient must not raise on an unusable URL.
+    """An UNREACHABLE backend must degrade to the static policy, not raise.
 
     get_interaction_policy() must return the static default (guided/se/balanced)
-    when the backend URL was rejected during __init__ — it must never propagate
-    the ValueError to the caller.
+    when the backend host could not be resolved during __init__ — it must never
+    propagate the error to the caller.
     """
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
 
-    # __init__ must succeed even with a bad URL
-    client = BackendIntegratedClient(api_key=FAKE_API_KEY, base_url=bad_url)
+    # __init__ must succeed when the host is merely unreachable
+    client = BackendIntegratedClient(api_key=FAKE_API_KEY, base_url=unreachable_url)
 
     assert client._url_invalid is True, (
-        "Expected _url_invalid=True for an unusable URL"
+        "Expected _url_invalid=True for an unreachable URL"
     )
 
     # get_interaction_policy() must return the static fallback without any
@@ -358,6 +355,38 @@ async def test_invalid_url_init_does_not_raise_and_returns_static_policy(
 
     _assert_static_policy(result)
     mock_session.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        # Cloud metadata endpoint (SSRF target) — must NEVER be swallowed
+        "https://169.254.169.254",
+        # Loopback / private-network targets blocked in production
+        "https://127.0.0.1:5000",
+        "https://192.168.1.1",
+        # Non-http scheme
+        "ftp://bad-scheme.example.com",
+        # URL with embedded credentials (explicitly forbidden)
+        "https://user:pass@api.example.com",  # pragma: allowlist secret
+    ],
+)
+@pytest.mark.asyncio
+async def test_unsafe_url_still_fails_loud_and_is_not_swallowed(
+    monkeypatch,
+    unsafe_url: str,
+) -> None:
+    """UNSAFE origins must keep failing loud — the fallback must not relax SSRF.
+
+    The interaction-policy fallback is scoped strictly to unreachable hosts; an
+    unsafe origin (metadata/loopback/private IP, bad scheme, credentialed URL)
+    must still raise from __init__ exactly as before the fallback was added.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+
+    with pytest.raises(ValueError):
+        BackendIntegratedClient(api_key=FAKE_API_KEY, base_url=unsafe_url)
 
 
 @pytest.mark.asyncio

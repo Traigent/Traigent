@@ -23,6 +23,19 @@ _METADATA_HOSTNAMES = {
 }
 
 
+class CloudUrlUnreachableError(ValueError):
+    """A cloud base URL was structurally valid but its host could not be resolved.
+
+    Distinct from the other ``ValueError``s raised by :func:`validate_cloud_base_url`,
+    which signal an *unsafe* URL (private/loopback/metadata IP, bad scheme, embedded
+    credentials, path traversal) and MUST always fail loud. This subclass marks the
+    narrow "backend is simply unreachable" case, so best-effort callers (e.g. the
+    interaction-policy read) may fall back to a static default instead of crashing,
+    WITHOUT relaxing any SSRF/unsafe-origin protection. Subclasses ``ValueError`` so
+    existing ``except ValueError`` callers keep catching it.
+    """
+
+
 def _is_development_environment() -> bool:
     """Return True only for explicit/local SDK development environments.
 
@@ -110,7 +123,9 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
     try:
         addr_infos = socket.getaddrinfo(normalized, None)
     except socket.gaierror:
-        raise ValueError("Cloud base URL host could not be resolved") from None
+        raise CloudUrlUnreachableError(
+            "Cloud base URL host could not be resolved"
+        ) from None
 
     for _family, _socktype, _proto, _canonname, sockaddr in addr_infos:
         try:

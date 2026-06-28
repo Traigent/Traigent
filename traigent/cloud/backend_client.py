@@ -65,7 +65,10 @@ from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import TrialOperations
-from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.url_security import (
+    CloudUrlUnreachableError,
+    validate_cloud_base_url,
+)
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
@@ -493,12 +496,13 @@ class BackendIntegratedClient:
         if effective_base_url is None:
             effective_base_url = BackendConfig.get_backend_url()
 
-        # Validate and sanitize URLs.  If the supplied URL is unreachable or
-        # structurally invalid (e.g. unresolvable hostname, private-IP target),
-        # mark _url_invalid so get_interaction_policy() can fall back to the
-        # static policy without raising.  The live validation path is entirely
-        # unchanged — only the fallback branch activates when the URL is
-        # genuinely unusable.
+        # Validate and sanitize URLs.  If the supplied URL is simply
+        # *unreachable* (host cannot be resolved), mark _url_invalid so
+        # get_interaction_policy() can fall back to the static policy without
+        # raising.  UNSAFE-origin rejections (private/loopback/metadata IPs,
+        # bad scheme, embedded credentials, path traversal) are NOT caught here
+        # — they keep failing loud to preserve SSRF protection.  The live
+        # validation path is otherwise entirely unchanged.
         self._url_invalid = False
         try:
             effective_base_url = validate_cloud_base_url(
@@ -538,10 +542,13 @@ class BackendIntegratedClient:
                 api_base_candidate
             )
             self.backend_config.api_base_url = self.api_base_url
-        except ValueError:
-            # URL is structurally invalid or the hostname could not be resolved.
+        except CloudUrlUnreachableError:
+            # The backend host could not be resolved (genuinely unreachable).
             # Store a safe inert placeholder so the rest of __init__ completes;
-            # get_interaction_policy() will short-circuit to _static_interaction_policy.
+            # get_interaction_policy() will short-circuit to _static_interaction_policy,
+            # while every cloud op fails closed via _raise_if_backend_egress_disabled.
+            # NOTE: unsafe-origin ValueErrors are intentionally NOT caught here —
+            # they propagate so SSRF/credentialed-URL rejections still fail loud.
             self._url_invalid = True
             _placeholder = "https://backend.invalid"
             self.base_url = _placeholder
