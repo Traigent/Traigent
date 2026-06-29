@@ -352,9 +352,7 @@ async def test_unreachable_url_init_does_not_raise_and_returns_static_policy(
 
     # get_interaction_policy() must return the static fallback without any
     # network call
-    with patch(
-        "traigent.cloud.backend_client.aiohttp.ClientSession"
-    ) as mock_session:
+    with patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_session:
         result = await client.get_interaction_policy()
 
     _assert_static_policy(result)
@@ -439,9 +437,7 @@ async def test_valid_url_does_not_set_url_invalid(monkeypatch) -> None:
         base_url="https://api.example.test",
     )
 
-    assert client._url_invalid is False, (
-        "Expected _url_invalid=False for a valid URL"
-    )
+    assert client._url_invalid is False, "Expected _url_invalid=False for a valid URL"
 
 
 # ---------------------------------------------------------------------------
@@ -479,9 +475,7 @@ async def test_invalid_url_cloud_ops_fail_closed_with_zero_transport(
 
     # Representative high-level cloud ops must fail closed end-to-end with no
     # network session ever constructed.
-    with patch(
-        "traigent.cloud.backend_client.aiohttp.ClientSession"
-    ) as mock_session:
+    with patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_session:
         with pytest.raises(CloudEgressBlockedError):
             await client.create_hybrid_session(
                 "guarded_problem",

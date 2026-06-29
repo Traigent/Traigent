@@ -553,9 +553,7 @@ class BackendIntegratedClient:
                 raise ValueError(
                     "backend client API base URL must not contain path traversal"
                 )
-            if any(
-                seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg
-            ):
+            if any(seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg):
                 raise ValueError(
                     "backend client API base URL must not contain path traversal"
                 )
