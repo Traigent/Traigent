@@ -121,7 +121,7 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "stream": "stream",
         "tools": "tools",
     },
-    # HuggingFace mappings
+    # HuggingFace mappings (transformers — legacy/direct-model path)
     "transformers.pipeline": {
         "model": "model",
         "temperature": "temperature",
@@ -137,6 +137,27 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "max_tokens": "max_new_tokens",
         "top_p": "top_p",
         "top_k": "top_k",
+    },
+    # HuggingFace Hub InferenceClient mappings (primary auto-override surface)
+    # text_generation uses max_new_tokens; chat_completion uses max_tokens directly
+    # (max_tokens is excluded from chat_completion METHOD_MAPPINGS to avoid injecting max_new_tokens)
+    "huggingface_hub.InferenceClient": {
+        "model": "model",
+        "temperature": "temperature",
+        "max_tokens": "max_new_tokens",
+        "top_p": "top_p",
+        "top_k": "top_k",
+        "stop": "stop",
+        "stream": "stream",
+    },
+    "huggingface_hub.AsyncInferenceClient": {
+        "model": "model",
+        "temperature": "temperature",
+        "max_tokens": "max_new_tokens",
+        "top_p": "top_p",
+        "top_k": "top_k",
+        "stop": "stop",
+        "stream": "stream",
     },
     # PydanticAI mappings — discovery/documentation only.
     # IMPORTANT: PydanticAI requires these params inside the `model_settings` dict,
@@ -277,6 +298,46 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "k",
             "stream",
             "tools",
+        ],
+    },
+    # HuggingFace Hub InferenceClient methods (primary auto-override surface)
+    # max_tokens is listed for text_generation only: maps to max_new_tokens via PARAMETER_MAPPINGS.
+    # chat_completion omits max_tokens because its framework param name is max_tokens (not
+    # max_new_tokens), so injecting max_new_tokens there would silently be ignored/error.
+    "huggingface_hub.InferenceClient": {
+        "text_generation": [
+            "model",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop",
+            "stream",
+        ],
+        "chat_completion": [
+            "model",
+            "temperature",
+            "top_p",
+            "stop",
+            "stream",
+        ],
+    },
+    "huggingface_hub.AsyncInferenceClient": {
+        "text_generation": [
+            "model",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop",
+            "stream",
+        ],
+        "chat_completion": [
+            "model",
+            "temperature",
+            "top_p",
+            "stop",
+            "stream",
         ],
     },
     # PydanticAI methods — params are injected via model_settings dict

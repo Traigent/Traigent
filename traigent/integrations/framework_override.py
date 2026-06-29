@@ -85,9 +85,9 @@ class FrameworkOverrideManager(BaseOverrideManager):
     def _init_parameter_mappings(self) -> dict[str, dict[str, str]]:
         """Initialize parameter mappings for different frameworks.
 
-        Uses static mappings from mappings.py as the baseline.
-        These serve as fallback when no plugin is registered for a framework.
-        Plugin mappings (via LLMPlugin._get_default_mappings) take precedence.
+        Uses static mappings from mappings.py as the single source of truth.
+        Every class registered in get_target_classes() of any plugin must have
+        a corresponding entry here for overrides to inject params at call sites.
         """
         # Deep copy to allow instance-level modifications without affecting global mappings
         return {k: dict(v) for k, v in PARAMETER_MAPPINGS.items()}
@@ -971,9 +971,12 @@ def override_cohere() -> None:
 
 
 def override_huggingface() -> None:
-    """Enable overrides for HuggingFace classes."""
+    """Enable overrides for HuggingFace Hub InferenceClient classes."""
     enable_framework_overrides(
-        ["transformers.pipeline", "transformers.AutoModelForCausalLM"]
+        [
+            "huggingface_hub.InferenceClient",
+            "huggingface_hub.AsyncInferenceClient",
+        ]
     )
 
 
@@ -995,9 +998,9 @@ def override_all_platforms() -> None:
             # Cohere
             "cohere.Client",
             "cohere.AsyncClient",
-            # HuggingFace
-            "transformers.pipeline",
-            "transformers.AutoModelForCausalLM",
+            # HuggingFace Hub
+            "huggingface_hub.InferenceClient",
+            "huggingface_hub.AsyncInferenceClient",
         ]
     )
 
