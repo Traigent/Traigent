@@ -304,15 +304,24 @@ def get_api_key(provider: str) -> str | None:
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "cohere": "COHERE_API_KEY",
-        "huggingface": "HF_API_KEY",
+        # HuggingFace: native HF_TOKEN first; HF_API_KEY kept for back-compat
+        "huggingface": "HF_TOKEN",
         "traigent": "TRAIGENT_API_KEY",
     }
 
-    env_var = env_map.get(provider.lower())
-    if not env_var:
+    normalized = provider.lower()
+    if normalized not in env_map:
         return None
 
-    return get_env_var(env_var, mask_in_logs=True)
+    if normalized == "huggingface":
+        # Native-first alias chain: HF_TOKEN -> HUGGING_FACE_HUB_TOKEN -> HF_API_KEY
+        return (
+            get_env_var("HF_TOKEN", mask_in_logs=True)
+            or get_env_var("HUGGING_FACE_HUB_TOKEN", mask_in_logs=True)
+            or get_env_var("HF_API_KEY", mask_in_logs=True)
+        )
+
+    return get_env_var(env_map[normalized], mask_in_logs=True)
 
 
 def get_database_url() -> str:
