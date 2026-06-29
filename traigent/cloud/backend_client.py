@@ -882,7 +882,7 @@ class BackendIntegratedClient:
         if cloud_backend_egress_disabled(self.no_egress):
             return self._static_interaction_policy()
 
-        if getattr(self, "_url_invalid", False):
+        if getattr(self, "_url_invalid", False) is True:
             return self._static_interaction_policy()
 
         api_key = os.getenv("TRAIGENT_API_KEY") or self._api_key_fallback
@@ -1081,7 +1081,7 @@ class BackendIntegratedClient:
         # Fail closed on an unusable backend URL: the placeholder origin set in
         # __init__ must never be dialed, and auth.get_headers() below may POST
         # to /keys/validate. Return an inert client with no transport.
-        if getattr(self, "_url_invalid", False):
+        if getattr(self, "_url_invalid", False) is True:
             return self
         if AIOHTTP_AVAILABLE:
             # Try to get headers, but don't fail if authentication is not available
@@ -1174,7 +1174,7 @@ class BackendIntegratedClient:
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
-        if getattr(self, "_url_invalid", False):
+        if getattr(self, "_url_invalid", False) is True:
             raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 

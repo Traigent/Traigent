@@ -67,7 +67,7 @@ class TrialOperations:
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
-        if getattr(self.client, "_url_invalid", False):
+        if getattr(self.client, "_url_invalid", False) is True:
             raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(
             operation,
