@@ -109,6 +109,18 @@ def _is_definitive_auth_rejection(exc: Exception) -> bool:
     degrade gracefully (as before), not hard-fail. Ambiguous errors default to
     NOT a rejection, preserving the prior resilient fallback.
     """
+    # Primary source: the real session API attaches the HTTP status on the
+    # structured failure detail (api_operations._handle_session_error maps a
+    # 401/403 to AuthenticationError with exc.session_creation_failure). A bare
+    # exc.status_code is a secondary source.
+    detail = getattr(exc, "session_creation_failure", None)
+    detail_status = getattr(detail, "status_code", None)
+    if isinstance(detail_status, int) and detail_status in (401, 403):
+        return True
+    if isinstance(detail_status, int) and (
+        detail_status == 429 or detail_status >= 500
+    ):
+        return False
     status = getattr(exc, "status_code", None)
     if isinstance(status, int):
         if status in (401, 403):
@@ -641,20 +653,36 @@ class SessionOperations:
                 await self._reset_client_session("create_session auth_failure")
                 if _must_fail_loud(e):
                     raise
-                logger.warning("Backend auth failed for '%s': %s", function_name, e)
+                # Non-definitive AuthenticationError = the backend did NOT clearly
+                # reject the credential; the auth layer maps a key-validation
+                # TIMEOUT / transport failure (could-not-reach /keys/validate) to
+                # AuthenticationError. That is a reachability failure, not a
+                # rejection, so it takes the same UNREACHABLE contract as a
+                # backend outage: degrade to LOCAL but FLAG it (degraded=True +
+                # SESSION_FAILED + WARN) so the local run is never mistaken for a
+                # managed one. Definitive rejections fail loud above.
+                logger.warning(
+                    "Managed session creation failed (could not validate "
+                    "credentials — backend unreachable) for '%s'; degrading to "
+                    "LOCAL execution — results are NOT tracked on the backend "
+                    "(set offline=True to make this explicit): %s",
+                    function_name,
+                    e,
+                )
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
                 )
                 return SessionCreationResult.fallback(
                     session_id=fallback_id,
-                    reason=SessionCreationFailureReason.AUTH,
+                    reason=SessionCreationFailureReason.SESSION_FAILED,
                     detail=(
                         failure_response.one_line_summary()
                         if failure_response
                         else str(e)[:200]
                     ),
                     failure_response=failure_response,
+                    degraded=True,
                 )
 
             except (TimeoutError, CloudServiceError, OSError) as e:
@@ -719,16 +747,21 @@ class SessionOperations:
         except AuthenticationError as exc:
             if _must_fail_loud(exc):
                 raise
-            # Issue #1373 (the "outer create_session swallow"): an auth/scope
-            # failure that ESCAPES _create_session_async (e.g. from the
-            # has_api_key preflight, or the async-runner machinery) on a
-            # non-governed run must NOT fall to debug-only — a failed publish
-            # would be invisible at the default log level. Mirror the inner
-            # sibling (~:573) and surface at WARNING. The two sites are
-            # mutually exclusive per failure (a single AuthenticationError is
-            # caught by exactly one handler), so this does not double-log.
+            # Issue #1373 "outer create_session swallow": an auth failure that
+            # ESCAPES _create_session_async (e.g. the has_api_key preflight or
+            # the async-runner machinery). A DEFINITIVE rejection fails loud
+            # above; reaching here means a non-definitive auth failure (could not
+            # validate the credential — typically a /keys/validate timeout the
+            # auth layer maps to AuthenticationError). Mirror the inner sibling:
+            # take the UNREACHABLE contract — degrade to LOCAL but FLAG it
+            # (degraded=True + SESSION_FAILED + WARN) so it is never silent. The
+            # two sites are mutually exclusive per failure, so this never
+            # double-logs.
             logger.warning(
-                "Backend auth failed for '%s': %s",
+                "Managed session creation failed (could not validate "
+                "credentials — backend unreachable) for '%s'; degrading to "
+                "LOCAL execution — results are NOT tracked on the backend "
+                "(set offline=True to make this explicit): %s",
                 function_name,
                 exc,
             )
@@ -738,13 +771,14 @@ class SessionOperations:
             )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
-                reason=SessionCreationFailureReason.AUTH,
+                reason=SessionCreationFailureReason.SESSION_FAILED,
                 detail=(
                     failure_response.one_line_summary()
                     if failure_response
                     else str(exc)[:200]
                 ),
                 failure_response=failure_response,
+                degraded=True,
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:

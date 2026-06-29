@@ -13,7 +13,10 @@ from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import CloudServiceError
 from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 from traigent.cloud.session_operations import SessionOperations
-from traigent.cloud.session_types import SessionCreationFailureReason
+from traigent.cloud.session_types import (
+    SessionCreationFailureDetail,
+    SessionCreationFailureReason,
+)
 from traigent.utils.exceptions import ValidationError as ValidationException
 
 
@@ -401,5 +404,71 @@ def test_create_session_backend_unreachable_flags_degraded_and_warns(monkeypatch
     ]
     assert degraded_warnings, (
         "Expected a WARNING that the managed run degraded to local; got: "
+        f"{[(r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
+
+
+def test_create_session_structured_401_fails_loud(monkeypatch):
+    """REAL session-API shape: a 401/403 is an AuthenticationError whose HTTP
+    status lives on ``exc.session_creation_failure.status_code`` (set by
+    api_operations._handle_session_error), NOT on ``exc.status_code`` and NOT in
+    the message text. The rejection MUST fail closed via the structured status —
+    a marker-string-only check would miss it and silently fall back.
+    """
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        # Mirrors api_operations._handle_session_error for a 401.
+        exc = AuthenticationError("Authentication failed (401): HTTP 401")
+        exc.session_creation_failure = SessionCreationFailureDetail(status_code=401)
+        raise exc
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    with pytest.raises(AuthenticationError):
+        ops.create_session(
+            "demo-function",
+            {"model": ["gpt-4o"]},
+            metadata={"max_trials": 3, "dataset_size": 4},
+        )
+
+
+def test_create_session_auth_validation_timeout_degrades_not_silent(monkeypatch, caplog):
+    """A NON-definitive AuthenticationError — the auth layer maps a key-validation
+    TIMEOUT/transport failure to AuthenticationError — must take the UNREACHABLE
+    contract: degrade to LOCAL but FLAGGED (degraded=True, SESSION_FAILED,
+    local_fallback) + WARN. It must NOT raise and must NOT be a silent AUTH
+    fallback with degraded=False.
+    """
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        raise AuthenticationError("API key validation failed: backend validation timed out")
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        result = ops.create_session(
+            "demo-function",
+            {"model": ["gpt-4o"]},
+            metadata={"max_trials": 3, "dataset_size": 4},
+        )
+
+    assert result.backend_connected is False
+    assert result.degraded is True  # reachability failure, NOT silent
+    assert result.backend_fallback is True
+    assert result.execution_path == "local_fallback"
+    assert result.failure_reason == SessionCreationFailureReason.SESSION_FAILED
+
+    degraded_warnings = [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and "degrading to LOCAL" in record.getMessage()
+    ]
+    assert degraded_warnings, (
+        "Expected a WARNING that the validation-timeout run degraded to local; got: "
         f"{[(r.levelname, r.getMessage()) for r in caplog.records]}"
     )
