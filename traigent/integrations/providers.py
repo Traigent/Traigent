@@ -78,7 +78,14 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     (None, "quality"): ["gpt-4o"],
 }
 
-# Model tier classification based on capabilities/cost
+# Model tier classification based on capabilities/cost.
+#
+# The SET of providers here (the keys of _MODEL_TIERS, which also drives
+# list_available_providers()) is pinned to the canonical provider-support table
+# (traigent/config/provider_support.py) by the drift regression test
+# (tests/unit/config/test_provider_support_drift.py): every spec with
+# tiered=True must appear here under its registry_key (Google is keyed
+# "gemini", matching the discovery registry and models.yaml).
 _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     "openai": {
         "fast": ["gpt-4o-mini", "gpt-3.5-turbo"],

@@ -299,29 +299,33 @@ def get_env_var(
 
 # Convenience functions for common environment variables
 def get_api_key(provider: str) -> str | None:
-    """Get API key for a specific provider from environment."""
-    env_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "cohere": "COHERE_API_KEY",
-        # HuggingFace: native HF_TOKEN first; HF_API_KEY kept for back-compat
-        "huggingface": "HF_TOKEN",
-        "traigent": "TRAIGENT_API_KEY",
-    }
+    """Get API key for a specific provider from environment.
+
+    LLM-provider key resolution is shared with
+    :meth:`traigent.config.api_keys.APIKeyManager.get_api_key` via the canonical
+    provider-support table (``traigent/config/provider_support.py``) so the two
+    key maps can no longer drift. This routes ``google`` and ``mistral`` through
+    their canonical env-var chains (previously they returned ``None`` here even
+    though the validator already read those vars) and preserves the HuggingFace
+    alias chain HF_TOKEN -> HUGGING_FACE_HUB_TOKEN -> HF_API_KEY.
+
+    ``traigent`` is the Traigent *backend* API key (``TRAIGENT_API_KEY``), not an
+    LLM provider, so it keeps a dedicated branch and is intentionally absent
+    from the LLM provider-support matrix.
+    """
+    # Imported lazily so this foundational module stays import-cycle-free.
+    from traigent.config.provider_support import resolve_api_key_from_env
 
     normalized = provider.lower()
-    if normalized not in env_map:
-        return None
 
-    if normalized == "huggingface":
-        # Native-first alias chain: HF_TOKEN -> HUGGING_FACE_HUB_TOKEN -> HF_API_KEY
-        return (
-            get_env_var("HF_TOKEN", mask_in_logs=True)
-            or get_env_var("HUGGING_FACE_HUB_TOKEN", mask_in_logs=True)
-            or get_env_var("HF_API_KEY", mask_in_logs=True)
-        )
+    if normalized == "traigent":
+        return get_env_var("TRAIGENT_API_KEY", mask_in_logs=True)
 
-    return get_env_var(env_map[normalized], mask_in_logs=True)
+    # Resolve LLM-provider keys via the canonical chain, preserving the
+    # masked-logging behavior of this accessor.
+    return resolve_api_key_from_env(
+        normalized, getter=lambda name: get_env_var(name, mask_in_logs=True)
+    )
 
 
 def get_database_url() -> str:

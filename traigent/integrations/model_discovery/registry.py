@@ -98,7 +98,14 @@ def clear_registry() -> None:
 
 
 def _register_default_discoveries() -> None:
-    """Register default model discovery implementations."""
+    """Register default model discovery implementations.
+
+    The SET of providers registered here is pinned to the canonical
+    provider-support table (traigent/config/provider_support.py) by the drift
+    regression test (tests/unit/config/test_provider_support_drift.py): every
+    spec with discovery=True must be registered under its registry_key (Google
+    is registered as "gemini").
+    """
     # Import here to avoid circular imports
     from traigent.integrations.model_discovery.anthropic_discovery import (
         AnthropicDiscovery,
