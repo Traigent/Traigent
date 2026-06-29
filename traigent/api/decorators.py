@@ -2038,25 +2038,51 @@ def _build_default_experiment_name(
     Returns:
         A deterministic, human-readable default experiment name.
     """
-    parts: list[str] = [func_name]
-
-    # Append objective names in stable order (schema preserves insertion order).
+    # Build the objective suffix — always preserved in the output.
+    obj_suffix = ""
     if resolved_schema is not None:
         obj_names = [obj.name for obj in resolved_schema.objectives]
-        parts.append(f"[{','.join(obj_names)}]")
+        obj_suffix = f"[{','.join(obj_names)}]"
 
-    # Append knob names; cap to avoid excessively long names.
+    # Build the knob suffix; cap list length to avoid excessively long names.
+    knob_suffix = ""
     if resolved_configuration_space:
         knob_names = list(resolved_configuration_space.keys())
         if len(knob_names) > max_knobs:
             displayed = knob_names[:max_knobs]
-            knob_part = f"[{','.join(displayed)},...]"
+            knob_suffix = f"[{','.join(displayed)},...]"
         else:
-            knob_part = f"[{','.join(knob_names)}]"
-        parts.append(knob_part)
+            knob_suffix = f"[{','.join(knob_names)}]"
 
-    name = "".join(parts)
-    return name[:max_total_length]
+    # Invariant: the objectives + knob sections are the self-describing payload
+    # and must never be sacrificed to the length cap.  Truncate only the
+    # function-name prefix (appending "~" to signal the cut), never the suffix.
+    suffix = obj_suffix + knob_suffix
+    func_budget = max_total_length - len(suffix)
+
+    if func_budget <= 0:
+        # Suffix alone meets or exceeds the cap — omit the function-name prefix.
+        if len(suffix) <= max_total_length:
+            return suffix
+        # Extreme edge case: even the suffix is over budget.  Preserve at least
+        # the objectives and one knob name by trimming the knob list.
+        if resolved_configuration_space:
+            knob_names_list = list(resolved_configuration_space.keys())
+            min_knob_suffix = f"[{knob_names_list[0]}]"
+            combined = obj_suffix + min_knob_suffix
+            if len(combined) <= max_total_length:
+                return combined
+        return obj_suffix[:max_total_length]
+
+    # Fit the function name into the remaining budget, marking any cut with "~".
+    if len(func_name) <= func_budget:
+        func_part = func_name
+    elif func_budget >= 2:
+        func_part = func_name[: func_budget - 1] + "~"
+    else:
+        func_part = func_name[:func_budget]
+
+    return func_part + suffix
 
 
 def optimize(  # NOSONAR(S107)

@@ -1382,3 +1382,33 @@ class TestExperimentName:
         assert fn1.experiment_name == fn2.experiment_name, (
             f"Default name is non-deterministic: {fn1.experiment_name!r} != {fn2.experiment_name!r}"
         )
+
+    def test_long_func_name_preserves_objectives_and_knobs(self):
+        """A 130-char function name must never evict objectives or knob names.
+
+        Regression guard for the Codex review finding against #1422: before the
+        fix, a blind right-truncation at 120 chars removed both objective and
+        knob sections entirely when func.__name__ was longer than the cap.
+        The fix truncates only the function-name prefix (with a '~' marker) so
+        the self-describing payload is always visible.
+        """
+        from traigent.api.decorators import (  # noqa: PLC0415
+            _build_default_experiment_name,
+            _resolve_objective_schema,
+        )
+
+        long_name = "x" * 130  # clearly exceeds the 120-char cap on its own
+        schema = _resolve_objective_schema(["accuracy", "latency"])
+        config_space = {"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.9]}
+
+        name = _build_default_experiment_name(long_name, schema, config_space)
+
+        # Objectives must survive the truncation.
+        assert "accuracy" in name, f"'accuracy' missing from {name!r}"
+        assert "latency" in name, f"'latency' missing from {name!r}"
+        # At least one knob name must survive.
+        assert "model" in name or "temperature" in name, (
+            f"Expected at least one knob name in {name!r}"
+        )
+        # Must still respect the hard length cap.
+        assert len(name) <= 120, f"Name exceeds max length: {len(name)} > 120"
