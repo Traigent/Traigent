@@ -383,6 +383,54 @@ class SessionOperations:
                 storage_e,
             )
 
+    def _auth_fallback_result(
+        self,
+        exc: Exception,
+        fallback_id: str,
+        detail: str,
+        failure_response: SessionCreationFailureDetail | None,
+        function_name: str,
+        intends_cloud_egress: bool,
+    ) -> SessionCreationResult:
+        """Build the fallback result for a non-fail-loud AuthenticationError.
+
+        A run that INTENDS cloud egress but hit a non-definitive auth failure
+        (could-not-validate / transient) takes the UNREACHABLE contract: degrade
+        to LOCAL but FLAG it (degraded=True + SESSION_FAILED + WARN) so it is
+        never mistaken for a managed run. A LOCAL-routed run only ever wanted
+        OPTIONAL backend tracking, so a rejected/invalid key is irrelevant: it
+        continues untracked locally (degraded=False) — intentional local
+        execution, NOT a downgrade (#1421).
+        """
+        if intends_cloud_egress:
+            logger.warning(
+                "Managed session creation failed (could not validate credentials "
+                "— backend unreachable) for '%s'; degrading to LOCAL execution — "
+                "results are NOT tracked on the backend (set offline=True to make "
+                "this explicit): %s",
+                function_name,
+                exc,
+            )
+            return SessionCreationResult.fallback(
+                session_id=fallback_id,
+                reason=SessionCreationFailureReason.SESSION_FAILED,
+                detail=detail,
+                failure_response=failure_response,
+                degraded=True,
+            )
+        logger.warning(
+            "Backend tracking unavailable (auth) for local run '%s'; continuing "
+            "untracked locally: %s",
+            function_name,
+            exc,
+        )
+        return SessionCreationResult.fallback(
+            session_id=fallback_id,
+            reason=SessionCreationFailureReason.AUTH,
+            detail=detail,
+            failure_response=failure_response,
+        )
+
     def create_session(
         self,
         function_name: str,
@@ -423,20 +471,32 @@ class SessionOperations:
         # misconfiguration, and old-BE typed rejection as success.
         governed = bool(promotion_policy or tvl_governance)
 
+        # Does this run actually INTEND cloud egress (managed / auto-cloud)? The
+        # backend session manager sets this from the runtime-resolved execution
+        # policy before calling us (mirrors the existing ``no_egress`` flag). A
+        # LOCAL-routed run (algorithm grid/random, offline, or runtime-resolved
+        # -to-local) creates a backend session only for OPTIONAL tracking — a
+        # configured-but-invalid/rejected key is irrelevant to it and must NOT
+        # hard-fail the local optimization. Default True keeps fail-closed for
+        # direct callers that do not declare intent. (#1421 regression.)
+        intends_cloud_egress = bool(getattr(self.client, "cloud_egress_intent", True))
+
         def _must_fail_loud(exc: Exception) -> bool:
             # A DEFINITIVELY rejected credential (invalid / revoked / expired /
             # unauthorized — a key WAS configured; the no-key path returns
-            # NO_API_KEY before any HTTP) is a user-actionable error. Silently
-            # degrading a cloud/managed run to a local/anonymous one would
-            # change execution semantics (managed Bayesian -> local search),
-            # drop the backend/billing/governance record, and present the
-            # degraded run as success — so fail closed. A *transient* failure
-            # to reach/validate the backend is NOT a rejection and still
-            # degrades gracefully (see _is_definitive_auth_rejection). Users
-            # who want local execution opt in explicitly via offline=True /
-            # TRAIGENT_OFFLINE_MODE (handled by is_backend_offline() above).
+            # NO_API_KEY before any HTTP) is a user-actionable error on a run
+            # that INTENDS cloud egress: silently degrading such a managed run
+            # to a local/anonymous one would change execution semantics (managed
+            # Bayesian -> local search), drop the backend/billing/governance
+            # record, and present the degraded run as success — so fail closed.
+            # On a LOCAL-routed run the same rejected key is irrelevant (zero
+            # cloud egress), so do NOT fail loud. A *transient* failure to
+            # reach/validate the backend is never a rejection and still degrades
+            # gracefully (see _is_definitive_auth_rejection).
             if isinstance(exc, AuthenticationError):
-                return governed or _is_definitive_auth_rejection(exc)
+                return governed or (
+                    intends_cloud_egress and _is_definitive_auth_rejection(exc)
+                )
             return governed or isinstance(
                 exc, (CloudEgressBlockedError, SessionContractError)
             )
@@ -653,36 +713,22 @@ class SessionOperations:
                 await self._reset_client_session("create_session auth_failure")
                 if _must_fail_loud(e):
                     raise
-                # Non-definitive AuthenticationError = the backend did NOT clearly
-                # reject the credential; the auth layer maps a key-validation
-                # TIMEOUT / transport failure (could-not-reach /keys/validate) to
-                # AuthenticationError. That is a reachability failure, not a
-                # rejection, so it takes the same UNREACHABLE contract as a
-                # backend outage: degrade to LOCAL but FLAG it (degraded=True +
-                # SESSION_FAILED + WARN) so the local run is never mistaken for a
-                # managed one. Definitive rejections fail loud above.
-                logger.warning(
-                    "Managed session creation failed (could not validate "
-                    "credentials — backend unreachable) for '%s'; degrading to "
-                    "LOCAL execution — results are NOT tracked on the backend "
-                    "(set offline=True to make this explicit): %s",
-                    function_name,
-                    e,
-                )
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
                 )
-                return SessionCreationResult.fallback(
-                    session_id=fallback_id,
-                    reason=SessionCreationFailureReason.SESSION_FAILED,
-                    detail=(
-                        failure_response.one_line_summary()
-                        if failure_response
-                        else str(e)[:200]
-                    ),
-                    failure_response=failure_response,
-                    degraded=True,
+                detail = (
+                    failure_response.one_line_summary()
+                    if failure_response
+                    else str(e)[:200]
+                )
+                return self._auth_fallback_result(
+                    e,
+                    fallback_id,
+                    detail,
+                    failure_response,
+                    function_name,
+                    intends_cloud_egress,
                 )
 
             except (TimeoutError, CloudServiceError, OSError) as e:
@@ -749,36 +795,27 @@ class SessionOperations:
                 raise
             # Issue #1373 "outer create_session swallow": an auth failure that
             # ESCAPES _create_session_async (e.g. the has_api_key preflight or
-            # the async-runner machinery). A DEFINITIVE rejection fails loud
-            # above; reaching here means a non-definitive auth failure (could not
-            # validate the credential — typically a /keys/validate timeout the
-            # auth layer maps to AuthenticationError). Mirror the inner sibling:
-            # take the UNREACHABLE contract — degrade to LOCAL but FLAG it
-            # (degraded=True + SESSION_FAILED + WARN) so it is never silent. The
-            # two sites are mutually exclusive per failure, so this never
-            # double-logs.
-            logger.warning(
-                "Managed session creation failed (could not validate "
-                "credentials — backend unreachable) for '%s'; degrading to "
-                "LOCAL execution — results are NOT tracked on the backend "
-                "(set offline=True to make this explicit): %s",
-                function_name,
-                exc,
-            )
+            # the async-runner machinery). A DEFINITIVE rejection on a cloud-
+            # intended run fails loud above. Reaching here is a non-definitive
+            # auth failure OR a LOCAL-routed run — both handled by the shared
+            # helper (cloud-intent: degrade+flag; local: continue untracked).
+            # The two auth sites are mutually exclusive per failure.
             failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
                 function_name, search_space, optimization_goal, metadata
             )
-            return SessionCreationResult.fallback(
-                session_id=fallback_id,
-                reason=SessionCreationFailureReason.SESSION_FAILED,
-                detail=(
-                    failure_response.one_line_summary()
-                    if failure_response
-                    else str(exc)[:200]
-                ),
-                failure_response=failure_response,
-                degraded=True,
+            detail = (
+                failure_response.one_line_summary()
+                if failure_response
+                else str(exc)[:200]
+            )
+            return self._auth_fallback_result(
+                exc,
+                fallback_id,
+                detail,
+                failure_response,
+                function_name,
+                intends_cloud_egress,
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:

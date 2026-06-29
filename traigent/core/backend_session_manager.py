@@ -760,6 +760,17 @@ class BackendSessionManager:
             if slug_hash:
                 portal_name = f"{portal_name} ({slug_hash})"
 
+            # Tell create_session whether this run actually INTENDS cloud egress
+            # (managed / auto-cloud) vs. a LOCAL-routed run (grid/random/offline/
+            # runtime-resolved-to-local) that only wants OPTIONAL backend
+            # tracking. A configured-but-invalid/rejected key must fail closed
+            # for the former but must NOT hard-fail the latter (#1421). Mirrors
+            # the existing ``no_egress`` flag set on the same client.
+            _policy = policy_from_config(self._traigent_config)
+            self._backend_client.cloud_egress_intent = bool(
+                policy_requires_cloud(_policy) or policy_is_cloud_brain(_policy)
+            )
+
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 search_space=getattr(self._optimizer, "config_space", {}),
@@ -1447,9 +1458,8 @@ class BackendSessionManager:
             result.metadata.get("statistical_significance") if result.metadata else None
         )
         if stat_sig:
-            summary_stats_with_aggregation["metadata"]["statistical_significance"] = (
-                stat_sig
-            )
+            agg_meta = summary_stats_with_aggregation["metadata"]
+            agg_meta["statistical_significance"] = stat_sig
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])

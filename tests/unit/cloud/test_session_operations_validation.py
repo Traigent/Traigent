@@ -478,3 +478,33 @@ def test_create_session_auth_validation_timeout_degrades_not_silent(
         "Expected a WARNING that the validation-timeout run degraded to local; got: "
         f"{[(r.levelname, r.getMessage()) for r in caplog.records]}"
     )
+
+
+def test_create_session_local_routed_rejected_key_does_not_raise(monkeypatch):
+    """#1421 regression: a LOCAL-routed run (cloud_egress_intent=False — e.g.
+    algorithm grid/random) must NOT fail closed on a configured-but-invalid/
+    rejected key. The backend session is only OPTIONAL tracking there, so the
+    bad key is irrelevant: the run continues untracked locally (degraded=False),
+    NOT a downgrade. (Fail-closed applies only to cloud-intended runs.)
+    """
+    client = FakeClient()
+    client.cloud_egress_intent = False  # local-routed (grid/random)
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        # Even a definitive rejection must not hard-fail a local run.
+        exc = AuthenticationError("Authentication failed (401): HTTP 401")
+        exc.session_creation_failure = SessionCreationFailureDetail(status_code=401)
+        raise exc
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    result = ops.create_session(
+        "demo-function",
+        {"model": ["gpt-4o"]},
+        metadata={"max_trials": 3, "dataset_size": 4},
+    )
+
+    assert result.backend_connected is False
+    assert result.degraded is False  # local run, key irrelevant — not a downgrade
+    assert result.failure_reason == SessionCreationFailureReason.AUTH
