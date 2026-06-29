@@ -540,12 +540,19 @@ class BackendIntegratedClient:
             # here — otherwise an explicit api_base_url like ".../../admin" would
             # bypass the traversal guard that validate_cloud_base_url applies to
             # full URLs.
+            # Decode to a fixed point (bounded) so multiply-encoded traversal
+            # (e.g. %25252e) cannot survive a fixed two-pass decode.
             _decoded_api_path = api_path or ""
-            for _ in range(2):
+            for _ in range(8):
                 _next = unquote(_decoded_api_path)
                 if _next == _decoded_api_path:
                     break
                 _decoded_api_path = _next
+            else:
+                # Still changing after 8 decodes — pathologically encoded; reject.
+                raise ValueError(
+                    "backend client API base URL must not contain path traversal"
+                )
             if any(
                 seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg
             ):

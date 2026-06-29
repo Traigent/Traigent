@@ -399,6 +399,9 @@ async def test_unsafe_url_still_fails_loud_and_is_not_swallowed(
         "/api/../../admin",
         "/%2e%2e/secret",
         "/v1/./../..",
+        # Multiply-encoded traversal must not survive fixed-point decoding
+        "/%252e%252e/secret",
+        "/%25252e%25252e/secret",
     ],
 )
 @pytest.mark.asyncio
