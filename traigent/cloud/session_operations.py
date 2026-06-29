@@ -98,14 +98,44 @@ class SessionOperations:
         validate_or_raise(CoreValidators.validate_positive_int(value, field_name))
 
     @staticmethod
+    def _config_value_contains_bool(value: Any) -> bool:
+        """Return True if a configuration_space value contains boolean(s).
+
+        Handles all supported parameter shapes:
+          - scalar bool: ``True`` / ``False``
+          - list/tuple of values containing a bool: ``[True, False]``
+          - typed/structured dict whose ``choices`` or ``values`` list contains a
+            bool: ``{"type": "categorical", "choices": [True, False]}``
+
+        Note: ``bool`` is a subclass of ``int`` in Python.  We use
+        ``type(v) is bool`` so plain ints/floats (including 0/1) are NOT
+        rejected — only literal ``True``/``False`` values.
+        """
+        if type(value) is bool:
+            return True
+        if isinstance(value, (list, tuple)):
+            return any(type(v) is bool for v in value)
+        if isinstance(value, dict):
+            for key in ("choices", "values"):
+                seq = value.get(key)
+                if isinstance(seq, (list, tuple)) and any(type(v) is bool for v in seq):
+                    return True
+        return False
+
+    @staticmethod
     def _validate_configuration_space_no_bools(
         space: dict[str, Any], field_name: str
     ) -> None:
-        """Raise ValidationException when a parameter list contains boolean values.
+        """Raise ValidationException when a parameter contains boolean values.
 
         The cloud session API rejects boolean knobs with a generic HTTP 400
         VALIDATION_ERROR that names no field.  Catching the problem client-side
         gives a clear, actionable error before any network round-trip.
+
+        Catches booleans in ALL supported configuration_space value shapes:
+          - scalar bool: ``{"flag": True}``
+          - list/tuple of values: ``{"flag": [True, False]}``
+          - typed param dict: ``{"flag": {"type": "categorical", "choices": [True, False]}}``
 
         Note: ``bool`` is a subclass of ``int`` in Python.  We use
         ``type(v) is bool`` (not ``isinstance``) so plain ints and floats such
@@ -113,9 +143,8 @@ class SessionOperations:
         """
         offending = [
             key
-            for key, values in space.items()
-            if isinstance(values, (list, tuple))
-            and any(type(v) is bool for v in values)
+            for key, value in space.items()
+            if SessionOperations._config_value_contains_bool(value)
         ]
         if offending:
             field_refs = ", ".join(f'"{k}"' for k in offending)

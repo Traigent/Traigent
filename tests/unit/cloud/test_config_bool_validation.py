@@ -187,6 +187,96 @@ class TestSessionOperationsBoolValidation:
         assert "flag" in str(exc_info.value)
         client._create_traigent_session_via_api.assert_not_called()
 
+    # --- newly-covered shapes (previously bypassed, Codex review finding) ---
+
+    def test_scalar_bool_value_raises(self):
+        """A scalar True/False as the config value must raise a field-named error.
+
+        Shape: {"flag": True}  — previously bypassed the list/tuple guard.
+        """
+        client = FakeClient()
+        ops = SessionOperations(client)
+
+        with pytest.raises(ValidationException) as exc_info:
+            ops.create_session(
+                "my_function",
+                {"flag": True, "model": ["gpt-4o"]},
+                metadata={"max_trials": 5},
+            )
+
+        msg = str(exc_info.value)
+        assert "flag" in msg, f"offending field name missing from: {msg}"
+        assert "boolean" in msg.lower(), f"'boolean' missing from: {msg}"
+        client._create_traigent_session_via_api.assert_not_called()
+
+    def test_typed_dict_with_bool_choices_raises(self):
+        """A typed/structured param dict whose choices list contains bools must raise.
+
+        Shape: {"flag": {"type": "categorical", "choices": [True, False]}}
+        — previously bypassed the guard because the outer value is a dict.
+        """
+        client = FakeClient()
+        ops = SessionOperations(client)
+
+        with pytest.raises(ValidationException) as exc_info:
+            ops.create_session(
+                "my_function",
+                {
+                    "flag": {"type": "categorical", "choices": [True, False]},
+                    "model": ["gpt-4o"],
+                },
+                metadata={"max_trials": 5},
+            )
+
+        msg = str(exc_info.value)
+        assert "flag" in msg, f"offending field name missing from: {msg}"
+        assert "boolean" in msg.lower(), f"'boolean' missing from: {msg}"
+        client._create_traigent_session_via_api.assert_not_called()
+
+    def test_typed_dict_with_bool_values_key_raises(self):
+        """A typed param dict using 'values' key (instead of 'choices') also raises.
+
+        Shape: {"flag": {"type": "categorical", "values": [True, False]}}
+        """
+        client = FakeClient()
+        ops = SessionOperations(client)
+
+        with pytest.raises(ValidationException) as exc_info:
+            ops.create_session(
+                "my_function",
+                {
+                    "flag": {"type": "categorical", "values": [True, False]},
+                    "model": ["gpt-4o"],
+                },
+                metadata={"max_trials": 5},
+            )
+
+        msg = str(exc_info.value)
+        assert "flag" in msg, f"offending field name missing from: {msg}"
+        assert "boolean" in msg.lower(), f"'boolean' missing from: {msg}"
+        client._create_traigent_session_via_api.assert_not_called()
+
+    def test_typed_dict_with_int_choices_does_not_raise(self, monkeypatch):
+        """A typed param dict with integer (not bool) choices must NOT be rejected."""
+        client = FakeClient()
+        ops = SessionOperations(client)
+
+        async def fake_api(_req):
+            return ("session-ok", "experiment-ok", "run-ok")
+
+        monkeypatch.setattr(client, "_create_traigent_session_via_api", fake_api)
+
+        # Should not raise — 0/1 are ints, not bools
+        result = ops.create_session(
+            "my_function",
+            {
+                "flag": {"type": "categorical", "choices": [0, 1]},
+                "model": ["gpt-4o"],
+            },
+            metadata={"max_trials": 5},
+        )
+        assert result is not None
+
 
 # ---------------------------------------------------------------------------
 # TraigentCloudService tests
@@ -212,6 +302,51 @@ class TestCloudServiceBoolValidation:
 
         msg = str(exc_info.value)
         assert "include_schema" in msg
+        assert "boolean" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_scalar_bool_raises_in_service(self):
+        """Scalar True/False value in the service request must raise before any work.
+
+        Shape: {"flag": True}  — previously bypassed the list/tuple guard.
+        """
+        service = TraigentCloudService()
+        request = OptimizationRequest(
+            function_name="greet",
+            dataset=_sample_dataset(),
+            configuration_space={"flag": True, "model": ["gpt-4o"]},
+            objectives=["accuracy"],
+        )
+
+        with pytest.raises(ValidationException) as exc_info:
+            await service.process_optimization_request(request)
+
+        msg = str(exc_info.value)
+        assert "flag" in msg
+        assert "boolean" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_typed_dict_bool_choices_raises_in_service(self):
+        """Typed param dict with bool choices must raise before any work in service.
+
+        Shape: {"flag": {"type": "categorical", "choices": [True, False]}}
+        """
+        service = TraigentCloudService()
+        request = OptimizationRequest(
+            function_name="greet",
+            dataset=_sample_dataset(),
+            configuration_space={
+                "flag": {"type": "categorical", "choices": [True, False]},
+                "model": ["gpt-4o"],
+            },
+            objectives=["accuracy"],
+        )
+
+        with pytest.raises(ValidationException) as exc_info:
+            await service.process_optimization_request(request)
+
+        msg = str(exc_info.value)
+        assert "flag" in msg
         assert "boolean" in msg.lower()
 
     @pytest.mark.asyncio
