@@ -143,6 +143,32 @@ _EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS = frozenset(
     }
 )
 
+# Allowlists for nested aggregate fields in get_example_insights() — derived from
+# BackendAnalyticsClient's RunExampleInsights Pydantic schema (ExampleInsightsSummary,
+# ExampleInsightsCohort, ExampleInsightsRecommendation, ExampleInsightsRedactions in
+# shared_infrastructure/schemas/run_analytics.py) and from the extended fixture in
+# tests/unit/cloud/test_analytics_client.py (which documents count keys that the backend
+# schema will expose in subsequent releases). All fields are coarse-aggregated, backend-
+# redacted, and contain no proprietary per-example signals.
+_EXAMPLE_INSIGHTS_SUMMARY_KEYS: frozenset[str] = frozenset(
+    {
+        "example_count",
+        "weak_example_count",
+        "unstable_example_count",
+        "suspicious_example_count",
+        "notable_example_count",
+        "stable_example_count",
+        "dataset_quality",
+    }
+)
+_EXAMPLE_INSIGHTS_COHORT_KEYS: frozenset[str] = frozenset(
+    {"kind", "count", "impact", "safe_example_refs", "recommendation"}
+)
+_EXAMPLE_INSIGHTS_RECOMMENDATION_KEYS: frozenset[str] = frozenset({"action", "reason"})
+_EXAMPLE_INSIGHTS_REDACTIONS_KEYS: frozenset[str] = frozenset(
+    {"raw_proprietary_signals_hidden", "raw_prompt_text_hidden_by_default"}
+)
+
 
 class AnalyticsClientError(RuntimeError):
     """Raised when the analytics backend returns a malformed response.
@@ -235,6 +261,21 @@ def _project_example_insight_row(row: Any, *, index: int) -> dict[str, Any]:
         "suspicious_flags": list(suspicious_flags),
         "recommended_action": recommended_action,
     }
+
+
+def _project_aggregate(data: Any, keys: frozenset[str], *, what: str) -> dict[str, Any]:
+    """Project a mapping to its known-safe keys, dropping unknown/raw keys.
+
+    Unknown nested keys can carry proprietary signals or raw backend state.
+    This function is the nested-aggregate counterpart of the per-row construction
+    in :func:`_project_example_insight_row`: both rebuild output by allowlist so
+    nothing unknown can pass through regardless of what the backend sends.
+    """
+    if not isinstance(data, dict):
+        raise AnalyticsClientError(
+            f"Malformed example insights response: {what} must be an object."
+        )
+    return {k: v for k, v in data.items() if k in keys}
 
 
 def _quote_segment(value: str, *, field: str) -> str:
@@ -666,18 +707,50 @@ class BackendAnalyticsClient:
                 "Malformed example insights response: example_rows must contain "
                 "at most 100 rows."
             )
+        cohorts_raw = payload["cohorts"]
+        if not isinstance(cohorts_raw, list):
+            raise AnalyticsClientError(
+                "Malformed example insights response: cohorts must be a list."
+            )
+        recommendations_raw = payload["recommendations"]
+        if not isinstance(recommendations_raw, list):
+            raise AnalyticsClientError(
+                "Malformed example insights response: recommendations must be a list."
+            )
 
         return {
             "run_id": payload["run_id"],
             "privacy_mode": payload["privacy_mode"],
-            "summary": payload["summary"],
+            "summary": _project_aggregate(
+                payload["summary"],
+                _EXAMPLE_INSIGHTS_SUMMARY_KEYS,
+                what="summary",
+            ),
             "example_rows": [
                 _project_example_insight_row(row, index=index)
                 for index, row in enumerate(rows)
             ],
-            "cohorts": payload["cohorts"],
-            "recommendations": payload["recommendations"],
-            "redactions": payload["redactions"],
+            "cohorts": [
+                _project_aggregate(
+                    cohort,
+                    _EXAMPLE_INSIGHTS_COHORT_KEYS,
+                    what=f"cohorts[{i}]",
+                )
+                for i, cohort in enumerate(cohorts_raw)
+            ],
+            "recommendations": [
+                _project_aggregate(
+                    rec,
+                    _EXAMPLE_INSIGHTS_RECOMMENDATION_KEYS,
+                    what=f"recommendations[{i}]",
+                )
+                for i, rec in enumerate(recommendations_raw)
+            ],
+            "redactions": _project_aggregate(
+                payload["redactions"],
+                _EXAMPLE_INSIGHTS_REDACTIONS_KEYS,
+                what="redactions",
+            ),
         }
 
 
