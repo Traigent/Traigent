@@ -97,6 +97,34 @@ class SessionOperations:
         """Validate that an integer is positive."""
         validate_or_raise(CoreValidators.validate_positive_int(value, field_name))
 
+    @staticmethod
+    def _validate_configuration_space_no_bools(
+        space: dict[str, Any], field_name: str
+    ) -> None:
+        """Raise ValidationException when a parameter list contains boolean values.
+
+        The cloud session API rejects boolean knobs with a generic HTTP 400
+        VALIDATION_ERROR that names no field.  Catching the problem client-side
+        gives a clear, actionable error before any network round-trip.
+
+        Note: ``bool`` is a subclass of ``int`` in Python.  We use
+        ``type(v) is bool`` (not ``isinstance``) so plain ints and floats such
+        as 0/1 are NOT rejected — only literal ``True``/``False`` values.
+        """
+        offending = [
+            key
+            for key, values in space.items()
+            if isinstance(values, (list, tuple))
+            and any(type(v) is bool for v in values)
+        ]
+        if offending:
+            field_refs = ", ".join(f'"{k}"' for k in offending)
+            raise ValidationException(
+                f"{field_name}[{field_refs}]: boolean values are not supported "
+                f"by the cloud session API — encode as strings "
+                f'(e.g. "true"/"false") or 0/1'
+            )
+
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
@@ -350,6 +378,7 @@ class SessionOperations:
         """
         self._validate_non_empty_string(function_name, "function_name")
         self._validate_mapping(search_space, "search_space")
+        self._validate_configuration_space_no_bools(search_space, "configuration_space")
         self._validate_non_empty_string(optimization_goal, "optimization_goal")
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
