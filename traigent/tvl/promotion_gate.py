@@ -24,7 +24,6 @@ from typing import Any, Literal
 from .models import BandTarget, PromotionPolicy, validate_adjust_method
 from .objectives import tost_equivalence_test
 from .statistics import (
-    _beta_quantile_approx,
     benjamini_hochberg_adjust,
     bonferroni_adjust,
     holm_bonferroni_adjust,
@@ -62,8 +61,19 @@ def clopper_pearson_upper_bound(
 
     When scipy is installed (the ``[bayesian]`` extra) the exact beta quantile
     comes straight from :func:`scipy.stats.beta.ppf`, matching canonical
-    exactly; otherwise an exact-beta pure-python quantile is used so the gate
-    still works on a core install (still exact Clopper-Pearson, NOT Wilson).
+    exactly. When scipy is NOT installed this FAILS CLOSED for any case that
+    needs the general beta quantile: it raises :class:`ImportError` rather than
+    falling back to the pure-python ``_beta_quantile_approx``. That
+    approximation is not reliable for high-violation / high-confidence inputs
+    (its damped Newton step can clamp to ``0.001``), which would silently
+    *under-estimate* the violation-rate upper bound and flip a chance-constraint
+    verdict to "promote" when it must reject. A chance constraint is policy-like
+    and must never fail open, so we refuse to produce a verdict instead of
+    trusting the approximation -- mirroring the canonical gate, which
+    hard-requires scipy for chance-constraint evaluation
+    (tvl/python/tvl/promotion.py:285-302, ``require_scipy()``). The trivial
+    edges (``violations == trials`` -> ``1.0``) need no quantile and still work
+    without scipy.
 
     Args:
         violations: Number of observed violations (non-negative).
@@ -75,6 +85,8 @@ def clopper_pearson_upper_bound(
 
     Raises:
         ValueError: If inputs are invalid.
+        ImportError: If the general beta quantile is required but scipy is not
+            installed (fail-closed; install ``traigent[bayesian]``).
     """
     if trials <= 0:
         raise ValueError(f"trials must be positive, got {trials}")
@@ -98,9 +110,23 @@ def clopper_pearson_upper_bound(
     # the exact value beta.ppf(confidence, 1, trials).
     k = violations
     n = trials
-    if _scipy_stats is not None:
-        return float(_scipy_stats.beta.ppf(confidence, k + 1, n - k))
-    return float(_beta_quantile_approx(confidence, k + 1, n - k))
+    if _scipy_stats is None:
+        # FAIL CLOSED. The only reliable exact-beta quantile available is
+        # scipy.stats.beta.ppf. statistics.py's pure-python
+        # _beta_quantile_approx clamps to 0.001 on high-violation /
+        # high-confidence inputs (e.g. clopper_pearson_upper_bound(95, 100,
+        # 0.99) returns 0.001 instead of the canonical 0.987031), which would
+        # silently flip a chance-constraint verdict to "promote" when it must
+        # reject. A chance constraint is policy-like and must never fail open,
+        # so refuse to produce a verdict instead of trusting the approximation
+        # (canonical require_scipy(), promotion.py:285-302).
+        raise ImportError(
+            "Chance-constraint evaluation requires scipy for the exact beta "
+            "Clopper-Pearson upper bound; the pure-python approximation is not "
+            "reliable enough for a fail-closed policy gate. Install the optional "
+            "extra to enable chance constraints: pip install 'traigent[bayesian]'."
+        )
+    return float(_scipy_stats.beta.ppf(confidence, k + 1, n - k))
 
 
 @dataclass(slots=True)

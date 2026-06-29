@@ -2,6 +2,7 @@
 
 import pytest
 
+from traigent.tvl import promotion_gate
 from traigent.tvl.models import BandTarget, ChanceConstraint, PromotionPolicy
 from traigent.tvl.promotion_gate import (
     ObjectiveSpec,
@@ -858,9 +859,13 @@ class TestExactBetaClopperPearsonUpperBound:
     ) -> None:
         """Both small-n AND large-n match the exact beta CP value (no Wilson).
 
-        The 1e-4 tolerance passes the exact beta quantile (scipy or the
-        exact-beta pure-python fallback, ~5e-6 error) but fails the old Wilson
-        approximation (~3e-3 error at these large-n points).
+        Runs with scipy present (the test venv ships the ``[bayesian]`` extra),
+        so this exercises the exact :func:`scipy.stats.beta.ppf` path. The 1e-4
+        tolerance passes the exact beta quantile but fails the old Wilson
+        approximation (~3e-3 error at these large-n points). The no-scipy path is
+        covered separately by
+        :class:`TestChanceConstraintFailsClosedWithoutScipy` (it fails closed
+        rather than approximating).
         """
         got = clopper_pearson_upper_bound(violations, trials, confidence)
         assert abs(got - exact_upper) < 1e-4
@@ -884,3 +889,114 @@ class TestExactBetaClopperPearsonUpperBound:
     def test_all_trials_violated_returns_one(self) -> None:
         """violations == trials -> upper bound is trivially 1.0 (canonical edge)."""
         assert clopper_pearson_upper_bound(50, 50, 0.95) == 1.0
+
+
+class TestChanceConstraintFailsClosedWithoutScipy:
+    """Without scipy the chance-constraint path must FAIL CLOSED (#1416 round-3).
+
+    The canonical gate hard-requires scipy for chance-constraint evaluation
+    (tvl/python/tvl/promotion.py:285-302, ``require_scipy()``). The SDK port
+    keeps the objective (non-inferiority/superiority) path working on a core,
+    no-scipy install via the pure-python paired test, but the exact beta
+    Clopper-Pearson quantile has no reliable pure-python implementation:
+    ``statistics._beta_quantile_approx`` clamps to ``0.001`` on
+    high-violation / high-confidence inputs and would silently UNDER-estimate
+    the violation-rate upper bound, flipping a chance-constraint verdict to
+    "promote" when it must reject. So when scipy is unavailable AND a chance
+    constraint must be evaluated, the gate raises instead of trusting the
+    approximation (fail-closed).
+
+    These tests FORCE the no-scipy path by monkeypatching the module-level
+    ``_scipy_stats`` reference to ``None`` (the test venv ships scipy, so the
+    flip would otherwise never be exercised -- which is exactly why the prior
+    suite missed it).
+    """
+
+    def test_direct_api_high_violation_case_raises_without_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exact reviewer case must RAISE, not silently return 0.001.
+
+        Forced no-scipy, ``clopper_pearson_upper_bound(95, 100, 0.99)``
+        previously returned ``0.001`` (the canonical/scipy value is
+        ``0.987031``); with threshold 0.20 that flipped satisfied=True/promote.
+        It must now raise ImportError (fail-closed).
+        """
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        with pytest.raises(ImportError, match="scipy"):
+            promotion_gate.clopper_pearson_upper_bound(95, 100, 0.99)
+
+    def test_gate_with_chance_constraint_fails_closed_without_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Evaluating a chance constraint without scipy raises -- never promotes.
+
+        This is the end-to-end form of the reviewer flip: violations=95,
+        trials=100, confidence=0.99, threshold=0.20. With the unreliable
+        approximation the gate produced satisfied=True/decision=promote; it must
+        now raise rather than emit any verdict.
+        """
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.99)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        with pytest.raises(ImportError, match=r"traigent\[bayesian\]"):
+            gate.evaluate(
+                incumbent_metrics={"accuracy": [0.8] * 5},
+                candidate_metrics={"accuracy": [0.9] * 5},
+                constraint_data={"error_rate": (95, 100)},  # (violations, trials)
+            )
+
+    def test_gate_without_chance_constraints_still_works_without_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A gate with NO chance constraints evaluates fine on a no-scipy core install.
+
+        The fail-closed guard must be scoped to chance-constraint evaluation
+        only: objective-only gates use the pure-python paired test and must keep
+        working without scipy.
+        """
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        policy = PromotionPolicy()  # no chance constraints
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.80] * 8},
+            candidate_metrics={"accuracy": [0.95] * 8},
+        )
+        assert decision.decision == "promote"
+        assert decision.chance_results == []
+
+    def test_trivial_all_violated_edge_needs_no_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """violations == trials -> 1.0 without scipy (exact edge, no quantile needed)."""
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        assert promotion_gate.clopper_pearson_upper_bound(50, 50, 0.95) == 1.0
+
+    def test_scipy_present_high_violation_case_rejects(self) -> None:
+        """With scipy the SAME case rejects: exact upper 0.987031 > threshold 0.20.
+
+        Pins the correct (non-flipped) verdict that the no-scipy path must never
+        contradict by approximation.
+        """
+        pytest.importorskip("scipy.stats")
+        upper = clopper_pearson_upper_bound(95, 100, 0.99)
+        assert abs(upper - 0.9870311) < 1e-4
+
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.99)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (95, 100)},  # (violations, trials)
+        )
+        assert decision.chance_results[0].satisfied is False
+        assert decision.chance_results[0].upper_bound > 0.20
+        assert decision.decision == "reject"
