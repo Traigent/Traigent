@@ -17,7 +17,6 @@ Sync: SYNC-OptimizationFlow
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -26,12 +25,17 @@ from .models import BandTarget, PromotionPolicy, validate_adjust_method
 from .objectives import tost_equivalence_test
 from .statistics import (
     _beta_quantile_approx,
-    _inverse_normal_cdf,
     benjamini_hochberg_adjust,
     bonferroni_adjust,
     holm_bonferroni_adjust,
     paired_comparison_test,
 )
+
+try:  # scipy ships only in the optional ``[bayesian]`` extra, mirroring the
+    # canonical gate's own guard (tvl/python/tvl/promotion.py:18-23).
+    from scipy import stats as _scipy_stats
+except ImportError:  # pragma: no cover - exercised only on a core (no-extra) install
+    _scipy_stats = None  # type: ignore[assignment]
 
 _VALID_OBJECTIVE_DIRECTIONS = frozenset({"maximize", "minimize", "band"})
 
@@ -41,13 +45,25 @@ def clopper_pearson_upper_bound(
     trials: int,
     confidence: float,
 ) -> float:
-    """Compute a one-sided upper confidence bound on a binomial proportion.
+    """Compute the exact one-sided Clopper-Pearson upper bound on a proportion.
 
-    This is the complement of :func:`clopper_pearson_lower_bound` and matches
-    the canonical chance-constraint test, which bounds the *violation* rate
-    from above (tvl/python/tvl/promotion.py:664-675): an exact Clopper-Pearson
-    upper bound for small samples and a Wilson-score upper bound for large
-    samples.
+    This bounds the *violation* rate from above and matches the canonical
+    chance-constraint test bit-for-bit (tvl/python/tvl/promotion.py:664-678),
+    which uses the EXACT beta Clopper-Pearson upper quantile for ALL sample
+    sizes::
+
+        ci_upper = beta.ppf(confidence, violations + 1, trials - violations)
+
+    There is deliberately NO normal/Wilson large-sample approximation. A Wilson
+    upper bound is systematically *smaller* than the exact beta quantile and can
+    flip a promotion verdict: e.g. ``violations=0, trials=100, confidence=0.95``
+    gives a Wilson upper of ``0.0264`` but an exact beta upper of ``0.0295``,
+    which straddle a threshold of ``0.028`` (the exact bound correctly fails).
+
+    When scipy is installed (the ``[bayesian]`` extra) the exact beta quantile
+    comes straight from :func:`scipy.stats.beta.ppf`, matching canonical
+    exactly; otherwise an exact-beta pure-python quantile is used so the gate
+    still works on a core install (still exact Clopper-Pearson, NOT Wilson).
 
     Args:
         violations: Number of observed violations (non-negative).
@@ -69,28 +85,22 @@ def clopper_pearson_upper_bound(
     if confidence <= 0 or confidence >= 1:  # NOSONAR - defensive validation
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
 
-    # All trials violated: the upper bound is trivially 1.0.
+    # All trials violated: the upper bound is trivially 1.0 (canonical
+    # promotion.py:674-675). The general beta.ppf would need shape
+    # ``trials - violations == 0`` here, which is undefined; guard it exactly as
+    # canonical does.
     if violations == trials:
         return 1.0
 
-    alpha_tail = 1 - confidence  # one-sided tail, matching the canonical gate
+    # Exact beta Clopper-Pearson upper bound for ALL n (canonical
+    # promotion.py:677-678): ci_upper = beta.ppf(confidence, k + 1, n - k).
+    # No special case for violations == 0 -- the general formula already yields
+    # the exact value beta.ppf(confidence, 1, trials).
     k = violations
     n = trials
-
-    if n < 30:
-        # Exact Clopper-Pearson upper bound: beta.ppf(1 - alpha_tail, k+1, n-k).
-        return float(_beta_quantile_approx(1 - alpha_tail, k + 1, n - k))
-
-    # Wilson score interval upper bound (one-sided) for large samples.
-    z = float(_inverse_normal_cdf(1 - alpha_tail))
-    p_hat = k / n
-
-    denominator = 1 + z * z / n
-    center = (p_hat + z * z / (2 * n)) / denominator
-    margin = z * math.sqrt(p_hat * (1 - p_hat) / n + z * z / (4 * n * n))
-    margin = margin / denominator
-
-    return float(min(1.0, center + margin))
+    if _scipy_stats is not None:
+        return float(_scipy_stats.beta.ppf(confidence, k + 1, n - k))
+    return float(_beta_quantile_approx(confidence, k + 1, n - k))
 
 
 @dataclass(slots=True)

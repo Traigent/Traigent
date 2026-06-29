@@ -3,7 +3,12 @@
 import pytest
 
 from traigent.tvl.models import BandTarget, ChanceConstraint, PromotionPolicy
-from traigent.tvl.promotion_gate import ObjectiveSpec, PromotionDecision, PromotionGate
+from traigent.tvl.promotion_gate import (
+    ObjectiveSpec,
+    PromotionDecision,
+    PromotionGate,
+    clopper_pearson_upper_bound,
+)
 
 
 class TestObjectiveSpec:
@@ -784,3 +789,98 @@ class TestFromSpecArtifactRealArtifact:
 
         gate = PromotionGate.from_spec_artifact(artifact)
         assert gate is None
+
+
+class TestExactBetaClopperPearsonUpperBound:
+    """Regression tests for the chance-constraint upper bound (#1416 review fix).
+
+    The canonical gate uses the EXACT beta Clopper-Pearson upper quantile for
+    ALL sample sizes (tvl/python/tvl/promotion.py:677-678)::
+
+        ci_upper = beta.ppf(confidence, violations + 1, trials - violations)
+
+    A prior SDK revision switched n>=30 to a Wilson-score upper bound, which is
+    systematically smaller than the exact bound and could flip a verdict. These
+    tests pin the exact-beta behavior for both small and large n and lock in the
+    specific case the reviewer flagged.
+    """
+
+    # Canonical reference values (scipy.stats.beta.ppf(conf, k+1, n-k)). The
+    # n>=30 entries are the ones a Wilson approximation would get wrong (Wilson
+    # differs by ~3e-3 at these points, far beyond the 1e-4 tolerance below).
+    _CANONICAL_UPPER = [
+        # (violations, trials, confidence, exact_upper)  -- small n (<30)
+        (0, 29, 0.95, 0.0981448),
+        (3, 29, 0.95, 0.2461389),
+        (2, 20, 0.95, 0.2826039),
+        # large n (>=30) -- the former Wilson branch
+        (0, 30, 0.95, 0.0950338),
+        (2, 30, 0.95, 0.1953260),
+        (0, 100, 0.95, 0.0295130),
+        (2, 100, 0.95, 0.0616192),
+        (5, 200, 0.95, 0.0518433),
+        (10, 40, 0.95, 0.3870602),
+    ]
+
+    def test_codex_review_case_is_not_satisfied_and_does_not_promote(self) -> None:
+        """The exact reviewer case must fail (exact 0.0295 > threshold 0.028).
+
+        violations=0, trials=100, confidence=0.95, threshold=0.028. Under the
+        removed Wilson branch the upper bound was ~0.02635 <= 0.028 (would PASS);
+        the exact beta upper is ~0.02951 > 0.028 and must NOT satisfy / promote.
+        """
+        upper = clopper_pearson_upper_bound(0, 100, 0.95)
+        assert upper > 0.028
+        assert abs(upper - 0.0295130) < 1e-4
+
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.028, confidence=0.95)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (0, 100)},  # (violations, trials)
+        )
+
+        assert decision.chance_results[0].satisfied is False
+        assert decision.chance_results[0].upper_bound > 0.028
+        assert decision.decision != "promote"
+        assert decision.decision == "reject"
+
+    @pytest.mark.parametrize(
+        ("violations", "trials", "confidence", "exact_upper"), _CANONICAL_UPPER
+    )
+    def test_exact_beta_upper_for_all_n_no_wilson(
+        self, violations: int, trials: int, confidence: float, exact_upper: float
+    ) -> None:
+        """Both small-n AND large-n match the exact beta CP value (no Wilson).
+
+        The 1e-4 tolerance passes the exact beta quantile (scipy or the
+        exact-beta pure-python fallback, ~5e-6 error) but fails the old Wilson
+        approximation (~3e-3 error at these large-n points).
+        """
+        got = clopper_pearson_upper_bound(violations, trials, confidence)
+        assert abs(got - exact_upper) < 1e-4
+
+    def test_large_n_matches_scipy_exactly_when_available(self) -> None:
+        """When scipy is installed, large-n bounds match canonical bit-for-bit."""
+        scipy_stats = pytest.importorskip("scipy.stats")
+        for violations, trials in [(0, 100), (2, 100), (5, 200), (10, 40)]:
+            got = clopper_pearson_upper_bound(violations, trials, 0.95)
+            canonical = float(
+                scipy_stats.beta.ppf(0.95, violations + 1, trials - violations)
+            )
+            assert got == canonical
+
+    def test_upper_bound_is_a_violation_rate_cap(self) -> None:
+        """More violations -> larger upper bound (cap on the violation rate)."""
+        low = clopper_pearson_upper_bound(2, 100, 0.95)
+        high = clopper_pearson_upper_bound(40, 100, 0.95)
+        assert 0.0 < low < high < 1.0
+
+    def test_all_trials_violated_returns_one(self) -> None:
+        """violations == trials -> upper bound is trivially 1.0 (canonical edge)."""
+        assert clopper_pearson_upper_bound(50, 50, 0.95) == 1.0
