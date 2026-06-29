@@ -15,7 +15,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent._version import get_version
-from traigent.cloud.client import raise_if_cloud_egress_disabled
+from traigent.cloud.client import (
+    CloudEgressBlockedError,
+    raise_if_cloud_egress_disabled,
+)
 from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
@@ -64,6 +67,8 @@ class TrialOperations:
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
+        if getattr(self.client, "_url_invalid", False) is True:
+            raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(
             operation,
             no_egress=getattr(self.client, "no_egress", False),

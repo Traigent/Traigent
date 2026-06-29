@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
+    CloudEgressBlockedError,
     CloudRemoteExecutionUnavailableError,
     CloudServiceError,
     SessionContractError,
@@ -34,12 +35,12 @@ from traigent.core.session_types import (
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
 )
-from traigent.utils.env_config import is_backend_offline
-from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
+from traigent.utils.env_config import is_backend_offline
+from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_numeric_metric
 
@@ -321,6 +322,8 @@ class ApiOperations:
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
+        if getattr(self.client, "_url_invalid", False) is True:
+            raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(
             operation,
             no_egress=getattr(self.client, "no_egress", False),
