@@ -1231,7 +1231,9 @@ class TestExperimentName:
             return x
 
         name = my_pipeline.experiment_name
-        assert name.startswith("my_pipeline["), f"Expected name to start with 'my_pipeline[', got {name!r}"
+        assert name.startswith("my_pipeline["), (
+            f"Expected name to start with 'my_pipeline[', got {name!r}"
+        )
         assert "accuracy" in name, f"Expected 'accuracy' in name, got {name!r}"
         assert "x" in name, f"Expected knob 'x' in name, got {name!r}"
 
@@ -1281,7 +1283,9 @@ class TestExperimentName:
             return x
 
         name = my_pipeline.experiment_name
-        assert name.startswith("my_pipeline["), f"Expected self-describing default, got {name!r}"
+        assert name.startswith("my_pipeline["), (
+            f"Expected self-describing default, got {name!r}"
+        )
 
     def test_experiment_name_stored_on_optimized_function(self):
         """_experiment_name is stored on the OptimizedFunction instance."""
@@ -1322,7 +1326,10 @@ class TestExperimentName:
 
         @optimize(
             objectives=["accuracy", "latency"],
-            configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.9]},
+            configuration_space={
+                "model": ["gpt-3.5", "gpt-4"],
+                "temperature": [0.1, 0.9],
+            },
         )
         def my_agent(config=None) -> str:
             return ""
@@ -1360,7 +1367,10 @@ class TestExperimentName:
         def make_func():
             @optimize(
                 objectives=["accuracy"],
-                configuration_space={"temperature": [0.1, 0.5, 0.9], "model": ["gpt-4"]},
+                configuration_space={
+                    "temperature": [0.1, 0.5, 0.9],
+                    "model": ["gpt-4"],
+                },
             )
             def deterministic_fn(config=None) -> str:
                 return ""
