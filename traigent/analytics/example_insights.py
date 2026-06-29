@@ -1,13 +1,14 @@
-"""Client for triggering example scoring and retrieving non-signal scoring metadata.
+"""Client for triggering example scoring and retrieving redacted example insights.
 
 This module provides async-first methods to:
 - Trigger scoring computation (async job) and poll job status
-- Retrieve per-example and dataset-level scoring *metadata* (whether scoring ran,
-  sample count, algorithm version)
+- Retrieve privacy-bounded scoring metadata and coarse "examples to review"
+  projections, including opaque example refs plus enum-only review metadata
 
-Proprietary tuning signals (the per-example signal vector and dataset quality
-signals) are NOT returned to clients — the backend redacts them. Signal-driven
-guidance is delivered via the GuidancePlan API.
+Proprietary tuning signals and raw signal values are NOT returned to clients.
+The backend redacts them and only exposes bounded metadata such as review
+priority, difficulty bucket, suspicious flags, and recommended action. Signal-
+driven guidance is delivered via the GuidancePlan API.
 
 Usage:
     >>> from traigent.analytics import ExampleInsightsClient
@@ -47,7 +48,7 @@ except ImportError:
 
 
 class ExampleInsightsClient:
-    """Client for retrieving example-level insights from backend.
+    """Client for retrieving privacy-bounded example-level insights.
 
     Thread Safety: Safe for concurrent use (httpx.AsyncClient is thread-safe).
     """

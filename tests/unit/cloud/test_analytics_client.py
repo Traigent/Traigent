@@ -430,8 +430,20 @@ class TestWave2SingleRunAnalytics:
                 "example_count": 10,
                 "weak_example_count": 2,
                 "unstable_example_count": 1,
+                "suspicious_example_count": 1,
+                "notable_example_count": 3,
+                "stable_example_count": 4,
                 "dataset_quality": "medium",
             },
+            "example_rows": [
+                {
+                    "safe_example_ref": "exref_0123456789abcdef",
+                    "review_priority": "high",
+                    "difficulty_bucket": "medium",
+                    "suspicious_flags": ["possible_mislabel"],
+                    "recommended_action": "review_label",
+                }
+            ],
             "cohorts": [
                 {
                     "kind": "weak_examples",
@@ -569,12 +581,131 @@ class TestWave2SingleRunAnalytics:
         result = await client.get_example_insights("proj_abc", "run 123")
 
         assert result == example_insights_payload
+        assert result is not example_insights_payload
+        rows = result["example_rows"]
+        assert isinstance(rows, list)
+        assert set(rows[0]) == {
+            "safe_example_ref",
+            "review_priority",
+            "difficulty_bucket",
+            "suspicious_flags",
+            "recommended_action",
+        }
         mock_response.raise_for_status.assert_called_once()
         mock_http.get.assert_called_once_with(
             "/api/v1/analytics/runs/run%20123/example-insights",
             headers={"X-Project-Id": "proj_abc"},
             params=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_projects_extra_raw_row_fields(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        extended_payload = dict(example_insights_payload)
+        rows = example_insights_payload["example_rows"]
+        assert isinstance(rows, list)
+        assert isinstance(rows[0], dict)
+        extended_payload["example_rows"] = [
+            {
+                **rows[0],
+                "composite_score": 0.9,
+                "success_rate": 0.1,
+                "example_id": "raw-123",
+            }
+        ]
+        _, _ = _mock_get_response(client, extended_payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        result_rows = result["example_rows"]
+        assert isinstance(result_rows, list)
+        row = result_rows[0]
+        assert isinstance(row, dict)
+        assert set(row) == {
+            "safe_example_ref",
+            "review_priority",
+            "difficulty_bucket",
+            "suspicious_flags",
+            "recommended_action",
+        }
+        assert "composite_score" not in row
+        assert "success_rate" not in row
+        assert "example_id" not in row
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("field", "bad_value", "message"),
+        [
+            ("review_priority", "urgent", "review_priority"),
+            ("difficulty_bucket", "hard", "difficulty_bucket"),
+            ("recommended_action", "review_before_promotion", "recommended_action"),
+            ("suspicious_flags", ["format_drift"], "suspicious_flags"),
+            ("safe_example_ref", "exref_bad", "safe_example_ref"),
+        ],
+    )
+    async def test_get_example_insights_rejects_invalid_row_fields(
+        self,
+        example_insights_payload: dict[str, object],
+        field: str,
+        bad_value: object,
+        message: str,
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        rows = example_insights_payload["example_rows"]
+        assert isinstance(rows, list)
+        assert isinstance(rows[0], dict)
+        payload["example_rows"] = [{**rows[0], field: bad_value}]
+        _mock_get_response(client, payload)
+
+        with pytest.raises(AnalyticsClientError, match=message):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_too_many_rows(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        rows = example_insights_payload["example_rows"]
+        assert isinstance(rows, list)
+        assert isinstance(rows[0], dict)
+        payload["example_rows"] = [
+            {**rows[0], "safe_example_ref": f"exref_{index:016x}"}
+            for index in range(101)
+        ]
+        _mock_get_response(client, payload)
+
+        with pytest.raises(AnalyticsClientError, match="at most 100"):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_drops_unknown_top_level_keys(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        extended_payload = dict(example_insights_payload)
+        extended_payload["raw_dataset_scores"] = {"composite_score": 0.9}
+        _mock_get_response(client, extended_payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        assert list(result) == [
+            "run_id",
+            "privacy_mode",
+            "summary",
+            "example_rows",
+            "cohorts",
+            "recommendations",
+            "redactions",
+        ]
+        assert "raw_dataset_scores" not in result
 
     @pytest.mark.asyncio
     async def test_get_example_insights_rejects_empty_ids(

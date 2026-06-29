@@ -8,7 +8,8 @@ the backend owns all analytics intelligence, so the SDK only
 * validates that the response is the platform success envelope, unwraps ``data``
   (and, for the frozen v0 contracts, validates that the required payload keys
   are present), and
-* returns the allowlisted payload unchanged.
+* returns the backend payload unchanged for aggregate readers, or a freshly
+  projected allowlist for IP-sensitive per-example surfaces.
 
 It deliberately reuses the SDK's existing credential plumbing
 (:func:`traigent.cloud.auth._build_api_key_auth_headers`,
@@ -35,6 +36,7 @@ Wired analytics endpoints:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from urllib.parse import quote
@@ -110,9 +112,34 @@ _RUN_EXAMPLE_INSIGHTS_REQUIRED_KEYS = frozenset(
         "run_id",
         "privacy_mode",
         "summary",
+        "example_rows",
         "cohorts",
         "recommendations",
         "redactions",
+    }
+)
+_EXAMPLE_INSIGHT_REF_PATTERN = re.compile(r"^exref_[0-9a-f]{16}$")
+_EXAMPLE_INSIGHT_REVIEW_PRIORITIES = frozenset({"critical", "high", "medium", "low"})
+_EXAMPLE_INSIGHT_DIFFICULTY_BUCKETS = frozenset({"low", "medium", "high", "unknown"})
+_EXAMPLE_INSIGHT_SUSPICIOUS_FLAGS = frozenset(
+    {
+        "low_agent_strength_correlation",
+        "anomalous_low_success",
+        "high_response_variance",
+        "possible_mislabel",
+        "redundant_pattern",
+        "low_sample_support",
+    }
+)
+_EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS = frozenset(
+    {
+        "review_label",
+        "clarify_expected_output",
+        "increase_repetitions",
+        "replace_or_rewrite",
+        "keep_as_hard_case",
+        "remove_redundant",
+        "inspect_evaluator",
     }
 )
 
@@ -151,6 +178,63 @@ def _require_keys(
         raise AnalyticsClientError(
             f"Malformed {what} response: missing required key(s): {', '.join(missing)}."
         )
+
+
+def _project_example_insight_row(row: Any, *, index: int) -> dict[str, Any]:
+    prefix = f"Malformed example insights response: example_rows[{index}]"
+    if not isinstance(row, dict):
+        raise AnalyticsClientError(f"{prefix} must be an object.")
+
+    safe_example_ref = row.get("safe_example_ref")
+    if not isinstance(safe_example_ref, str) or not _EXAMPLE_INSIGHT_REF_PATTERN.match(
+        safe_example_ref
+    ):
+        raise AnalyticsClientError(
+            f"{prefix}.safe_example_ref must match ^exref_[0-9a-f]{{16}}$."
+        )
+
+    review_priority = row.get("review_priority")
+    if review_priority not in _EXAMPLE_INSIGHT_REVIEW_PRIORITIES:
+        raise AnalyticsClientError(
+            f"{prefix}.review_priority must be one of: "
+            f"{', '.join(sorted(_EXAMPLE_INSIGHT_REVIEW_PRIORITIES))}."
+        )
+
+    difficulty_bucket = row.get("difficulty_bucket")
+    if difficulty_bucket not in _EXAMPLE_INSIGHT_DIFFICULTY_BUCKETS:
+        raise AnalyticsClientError(
+            f"{prefix}.difficulty_bucket must be one of: "
+            f"{', '.join(sorted(_EXAMPLE_INSIGHT_DIFFICULTY_BUCKETS))}."
+        )
+
+    suspicious_flags = row.get("suspicious_flags")
+    if not isinstance(suspicious_flags, list):
+        raise AnalyticsClientError(f"{prefix}.suspicious_flags must be a list.")
+    invalid_flags = [
+        flag
+        for flag in suspicious_flags
+        if flag not in _EXAMPLE_INSIGHT_SUSPICIOUS_FLAGS
+    ]
+    if invalid_flags:
+        raise AnalyticsClientError(
+            f"{prefix}.suspicious_flags contains unsupported value(s): "
+            f"{', '.join(str(flag) for flag in invalid_flags)}."
+        )
+
+    recommended_action = row.get("recommended_action")
+    if recommended_action not in _EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS:
+        raise AnalyticsClientError(
+            f"{prefix}.recommended_action must be one of: "
+            f"{', '.join(sorted(_EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS))}."
+        )
+
+    return {
+        "safe_example_ref": safe_example_ref,
+        "review_priority": review_priority,
+        "difficulty_bucket": difficulty_bucket,
+        "suspicious_flags": list(suspicious_flags),
+        "recommended_action": recommended_action,
+    }
 
 
 def _quote_segment(value: str, *, field: str) -> str:
@@ -276,7 +360,7 @@ class BackendAnalyticsClient:
         """
         from traigent.cloud.auth import _build_api_key_auth_headers
 
-        api_key_headers = _build_api_key_auth_headers(self.api_key)
+        api_key_headers: dict[str, str] = _build_api_key_auth_headers(self.api_key)
         if api_key_headers:
             return api_key_headers
         if self.jwt_token:
@@ -547,7 +631,17 @@ class BackendAnalyticsClient:
         project_id: str,
         run_id: str,
     ) -> dict[str, Any]:
-        """Return the backend's privacy-bounded example insights for one run."""
+        """Return allowlisted privacy-bounded example insights for one run.
+
+        The payload is freshly constructed after validating the stable top-level
+        contract. ``example_rows`` is the only per-example surface and is rebuilt
+        from projected safe fields so raw signals cannot pass through even on a
+        backend regression. ``summary``, ``cohorts``, ``recommendations``, and
+        ``redactions`` are backend-redacted, templated, canary-enforced safe
+        aggregate guidance and are forwarded as-is. This reader deliberately
+        allowlists by construction, unlike the other thin pass-through readers in
+        this module, because it is the IP-sensitive per-example endpoint.
+        """
         path = (
             "/api/v1/analytics/runs/"
             f"{_quote_segment(run_id, field='run_id')}/example-insights"
@@ -562,7 +656,29 @@ class BackendAnalyticsClient:
             _RUN_EXAMPLE_INSIGHTS_REQUIRED_KEYS,
             what="example insights",
         )
-        return payload
+        rows = payload["example_rows"]
+        if not isinstance(rows, list):
+            raise AnalyticsClientError(
+                "Malformed example insights response: example_rows must be a list."
+            )
+        if len(rows) > 100:
+            raise AnalyticsClientError(
+                "Malformed example insights response: example_rows must contain "
+                "at most 100 rows."
+            )
+
+        return {
+            "run_id": payload["run_id"],
+            "privacy_mode": payload["privacy_mode"],
+            "summary": payload["summary"],
+            "example_rows": [
+                _project_example_insight_row(row, index=index)
+                for index, row in enumerate(rows)
+            ],
+            "cohorts": payload["cohorts"],
+            "recommendations": payload["recommendations"],
+            "redactions": payload["redactions"],
+        }
 
 
 def _require_non_empty(value: str, *, field: str) -> str:
