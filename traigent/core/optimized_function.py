@@ -615,8 +615,16 @@ class OptimizedFunction(Generic[_P, _R]):
         self.max_trials = kwargs.pop("max_trials", DEFAULT_MAX_TRIALS)
         kwargs["max_trials"] = self.max_trials
 
-        # Experiment display name: decorator param > TRAIGENT_EXPERIMENT_NAME > func.__name__
+        # Experiment display name: decorator param > TRAIGENT_EXPERIMENT_NAME > self-describing default > func.__name__
+        # _experiment_name holds ONLY the explicit decorator value (None when absent).
+        # _default_experiment_name holds the precomputed self-describing default string
+        # (func name + objectives + knobs) that decorators.py computed at decoration time.
+        # The experiment_name getter resolves lazily so TRAIGENT_EXPERIMENT_NAME can be
+        # changed AFTER decoration and still take effect.
         self._experiment_name: str | None = kwargs.pop("experiment_name", None)
+        self._default_experiment_name: str | None = kwargs.pop(
+            "_default_experiment_name", None
+        )
 
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
@@ -3479,15 +3487,20 @@ Remediation:
         """Resolved experiment display name for portal/storage.
 
         Resolution order (highest to lowest priority):
-        1. ``experiment_name`` passed to ``@traigent.optimize()``
-        2. ``TRAIGENT_EXPERIMENT_NAME`` environment variable
-        3. Decorated function's ``__name__``
+        1. ``experiment_name`` passed to ``@traigent.optimize()`` — stored in ``_experiment_name``.
+        2. ``TRAIGENT_EXPERIMENT_NAME`` environment variable — checked at access time, so
+           setting it after decoration still takes effect.
+        3. Self-describing default precomputed at decoration time (func name + objectives + knobs)
+           — stored in ``_default_experiment_name``.
+        4. Decorated function's ``__name__`` (bare fallback when no objectives/knobs exist).
         """
         if self._experiment_name is not None:
             return self._experiment_name
         env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
         if env_name:
             return env_name
+        if self._default_experiment_name is not None:
+            return self._default_experiment_name
         return self.__name__
 
     @property

@@ -2834,21 +2834,35 @@ def optimize(  # NOSONAR(S107)
             config_param,
         )
 
-        # Resolve the effective experiment name (#1422).
-        # Priority (highest → lowest):
-        #   1. Explicit experiment_name decorator argument (pass through verbatim).
-        #   2. TRAIGENT_EXPERIMENT_NAME environment variable captured at decoration time.
-        #   3. Self-describing default: func name + objective names + knob names.
-        if experiment_name_value is not None:
-            effective_experiment_name = experiment_name_value
-        else:
-            env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
-            if env_name:
-                effective_experiment_name = env_name
-            else:
-                effective_experiment_name = _build_default_experiment_name(
-                    func.__name__, resolved_schema, resolved_configuration_space
-                )
+        # Experiment name resolution (#1422).
+        #
+        # _experiment_name on OptimizedFunction stores ONLY the explicit decorator value
+        # so the getter can lazily check TRAIGENT_EXPERIMENT_NAME at each access —
+        # callers that set the env var AFTER decoration must see it take effect.
+        #
+        # The self-describing default (func name + objectives + knobs) is precomputed
+        # here because the inputs are fully resolved at decoration time; it is stored
+        # in _default_experiment_name and used by the getter as the last resort, after
+        # the explicit value and the env var are both absent.
+        #
+        # Priority resolved in OptimizedFunction.experiment_name getter (highest → lowest):
+        #   1. Explicit experiment_name decorator argument → _experiment_name (not None).
+        #   2. TRAIGENT_EXPERIMENT_NAME env var — checked at ACCESS time (not decoration time).
+        #   3. Self-describing default → _default_experiment_name.
+        #   4. Bare func.__name__ (if no objectives/knobs were registered).
+        default_experiment_name: str | None = None
+        if experiment_name_value is None:
+            default_experiment_name = _build_default_experiment_name(
+                func.__name__, resolved_schema, resolved_configuration_space
+            )
+
+        # Approximate resolved name for the creation log (decoration-time snapshot only).
+        effective_experiment_name = (
+            experiment_name_value
+            or os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+            or default_experiment_name
+            or func.__name__
+        )
 
         optimized_func: OptimizedFunction[_P, _R] = OptimizedFunction(  # type: ignore[assignment]
             func=func,
@@ -2909,8 +2923,11 @@ def optimize(  # NOSONAR(S107)
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
             _max_trials_explicit=max_trials_explicit,
-            # Experiment display name: self-describing default when not supplied explicitly.
-            experiment_name=effective_experiment_name,
+            # Experiment display name: only the explicit value goes into _experiment_name
+            # so that TRAIGENT_EXPERIMENT_NAME is checked lazily at access time.
+            # The precomputed self-describing default is stored separately.
+            experiment_name=experiment_name_value,
+            _default_experiment_name=default_experiment_name,
             # Warm-start: seed this run from a prior experiment's learned configs.
             warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)

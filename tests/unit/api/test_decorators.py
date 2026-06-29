@@ -1300,7 +1300,9 @@ class TestExperimentName:
         assert my_func._experiment_name == "stored name"
 
     def test_experiment_name_none_stores_self_describing(self):
-        """When experiment_name=None (default), _experiment_name holds the auto-generated name.
+        """When experiment_name=None (default), the self-describing default is stored in
+        _default_experiment_name, while _experiment_name stays None so the runtime
+        env-var fallback (TRAIGENT_EXPERIMENT_NAME) is still checked at access time.
 
         The auto-generated name is self-describing (includes objectives and knobs),
         not just the bare function name.
@@ -1310,8 +1312,49 @@ class TestExperimentName:
         def my_func(x: int) -> int:
             return x
 
-        assert my_func._experiment_name is not None
-        assert my_func._experiment_name.startswith("my_func[")
+        # _experiment_name must be None — only explicit decorator values go here.
+        assert my_func._experiment_name is None, (
+            f"Expected _experiment_name=None for implicit default, got {my_func._experiment_name!r}"
+        )
+        # The self-describing default lives in _default_experiment_name.
+        assert my_func._default_experiment_name is not None
+        assert my_func._default_experiment_name.startswith("my_func["), (
+            f"Expected self-describing default starting with 'my_func[', got "
+            f"{my_func._default_experiment_name!r}"
+        )
+        # experiment_name property returns the self-describing default (no env var set).
+        assert my_func.experiment_name == my_func._default_experiment_name
+
+    def test_env_var_set_after_decoration_wins_over_default(self, monkeypatch):
+        """TRAIGENT_EXPERIMENT_NAME set AFTER decoration overrides the self-describing default.
+
+        Regression guard for the round-3 finding: in round-2, the self-describing default
+        was baked into _experiment_name at decoration time, so post-decoration env-var
+        changes were silently ignored.  The fix stores the default in _default_experiment_name
+        and keeps _experiment_name=None so the getter checks the env var lazily at each access.
+        """
+        monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME", raising=False)
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_func(x: int) -> int:
+            return x
+
+        # No env var yet → self-describing default wins.
+        assert my_func.experiment_name.startswith("my_func["), (
+            f"Without env var, expected self-describing default, got {my_func.experiment_name!r}"
+        )
+
+        # Set env var AFTER decoration — must now win over the precomputed default.
+        monkeypatch.setenv("TRAIGENT_EXPERIMENT_NAME", "env_set_post_decoration")
+        assert my_func.experiment_name == "env_set_post_decoration", (
+            f"Expected env var to win after decoration, got {my_func.experiment_name!r}"
+        )
+
+        # Clear env var again — self-describing default resumes.
+        monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME")
+        assert my_func.experiment_name.startswith("my_func["), (
+            f"After clearing env var, expected self-describing default, got {my_func.experiment_name!r}"
+        )
 
     # ------------------------------------------------------------------ #
     # New tests for self-describing default experiment name (#1422).      #
