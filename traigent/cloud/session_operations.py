@@ -362,8 +362,20 @@ class SessionOperations:
         governed = bool(promotion_policy or tvl_governance)
 
         def _must_fail_loud(exc: Exception) -> bool:
+            # An AuthenticationError reaching a handler means a key WAS
+            # configured (the no-key path returns NO_API_KEY before any HTTP)
+            # and the backend REJECTED it (invalid / revoked / unauthorized).
+            # That is a user-actionable credential error, not a transient
+            # backend outage: silently degrading a cloud/managed run to a
+            # local/anonymous one would change execution semantics (managed
+            # Bayesian -> local search), drop the backend/billing/governance
+            # record, and present the degraded run as success. Fail closed;
+            # users who genuinely want local execution opt in explicitly via
+            # offline=True / TRAIGENT_OFFLINE_MODE (handled by
+            # is_backend_offline() above, before any auth attempt).
             return governed or isinstance(
-                exc, (CloudEgressBlockedError, SessionContractError)
+                exc,
+                (AuthenticationError, CloudEgressBlockedError, SessionContractError),
             )
 
         if is_backend_offline():
