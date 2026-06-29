@@ -486,3 +486,62 @@ async def test_invalid_url_cloud_ops_fail_closed_with_zero_transport(
             await client.request_trial_slot("sess-invalid-url")
 
     mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_invalid_url_context_manager_does_no_egress(monkeypatch) -> None:
+    """Entering the async context manager on an unusable URL must not dial out.
+
+    __aenter__ would otherwise call auth.get_headers() (which can POST
+    /keys/validate) and build an aiohttp session against the inert placeholder
+    origin. On _url_invalid it must return an inert client with no transport and
+    no auth round-trip.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+
+    client = BackendIntegratedClient(
+        api_key=FAKE_API_KEY,
+        base_url="https://does-not-exist.traigent.invalid",
+    )
+    assert client._url_invalid is True
+
+    with patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_session:
+        with patch.object(client.auth_manager.auth, "get_headers") as mock_get_headers:
+            async with client as entered:
+                assert entered is client
+                assert client._session is None
+
+    mock_session.assert_not_called()
+    mock_get_headers.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "traversal_path",
+    [
+        "/%2e%2e/secret",
+        # Multiply-encoded traversal on the FULL base_url path must not survive
+        # the fixed-point decode in validate_cloud_base_url (regression: it was a
+        # fixed two-pass decode, so triple-encoded %25252e slipped through).
+        "/%252e%252e/secret",
+        "/%25252e%25252e/secret",
+    ],
+)
+@pytest.mark.asyncio
+async def test_full_url_multiply_encoded_traversal_is_rejected(
+    monkeypatch,
+    traversal_path: str,
+) -> None:
+    """A traversal path on the primary base_url must fail loud, not be swallowed.
+
+    This exercises validate_cloud_base_url directly (the full-URL path), not the
+    explicit api_base_url guard — they must be consistent.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_API_KEY", FAKE_API_KEY)
+
+    with pytest.raises(ValueError, match="traversal"):
+        BackendIntegratedClient(
+            api_key=FAKE_API_KEY,
+            base_url=f"https://api.example.test{traversal_path}",
+        )

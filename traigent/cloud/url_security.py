@@ -170,12 +170,20 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
     if not allow_local and parsed.scheme != "https":
         raise ValueError(f"{purpose} base URL must use https in production") from None
 
+    # Decode to a fixed point (bounded) so multiply-encoded traversal
+    # (e.g. %25252e) cannot survive a fixed two-pass decode. Mirrors the
+    # explicit-api_base_url guard in backend_client.py.
     decoded_path = parsed.path
-    for _ in range(2):
+    for _ in range(8):
         next_path = unquote(decoded_path)
         if next_path == decoded_path:
             break
         decoded_path = next_path
+    else:
+        # Still changing after 8 decodes — pathologically encoded; reject.
+        raise ValueError(
+            f"{purpose} base URL must not contain path traversal"
+        ) from None
 
     path_segments = [part for part in decoded_path.split("/") if part]
     if any(part in {".", ".."} for part in path_segments):

@@ -1078,6 +1078,11 @@ class BackendIntegratedClient:
         """Async context manager entry."""
         if cloud_backend_egress_disabled(self.no_egress):
             return self
+        # Fail closed on an unusable backend URL: the placeholder origin set in
+        # __init__ must never be dialed, and auth.get_headers() below may POST
+        # to /keys/validate. Return an inert client with no transport.
+        if getattr(self, "_url_invalid", False):
+            return self
         if AIOHTTP_AVAILABLE:
             # Try to get headers, but don't fail if authentication is not available
             # B4 ROUND 4: ``AuthenticationError`` must propagate -- a
