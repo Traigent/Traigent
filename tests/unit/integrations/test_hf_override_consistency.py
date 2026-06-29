@@ -116,19 +116,30 @@ def test_hf_method_mappings_text_generation_includes_max_tokens():
 
 
 @pytest.mark.unit
-def test_hf_method_mappings_chat_completion_excludes_max_tokens():
-    """chat_completion must NOT list max_tokens: PARAMETER_MAPPINGS maps it to max_new_tokens
-    which is not a valid chat_completion kwarg."""
-    assert (
-        "max_tokens"
-        not in METHOD_MAPPINGS["huggingface_hub.InferenceClient"]["chat_completion"]
-    )
-    assert (
-        "max_tokens"
-        not in METHOD_MAPPINGS["huggingface_hub.AsyncInferenceClient"][
-            "chat_completion"
-        ]
-    )
+def test_hf_method_mappings_chat_completion_includes_max_tokens():
+    """chat_completion MUST list max_tokens (issue #1570 round-3).
+
+    The installed huggingface_hub InferenceClient.chat_completion accepts max_tokens
+    NATIVELY (OpenAI-style). Omitting it from METHOD_MAPPINGS silently drops a configured
+    max_tokens for chat calls. It must be present, and it must NOT have a
+    max_tokens -> max_new_tokens translation (chat_completion has no max_new_tokens kwarg),
+    so the canonical/native name is passed through unchanged.
+    """
+    for cls in (
+        "huggingface_hub.InferenceClient",
+        "huggingface_hub.AsyncInferenceClient",
+    ):
+        assert "max_tokens" in METHOD_MAPPINGS[cls]["chat_completion"], (
+            f"{cls}.chat_completion must list max_tokens — it is a native chat_completion "
+            f"kwarg and is otherwise silently dropped (issue #1570)."
+        )
+        chat_translations = METHOD_PARAMETER_TRANSLATIONS.get(cls, {}).get(
+            "chat_completion", {}
+        )
+        assert "max_tokens" not in chat_translations, (
+            f"{cls}.chat_completion must NOT translate max_tokens (it is native); a "
+            f"max_tokens -> max_new_tokens entry here would drop the configured value."
+        )
 
 
 @pytest.mark.unit
@@ -246,3 +257,98 @@ def test_hf_manager_uses_all_target_classes():
             f"declared by HuggingFacePlugin.get_target_classes(). "
             f"Add it to METHOD_MAPPINGS in mappings.py."
         )
+
+
+@pytest.mark.unit
+def test_hf_method_injection_per_method_param_names(monkeypatch):
+    """Wrapper-probe (issue #1570 round-3): with the HF override active and a config of
+    {max_tokens, temperature, top_p}, assert the kwargs ACTUALLY delivered to each method
+    use the name THAT method accepts.
+
+      * chat_completion receives max_tokens NATIVELY (and no max_new_tokens).
+      * text_generation receives max_new_tokens (translated; and no leftover max_tokens).
+      * both receive temperature/top_p under their canonical names.
+
+    Neither call may raise or drop a configured generation param. This is the behavior the
+    earlier round regressed by dropping max_tokens from chat_completion entirely.
+    """
+    import huggingface_hub
+
+    from traigent.config.context import (
+        config_context,
+        config_space_context,
+        set_config,
+        set_config_space,
+    )
+    from traigent.config.types import TraigentConfig
+    from traigent.integrations.framework_override import FrameworkOverrideManager
+
+    captured: dict[str, dict] = {}
+
+    def capture_text_generation(self, *args, **kwargs):
+        captured["text_generation"] = dict(kwargs)
+        return "text-generation-ok"
+
+    def capture_chat_completion(self, *args, **kwargs):
+        captured["chat_completion"] = dict(kwargs)
+        return "chat-completion-ok"
+
+    # Replace the real network-bound methods with capturing stubs BEFORE activation so
+    # the override wraps the stub (no real inference endpoint is contacted).
+    monkeypatch.setattr(
+        huggingface_hub.InferenceClient,
+        "text_generation",
+        capture_text_generation,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        huggingface_hub.InferenceClient,
+        "chat_completion",
+        capture_chat_completion,
+        raising=False,
+    )
+
+    manager = FrameworkOverrideManager()
+    manager.activate_overrides(["huggingface_hub.InferenceClient"])
+
+    config = TraigentConfig(max_tokens=42, temperature=0.5, top_p=0.9)
+    cfg_token = set_config(config)
+    space_token = set_config_space(
+        {"max_tokens": [42], "temperature": [0.5], "top_p": [0.9]}
+    )
+    try:
+        client = huggingface_hub.InferenceClient(model="gpt2")
+
+        # These must not raise and must carry the per-method-correct param names.
+        assert client.text_generation("hello") == "text-generation-ok"
+        assert (
+            client.chat_completion(messages=[{"role": "user", "content": "hi"}])
+            == "chat-completion-ok"
+        )
+    finally:
+        config_space_context.reset(space_token)
+        config_context.reset(cfg_token)
+        manager.deactivate_overrides()
+
+    tg = captured["text_generation"]
+    cc = captured["chat_completion"]
+
+    # text_generation: HF-native name max_new_tokens; canonical max_tokens must be gone.
+    assert tg.get("max_new_tokens") == 42, (
+        f"text_generation must receive the configured max_tokens as max_new_tokens; got {tg!r}"
+    )
+    assert "max_tokens" not in tg, (
+        f"text_generation must NOT receive the OpenAI-style max_tokens name; got {tg!r}"
+    )
+    assert tg.get("temperature") == 0.5, f"text_generation lost temperature; got {tg!r}"
+    assert tg.get("top_p") == 0.9, f"text_generation lost top_p; got {tg!r}"
+
+    # chat_completion: native max_tokens passthrough; max_new_tokens must NOT appear.
+    assert cc.get("max_tokens") == 42, (
+        f"chat_completion must receive the configured max_tokens NATIVELY (not dropped); got {cc!r}"
+    )
+    assert "max_new_tokens" not in cc, (
+        f"chat_completion must NOT receive max_new_tokens (not a valid kwarg); got {cc!r}"
+    )
+    assert cc.get("temperature") == 0.5, f"chat_completion lost temperature; got {cc!r}"
+    assert cc.get("top_p") == 0.9, f"chat_completion lost top_p; got {cc!r}"

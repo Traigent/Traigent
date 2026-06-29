@@ -302,9 +302,19 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
         ],
     },
     # HuggingFace Hub InferenceClient methods (primary auto-override surface)
-    # max_tokens is listed for text_generation only: maps to max_new_tokens via PARAMETER_MAPPINGS.
-    # chat_completion omits max_tokens because its framework param name is max_tokens (not
-    # max_new_tokens), so injecting max_new_tokens there would silently be ignored/error.
+    #
+    # The two methods accept DIFFERENT generation-param NAMES (verified against the
+    # installed huggingface_hub signatures — issue #1570 round-3):
+    #   * InferenceClient.chat_completion(..., max_tokens, temperature, top_p, stop, stream)
+    #       — OpenAI-style names; accepts max_tokens NATIVELY; does NOT accept top_k.
+    #   * InferenceClient.text_generation(..., max_new_tokens, temperature, top_p, top_k,
+    #       stop, stream) — HF-native names; uses max_new_tokens (NOT max_tokens).
+    #
+    # Each method lists ONLY the canonical Traigent params it can actually accept.
+    # The framework-name translation (e.g. max_tokens -> max_new_tokens for text_generation)
+    # is applied per-method via METHOD_PARAMETER_TRANSLATIONS below; chat_completion needs
+    # no translation because every param it accepts uses its canonical name (max_tokens is
+    # native), so the identity fallback in _create_override_method handles it.
     "huggingface_hub.InferenceClient": {
         "text_generation": [
             "model",
@@ -317,6 +327,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
         ],
         "chat_completion": [
             "model",
+            "max_tokens",
             "temperature",
             "top_p",
             "stop",
@@ -335,6 +346,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
         ],
         "chat_completion": [
             "model",
+            "max_tokens",
             "temperature",
             "top_p",
             "stop",
@@ -369,8 +381,10 @@ METHOD_PARAMETER_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "text_generation": {
             "max_tokens": "max_new_tokens",
         },
-        # chat_completion: max_tokens is intentionally excluded from METHOD_MAPPINGS
-        # (it is not a valid chat_completion kwarg); no special translation needed.
+        # chat_completion accepts max_tokens NATIVELY (OpenAI-style), so no translation is
+        # needed — the identity fallback maps max_tokens -> max_tokens. Adding a
+        # max_tokens -> max_new_tokens entry here would WRONGLY drop the configured value
+        # (chat_completion has no max_new_tokens kwarg). Keep this empty.
         "chat_completion": {},
     },
     "huggingface_hub.AsyncInferenceClient": {
