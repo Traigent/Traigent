@@ -14,11 +14,22 @@ Covers all three resolution entry points so they stay in lockstep:
 
 from __future__ import annotations
 
+import ast
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import pytest
 
 from traigent.api.functions import get_api_key as public_get_api_key
 from traigent.config.api_keys import APIKeyManager
 from traigent.utils.env_config import get_api_key as env_get_api_key
+
+# Repo root: tests/unit/config/<this file> -> parents[3].
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_PROVIDER_SUPPORT_SRC = _REPO_ROOT / "traigent" / "config" / "provider_support.py"
 
 _PROVIDER_VARS = (
     "GOOGLE_API_KEY",
@@ -168,3 +179,82 @@ class TestBackendAndUnknown:
     def test_unknown_provider_returns_none(self, manager):
         assert manager.get_api_key("nonexistent-provider") is None
         assert env_get_api_key("nonexistent-provider") is None
+
+
+@pytest.mark.unit
+class TestCoreKeyApiHasNoYamlImportDependency:
+    """#1568 review fix: the CORE key/config API must import and resolve keys
+    with PyYAML absent.
+
+    ``provider_support`` is in the import chain of the public key API
+    (``traigent.get_api_key`` -> ``APIKeyManager`` / ``env_config.get_api_key``
+    via ``resolve_api_key_from_env``). PyYAML is NOT a core dependency (only
+    ``types-PyYAML`` is a dev dep), so a module-level ``import yaml`` there would
+    make a minimal install fail importing ``get_api_key`` before any behavior
+    runs. The canonical ``PROVIDER_SPECS`` table is a static literal; the only
+    yaml-dependent path (``load_models_yaml``) imports yaml lazily and is used
+    solely by the drift test and ``model_discovery`` (integrations extra).
+    """
+
+    def test_provider_support_has_no_module_level_yaml_import(self) -> None:
+        """Static guard: no top-level ``import yaml`` in provider_support.py."""
+        tree = ast.parse(_PROVIDER_SUPPORT_SRC.read_text())
+        offending: list[str] = []
+        for node in tree.body:  # module-level statements only
+            if isinstance(node, ast.Import):
+                offending += [
+                    alias.name
+                    for alias in node.names
+                    if alias.name.split(".")[0] == "yaml"
+                ]
+            elif isinstance(node, ast.ImportFrom):
+                if (node.module or "").split(".")[0] == "yaml":
+                    offending.append(node.module or "")
+        assert not offending, (
+            "provider_support.py must NOT import yaml at module level (found "
+            f"{offending}); it is in the core key-API import chain and PyYAML "
+            "is not a core dependency (#1568 review)."
+        )
+
+    def test_core_key_api_resolves_google_with_yaml_blocked(self) -> None:
+        """Behavioral proof: import + resolve a key in a fresh interpreter
+        where ``import yaml`` raises ImportError.
+
+        Runs in a subprocess so the (process-global) ``sys.modules`` block and a
+        truly-fresh import chain cannot pollute the in-process suite. Setting
+        ``sys.modules['yaml'] = None`` makes any subsequent ``import yaml`` raise
+        ImportError, exactly simulating a minimal install without PyYAML.
+        """
+        script = textwrap.dedent(
+            """
+            import sys
+            # A None entry makes any `import yaml` raise ImportError, simulating
+            # a minimal install with PyYAML absent.
+            sys.modules["yaml"] = None
+            from traigent.config.api_keys import APIKeyManager
+            val = APIKeyManager().get_api_key("google")
+            assert val == "g-subproc", repr(val)
+            print("RESOLVED", val)
+            """
+        )
+        env = dict(os.environ)
+        env["GOOGLE_API_KEY"] = "g-subproc"
+        env.pop("GEMINI_API_KEY", None)
+        # Hermetic: don't let the repo's .env perturb resolution.
+        env["TRAIGENT_SKIP_DOTENV"] = "1"
+        existing_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{_REPO_ROOT}{os.pathsep}{existing_pp}" if existing_pp else str(_REPO_ROOT)
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            "core key API failed to import/resolve with yaml blocked:\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+        assert "RESOLVED g-subproc" in result.stdout, result.stdout

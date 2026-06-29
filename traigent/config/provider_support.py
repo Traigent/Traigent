@@ -61,7 +61,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
+# NOTE: ``yaml`` (PyYAML) is intentionally NOT imported at module level. This
+# module is in the import chain of the CORE public key/config API
+# (``traigent.get_api_key`` -> ``APIKeyManager`` / ``env_config.get_api_key``
+# via ``resolve_api_key_from_env``), and PyYAML is *not* a core dependency
+# (only ``types-PyYAML`` is a dev dep). A module-level ``import yaml`` would
+# make a minimal install fail importing ``get_api_key`` before any behavior
+# runs (#1568 review). The canonical :data:`PROVIDER_SPECS` table below is a
+# hand-authored static literal that needs no YAML load, so all runtime key
+# resolution / validator support-level / tier participation work with NO yaml
+# present. The optional ``models.yaml`` cross-check is loaded lazily inside
+# :func:`load_models_yaml`, which imports ``yaml`` locally and is used only by
+# the drift test (dev has PyYAML) and ``model_discovery`` (integrations extra).
 
 # Path to the richest model registry; this module is "sourced from models.yaml".
 MODELS_YAML_PATH = Path(__file__).parent / "models.yaml"
@@ -348,10 +359,20 @@ def models_yaml_registry_keys() -> set[str]:
 def load_models_yaml() -> dict[str, Any]:
     """Load and cache ``config/models.yaml`` (the model-data source).
 
+    ``yaml`` (PyYAML) is imported **inside** this function on purpose: PyYAML is
+    not a core dependency, so importing it at module level would break the core
+    key/config API on a minimal install (#1568 review). This loader is the only
+    yaml-dependent path in this module and is used exclusively by the drift
+    regression test (dev installs have PyYAML) and ``model_discovery`` (the
+    integrations extra, which ships PyYAML). The runtime key-resolution /
+    support-matrix paths never call it and therefore never need yaml.
+
     Returns an empty dict if the file is missing or unparseable; callers and
     the drift test treat that as a hard failure surfaced via assertions rather
-    than crashing import.
+    than crashing import. (Runtime never reaches this function.)
     """
+    import yaml
+
     if not MODELS_YAML_PATH.exists():
         return {}
     with open(MODELS_YAML_PATH) as handle:
