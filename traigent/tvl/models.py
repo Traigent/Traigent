@@ -312,7 +312,8 @@ class PromotionPolicy:
         alpha: Family-wise error rate budget (0 < alpha < 1, default 0.05).
         min_effect: Per-objective epsilon tolerances for dominance comparison.
         adjust: Multiple testing adjustment ("none", "BH", "holm", or
-            "bonferroni").
+            "bonferroni"). Defaults to "holm", matching the canonical
+            epsilon-Pareto gate (tvl/python/tvl/promotion.py:200).
         chance_constraints: Hard constraints with confidence thresholds.
         tie_breakers: Secondary ordering rules for ties.
     """
@@ -320,7 +321,7 @@ class PromotionPolicy:
     dominance: Literal["epsilon_pareto"] = "epsilon_pareto"
     alpha: float = 0.05
     min_effect: dict[str, float] = field(default_factory=dict)
-    adjust: AdjustMethod = "none"
+    adjust: AdjustMethod = "holm"
     chance_constraints: list[ChanceConstraint] = field(default_factory=list)
     tie_breakers: dict[str, TieBreaker] = field(default_factory=dict)
     require_calibration: RequireCalibration | None = None  # TVL 1.1 strict mode
@@ -367,7 +368,7 @@ class PromotionPolicy:
             dominance=data.get("dominance", "epsilon_pareto"),
             alpha=float(data.get("alpha", 0.05)),
             min_effect=data.get("min_effect", {}),
-            adjust=data.get("adjust", "none"),
+            adjust=data.get("adjust", "holm"),
             chance_constraints=chance_constraints,
             tie_breakers=data.get("tie_breakers", {}),
             require_calibration=require_calibration,

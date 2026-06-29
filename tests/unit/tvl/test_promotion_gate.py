@@ -3,11 +3,7 @@
 import pytest
 
 from traigent.tvl.models import BandTarget, ChanceConstraint, PromotionPolicy
-from traigent.tvl.promotion_gate import (
-    ObjectiveSpec,
-    PromotionDecision,
-    PromotionGate,
-)
+from traigent.tvl.promotion_gate import ObjectiveSpec, PromotionDecision, PromotionGate
 
 
 class TestObjectiveSpec:
@@ -27,6 +23,16 @@ class TestObjectiveSpec:
         assert spec.name == "consistency"
         assert spec.direction == "band"
         assert spec.band == band
+
+    def test_invalid_direction_raises(self) -> None:
+        """Axis D: a direct ObjectiveSpec caller with an invalid direction raises.
+
+        Mirrors the spec-load guard (spec_loader.py:1980-1983). The compile-time
+        ``Literal`` does not enforce at runtime, so an unsupported direction must
+        fail loudly instead of silently falling into the minimize branch.
+        """
+        with pytest.raises(ValueError, match="direction must be one of"):
+            ObjectiveSpec(name="accuracy", direction="upward")  # type: ignore[arg-type]
 
 
 class TestPromotionGate:
@@ -178,14 +184,25 @@ class TestPromotionGate:
         assert len(decision.adjusted_p_values) > 0
 
     def test_holm_adjustment_blocks_raw_p_value_promotion(self) -> None:
-        """Holm adjustment prevents promotion that raw p-values would allow."""
+        """Holm adjustment prevents promotion that raw p-values would allow.
+
+        Axis B (canonical promotion.py:233-244): the superiority (union)
+        component is multiplicity-adjusted while non-inferiority stays
+        unadjusted. Two identical, moderately-improved objectives are each
+        superior at the raw p-value (p_super=0.0366 < 0.05) but Holm doubles
+        the smallest p-value (2 x 0.0366 = 0.0731 >= 0.05), so neither is
+        superior under Holm even though both remain non-inferior.
+        """
+        # Both objectives share the same candidate samples (incumbent = 0).
+        # p_noninf == p_super here (epsilon = 0), so both stay non-inferior.
+        cand_samples = [-0.45, -0.2, 0.05, 0.3, 0.55, 0.8, 1.05, -0.075, 0.425, 0.55]
         incumbent_metrics = {
             "a": [0.0] * 10,
             "b": [0.0] * 10,
         }
         candidate_metrics = {
-            "a": [-0.9, -0.4, 0.1, 0.6, 1.1, 1.6, 2.1, -0.15, 0.85, 1.1],
-            "b": [0.0] * 10,
+            "a": list(cand_samples),
+            "b": list(cand_samples),
         }
         objectives = [
             ObjectiveSpec("a", "maximize"),
@@ -193,7 +210,7 @@ class TestPromotionGate:
         ]
 
         raw_gate = PromotionGate(
-            PromotionPolicy(alpha=0.05, min_effect={"a": 0.0, "b": 0.0}),
+            PromotionPolicy(alpha=0.05, min_effect={"a": 0.0, "b": 0.0}, adjust="none"),
             objectives,
         )
         raw_decision = raw_gate.evaluate(incumbent_metrics, candidate_metrics)
@@ -209,9 +226,54 @@ class TestPromotionGate:
             objectives,
         )
         holm_decision = holm_gate.evaluate(incumbent_metrics, candidate_metrics)
+        # Non-inferiority is unadjusted, so the candidate is not rejected...
+        assert all(
+            r.p_value_noninf < holm_gate.policy.alpha
+            for r in holm_decision.objective_results
+        )
+        # ...but the adjusted superiority p-value clears alpha -> no superiority.
         assert holm_decision.adjusted_p_values["a"] > holm_gate.policy.alpha
         assert holm_decision.decision == "no_decision"
         assert holm_decision.dominance_satisfied is False
+
+    def test_iut_rejects_when_objective_not_noninferior(self) -> None:
+        """Axis A: canonical IUT rejects when any objective is not non-inferior.
+
+        Mirrors the canonical decision rule (promotion.py:768-773, :249-251):
+        a candidate that is clearly superior on Y but cannot prove
+        non-inferiority on a neutral objective X is REJECTED. The old SDK gate
+        (any_better and not any_worse) PROMOTED this case, because the neutral
+        objective X is not "worse beyond epsilon" and Y is better.
+        """
+        incumbent_metrics = {
+            "x": [0.80, 0.82, 0.81, 0.79, 0.80, 0.81, 0.82, 0.80, 0.79, 0.81],
+            "y": [0.50, 0.52, 0.48, 0.51, 0.49, 0.50, 0.53, 0.47, 0.51, 0.50],
+        }
+        candidate_metrics = {
+            # X: identical to incumbent -> non-inferiority unproven (p >= alpha),
+            # yet NOT worse beyond epsilon (so the old gate ignored it).
+            "x": list(incumbent_metrics["x"]),
+            # Y: clearly better.
+            "y": [0.80, 0.82, 0.78, 0.81, 0.79, 0.80, 0.83, 0.77, 0.81, 0.80],
+        }
+        objectives = [
+            ObjectiveSpec("x", "maximize"),
+            ObjectiveSpec("y", "maximize"),
+        ]
+        gate = PromotionGate(
+            PromotionPolicy(alpha=0.05, min_effect={"x": 0.0, "y": 0.0}, adjust="none"),
+            objectives,
+        )
+
+        decision = gate.evaluate(incumbent_metrics, candidate_metrics)
+
+        assert decision.decision == "reject"
+        assert decision.dominance_satisfied is False
+        verdicts = {r.name: r.verdict for r in decision.objective_results}
+        assert verdicts["x"] == "inferior"
+        assert verdicts["y"] == "superior"
+        x_result = next(r for r in decision.objective_results if r.name == "x")
+        assert x_result.p_value_noninf >= gate.policy.alpha
 
     def test_unsupported_adjust_value_reaching_gate_raises(self) -> None:
         """The gate fails closed if an unsupported adjust value reaches it."""
@@ -244,45 +306,86 @@ class TestChanceConstraints:
     """Tests for chance constraint evaluation."""
 
     def test_constraint_satisfied(self) -> None:
-        """Chance constraint is satisfied when lower bound >= threshold."""
+        """Chance constraint passes when the violation-rate upper bound <= threshold.
+
+        Axis C (canonical promotion.py:677-678): constraint_data is
+        ``(violations, trials)`` and the constraint is satisfied iff the
+        upper confidence bound on the violation rate is at or below the
+        threshold. 2/100 violations -> upper bound ~0.06 <= 0.10.
+        """
         policy = PromotionPolicy(
             chance_constraints=[
-                ChanceConstraint(name="accuracy", threshold=0.80, confidence=0.95)
+                ChanceConstraint(name="error_rate", threshold=0.10, confidence=0.95)
             ]
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
 
-        # 95/100 successes should satisfy accuracy >= 0.80 with 95% confidence
         decision = gate.evaluate(
             incumbent_metrics={"accuracy": [0.8] * 5},
             candidate_metrics={"accuracy": [0.9] * 5},
-            constraint_data={"accuracy": (95, 100)},
+            constraint_data={"error_rate": (2, 100)},  # (violations, trials)
         )
 
-        # Constraint should be satisfied
         assert len(decision.chance_results) == 1
         assert decision.chance_results[0].satisfied is True
+        assert decision.chance_results[0].upper_bound <= 0.10
 
     def test_constraint_not_satisfied(self) -> None:
-        """Candidate is rejected when constraint not satisfied."""
+        """Candidate is rejected when the violation-rate upper bound > threshold.
+
+        Axis C: 30/100 violations -> upper bound ~0.38 > 0.10 threshold.
+        """
         policy = PromotionPolicy(
             chance_constraints=[
-                ChanceConstraint(name="safety", threshold=0.95, confidence=0.95)
+                ChanceConstraint(name="error_rate", threshold=0.10, confidence=0.95)
             ]
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
 
-        # Only 70/100 successes, won't satisfy 0.95 threshold
         decision = gate.evaluate(
             incumbent_metrics={"accuracy": [0.8] * 5},
             candidate_metrics={"accuracy": [0.9] * 5},
-            constraint_data={"safety": (70, 100)},
+            constraint_data={"error_rate": (30, 100)},  # (violations, trials)
         )
 
         assert decision.decision == "reject"
         assert "Chance constraints not satisfied" in decision.reason
+
+    def test_constraint_direction_matches_canonical_violation_bound(self) -> None:
+        """Axis C flip: the SAME spec yields the canonical (violation-bound) verdict.
+
+        Under the old SDK semantics (lower bound on a SUCCESS rate >= threshold)
+        a high count would PASS; canonical treats the count as VIOLATIONS and
+        bounds them from above, so a high count must FAIL and a low count must
+        PASS. This asserts the verdict has flipped to the canonical one.
+        """
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.95)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+
+        # 90/100: old success-rate logic (0.90 lower bound >= 0.20) PASSED;
+        # canonical violation-rate upper bound (~0.95) > 0.20 -> FAIL.
+        high = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (90, 100)},
+        )
+        assert high.chance_results[0].satisfied is False
+        assert high.chance_results[0].upper_bound > 0.20
+
+        # 5/100: canonical upper bound (~0.11) <= 0.20 -> PASS.
+        low = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (5, 100)},
+        )
+        assert low.chance_results[0].satisfied is True
+        assert low.chance_results[0].upper_bound <= 0.20
 
     def test_missing_constraint_data(self) -> None:
         """Missing constraint data is treated as not satisfied."""
@@ -306,8 +409,14 @@ class TestChanceConstraints:
 class TestBandedObjectives:
     """Tests for banded objective handling."""
 
-    def test_banded_objective_promotion(self) -> None:
-        """Candidate passing TOST is promoted."""
+    def test_banded_objective_in_band_no_superiority(self) -> None:
+        """A banded objective gates but never grants superiority.
+
+        Matching the canonical gate (promotion.py:217-222, :790-795), a banded
+        objective only contributes a pass/fail band constraint and is never
+        "superior". With no standard superior objective, an in-band candidate
+        yields NoDecision (the old SDK gate promoted on the band alone).
+        """
         band = BandTarget(low=0.85, high=0.95)
         policy = PromotionPolicy()
         objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
@@ -345,7 +454,8 @@ class TestBandedObjectives:
             },
         )
 
-        assert decision.decision == "promote"
+        assert decision.decision == "no_decision"
+        assert decision.objective_results[0].verdict == "in_band"
 
 
 class TestPromotionDecision:

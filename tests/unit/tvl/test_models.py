@@ -184,7 +184,9 @@ class TestPromotionPolicy:
         policy = PromotionPolicy()
         assert policy.dominance == "epsilon_pareto"
         assert policy.alpha == 0.05
-        assert policy.adjust == "none"
+        # Default adjust is "holm", matching the canonical epsilon-Pareto gate
+        # (tvl/python/tvl/promotion.py:200).
+        assert policy.adjust == "holm"
         assert policy.min_effect == {}
 
     def test_invalid_alpha(self) -> None:
