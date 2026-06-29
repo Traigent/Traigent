@@ -36,7 +36,7 @@ from ..utils.logging import get_logger
 from .base import BaseOverrideManager
 
 # Import static mappings from dedicated module
-from .mappings import METHOD_MAPPINGS, PARAMETER_MAPPINGS
+from .mappings import METHOD_MAPPINGS, METHOD_PARAMETER_TRANSLATIONS, PARAMETER_MAPPINGS
 
 logger = get_logger(__name__)
 
@@ -81,13 +81,14 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
         self._parameter_mappings = self._init_parameter_mappings()
         self._method_mappings = self._init_method_mappings()
+        self._method_parameter_translations = self._init_method_parameter_translations()
 
     def _init_parameter_mappings(self) -> dict[str, dict[str, str]]:
         """Initialize parameter mappings for different frameworks.
 
-        Uses static mappings from mappings.py as the baseline.
-        These serve as fallback when no plugin is registered for a framework.
-        Plugin mappings (via LLMPlugin._get_default_mappings) take precedence.
+        Uses static mappings from mappings.py as the single source of truth.
+        Every class registered in get_target_classes() of any plugin must have
+        a corresponding entry here for overrides to inject params at call sites.
         """
         # Deep copy to allow instance-level modifications without affecting global mappings
         return {k: dict(v) for k, v in PARAMETER_MAPPINGS.items()}
@@ -95,15 +96,30 @@ class FrameworkOverrideManager(BaseOverrideManager):
     def _init_method_mappings(self) -> dict[str, dict[str, list[str]]]:
         """Initialize method mappings for different frameworks.
 
-        Uses static mappings from mappings.py as the baseline.
-        Maps class names to methods that should be overridden for parameter injection.
-        These serve as fallback when no plugin is registered for a framework.
+        Uses static mappings from mappings.py as the single active source of truth.
+        Maps class names to methods and the Traigent canonical param names each method
+        accepts. The method override injects only params listed here (combined with
+        METHOD_PARAMETER_TRANSLATIONS for non-identity name translations).
         """
         # Deep copy to allow instance-level modifications without affecting global mappings
         # Inner lists also need to be copied
         return {
             k: {method: list(params) for method, params in v.items()}
             for k, v in METHOD_MAPPINGS.items()
+        }
+
+    def _init_method_parameter_translations(
+        self,
+    ) -> dict[str, dict[str, dict[str, str]]]:
+        """Initialize method-level parameter name translations.
+
+        Used when a method's framework param name differs from the Traigent canonical
+        name but the param is intentionally absent from the class-level PARAMETER_MAPPINGS
+        (because it is not a valid constructor arg). Deep-copied for instance isolation.
+        """
+        return {
+            k: {method: dict(trans) for method, trans in v.items()}
+            for k, v in METHOD_PARAMETER_TRANSLATIONS.items()
         }
 
     def register_framework_target(
@@ -203,10 +219,30 @@ class FrameworkOverrideManager(BaseOverrideManager):
         Returns:
             Overridden method with parameter injection
         """
-        parameter_mapping = self._parameter_mappings.get(class_name, {})
+        # supported_params: the Traigent canonical names this method accepts.
         supported_params = self._method_mappings.get(class_name, {}).get(
             method_name, []
         )
+
+        # Build the effective parameter name translation for this method.
+        # Priority (highest to lowest):
+        #   1. Method-specific translations from METHOD_PARAMETER_TRANSLATIONS
+        #      (e.g. HF text_generation: max_tokens → max_new_tokens).
+        #      These cover generation params intentionally excluded from the class-level
+        #      PARAMETER_MAPPINGS to avoid TypeError on __init__.
+        #   2. Class-level PARAMETER_MAPPINGS (constructor-valid params, e.g. model).
+        #   3. Identity: for any supported param not covered above, the framework param
+        #      name equals the Traigent canonical name (e.g. temperature → temperature).
+        method_translations = self._method_parameter_translations.get(
+            class_name, {}
+        ).get(method_name, {})
+        class_mapping = self._parameter_mappings.get(class_name, {})
+        effective_mapping: dict[str, str] = dict(class_mapping)
+        effective_mapping.update(method_translations)  # method translations win
+        for sp in supported_params:
+            if sp not in effective_mapping:
+                effective_mapping[sp] = sp  # identity fallback
+
         override_active = self._override_active  # Capture in closure
 
         @functools.wraps(original_method)
@@ -235,15 +271,21 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             config_space = get_config_space()
 
-            # Override parameters based on mapping and supported params
+            # Override parameters based on supported_params and effective translation.
+            # Iterating supported_params (not parameter_mapping) ensures we inject all
+            # method-accepted generation params even when they are absent from the
+            # class-level PARAMETER_MAPPINGS (e.g. temperature for HF InferenceClient).
             overridden_kwargs = kwargs.copy()
             overrides_applied = []
 
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict and traigent_param in supported_params:
+            for traigent_param in supported_params:
+                if traigent_param in config_dict:
                     # Only override if parameter is in configuration space (being optimized)
                     # or if no configuration space is set (not in optimization)
                     if config_space is None or traigent_param in config_space:
+                        framework_param = effective_mapping.get(
+                            traigent_param, traigent_param
+                        )
                         override_value = config_dict[traigent_param]
                         original_value = overridden_kwargs.get(
                             framework_param, "not_set"
@@ -285,15 +327,18 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             config_space = get_config_space()
 
-            # Override parameters based on mapping and supported params
+            # Override parameters based on supported_params and effective translation.
             overridden_kwargs = kwargs.copy()
             overrides_applied = []
 
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict and traigent_param in supported_params:
+            for traigent_param in supported_params:
+                if traigent_param in config_dict:
                     # Only override if parameter is in configuration space (being optimized)
                     # or if no configuration space is set (not in optimization)
                     if config_space is None or traigent_param in config_space:
+                        framework_param = effective_mapping.get(
+                            traigent_param, traigent_param
+                        )
                         override_value = config_dict[traigent_param]
                         original_value = overridden_kwargs.get(
                             framework_param, "not_set"
@@ -971,9 +1016,12 @@ def override_cohere() -> None:
 
 
 def override_huggingface() -> None:
-    """Enable overrides for HuggingFace classes."""
+    """Enable overrides for HuggingFace Hub InferenceClient classes."""
     enable_framework_overrides(
-        ["transformers.pipeline", "transformers.AutoModelForCausalLM"]
+        [
+            "huggingface_hub.InferenceClient",
+            "huggingface_hub.AsyncInferenceClient",
+        ]
     )
 
 
@@ -995,9 +1043,9 @@ def override_all_platforms() -> None:
             # Cohere
             "cohere.Client",
             "cohere.AsyncClient",
-            # HuggingFace
-            "transformers.pipeline",
-            "transformers.AutoModelForCausalLM",
+            # HuggingFace Hub
+            "huggingface_hub.InferenceClient",
+            "huggingface_hub.AsyncInferenceClient",
         ]
     )
 
