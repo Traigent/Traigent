@@ -102,24 +102,37 @@ class TestGetProviderForModel:
         """Test LiteLLM gemini alias maps to google."""
         assert get_provider_for_model("gemini/gemini-pro") == "google"
 
-    def test_litellm_vertex_ai_prefix_not_matched(self):
-        """Test vertex_ai prefix with underscore is not caught by the LiteLLM prefix check.
+    def test_litellm_vertex_ai_prefix_matched(self):
+        """Test vertex_ai prefix with underscore resolves correctly (NOT huggingface).
 
-        The LiteLLM prefix pattern only matches [a-z]+ (lowercase letters),
-        so vertex_ai with underscore doesn't match the prefix map. The full
-        string "vertex_ai/gemini-pro" DOES match the HuggingFace org/model
-        pattern, so it resolves to huggingface as the closest fallback.
+        The LiteLLM prefix pattern now matches underscores, so vertex_ai/gemini-pro
+        is caught by the prefix map and returns 'google'.  It must NOT leak into
+        the HuggingFace catch-all.
         """
-        result = get_provider_for_model("vertex_ai/gemini-pro")
-        # vertex_ai prefix has underscore, doesn't match [a-z]+ pattern;
-        # falls through to HF pattern which matches any org/model format
-        assert result == "huggingface"
+        assert get_provider_for_model("vertex_ai/gemini-pro") == "google"
+
+    def test_litellm_known_prefixes_not_huggingface(self):
+        """Known LiteLLM prefixes must NOT resolve to huggingface.
+
+        This pins the last-resort boundary: azure, groq, bedrock, together_ai and
+        similar prefixes are known provider segments and must be excluded from HF
+        detection even when we have no dedicated validator for them.
+        """
+        # Known prefixes with a Traigent provider validator
+        assert get_provider_for_model("openai/gpt-4") == "openai"
+        assert get_provider_for_model("anthropic/claude-3-haiku") == "anthropic"
+        assert get_provider_for_model("google/gemini-pro") == "google"
+        assert get_provider_for_model("vertex_ai/gemini-pro") == "google"
+        # Known prefixes without a Traigent validator — must not become huggingface
+        assert get_provider_for_model("azure/my-deployment") != "huggingface"
+        assert get_provider_for_model("groq/llama-3.1-8b-instant") != "huggingface"
+        assert get_provider_for_model("bedrock/anthropic.claude-3") != "huggingface"
 
     def test_unknown_model(self):
         """Test unknown model returns None."""
         assert get_provider_for_model("my-custom-model") is None
-        # org/model format now resolves to huggingface (open namespace)
-        assert get_provider_for_model("unknown-provider/model") == "huggingface"
+        # bare org/model with unknown org → huggingface (last resort)
+        assert get_provider_for_model("unknown-org/some-model") == "huggingface"
         assert get_provider_for_model("") is None
 
     def test_case_insensitive(self):

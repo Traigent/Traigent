@@ -60,12 +60,18 @@ _PROVIDER_PATTERNS: dict[str, re.Pattern[str]] = {
     "google": re.compile(r"^(gemini-|models/gemini-)"),
     "mistral": re.compile(r"^(mistral-|codestral-|pixtral-|open-mistral-)"),
     "cohere": re.compile(r"^command-"),
-    # HuggingFace: open namespace with org/model format (millions of public models)
-    "huggingface": re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$"),
+    # NOTE: HuggingFace (org/model format) is intentionally NOT in this dict.
+    # It is applied as a true last resort in get_provider_for_model(), after all
+    # known-provider prefix checks have been exhausted.
 }
 
-# Also accept provider/model and provider:model formats (LiteLLM compatibility)
-_LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z]+)[:/](.+)$")
+# HuggingFace bare org/model pattern (e.g. "meta-llama/Meta-Llama-3-8B-Instruct").
+# Applied as a LAST RESORT only when the leading segment is not a known provider prefix.
+_HF_ORG_MODEL_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$")
+
+# Also accept provider/model and provider:model formats (LiteLLM compatibility).
+# Supports underscores and digits in the prefix (e.g. vertex_ai, together_ai).
+_LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z][a-z0-9_]*)[:/](.+)$")
 
 # Known valid models per provider (as of Jan 2026)
 # Used to warn users about potentially invalid model names before API calls
@@ -908,31 +914,64 @@ def get_provider_for_model(model_name: str) -> str | None:
         >>> get_provider_for_model("my-custom-model")  # Unknown
         None
     """
-    # Check for LiteLLM provider prefix format (provider/model or provider:model)
+    # Map of LiteLLM provider prefixes (including those with underscores/digits) to
+    # our canonical provider names.  None means "known prefix but not a Traigent-managed
+    # provider" — these are still routed away from HuggingFace.
+    _LITELLM_PREFIX_MAP: dict[str, str | None] = {
+        # Core providers we validate
+        "openai": "openai",
+        "anthropic": "anthropic",
+        "google": "google",
+        "gemini": "google",
+        "vertex_ai": "google",
+        "mistral": "mistral",
+        "cohere": "cohere",
+        "huggingface": "huggingface",
+        "hf": "huggingface",
+        "huggingface_hub": "huggingface",
+        # Additional known LiteLLM prefixes (not HuggingFace, not our validators)
+        "azure": None,
+        "groq": None,
+        "bedrock": None,
+        "together_ai": None,
+        "replicate": None,
+        "ollama": None,
+        "openrouter": None,
+        "perplexity": None,
+        "fireworks_ai": None,
+        "anyscale": None,
+        "deepinfra": None,
+        "voyage": None,
+        "palm": None,
+        "ai21": None,
+        "nlp_cloud": None,
+        "aleph_alpha": None,
+        "petals": None,
+        "oobabooga": None,
+        "databricks": None,
+    }
+
+    # Step 1: Check for explicit provider/model or provider:model prefix (LiteLLM format).
+    # This handles underscores/digits in prefixes (e.g. vertex_ai, together_ai).
     prefix_match = _LITELLM_PREFIX_PATTERN.match(model_name)
     if prefix_match:
         prefix = prefix_match.group(1).lower()
-        # Map common LiteLLM prefixes to our provider names
-        prefix_map = {
-            "openai": "openai",
-            "anthropic": "anthropic",
-            "google": "google",
-            "gemini": "google",
-            "vertex_ai": "google",
-            "mistral": "mistral",
-            "cohere": "cohere",
-            "huggingface": "huggingface",
-            "hf": "huggingface",
-            "huggingface_hub": "huggingface",
-        }
-        if prefix in prefix_map:
-            return prefix_map[prefix]
+        if prefix in _LITELLM_PREFIX_MAP:
+            return _LITELLM_PREFIX_MAP[prefix]
 
-    # Check against known patterns
+    # Step 2: Check against known provider name-prefix patterns (no slash in model id).
     model_lower = model_name.lower()
     for provider, pattern in _PROVIDER_PATTERNS.items():
         if pattern.match(model_lower):
             return provider
+
+    # Step 3: Last resort — bare "org/model" HuggingFace format.
+    # Only attribute to huggingface when the segment before the slash is NOT a known
+    # provider prefix (which was already handled in step 1).
+    if _HF_ORG_MODEL_PATTERN.match(model_name):
+        org_segment = model_name.split("/", 1)[0].lower()
+        if org_segment not in _LITELLM_PREFIX_MAP:
+            return "huggingface"
 
     return None
 

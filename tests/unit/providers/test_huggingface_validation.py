@@ -69,6 +69,25 @@ class TestGetProviderForModelHuggingFace:
         assert get_provider_for_model("anthropic/claude-3-haiku") == "anthropic"
         assert get_provider_for_model("google/gemini-pro") == "google"
 
+    def test_known_provider_prefixes_never_resolve_to_huggingface(self):
+        """Known provider/platform prefixes must NOT leak into HuggingFace (last-resort guard).
+
+        This is the critical last-resort boundary: any model id whose leading
+        segment (before the first '/') is a known LiteLLM provider prefix must
+        be routed away from HuggingFace, regardless of whether we have a
+        dedicated validator for that provider.
+        """
+        # These have dedicated Traigent validators
+        assert get_provider_for_model("vertex_ai/gemini-pro") != "huggingface"
+        assert get_provider_for_model("vertex_ai/gemini-pro") == "google"
+        # These are known LiteLLM prefixes without a Traigent validator
+        assert get_provider_for_model("azure/my-deployment") != "huggingface"
+        assert get_provider_for_model("groq/llama-3.1-8b-instant") != "huggingface"
+        assert get_provider_for_model("bedrock/anthropic.claude-3") != "huggingface"
+        assert get_provider_for_model("together_ai/togethercomputer/llama-2-70b") != "huggingface"
+        assert get_provider_for_model("ollama/llama3") != "huggingface"
+        assert get_provider_for_model("openrouter/meta-llama/llama-3.1-8b") != "huggingface"
+
 
 @pytest.mark.unit
 class TestValidateModelNamesHuggingFace:
