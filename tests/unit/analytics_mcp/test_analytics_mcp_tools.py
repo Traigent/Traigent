@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -489,11 +489,11 @@ class TestWave2AnalyticsTools:
             },
             "example_rows": [
                 {
-                    "safe_example_ref": "exref_a1b2c3d4",
+                    "safe_example_ref": "exref_a1b2c3d4e5f6a7b8",
                     "review_priority": "high",
-                    "difficulty_bucket": "hard",
-                    "suspicious_flags": ["label_conflict", "format_drift"],
-                    "recommended_action": "review_before_promotion",
+                    "difficulty_bucket": "medium",
+                    "suspicious_flags": ["possible_mislabel"],
+                    "recommended_action": "review_label",
                 }
             ],
         }
@@ -849,3 +849,175 @@ class TestNoTenantArgument:
             assert not any("tenant" in p.lower() for p in params), (
                 f"{fn.__name__} must not accept a tenant parameter"
             )
+
+
+def _make_analytics_client():
+    from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+    return BackendAnalyticsClient(
+        backend_url="http://localhost:5000", api_key="uk_test_key"
+    )  # pragma: allowlist secret
+
+
+def _mock_client_http(client, payload: dict):
+    """Install a mocked HTTP transport on a BackendAnalyticsClient instance."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "success": True,
+        "message": "ok",
+        "data": payload,
+    }
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.get.return_value = mock_response
+    client._client = mock_http
+    return mock_http
+
+
+def _base_example_insights_payload() -> dict:
+    return {
+        "run_id": "run_123",
+        "privacy_mode": "safe_agent_projection",
+        "summary": {
+            "example_count": 5,
+            "weak_example_count": 1,
+            "unstable_example_count": 0,
+            "dataset_quality": "high",
+        },
+        "example_rows": [
+            {
+                "safe_example_ref": "exref_0123456789abcdef",
+                "review_priority": "low",
+                "difficulty_bucket": "low",
+                "suspicious_flags": [],
+                "recommended_action": "keep_as_hard_case",
+            }
+        ],
+        "cohorts": [
+            {
+                "kind": "stable_examples",
+                "count": 4,
+                "impact": "positive",
+                "safe_example_refs": [],
+                "recommendation": "No action needed.",
+            }
+        ],
+        "recommendations": [
+            {
+                "action": "keep_as_hard_case",
+                "reason": "Dataset is high quality.",
+            }
+        ],
+        "redactions": {
+            "raw_proprietary_signals_hidden": True,
+            "raw_prompt_text_hidden_by_default": False,
+        },
+    }
+
+
+@pytest.mark.skipif(not HTTPX_AVAILABLE, reason="httpx not installed")
+class TestExampleInsightsAggregateProjection:
+    """Canary: nested unknown/raw keys inside aggregate fields must be dropped.
+
+    BackendAnalyticsClient.get_example_insights() rebuilds per-row output by
+    allowlist (via _project_example_insight_row). This suite verifies the same
+    property holds for the aggregate fields — summary, cohorts items,
+    recommendations items, and redactions — after the defense-in-depth fix for
+    issue #1562. Any truly raw backend key injected into a nested aggregate must
+    be absent from the returned payload; known fields must pass through unchanged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_in_summary_is_dropped(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        payload = _base_example_insights_payload()
+        payload["summary"]["raw_signal_vector"] = [0.9, 0.1, 0.5]
+        client = _make_analytics_client()
+        _mock_client_http(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        assert "raw_signal_vector" not in result["summary"]
+        assert result["summary"]["example_count"] == 5
+        assert result["summary"]["dataset_quality"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_in_cohort_item_is_dropped(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        payload = _base_example_insights_payload()
+        payload["cohorts"][0]["raw_member_ids"] = ["id_1", "id_2"]
+        client = _make_analytics_client()
+        _mock_client_http(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        cohort = result["cohorts"][0]
+        assert "raw_member_ids" not in cohort
+        assert cohort["kind"] == "stable_examples"
+        assert cohort["count"] == 4
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_in_recommendation_item_is_dropped(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        payload = _base_example_insights_payload()
+        payload["recommendations"][0]["raw_priority_score"] = 0.95
+        client = _make_analytics_client()
+        _mock_client_http(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        rec = result["recommendations"][0]
+        assert "raw_priority_score" not in rec
+        assert rec["action"] == "keep_as_hard_case"
+        assert rec["reason"] == "Dataset is high quality."
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_in_redactions_is_dropped(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        payload = _base_example_insights_payload()
+        payload["redactions"]["raw_suppressed_fields"] = ["signals", "scores"]
+        client = _make_analytics_client()
+        _mock_client_http(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        assert "raw_suppressed_fields" not in result["redactions"]
+        assert result["redactions"]["raw_proprietary_signals_hidden"] is True
+
+    @pytest.mark.asyncio
+    async def test_known_aggregate_fields_pass_through_with_identical_values(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        payload = _base_example_insights_payload()
+        # inject unknown keys into all aggregates simultaneously
+        payload["summary"]["__canary__"] = "must_not_appear"
+        payload["cohorts"][0]["__canary__"] = "must_not_appear"
+        payload["recommendations"][0]["__canary__"] = "must_not_appear"
+        payload["redactions"]["__canary__"] = "must_not_appear"
+        client = _make_analytics_client()
+        _mock_client_http(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        # known fields in all aggregates pass through with identical values
+        assert result["summary"]["example_count"] == 5
+        assert result["summary"]["weak_example_count"] == 1
+        assert result["summary"]["unstable_example_count"] == 0
+        assert result["summary"]["dataset_quality"] == "high"
+        assert result["cohorts"][0]["kind"] == "stable_examples"
+        assert result["cohorts"][0]["count"] == 4
+        assert result["cohorts"][0]["impact"] == "positive"
+        assert result["cohorts"][0]["safe_example_refs"] == []
+        assert result["cohorts"][0]["recommendation"] == "No action needed."
+        assert result["recommendations"][0]["action"] == "keep_as_hard_case"
+        assert result["recommendations"][0]["reason"] == "Dataset is high quality."
+        assert result["redactions"]["raw_proprietary_signals_hidden"] is True
+        assert result["redactions"]["raw_prompt_text_hidden_by_default"] is False
+        # injected unknown canary keys absent in every aggregate
+        assert "__canary__" not in result["summary"]
+        assert "__canary__" not in result["cohorts"][0]
+        assert "__canary__" not in result["recommendations"][0]
+        assert "__canary__" not in result["redactions"]
