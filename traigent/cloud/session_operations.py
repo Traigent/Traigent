@@ -71,6 +71,56 @@ def _get_session_creation_failure_detail(
     return None
 
 
+# Transient signals: the SDK could not REACH/validate the backend (the auth
+# layer fails closed on these for safety, but the run should still degrade
+# gracefully as it did before, not hard-fail).
+_AUTH_TRANSIENT_MARKERS = (
+    "timed out",
+    "timeout",
+    "transport error",
+    "rate limited",
+    "temporarily unavailable",
+    "service unavailable",
+    "connection",
+)
+# Definitive signals: the backend REJECTED the credential (user-actionable;
+# fix the key). Only these fail closed.
+_AUTH_REJECTION_MARKERS = (
+    "unauthorized",
+    "invalid api key",
+    "invalid_api_key",
+    "api_key_validation_failed",
+    "reported key invalid",
+    "revoked",
+    "forbidden",
+    "expired",
+    "permission",
+)
+
+
+def _is_definitive_auth_rejection(exc: Exception) -> bool:
+    """True only when an auth failure is a DEFINITIVE credential rejection.
+
+    A configured key that the backend rejected (invalid / revoked / expired /
+    unauthorized / forbidden — typically 401/403) is user-actionable and must
+    fail closed. A transient inability to validate the key (timeout / transport
+    error / 5xx / 429 during ``/keys/validate``) is NOT a rejection: the auth
+    layer fails closed on it for safety, but the optimization run should still
+    degrade gracefully (as before), not hard-fail. Ambiguous errors default to
+    NOT a rejection, preserving the prior resilient fallback.
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        if status in (401, 403):
+            return True
+        if status == 429 or status >= 500:
+            return False
+    msg = str(exc).lower()
+    if any(marker in msg for marker in _AUTH_TRANSIENT_MARKERS):
+        return False
+    return any(marker in msg for marker in _AUTH_REJECTION_MARKERS)
+
+
 class SessionOperations:
     """Handles session management operations."""
 
@@ -362,20 +412,21 @@ class SessionOperations:
         governed = bool(promotion_policy or tvl_governance)
 
         def _must_fail_loud(exc: Exception) -> bool:
-            # An AuthenticationError reaching a handler means a key WAS
-            # configured (the no-key path returns NO_API_KEY before any HTTP)
-            # and the backend REJECTED it (invalid / revoked / unauthorized).
-            # That is a user-actionable credential error, not a transient
-            # backend outage: silently degrading a cloud/managed run to a
-            # local/anonymous one would change execution semantics (managed
-            # Bayesian -> local search), drop the backend/billing/governance
-            # record, and present the degraded run as success. Fail closed;
-            # users who genuinely want local execution opt in explicitly via
-            # offline=True / TRAIGENT_OFFLINE_MODE (handled by
-            # is_backend_offline() above, before any auth attempt).
+            # A DEFINITIVELY rejected credential (invalid / revoked / expired /
+            # unauthorized — a key WAS configured; the no-key path returns
+            # NO_API_KEY before any HTTP) is a user-actionable error. Silently
+            # degrading a cloud/managed run to a local/anonymous one would
+            # change execution semantics (managed Bayesian -> local search),
+            # drop the backend/billing/governance record, and present the
+            # degraded run as success — so fail closed. A *transient* failure
+            # to reach/validate the backend is NOT a rejection and still
+            # degrades gracefully (see _is_definitive_auth_rejection). Users
+            # who want local execution opt in explicitly via offline=True /
+            # TRAIGENT_OFFLINE_MODE (handled by is_backend_offline() above).
+            if isinstance(exc, AuthenticationError):
+                return governed or _is_definitive_auth_rejection(exc)
             return governed or isinstance(
-                exc,
-                (AuthenticationError, CloudEgressBlockedError, SessionContractError),
+                exc, (CloudEgressBlockedError, SessionContractError)
             )
 
         if is_backend_offline():
@@ -610,7 +661,18 @@ class SessionOperations:
                 await self._reset_client_session("create_session fallback")
                 if _must_fail_loud(e):
                     raise
-                logger.debug("Backend unavailable for '%s': %s", function_name, e)
+                # A configured key intended a managed/cloud run, but the backend
+                # was unreachable. We degrade to LOCAL execution for resilience —
+                # but this is a DOWNGRADE (managed search/tracking is lost), so
+                # surface it at WARNING and flag degraded=True on the result so a
+                # caller never mistakes the local run for a managed one.
+                logger.warning(
+                    "Managed session creation failed (backend unreachable) for "
+                    "'%s'; degrading to LOCAL execution — results are NOT tracked "
+                    "on the backend (set offline=True to make this explicit): %s",
+                    function_name,
+                    e,
+                )
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
@@ -628,6 +690,7 @@ class SessionOperations:
                     typed_legacy_session_create_400=bool(
                         getattr(e, "typed_legacy_session_create_400", False)
                     ),
+                    degraded=True,
                 )
 
         # Run async method in sync context
@@ -687,8 +750,13 @@ class SessionOperations:
         except (TimeoutError, CloudServiceError, OSError) as exc:
             if _must_fail_loud(exc):
                 raise
-            logger.debug(
-                "Error in create_session for function '%s': %s",
+            # Backend unreachable on the outer path — same downgrade semantics as
+            # the inner sibling: WARN + flag degraded so the local run is never
+            # mistaken for a managed one.
+            logger.warning(
+                "Managed session creation failed (backend unreachable) for '%s'; "
+                "degrading to LOCAL execution — results are NOT tracked on the "
+                "backend (set offline=True to make this explicit): %s",
                 function_name,
                 exc,
             )
@@ -706,6 +774,7 @@ class SessionOperations:
                 reason=SessionCreationFailureReason.SESSION_FAILED,
                 detail=detail,
                 failure_response=failure_response,
+                degraded=True,
             )
 
         except Exception as exc:
@@ -715,8 +784,11 @@ class SessionOperations:
             # governed/contract failures, which must stay loud.
             if _must_fail_loud(exc):
                 raise
-            logger.debug(
-                "Unexpected error in create_session for function '%s': %s",
+            # An unexpected error that degrades a managed run to local is still a
+            # downgrade — surface at WARNING and flag degraded (was debug-only).
+            logger.warning(
+                "Unexpected error in create_session for '%s'; degrading to LOCAL "
+                "execution — results are NOT tracked on the backend: %s",
                 function_name,
                 exc,
             )
@@ -727,6 +799,7 @@ class SessionOperations:
                 session_id=fallback_id,
                 reason=SessionCreationFailureReason.SESSION_FAILED,
                 detail=str(exc)[:200],
+                degraded=True,
             )
 
     async def create_hybrid_session(

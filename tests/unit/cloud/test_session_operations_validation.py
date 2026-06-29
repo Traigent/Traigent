@@ -1,5 +1,6 @@
 """Validation and locking tests for SessionOperations."""
 
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -9,8 +10,10 @@ import pytest
 
 from traigent.cloud.api_operations import TraigentSessionApiResult
 from traigent.cloud.auth import AuthenticationError
+from traigent.cloud.client import CloudServiceError
 from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 from traigent.cloud.session_operations import SessionOperations
+from traigent.cloud.session_types import SessionCreationFailureReason
 from traigent.utils.exceptions import ValidationError as ValidationException
 
 
@@ -318,3 +321,85 @@ def test_create_session_outer_auth_failure_fails_loud(monkeypatch):
             {"model": ["gpt-4o"]},
             metadata={"max_trials": 3, "dataset_size": 4},
         )
+
+
+def test_create_session_offline_mode_runs_local_without_raising(monkeypatch):
+    """The benign offline path MUST still run locally without raising.
+
+    Fail-closed applies ONLY to a managed/cloud intent whose configured key is
+    rejected (or whose backend is unreachable). Explicit local execution
+    (offline mode) is a deliberate configuration, so it returns a local result
+    with degraded=False — it is not a downgrade.
+    """
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "true")
+
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    result = ops.create_session(
+        "demo-function",
+        {"model": ["gpt-4o"]},
+        metadata={"max_trials": 3},
+    )
+
+    assert result.backend_connected is False
+    assert result.degraded is False  # intentional local, NOT a downgrade
+    assert result.backend_fallback is True
+    assert result.execution_path == "local_fallback"
+
+
+def test_create_session_no_api_key_runs_local_without_raising(monkeypatch):
+    """No API key configured → run locally without raising (not a downgrade)."""
+    client = FakeClient()
+    monkeypatch.setattr(client.auth_manager, "has_api_key", lambda: False)
+    ops = SessionOperations(client)
+
+    result = ops.create_session(
+        "demo-function",
+        {"model": ["gpt-4o"]},
+        metadata={"max_trials": 3},
+    )
+
+    assert result.backend_connected is False
+    assert result.failure_reason == SessionCreationFailureReason.NO_API_KEY
+    assert result.degraded is False  # no key = intentional local, not degraded
+
+
+def test_create_session_backend_unreachable_flags_degraded_and_warns(monkeypatch, caplog):
+    """Backend UNREACHABLE with a configured key → degrade to local, but the
+    result MUST be flagged (degraded + local_fallback) and a WARNING emitted so
+    the local run is never mistaken for a managed one.
+    """
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        raise CloudServiceError("503 Service Unavailable: backend down")
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        result = ops.create_session(
+            "demo-function",
+            {"model": ["gpt-4o"]},
+            metadata={"max_trials": 3, "dataset_size": 4},
+        )
+
+    # Degraded local result — explicitly flagged, not silent.
+    assert result.backend_connected is False
+    assert result.failure_reason == SessionCreationFailureReason.SESSION_FAILED
+    assert result.degraded is True
+    assert result.backend_fallback is True
+    assert result.execution_path == "local_fallback"
+
+    degraded_warnings = [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and "degrading to LOCAL" in record.getMessage()
+    ]
+    assert degraded_warnings, (
+        "Expected a WARNING that the managed run degraded to local; got: "
+        f"{[(r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
