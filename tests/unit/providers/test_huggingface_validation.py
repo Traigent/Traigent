@@ -25,7 +25,10 @@ class TestGetProviderForModelHuggingFace:
 
     def test_bare_hf_repo_id_detected(self):
         """Bare org/model format resolves to huggingface."""
-        assert get_provider_for_model("meta-llama/Meta-Llama-3-8B-Instruct") == "huggingface"
+        assert (
+            get_provider_for_model("meta-llama/Meta-Llama-3-8B-Instruct")
+            == "huggingface"
+        )
 
     def test_bare_hf_repo_id_other_orgs(self):
         """Other orgs in org/model format also resolve to huggingface.
@@ -33,14 +36,19 @@ class TestGetProviderForModelHuggingFace:
         Note: orgs whose name matches a known LiteLLM prefix (e.g. 'google')
         are caught by the prefix map first and resolve to that provider instead.
         """
-        assert get_provider_for_model("mistralai/Mistral-7B-Instruct-v0.2") == "huggingface"
+        assert (
+            get_provider_for_model("mistralai/Mistral-7B-Instruct-v0.2")
+            == "huggingface"
+        )
         assert get_provider_for_model("HuggingFaceH4/zephyr-7b-beta") == "huggingface"
         # 'google' is a known LiteLLM prefix, so it routes to Google, not HF
         assert get_provider_for_model("google/flan-t5-base") == "google"
 
     def test_litellm_huggingface_prefix(self):
         """'huggingface/' prefix resolves to huggingface."""
-        assert get_provider_for_model("huggingface/meta-llama/Llama-2-7b") == "huggingface"
+        assert (
+            get_provider_for_model("huggingface/meta-llama/Llama-2-7b") == "huggingface"
+        )
 
     def test_litellm_hf_prefix(self):
         """'hf/' prefix resolves to huggingface."""
@@ -84,9 +92,15 @@ class TestGetProviderForModelHuggingFace:
         assert get_provider_for_model("azure/my-deployment") != "huggingface"
         assert get_provider_for_model("groq/llama-3.1-8b-instant") != "huggingface"
         assert get_provider_for_model("bedrock/anthropic.claude-3") != "huggingface"
-        assert get_provider_for_model("together_ai/togethercomputer/llama-2-70b") != "huggingface"
+        assert (
+            get_provider_for_model("together_ai/togethercomputer/llama-2-70b")
+            != "huggingface"
+        )
         assert get_provider_for_model("ollama/llama3") != "huggingface"
-        assert get_provider_for_model("openrouter/meta-llama/llama-3.1-8b") != "huggingface"
+        assert (
+            get_provider_for_model("openrouter/meta-llama/llama-3.1-8b")
+            != "huggingface"
+        )
 
 
 @pytest.mark.unit
@@ -95,7 +109,10 @@ class TestValidateModelNamesHuggingFace:
 
     def test_hf_models_all_valid_open_namespace(self):
         """HuggingFace skips model-name check; all models returned as valid."""
-        models = ["meta-llama/Meta-Llama-3-8B-Instruct", "mistralai/Mistral-7B-Instruct-v0.2"]
+        models = [
+            "meta-llama/Meta-Llama-3-8B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.2",
+        ]
         valid, unknown = validate_model_names(models, "huggingface")
         assert valid == models
         assert unknown == []
