@@ -62,12 +62,21 @@ class APIKeyManager:
             "openai": "OPENAI_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
             "cohere": "COHERE_API_KEY",
-            "huggingface": "HF_API_KEY",
+            # HuggingFace: native HF_TOKEN first; HF_API_KEY kept for back-compat
+            "huggingface": "HF_TOKEN",
         }
 
         # Check environment first (most secure)
         if provider in env_names:
-            env_key = os.getenv(env_names[provider])
+            if provider == "huggingface":
+                # Native-first alias chain: HF_TOKEN -> HUGGING_FACE_HUB_TOKEN -> HF_API_KEY
+                env_key = (
+                    os.getenv("HF_TOKEN")
+                    or os.getenv("HUGGING_FACE_HUB_TOKEN")
+                    or os.getenv("HF_API_KEY")
+                )
+            else:
+                env_key = os.getenv(env_names[provider])
             if env_key:
                 return env_key
 
