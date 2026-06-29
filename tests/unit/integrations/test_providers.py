@@ -137,8 +137,8 @@ class TestGetModelsForTier:
 
         assert any("mistral" in m for m in models)
 
-    def test_unknown_provider_uses_default_fallback(self) -> None:
-        """Unknown provider should use default fallback models."""
+    def test_unknown_provider_returns_empty_not_openai_models(self) -> None:
+        """Unknown non-OpenAI provider must not silently return OpenAI models."""
         with (
             patch.dict(os.environ, {}, clear=True),
             patch(
@@ -148,8 +148,9 @@ class TestGetModelsForTier:
             mock_discovery.return_value = None
             models = get_models_for_tier(provider="unknown_provider", tier="balanced")
 
-        # Should return something, likely default OpenAI models
-        assert len(models) >= 1
+        # Provider-aware fallback: return [] rather than silently yielding gpt-4o-mini
+        assert isinstance(models, list)
+        assert "gpt-4o-mini" not in models
 
     def test_all_tiers_return_models(self) -> None:
         """All tier values should return models."""

@@ -59,6 +59,19 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     ("mistral", "fast"): ["mistral-small-latest"],
     ("mistral", "balanced"): ["mistral-medium-latest"],
     ("mistral", "quality"): ["mistral-large-latest"],
+    # HuggingFace tiers — sourced from config/models.yaml known_models
+    ("huggingface", "fast"): [
+        "meta-llama/Meta-Llama-3-8B-Instruct",
+        "mistralai/Mistral-7B-Instruct-v0.2",
+    ],
+    ("huggingface", "balanced"): [
+        "meta-llama/Meta-Llama-3-8B-Instruct",
+        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    ],
+    ("huggingface", "quality"): [
+        "meta-llama/Meta-Llama-3-70B-Instruct",
+        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    ],
     # Default (unknown provider)
     (None, "fast"): ["gpt-4o-mini"],
     (None, "balanced"): ["gpt-4o-mini", "gpt-4o"],
@@ -86,6 +99,22 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
         "fast": ["mistral-small-latest", "open-mistral-7b"],
         "balanced": ["mistral-medium-latest", "mistral-small-latest"],
         "quality": ["mistral-large-latest"],
+    },
+    # HuggingFace — sourced from config/models.yaml known_models; tiered by parameter count
+    "huggingface": {
+        "fast": [
+            "meta-llama/Meta-Llama-3-8B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.2",
+            "HuggingFaceH4/zephyr-7b-beta",
+        ],
+        "balanced": [
+            "meta-llama/Meta-Llama-3-8B-Instruct",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        ],
+        "quality": [
+            "meta-llama/Meta-Llama-3-70B-Instruct",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        ],
     },
 }
 
@@ -147,9 +176,16 @@ def get_models_for_tier(
         )
         return list(fallback)
 
-    # Ultimate fallback
-    logger.warning(f"No models found for {provider}/{tier}, using default")
-    return _FALLBACK_MODELS.get((None, tier), ["gpt-4o-mini"])
+    # Provider-aware ultimate fallback: never return an OpenAI model for a non-OpenAI provider
+    if provider is None or provider_key == "openai":
+        logger.warning(f"No models found for {provider}/{tier}, using default")
+        return _FALLBACK_MODELS.get((None, tier), ["gpt-4o-mini"])
+
+    logger.warning(
+        f"No models found for {provider}/{tier}. "
+        f"Set {env_key} to specify models for this provider."
+    )
+    return []
 
 
 def _discover_and_filter_by_tier(provider: str, tier: Tier) -> list[str]:
