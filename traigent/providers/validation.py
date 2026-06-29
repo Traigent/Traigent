@@ -60,6 +60,8 @@ _PROVIDER_PATTERNS: dict[str, re.Pattern[str]] = {
     "google": re.compile(r"^(gemini-|models/gemini-)"),
     "mistral": re.compile(r"^(mistral-|codestral-|pixtral-|open-mistral-)"),
     "cohere": re.compile(r"^command-"),
+    # HuggingFace: open namespace with org/model format (millions of public models)
+    "huggingface": re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$"),
 }
 
 # Also accept provider/model and provider:model formats (LiteLLM compatibility)
@@ -263,6 +265,11 @@ def validate_model_names(
         Unknown models are not necessarily invalid - just not in our known list.
     """
     known = _KNOWN_MODELS.get(provider, frozenset())
+    if provider == "huggingface":
+        logger.debug(
+            "HuggingFace is an open model namespace - skipping model-name sanity check"
+        )
+        return models, []
     if not known:
         # No known models list for this provider - assume all valid
         return models, []
@@ -805,6 +812,80 @@ class ProviderValidator:
                 error_type=error_type,
             )
 
+    def _validate_huggingface(self) -> ProviderStatus:
+        """Validate HuggingFace API token."""
+        key = (
+            os.getenv("HF_TOKEN")
+            or os.getenv("HUGGING_FACE_HUB_TOKEN")
+            or os.getenv("HF_API_KEY")
+        )
+        if not key:
+            return ProviderStatus(
+                provider="huggingface",
+                valid=False,
+                message="Set HF_TOKEN",
+                error_type="MissingKey",
+            )
+
+        if self._is_cached("huggingface", key):
+            return ProviderStatus(
+                provider="huggingface",
+                valid=True,
+                message=_MSG_AVAILABLE_CACHED,
+            )
+
+        try:
+            from huggingface_hub import HfApi
+
+            HfApi().whoami(token=key)
+            self._cache_success("huggingface", key)
+            return ProviderStatus(
+                provider="huggingface",
+                valid=True,
+                message="Available",
+            )
+        except ImportError:
+            return ProviderStatus(
+                provider="huggingface",
+                valid=False,
+                message="SDK not installed (pip install huggingface_hub)",
+                error_type="ModuleNotFoundError",
+            )
+        except Exception as exc:
+            error_type = type(exc).__name__
+            if _is_auth_error(exc):
+                return ProviderStatus(
+                    provider="huggingface",
+                    valid=False,
+                    message=_MSG_INVALID_KEY.format(error_type=error_type),
+                    error_type=error_type,
+                )
+            if _is_insufficient_funds_error(exc):
+                return ProviderStatus(
+                    provider="huggingface",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="HuggingFace"),
+                    error_type="InsufficientFunds",
+                )
+            if _is_transient_error(exc):
+                logger.warning(
+                    _MSG_TRANSIENT_WARNING,
+                    "HuggingFace",
+                    error_type,
+                )
+                return ProviderStatus(
+                    provider="huggingface",
+                    valid=True,
+                    message=_MSG_AVAILABLE_UNVERIFIED.format(error_type=error_type),
+                    error_type=error_type,
+                )
+            return ProviderStatus(
+                provider="huggingface",
+                valid=False,
+                message=_MSG_VALIDATION_FAILED.format(error_type=error_type),
+                error_type=error_type,
+            )
+
 
 def get_provider_for_model(model_name: str) -> str | None:
     """Detect provider from model name.
@@ -840,6 +921,9 @@ def get_provider_for_model(model_name: str) -> str | None:
             "vertex_ai": "google",
             "mistral": "mistral",
             "cohere": "cohere",
+            "huggingface": "huggingface",
+            "hf": "huggingface",
+            "huggingface_hub": "huggingface",
         }
         if prefix in prefix_map:
             return prefix_map[prefix]

@@ -103,21 +103,23 @@ class TestGetProviderForModel:
         assert get_provider_for_model("gemini/gemini-pro") == "google"
 
     def test_litellm_vertex_ai_prefix_not_matched(self):
-        """Test vertex_ai prefix with underscore is not matched.
+        """Test vertex_ai prefix with underscore is not caught by the LiteLLM prefix check.
 
         The LiteLLM prefix pattern only matches [a-z]+ (lowercase letters),
-        so vertex_ai with underscore doesn't match. The full string
-        "vertex_ai/gemini-pro" also doesn't match any provider patterns.
+        so vertex_ai with underscore doesn't match the prefix map. The full
+        string "vertex_ai/gemini-pro" DOES match the HuggingFace org/model
+        pattern, so it resolves to huggingface as the closest fallback.
         """
         result = get_provider_for_model("vertex_ai/gemini-pro")
-        # vertex_ai prefix has underscore, doesn't match [a-z]+ pattern
-        # and full string doesn't match any provider pattern
-        assert result is None
+        # vertex_ai prefix has underscore, doesn't match [a-z]+ pattern;
+        # falls through to HF pattern which matches any org/model format
+        assert result == "huggingface"
 
     def test_unknown_model(self):
         """Test unknown model returns None."""
         assert get_provider_for_model("my-custom-model") is None
-        assert get_provider_for_model("unknown-provider/model") is None
+        # org/model format now resolves to huggingface (open namespace)
+        assert get_provider_for_model("unknown-provider/model") == "huggingface"
         assert get_provider_for_model("") is None
 
     def test_case_insensitive(self):
