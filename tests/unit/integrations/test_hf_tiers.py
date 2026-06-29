@@ -24,15 +24,21 @@ class TestHuggingFaceTiers:
 
     def _no_discovery(self):
         """Context manager: disable model discovery so fallback/tier data is exercised."""
-        return patch("traigent.integrations.providers.get_model_discovery", return_value=None)
+        return patch(
+            "traigent.integrations.providers.get_model_discovery", return_value=None
+        )
 
     def test_balanced_returns_hf_models_not_openai(self) -> None:
         """get_models_for_tier(huggingface, balanced) must NOT return gpt-4o-mini."""
         with patch.dict(os.environ, {}, clear=True), self._no_discovery():
             models = get_models_for_tier(provider="huggingface", tier="balanced")
 
-        assert len(models) >= 1, "HuggingFace balanced tier must return at least one model"
-        assert "gpt-4o-mini" not in models, "HF balanced must not fall back to gpt-4o-mini"
+        assert len(models) >= 1, (
+            "HuggingFace balanced tier must return at least one model"
+        )
+        assert "gpt-4o-mini" not in models, (
+            "HF balanced must not fall back to gpt-4o-mini"
+        )
         assert "gpt-4o" not in models, "HF balanced must not return any OpenAI model"
         assert all("/" in m for m in models), (
             "HF model IDs should be in 'org/model' format"
@@ -88,12 +94,16 @@ class TestProviderAwareFallback:
     """The ultimate fallback must NOT return an OpenAI model for non-OpenAI providers."""
 
     def _no_discovery(self):
-        return patch("traigent.integrations.providers.get_model_discovery", return_value=None)
+        return patch(
+            "traigent.integrations.providers.get_model_discovery", return_value=None
+        )
 
     def test_truly_unknown_provider_does_not_return_openai_model(self) -> None:
         """An unknown provider should get [] rather than gpt-4o-mini."""
         with patch.dict(os.environ, {}, clear=True), self._no_discovery():
-            models = get_models_for_tier(provider="unknown_xyz_provider", tier="balanced")
+            models = get_models_for_tier(
+                provider="unknown_xyz_provider", tier="balanced"
+            )
 
         assert "gpt-4o-mini" not in models, (
             "ultimate fallback returned gpt-4o-mini for an unrelated provider"
