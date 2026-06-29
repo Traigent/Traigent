@@ -232,12 +232,7 @@ def _add_measures_to_metadata(
         trial_metadata.pop("measures", None)
         return
 
-    include_full_measures = not privacy_on and mode_enum in {
-        ExecutionMode.EDGE_ANALYTICS,
-        ExecutionMode.HYBRID,
-    }
-
-    if include_full_measures:
+    if not privacy_on:
         measures = _cap_measures(
             _build_measures_full(example_results, primary_objective, dataset_name),
             execution_mode,
@@ -505,6 +500,56 @@ def _is_measure_metric_value(value: Any) -> bool:
     )
 
 
+def _coerce_non_empty_example_id(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    if isinstance(value, (int, float)):
+        return str(value)
+    return None
+
+
+def _metadata_example_id(metadata: Any) -> str | None:
+    if not isinstance(metadata, Mapping):
+        return None
+
+    id_keys = ("example_id", "dataset_example_id", "input_id", "row_id", "id")
+    for key in id_keys:
+        example_id = _coerce_non_empty_example_id(metadata.get(key))
+        if example_id is not None:
+            return example_id
+
+    for container_key in ("dataset", "source", "provenance"):
+        nested = metadata.get(container_key)
+        if isinstance(nested, Mapping):
+            for key in id_keys:
+                nested_example_id = _coerce_non_empty_example_id(nested.get(key))
+                if nested_example_id is not None:
+                    return nested_example_id
+
+    return None
+
+
+def _resolve_measure_example_id(
+    example_result: Any, idx: int, dataset_hash: str
+) -> str:
+    """Prefer the evaluator/dataset example_id, falling back to synthetic IDs."""
+    for key in ("example_id", "dataset_example_id", "input_id"):
+        example_id = _coerce_non_empty_example_id(_example_field(example_result, key))
+        if example_id is not None:
+            return example_id
+
+    metadata_example_id = _metadata_example_id(
+        _example_field(example_result, "metadata")
+    )
+    if metadata_example_id is not None:
+        return metadata_example_id
+
+    return generate_stable_example_id(dataset_hash, idx)
+
+
 def _build_single_measure_full(
     example_result: Any,
     idx: int,
@@ -512,7 +557,7 @@ def _build_single_measure_full(
     primary_objective: str,
 ) -> dict[str, Any] | None:
     """Build a single full measure for non-privacy mode."""
-    example_id = generate_stable_example_id(dataset_hash, idx)
+    example_id = _resolve_measure_example_id(example_result, idx, dataset_hash)
     metrics_dict: dict[str, Any] = {}
     eval_metrics = _example_field(example_result, "metrics") or {}
 
@@ -604,7 +649,7 @@ def _build_single_measure_privacy(
     primary_objective: str,
 ) -> dict[str, Any] | None:
     """Build a single sanitized measure for privacy mode."""
-    example_id = generate_stable_example_id(dataset_hash, idx)
+    example_id = _resolve_measure_example_id(example_result, idx, dataset_hash)
     metrics_dict: dict[str, Any] = {}
     eval_metrics = _example_field(example_result, "metrics") or {}
 
