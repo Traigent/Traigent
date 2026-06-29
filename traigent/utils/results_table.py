@@ -111,12 +111,28 @@ def _format_config_value(val: Any) -> str:
     return str(val)
 
 
+def _format_percent_metric(val: float) -> str:
+    """Format a quality metric (accuracy / score / ...) as a percent string.
+
+    Metrics reach the table on either a 0-1 fraction scale or an already-percent
+    0-100 scale (e.g. a 0-100 ``accuracy`` of 79.16). Mirror the frontend rule
+    (``percentFormatting``): a value ``> 1`` is already a percent and is rendered
+    as-is (79.16 -> ``"79.2%"``); a value ``<= 1`` is a fraction and scaled
+    (0.79 -> ``"79.0%"``). This never double-scales, so a 0-100 metric can no
+    longer render as ">100%" (the prior ``f"{val:.1%}"`` turned 79.16 into
+    "7916.2%").
+    """
+    if val > 1.0:
+        return f"{val:.1f}%"
+    return f"{val:.1%}"
+
+
 def _format_metric_value(metric: str, val: float) -> str:
     if metric == "cost":
         return f"${val:.5f}"
     if metric == "latency":
         return f"{val:.3f}s"
-    return f"{val:.1%}"
+    return _format_percent_metric(val)
 
 
 def _coerce_float(value: Any) -> float | None:

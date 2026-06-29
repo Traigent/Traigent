@@ -23,6 +23,7 @@ from traigent.api.types import (
 )
 from traigent.utils.results_table import (
     _find_best_per_objective,
+    _format_metric_value,
     _trials_all_failed,
     print_results_table,
 )
@@ -517,3 +518,36 @@ class TestPrintResultsTableFailLoud:
                 config_space={"model": ["m1"]},
                 objectives=["accuracy"],
             )
+
+
+class TestMetricPercentFormatting:
+    """The trial-results table must not double-scale a 0-100 metric.
+
+    Regression: ``_format_metric_value`` used ``f"{val:.1%}"`` for every quality
+    metric, so a 0-100 accuracy of 79.16 rendered as "7916.2%". Mirror the FE
+    rule: value > 1 is already a percent (render as-is); value <= 1 is a fraction
+    (scale by 100). Never produce ">100%" for a real 0-100 accuracy.
+    """
+
+    def test_zero_to_hundred_scale_accuracy_not_double_scaled(self) -> None:
+        rendered = _format_metric_value("accuracy", 79.162)
+        assert rendered == "79.2%"
+        assert "7916" not in rendered
+        numeric = float(rendered.rstrip("%"))
+        assert numeric <= 100.0  # a real accuracy can never exceed 100%
+
+    def test_fraction_scale_value_still_renders_correctly(self) -> None:
+        # 0-1 fraction inputs keep the prior behaviour (scaled to a percent).
+        assert _format_metric_value("accuracy", 0.79) == "79.0%"
+        assert _format_metric_value("accuracy", 0.0) == "0.0%"
+
+    def test_boundaries_and_other_quality_metric(self) -> None:
+        # 1.0 is treated as a fraction (100%); 100.0 as an already-percent value.
+        assert _format_metric_value("accuracy", 1.0) == "100.0%"
+        assert _format_metric_value("accuracy", 100.0) == "100.0%"
+        # The scale rule applies to any non cost/latency metric name.
+        assert _format_metric_value("score", 87.4) == "87.4%"
+
+    def test_cost_and_latency_formatting_unchanged(self) -> None:
+        assert _format_metric_value("cost", 0.00123).startswith("$")
+        assert _format_metric_value("latency", 1.234) == "1.234s"
