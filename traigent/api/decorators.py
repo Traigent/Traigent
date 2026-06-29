@@ -43,6 +43,7 @@ Examples:
 from __future__ import annotations
 
 import inspect
+import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2011,6 +2012,79 @@ def _suggest_detected_tvars(
         return None
 
 
+def _build_default_experiment_name(
+    func_name: str,
+    resolved_schema: ObjectiveSchema | None,
+    resolved_configuration_space: dict[str, Any] | None,
+    *,
+    max_knobs: int = 4,
+    max_total_length: int = 120,
+) -> str:
+    """Build a self-describing default experiment name when none is provided.
+
+    Combines the function name, objective names, and tuned-variable (knob) names
+    into a concise, deterministic, human-meaningful string.  Format::
+
+        <func_name>[<obj1>,<obj2>,...][<knob1>,<knob2>,...]
+
+    Args:
+        func_name: The decorated function's ``__name__``.
+        resolved_schema: Resolved objective schema (from ``_resolve_objective_schema``).
+        resolved_configuration_space: Normalized configuration-space dict whose keys
+            are the tuned-variable names.
+        max_knobs: Maximum number of knob names to display before appending ``,...``.
+        max_total_length: Hard cap on the final string length (excess is truncated).
+
+    Returns:
+        A deterministic, human-readable default experiment name.
+    """
+    # Build the objective suffix — always preserved in the output.
+    obj_suffix = ""
+    if resolved_schema is not None:
+        obj_names = [obj.name for obj in resolved_schema.objectives]
+        obj_suffix = f"[{','.join(obj_names)}]"
+
+    # Build the knob suffix; cap list length to avoid excessively long names.
+    knob_suffix = ""
+    if resolved_configuration_space:
+        knob_names = list(resolved_configuration_space.keys())
+        if len(knob_names) > max_knobs:
+            displayed = knob_names[:max_knobs]
+            knob_suffix = f"[{','.join(displayed)},...]"
+        else:
+            knob_suffix = f"[{','.join(knob_names)}]"
+
+    # Invariant: the objectives + knob sections are the self-describing payload
+    # and must never be sacrificed to the length cap.  Truncate only the
+    # function-name prefix (appending "~" to signal the cut), never the suffix.
+    suffix = obj_suffix + knob_suffix
+    func_budget = max_total_length - len(suffix)
+
+    if func_budget <= 0:
+        # Suffix alone meets or exceeds the cap — omit the function-name prefix.
+        if len(suffix) <= max_total_length:
+            return suffix
+        # Extreme edge case: even the suffix is over budget.  Preserve at least
+        # the objectives and one knob name by trimming the knob list.
+        if resolved_configuration_space:
+            knob_names_list = list(resolved_configuration_space.keys())
+            min_knob_suffix = f"[{knob_names_list[0]}]"
+            combined = obj_suffix + min_knob_suffix
+            if len(combined) <= max_total_length:
+                return combined
+        return obj_suffix[:max_total_length]
+
+    # Fit the function name into the remaining budget, marking any cut with "~".
+    if len(func_name) <= func_budget:
+        func_part = func_name
+    elif func_budget >= 2:
+        func_part = func_name[: func_budget - 1] + "~"
+    else:
+        func_part = func_name[:func_budget]
+
+    return func_part + suffix
+
+
 def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
@@ -2760,6 +2834,36 @@ def optimize(  # NOSONAR(S107)
             config_param,
         )
 
+        # Experiment name resolution (#1422).
+        #
+        # _experiment_name on OptimizedFunction stores ONLY the explicit decorator value
+        # so the getter can lazily check TRAIGENT_EXPERIMENT_NAME at each access —
+        # callers that set the env var AFTER decoration must see it take effect.
+        #
+        # The self-describing default (func name + objectives + knobs) is precomputed
+        # here because the inputs are fully resolved at decoration time; it is stored
+        # in _default_experiment_name and used by the getter as the last resort, after
+        # the explicit value and the env var are both absent.
+        #
+        # Priority resolved in OptimizedFunction.experiment_name getter (highest → lowest):
+        #   1. Explicit experiment_name decorator argument → _experiment_name (not None).
+        #   2. TRAIGENT_EXPERIMENT_NAME env var — checked at ACCESS time (not decoration time).
+        #   3. Self-describing default → _default_experiment_name.
+        #   4. Bare func.__name__ (if no objectives/knobs were registered).
+        default_experiment_name: str | None = None
+        if experiment_name_value is None:
+            default_experiment_name = _build_default_experiment_name(
+                func.__name__, resolved_schema, resolved_configuration_space
+            )
+
+        # Approximate resolved name for the creation log (decoration-time snapshot only).
+        effective_experiment_name = (
+            experiment_name_value
+            or os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+            or default_experiment_name
+            or func.__name__
+        )
+
         optimized_func: OptimizedFunction[_P, _R] = OptimizedFunction(  # type: ignore[assignment]
             func=func,
             eval_dataset=eval_dataset,
@@ -2819,8 +2923,11 @@ def optimize(  # NOSONAR(S107)
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
             _max_trials_explicit=max_trials_explicit,
-            # Experiment display name (overrides func.__name__ in portal/storage)
+            # Experiment display name: only the explicit value goes into _experiment_name
+            # so that TRAIGENT_EXPERIMENT_NAME is checked lazily at access time.
+            # The precomputed self-describing default is stored separately.
             experiment_name=experiment_name_value,
+            _default_experiment_name=default_experiment_name,
             # Warm-start: seed this run from a prior experiment's learned configs.
             warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
@@ -2834,9 +2941,8 @@ def optimize(  # NOSONAR(S107)
         optimized_func.hybrid_api_options = hybrid_api_options
         optimized_func.offline = execution_policy.offline
 
-        effective_name = experiment_name_value or func.__name__
         logger.info(
-            f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})"
+            f"Created optimizable function: {func.__name__} (experiment_name={effective_experiment_name!r})"
         )
 
         # cast so mypy sees OptimizedFunction[_P, _R] rather than
