@@ -369,7 +369,9 @@ def test_create_session_no_api_key_runs_local_without_raising(monkeypatch):
     assert result.degraded is False  # no key = intentional local, not degraded
 
 
-def test_create_session_backend_unreachable_flags_degraded_and_warns(monkeypatch, caplog):
+def test_create_session_backend_unreachable_flags_degraded_and_warns(
+    monkeypatch, caplog
+):
     """Backend UNREACHABLE with a configured key → degrade to local, but the
     result MUST be flagged (degraded + local_fallback) and a WARNING emitted so
     the local run is never mistaken for a managed one.
@@ -434,7 +436,9 @@ def test_create_session_structured_401_fails_loud(monkeypatch):
         )
 
 
-def test_create_session_auth_validation_timeout_degrades_not_silent(monkeypatch, caplog):
+def test_create_session_auth_validation_timeout_degrades_not_silent(
+    monkeypatch, caplog
+):
     """A NON-definitive AuthenticationError — the auth layer maps a key-validation
     TIMEOUT/transport failure to AuthenticationError — must take the UNREACHABLE
     contract: degrade to LOCAL but FLAGGED (degraded=True, SESSION_FAILED,
@@ -445,7 +449,9 @@ def test_create_session_auth_validation_timeout_degrades_not_silent(monkeypatch,
     ops = SessionOperations(client)
 
     async def create_via_api(_request):
-        raise AuthenticationError("API key validation failed: backend validation timed out")
+        raise AuthenticationError(
+            "API key validation failed: backend validation timed out"
+        )
 
     monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
 
