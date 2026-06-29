@@ -105,16 +105,30 @@ def test_hf_parameter_mappings_have_core_params():
 @pytest.mark.unit
 def test_hf_method_mappings_text_generation_includes_max_tokens():
     """text_generation METHOD_MAPPINGS must include max_tokens so max_new_tokens is injected."""
-    assert "max_tokens" in METHOD_MAPPINGS["huggingface_hub.InferenceClient"]["text_generation"]
-    assert "max_tokens" in METHOD_MAPPINGS["huggingface_hub.AsyncInferenceClient"]["text_generation"]
+    assert (
+        "max_tokens"
+        in METHOD_MAPPINGS["huggingface_hub.InferenceClient"]["text_generation"]
+    )
+    assert (
+        "max_tokens"
+        in METHOD_MAPPINGS["huggingface_hub.AsyncInferenceClient"]["text_generation"]
+    )
 
 
 @pytest.mark.unit
 def test_hf_method_mappings_chat_completion_excludes_max_tokens():
     """chat_completion must NOT list max_tokens: PARAMETER_MAPPINGS maps it to max_new_tokens
     which is not a valid chat_completion kwarg."""
-    assert "max_tokens" not in METHOD_MAPPINGS["huggingface_hub.InferenceClient"]["chat_completion"]
-    assert "max_tokens" not in METHOD_MAPPINGS["huggingface_hub.AsyncInferenceClient"]["chat_completion"]
+    assert (
+        "max_tokens"
+        not in METHOD_MAPPINGS["huggingface_hub.InferenceClient"]["chat_completion"]
+    )
+    assert (
+        "max_tokens"
+        not in METHOD_MAPPINGS["huggingface_hub.AsyncInferenceClient"][
+            "chat_completion"
+        ]
+    )
 
 
 @pytest.mark.unit
@@ -160,7 +174,9 @@ def test_override_all_platforms_includes_huggingface_hub_classes(monkeypatch):
     monkeypatch.setattr(fo, "enable_framework_overrides", fake_enable)
     fo.override_all_platforms()
 
-    assert captured, "override_all_platforms() did not call enable_framework_overrides()"
+    assert captured, (
+        "override_all_platforms() did not call enable_framework_overrides()"
+    )
     enabled = captured[0]
 
     assert "huggingface_hub.InferenceClient" in enabled
@@ -198,7 +214,9 @@ def test_hf_constructor_no_generation_param_injection():
     try:
         # This must not raise TypeError.
         client = huggingface_hub.InferenceClient(model="gpt2")
-        assert client is not None, "InferenceClient instance must be created without error"
+        assert client is not None, (
+            "InferenceClient instance must be created without error"
+        )
     finally:
         config_context.reset(token)
         manager.deactivate_overrides()
