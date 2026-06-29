@@ -950,10 +950,12 @@ class TestOptimizedFunctionIntegration:
             "Decorating function test_func with @traigent.optimize"
         )
 
-        # Check info log for creation (message includes experiment_name)
-        mock_logger.info.assert_called_with(
-            "Created optimizable function: test_func (experiment_name='test_func')"
-        )
+        # Check info log for creation (message includes self-describing experiment_name)
+        info_calls = [str(call) for call in mock_logger.info.call_args_list]
+        assert any(
+            "Created optimizable function: test_func" in c and "experiment_name=" in c
+            for c in info_calls
+        ), f"Expected creation log with experiment_name, got calls: {info_calls}"
 
     def test_decorator_factory_pattern(self):
         """Test that optimize returns a decorator function."""
@@ -1217,14 +1219,21 @@ class TestRemovedDecoratorCompatibilityOptions:
 class TestExperimentName:
     """Tests for experiment_name parameter and TRAIGENT_EXPERIMENT_NAME env var."""
 
-    def test_experiment_name_default_is_func_name(self):
-        """When no experiment_name is passed, experiment_name == func.__name__."""
+    def test_experiment_name_default_is_self_describing(self):
+        """When no experiment_name is passed, the default is self-describing.
+
+        The name must start with the function name and include the objective name
+        and the tuned-variable (knob) name, not just the bare function name.
+        """
 
         @optimize(configuration_space={"x": [1, 2]})
         def my_pipeline(x: int) -> int:
             return x
 
-        assert my_pipeline.experiment_name == "my_pipeline"
+        name = my_pipeline.experiment_name
+        assert name.startswith("my_pipeline["), f"Expected name to start with 'my_pipeline[', got {name!r}"
+        assert "accuracy" in name, f"Expected 'accuracy' in name, got {name!r}"
+        assert "x" in name, f"Expected knob 'x' in name, got {name!r}"
 
     def test_experiment_name_override(self):
         """Explicit experiment_name is used instead of func.__name__."""
@@ -1264,14 +1273,15 @@ class TestExperimentName:
         assert my_pipeline.experiment_name == "explicit name"
 
     def test_experiment_name_env_var_cleared(self, monkeypatch):
-        """After env var is removed, falls back to func.__name__."""
+        """After env var is removed, falls back to a self-describing default."""
         monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME", raising=False)
 
         @optimize(configuration_space={"x": [1, 2]})
         def my_pipeline(x: int) -> int:
             return x
 
-        assert my_pipeline.experiment_name == "my_pipeline"
+        name = my_pipeline.experiment_name
+        assert name.startswith("my_pipeline["), f"Expected self-describing default, got {name!r}"
 
     def test_experiment_name_stored_on_optimized_function(self):
         """_experiment_name is stored on the OptimizedFunction instance."""
@@ -1285,11 +1295,80 @@ class TestExperimentName:
 
         assert my_func._experiment_name == "stored name"
 
-    def test_experiment_name_none_stores_none(self):
-        """When experiment_name=None (default), _experiment_name is None."""
+    def test_experiment_name_none_stores_self_describing(self):
+        """When experiment_name=None (default), _experiment_name holds the auto-generated name.
+
+        The auto-generated name is self-describing (includes objectives and knobs),
+        not just the bare function name.
+        """
 
         @optimize(configuration_space={"x": [1, 2]})
         def my_func(x: int) -> int:
             return x
 
-        assert my_func._experiment_name is None
+        assert my_func._experiment_name is not None
+        assert my_func._experiment_name.startswith("my_func[")
+
+    # ------------------------------------------------------------------ #
+    # New tests for self-describing default experiment name (#1422).      #
+    # ------------------------------------------------------------------ #
+
+    def test_default_name_includes_objectives_and_knobs(self):
+        """Default name with objectives + configuration_space includes both in the name.
+
+        This is the core requirement of #1422: the name must not be just the bare
+        function name when objectives and knob names are available.
+        """
+
+        @optimize(
+            objectives=["accuracy", "latency"],
+            configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.9]},
+        )
+        def my_agent(config=None) -> str:
+            return ""
+
+        name = my_agent.experiment_name
+        # Must include both objective names
+        assert "accuracy" in name, f"'accuracy' missing from {name!r}"
+        assert "latency" in name, f"'latency' missing from {name!r}"
+        # Must include at least one tuned-variable name
+        assert "model" in name or "temperature" in name, (
+            f"Expected at least one knob name in {name!r}"
+        )
+        # Must not be just the bare function name
+        assert name != "my_agent", "Default name must not be just the function name"
+
+    def test_explicit_experiment_name_passed_through_unchanged(self):
+        """An explicitly supplied experiment_name is stored verbatim, untouched."""
+
+        explicit = "Amir SQL v2 (F1=0.91, cost=0.003)"
+
+        @optimize(
+            objectives=["accuracy"],
+            configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+            experiment_name=explicit,
+        )
+        def my_pipeline(config=None) -> str:
+            return ""
+
+        assert my_pipeline.experiment_name == explicit
+        assert my_pipeline._experiment_name == explicit
+
+    def test_default_name_is_deterministic(self):
+        """Same decorator arguments always produce the same default experiment name."""
+
+        def make_func():
+            @optimize(
+                objectives=["accuracy"],
+                configuration_space={"temperature": [0.1, 0.5, 0.9], "model": ["gpt-4"]},
+            )
+            def deterministic_fn(config=None) -> str:
+                return ""
+
+            return deterministic_fn
+
+        fn1 = make_func()
+        fn2 = make_func()
+        assert fn1.experiment_name == fn2.experiment_name, (
+            f"Default name is non-deterministic: {fn1.experiment_name!r} != {fn2.experiment_name!r}"
+        )

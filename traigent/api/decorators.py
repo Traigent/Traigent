@@ -43,6 +43,7 @@ Examples:
 from __future__ import annotations
 
 import inspect
+import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2011,6 +2012,53 @@ def _suggest_detected_tvars(
         return None
 
 
+def _build_default_experiment_name(
+    func_name: str,
+    resolved_schema: ObjectiveSchema | None,
+    resolved_configuration_space: dict[str, Any] | None,
+    *,
+    max_knobs: int = 4,
+    max_total_length: int = 120,
+) -> str:
+    """Build a self-describing default experiment name when none is provided.
+
+    Combines the function name, objective names, and tuned-variable (knob) names
+    into a concise, deterministic, human-meaningful string.  Format::
+
+        <func_name>[<obj1>,<obj2>,...][<knob1>,<knob2>,...]
+
+    Args:
+        func_name: The decorated function's ``__name__``.
+        resolved_schema: Resolved objective schema (from ``_resolve_objective_schema``).
+        resolved_configuration_space: Normalized configuration-space dict whose keys
+            are the tuned-variable names.
+        max_knobs: Maximum number of knob names to display before appending ``,...``.
+        max_total_length: Hard cap on the final string length (excess is truncated).
+
+    Returns:
+        A deterministic, human-readable default experiment name.
+    """
+    parts: list[str] = [func_name]
+
+    # Append objective names in stable order (schema preserves insertion order).
+    if resolved_schema is not None:
+        obj_names = [obj.name for obj in resolved_schema.objectives]
+        parts.append(f"[{','.join(obj_names)}]")
+
+    # Append knob names; cap to avoid excessively long names.
+    if resolved_configuration_space:
+        knob_names = list(resolved_configuration_space.keys())
+        if len(knob_names) > max_knobs:
+            displayed = knob_names[:max_knobs]
+            knob_part = f"[{','.join(displayed)},...]"
+        else:
+            knob_part = f"[{','.join(knob_names)}]"
+        parts.append(knob_part)
+
+    name = "".join(parts)
+    return name[:max_total_length]
+
+
 def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
@@ -2760,6 +2808,22 @@ def optimize(  # NOSONAR(S107)
             config_param,
         )
 
+        # Resolve the effective experiment name (#1422).
+        # Priority (highest → lowest):
+        #   1. Explicit experiment_name decorator argument (pass through verbatim).
+        #   2. TRAIGENT_EXPERIMENT_NAME environment variable captured at decoration time.
+        #   3. Self-describing default: func name + objective names + knob names.
+        if experiment_name_value is not None:
+            effective_experiment_name = experiment_name_value
+        else:
+            env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+            if env_name:
+                effective_experiment_name = env_name
+            else:
+                effective_experiment_name = _build_default_experiment_name(
+                    func.__name__, resolved_schema, resolved_configuration_space
+                )
+
         optimized_func: OptimizedFunction[_P, _R] = OptimizedFunction(  # type: ignore[assignment]
             func=func,
             eval_dataset=eval_dataset,
@@ -2819,8 +2883,8 @@ def optimize(  # NOSONAR(S107)
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
             _max_trials_explicit=max_trials_explicit,
-            # Experiment display name (overrides func.__name__ in portal/storage)
-            experiment_name=experiment_name_value,
+            # Experiment display name: self-describing default when not supplied explicitly.
+            experiment_name=effective_experiment_name,
             # Warm-start: seed this run from a prior experiment's learned configs.
             warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
@@ -2834,9 +2898,8 @@ def optimize(  # NOSONAR(S107)
         optimized_func.hybrid_api_options = hybrid_api_options
         optimized_func.offline = execution_policy.offline
 
-        effective_name = experiment_name_value or func.__name__
         logger.info(
-            f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})"
+            f"Created optimizable function: {func.__name__} (experiment_name={effective_experiment_name!r})"
         )
 
         # cast so mypy sees OptimizedFunction[_P, _R] rather than
