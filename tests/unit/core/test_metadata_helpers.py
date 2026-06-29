@@ -325,6 +325,48 @@ class TestBuildBackendMetadataPrivacy:
         assert "measures" in metadata
         assert len(metadata["measures"]) == 1
 
+    def test_hybrid_api_non_privacy_emits_numeric_measures(
+        self, mock_trial_result, mock_config
+    ):
+        """HYBRID_API should emit content-free measures when examples exist."""
+        sentinel = "SDK_HYBRID_API_SENTINEL_DO_NOT_EMIT"
+        mock_config.execution_mode = "hybrid_api"
+        mock_config.execution_mode_enum = ExecutionMode.HYBRID_API
+        mock_config.privacy_enabled = False
+        mock_trial_result.metadata = {
+            "example_results": [
+                {
+                    "example_id": "dataset-row-001",
+                    "input_data": {"prompt": sentinel},
+                    "expected_output": sentinel,
+                    "actual_output": sentinel,
+                    "metrics": {
+                        "accuracy": 0.91,
+                        "latency_ms": 123.4,
+                        "raw_output": sentinel,
+                        "passed": True,
+                    },
+                    "execution_time": 0.02,
+                }
+            ]
+        }
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert "measures" in metadata
+        assert len(metadata["measures"]) == 1
+        measure = metadata["measures"][0]
+        assert measure["example_id"] == "dataset-row-001"
+        assert measure["metrics"]["accuracy"] == 0.91
+        assert measure["metrics"]["score"] == 0.91
+        assert "raw_output" not in measure["metrics"]
+        assert "passed" not in measure["metrics"]
+        assert sentinel not in json.dumps(metadata["measures"])
+        assert all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in measure["metrics"].values()
+        )
+
 
 class TestMeasuresProducerCap:
     """Regression tests for #1285: producer-side cap on per-example measures.
@@ -549,6 +591,35 @@ class TestBuildMeasuresFull:
         assert "input_data" not in sanitized[0]
         assert "actual_output" not in json.dumps(sanitized)
 
+    def test_prefers_real_example_id_and_falls_back_to_synthetic(self):
+        """Measures use real dataset IDs when present and synthetic IDs otherwise."""
+        payload_with_real_id = {
+            "example_id": "dataset-row-a",
+            "metrics": {"accuracy": 0.9},
+            "execution_time": None,
+        }
+        payload_with_metadata_id = {
+            "metadata": {"dataset": {"row_id": "dataset-row-b"}},
+            "metrics": {"accuracy": 0.8},
+            "execution_time": None,
+        }
+        payload_without_id = {
+            "example_id": "",
+            "metadata": {"example_id": ""},
+            "metrics": {"accuracy": 0.7},
+            "execution_time": None,
+        }
+
+        measures = _build_measures_full(
+            [payload_with_real_id, payload_with_metadata_id, payload_without_id],
+            "accuracy",
+        )
+
+        assert measures[0]["example_id"] == "dataset-row-a"
+        assert measures[1]["example_id"] == "dataset-row-b"
+        assert measures[2]["example_id"].startswith("ex_")
+        assert measures[2]["example_id"].endswith("_2")
+
     def test_empty_metric_measure_entries_are_omitted(self):
         """Examples with no numeric metrics do not produce empty measure stubs."""
         empty_example = Mock()
@@ -725,6 +796,22 @@ class TestBuildMeasuresPrivacy:
         assert "output_cost" in metrics
         assert "total_cost" in metrics
         assert metrics["total_cost"] == 0.03
+
+    def test_privacy_measure_prefers_real_example_id(self, example_result):
+        """Privacy measures keep the correlation ID while still sanitizing metrics."""
+        example_result.example_id = "privacy-row-001"
+        example_result.metrics = {
+            "accuracy": 0.9,
+            "input_tokens": 100,
+            "raw_output": "private text",
+        }
+
+        measures = _build_measures_privacy([example_result], "accuracy")
+
+        assert measures[0]["example_id"] == "privacy-row-001"
+        assert measures[0]["metrics"]["score"] == 0.9
+        assert measures[0]["metrics"]["input_tokens"] == 100
+        assert "raw_output" not in measures[0]["metrics"]
 
     def test_exclude_sensitive_metrics(self, example_result):
         """Test sensitive metrics are excluded in privacy mode."""
