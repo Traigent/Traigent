@@ -1,11 +1,18 @@
 """Static parameter and method mappings for framework overrides.
 
-This module contains the static mappings used as FALLBACK when no plugin is registered.
-Plugin mappings (via LLMPlugin._get_default_mappings) take precedence over these static
-mappings. These are primarily used for:
-1. Legacy override path support
-2. Frameworks without dedicated plugins
-3. Method-level parameter injection (specifying which params each method accepts)
+This module is the single active source of truth for framework parameter mappings.
+FrameworkOverrideManager loads these directly — there is no separate plugin-precedence
+layer on top of them. They are used for:
+1. Class-level (constructor) parameter injection — ONLY constructor-valid kwargs
+2. Method-level parameter injection — specifying which params each method accepts
+3. Method-specific parameter name translations (see METHOD_PARAMETER_TRANSLATIONS)
+
+IMPORTANT — constructor vs method params:
+  Class-level PARAMETER_MAPPINGS must contain ONLY parameters that are valid kwargs
+  for the class __init__. Generation params (temperature, max_tokens, top_p, etc.)
+  that are NOT accepted by __init__ must NOT appear in PARAMETER_MAPPINGS — doing so
+  causes TypeError when the constructor override injects them. Generation params for
+  such classes belong exclusively in METHOD_MAPPINGS and METHOD_PARAMETER_TRANSLATIONS.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008
 """
@@ -139,25 +146,19 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "top_k": "top_k",
     },
     # HuggingFace Hub InferenceClient mappings (primary auto-override surface)
-    # text_generation uses max_new_tokens; chat_completion uses max_tokens directly
-    # (max_tokens is excluded from chat_completion METHOD_MAPPINGS to avoid injecting max_new_tokens)
+    #
+    # CONSTRUCTOR-ONLY params: InferenceClient.__init__ accepts model, token, timeout,
+    # base_url, headers, cookies, api_key — it does NOT accept generation kwargs such as
+    # temperature, max_tokens/max_new_tokens, top_p, top_k, stop, or stream.
+    # Injecting those into __init__ raises TypeError (issue #1570).
+    #
+    # Generation params live ONLY in METHOD_MAPPINGS (to control which methods receive them)
+    # and METHOD_PARAMETER_TRANSLATIONS (for max_tokens → max_new_tokens in text_generation).
     "huggingface_hub.InferenceClient": {
         "model": "model",
-        "temperature": "temperature",
-        "max_tokens": "max_new_tokens",
-        "top_p": "top_p",
-        "top_k": "top_k",
-        "stop": "stop",
-        "stream": "stream",
     },
     "huggingface_hub.AsyncInferenceClient": {
         "model": "model",
-        "temperature": "temperature",
-        "max_tokens": "max_new_tokens",
-        "top_p": "top_p",
-        "top_k": "top_k",
-        "stop": "stop",
-        "stream": "stream",
     },
     # PydanticAI mappings — discovery/documentation only.
     # IMPORTANT: PydanticAI requires these params inside the `model_settings` dict,
@@ -349,6 +350,55 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
         "run_stream_sync": ["temperature", "max_tokens", "top_p"],
     },
 }
+
+# Method-level parameter name translations.
+# Used when a method's framework param name differs from the Traigent canonical name
+# AND the class-level PARAMETER_MAPPINGS does not carry that translation (because the
+# param is not a constructor arg and therefore was intentionally excluded from
+# PARAMETER_MAPPINGS to prevent TypeError on __init__).
+#
+# Structure: class_name -> method_name -> {traigent_param: framework_param}
+#
+# These translations are merged by FrameworkOverrideManager._create_override_method
+# with the class-level PARAMETER_MAPPINGS and an identity fallback for remaining
+# supported_params, so only entries that differ from the canonical name are needed.
+METHOD_PARAMETER_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
+    # HuggingFace text_generation: the framework param is max_new_tokens, not max_tokens.
+    # All other generation params use the canonical Traigent name (temperature, top_p, etc.).
+    "huggingface_hub.InferenceClient": {
+        "text_generation": {
+            "max_tokens": "max_new_tokens",
+        },
+        # chat_completion: max_tokens is intentionally excluded from METHOD_MAPPINGS
+        # (it is not a valid chat_completion kwarg); no special translation needed.
+        "chat_completion": {},
+    },
+    "huggingface_hub.AsyncInferenceClient": {
+        "text_generation": {
+            "max_tokens": "max_new_tokens",
+        },
+        "chat_completion": {},
+    },
+}
+
+
+def get_method_parameter_translation(
+    class_name: str, method_name: str
+) -> dict[str, str]:
+    """Get method-level parameter translations for a specific class and method.
+
+    These supplement the class-level PARAMETER_MAPPINGS for cases where a method's
+    framework param name differs from the Traigent canonical name but the param is
+    NOT a valid constructor arg (and therefore absent from PARAMETER_MAPPINGS).
+
+    Args:
+        class_name: Fully-qualified class name (e.g., "huggingface_hub.InferenceClient")
+        method_name: Method name (e.g., "text_generation")
+
+    Returns:
+        Dict mapping traigent_param -> framework_param for this method, or empty dict
+    """
+    return METHOD_PARAMETER_TRANSLATIONS.get(class_name, {}).get(method_name, {})
 
 
 def get_parameter_mapping(class_name: str) -> dict[str, str]:
