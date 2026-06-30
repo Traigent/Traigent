@@ -10,11 +10,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from traigent.core.types import TrialResult
+from traigent.integrations.langfuse.callback import LangfuseOptimizationCallback
 from traigent.integrations.langfuse.client import LangfuseClient
 from traigent.integrations.langfuse.tracker import (
     LangfuseTracker,
     create_langfuse_tracker,
 )
+from traigent.utils.callbacks import ProgressInfo
 
 
 class TestLangfuseTrackerInit:
@@ -92,7 +95,22 @@ class TestLangfuseTrackerCallback:
             trace_id_resolver=mock_resolver,
         )
         callback = tracker.get_callback()
-        assert callback is not None
+
+        # get_callback() is documented to return a LangfuseOptimizationCallback
+        # configured with this tracker's settings.
+        assert isinstance(callback, LangfuseOptimizationCallback)
+
+        mock_client.get_trace_metrics.return_value = None
+        trial = MagicMock(spec=TrialResult)
+        trial.trial_id = "trial-1"
+        trial.metrics = {}
+        progress = MagicMock(spec=ProgressInfo)
+        callback.on_trial_complete(trial, progress)
+
+        # Prove the callback is wired to THIS tracker's injected client and
+        # resolver (not freshly-constructed stand-ins).
+        mock_resolver.assert_called_once_with(trial)
+        mock_client.get_trace_metrics.assert_called_once_with("trace-123")
 
     def test_get_callback_returns_same_instance(self, mock_client, mock_resolver):
         """Test callback is cached."""

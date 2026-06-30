@@ -380,8 +380,14 @@ class TestLangfuseCallbackMetricsMerging:
 
         callback.on_trial_complete(trial, progress)
 
-        # Verify metrics were merged (|= operation)
-        assert trial.metrics is not None
+        # Verify metrics were merged (|= operation): pre-existing keys are
+        # preserved and Langfuse measures are added alongside them.
+        assert trial.metrics == {
+            "accuracy": 0.9,
+            "existing": 42,
+            "langfuse_total_cost": 0.01,
+            "langfuse_total_tokens": 100,
+        }
 
     def test_metrics_created_when_none(self, mock_client):
         """Test metrics dict is created when trial.metrics is None."""
@@ -397,5 +403,9 @@ class TestLangfuseCallbackMetricsMerging:
 
         callback.on_trial_complete(trial, progress)
 
-        # Verify metrics dict was created
-        assert trial.metrics is not None
+        # Verify a fresh metrics dict was created and populated with exactly
+        # the Langfuse measures (trial.metrics started as None).
+        assert trial.metrics == {
+            "langfuse_total_cost": 0.01,
+            "langfuse_total_tokens": 100,
+        }

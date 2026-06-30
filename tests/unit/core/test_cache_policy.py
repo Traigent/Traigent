@@ -364,7 +364,9 @@ class TestLockSegment:
         """Test lock segment with empty string."""
         result = CachePolicyHandler._lock_segment("")
 
-        assert result is not None
+        # sanitize_identifier("") falls back to the "unnamed" placeholder,
+        # which has no underscore, so _lock_segment returns it unchanged.
+        assert result == "unnamed"
 
     def test_lock_segment_no_underscore(self):
         """Test lock segment without underscore."""

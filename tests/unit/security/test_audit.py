@@ -440,6 +440,15 @@ class TestAuditLogger:
         assert event.message == "Unauthorized access attempt"
         assert ComplianceFramework.SOC2 in event.compliance_tags
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "add_alert_handler() is documented as registering a handler "
+            "'for high-severity events', but AuditLogger.log_event() never "
+            "invokes any registered alert_handlers entry (the list is "
+            "appended to and never read) -- weak-test-ratchet bug candidate"
+        ),
+    )
     def test_alert_handling(self):
         """Test alert handling for high-severity events"""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
@@ -458,9 +467,8 @@ class TestAuditLogger:
         # Process events (wait briefly for background processing)
         time.sleep(0.1)
 
-        # Verify alert handler was registered
-        assert audit_logger is not None
-        # Note: Full alert testing would require synchronous processing
+        # A CRITICAL-severity event must trigger the registered alert handler.
+        alert_handler.assert_called_once()
 
     def test_get_events(self):
         """Test retrieving events from audit logger"""

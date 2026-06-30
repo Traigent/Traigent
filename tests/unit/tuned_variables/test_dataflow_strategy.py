@@ -410,6 +410,8 @@ class TestBackwardSlicing:
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "x")
         assert c is not None, f"x not traced through call; got {_names(candidates)}"
+        assert c.confidence == DetectionConfidence.HIGH
+        assert c.current_value == pytest.approx(0.7)
 
     def test_fstring_detects_variables(self, strategy) -> None:
         src = _dedent("""
@@ -424,6 +426,8 @@ class TestBackwardSlicing:
         assert c is not None, (
             f"topic not detected in f-string; got {_names(candidates)}"
         )
+        assert c.confidence == DetectionConfidence.HIGH
+        assert c.current_value == "science"
 
     def test_string_concat_detects_both(self, strategy) -> None:
         src = _dedent("""
