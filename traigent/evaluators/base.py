@@ -1610,7 +1610,10 @@ class BaseEvaluator(ABC):
 
         if progress_callback:
             progress_callback(
-                index, {"success": error is None, "output": output, "error": error}
+                index,
+                self._build_non_detailed_progress_payload(
+                    example, index, output, error
+                ),
             )
 
         return output, error
@@ -1727,6 +1730,7 @@ class BaseEvaluator(ABC):
         detailed: bool,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
         index: int,
+        example: EvaluationExample,
         outputs: list[Any],
         errors: list[str | None],
         example_results: list[ExampleResult | None],
@@ -1742,7 +1746,10 @@ class BaseEvaluator(ABC):
             errors.append(error)
             if progress_callback:
                 progress_callback(
-                    index, {"success": error is None, "output": output, "error": error}
+                    index,
+                    self._build_non_detailed_progress_payload(
+                        example, index, output, error
+                    ),
                 )
 
     async def _handle_task_result(
@@ -1813,6 +1820,7 @@ class BaseEvaluator(ABC):
             result,
             detailed,
             progress_callback,
+            examples[index],
             outputs_by_index,
             errors_by_index,
             example_results_by_index,
@@ -1845,6 +1853,7 @@ class BaseEvaluator(ABC):
         result: Any,
         detailed: bool,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        example: EvaluationExample,
         outputs_by_index: dict[int, Any],
         errors_by_index: dict[int, str | None],
         example_results_by_index: dict[int, ExampleResult | None],
@@ -1864,7 +1873,9 @@ class BaseEvaluator(ABC):
                 # Note: This is sync in the original, we handle exceptions elsewhere
                 progress_callback(
                     index,
-                    {"success": error is None, "output": output, "error": error},
+                    self._build_non_detailed_progress_payload(
+                        example, index, output, error
+                    ),
                 )
 
     async def _safe_progress_callback(
@@ -2229,35 +2240,73 @@ class BaseEvaluator(ABC):
         error: str | None,
     ) -> dict[str, Any]:
         """Build progress callback payload with metrics."""
-        metrics_payload: dict[str, float] = {}
-
-        if error is None and example.expected_output is not None:
-            try:
-                metrics_payload["accuracy"] = (
-                    1.0
-                    if _accuracy_values_match(
-                        result.actual_output, example.expected_output
-                    )
-                    else 0.0
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to compute accuracy metric for example %s: %s",
-                    example_id,
-                    exc,
-                )
+        metrics_payload = self._build_progress_accuracy_metrics(
+            output=result.actual_output,
+            expected_output=example.expected_output,
+            error=error,
+            example_id=example_id,
+        )
 
         metrics_update, _ = self._extract_response_metrics(
             example_id, example, result, config
         )
         metrics_payload.update(metrics_update)
 
-        return {
+        payload: dict[str, Any] = {
             "success": result.success,
             "error": result.error_message,
-            "metrics": metrics_payload,
             "output": result.actual_output,
         }
+        if metrics_payload:
+            payload["metrics"] = metrics_payload
+        return payload
+
+    def _build_progress_accuracy_metrics(
+        self,
+        *,
+        output: Any,
+        expected_output: Any,
+        error: str | None,
+        example_id: str,
+    ) -> dict[str, float]:
+        """Return per-example accuracy using the same comparator as aggregate accuracy."""
+        if error is not None or _is_empty_expected_output(expected_output):
+            return {}
+        try:
+            return {
+                "accuracy": (
+                    1.0 if _accuracy_values_match(output, expected_output) else 0.0
+                )
+            }
+        except Exception as exc:
+            logger.warning(
+                "Failed to compute accuracy metric for example %s: %s",
+                example_id,
+                exc,
+            )
+            return {}
+
+    def _build_non_detailed_progress_payload(
+        self,
+        example: EvaluationExample,
+        index: int,
+        output: Any,
+        error: str | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "success": error is None,
+            "output": output,
+            "error": error,
+        }
+        metrics_payload = self._build_progress_accuracy_metrics(
+            output=output,
+            expected_output=example.expected_output,
+            error=error,
+            example_id=_example_correlation_key(example, index),
+        )
+        if metrics_payload:
+            payload["metrics"] = metrics_payload
+        return payload
 
     def _record_example_trace(
         self,
