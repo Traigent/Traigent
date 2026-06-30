@@ -80,6 +80,6 @@ def normalize_intermediate_report_payload(
     if unknown_keys:
         joined = ", ".join(unknown_keys)
         raise ValueError(
-            "intermediate report payload contains unsupported key(s): " f"{joined}"
+            f"intermediate report payload contains unsupported key(s): {joined}"
         )
     return {key: payload[key] for key in payload}

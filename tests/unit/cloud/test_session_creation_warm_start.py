@@ -2,7 +2,7 @@
 
 import json
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -260,7 +260,7 @@ class TestSessionOperationsWarmStartThreading:
 
     def _make_ops(self) -> tuple[SessionOperations, CapturingFakeClient]:
         client = CapturingFakeClient()
-        return SessionOperations(client), client
+        return SessionOperations(cast(Any, client)), client
 
     def test_warm_start_from_threads_to_session_request(self):
         ops, client = self._make_ops()

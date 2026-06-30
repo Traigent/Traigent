@@ -29,10 +29,10 @@ try:
 except ImportError:
     REDIS_AVAILABLE = False
     if TYPE_CHECKING:
-        from typing import Any as Redis  # type: ignore[assignment]
+        from typing import Any as Redis
     else:
         Redis = None
-    redis = None  # type: ignore[assignment]
+    redis = None
 
 
 class SessionManager:

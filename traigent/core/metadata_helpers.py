@@ -419,7 +419,7 @@ def build_backend_metadata(
         dataset_name,
         privacy_on,
         mode_enum,
-        cast(str, traigent_config.execution_mode),
+        traigent_config.execution_mode,
     )
 
     # Add additional metrics (excluding primary objective)

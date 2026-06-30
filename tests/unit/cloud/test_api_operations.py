@@ -176,9 +176,10 @@ class TestMapToBackendStatus:
             mapped = self.ops.map_to_backend_status(
                 sdk_status, endpoint="experiment_run"
             )
-            assert mapped not in forbidden, (
+            message = (
                 f"{sdk_status!r} mapped to forbidden session-lifecycle value {mapped!r}"
             )
+            assert mapped not in forbidden, message
             assert mapped in EXPERIMENT_RUN_WIRE_STATUSES
 
     def test_config_run_vocab_for_config_endpoint(self):
@@ -432,6 +433,7 @@ class TestBuildSessionPayload:
         request.objectives = ["accuracy"]
         request.promotion_policy = None
         request.tvl_governance = None
+        request.smart_pruning = None
 
         payload = self.ops._build_session_payload(request, 10)
 
@@ -457,6 +459,7 @@ class TestBuildSessionPayload:
         request.objectives = ["maximize"]
         request.promotion_policy = None
         request.tvl_governance = None
+        request.smart_pruning = None
 
         payload = self.ops._build_session_payload(request, 10)
 
@@ -477,6 +480,7 @@ class TestBuildSessionPayload:
         # bare Mock auto-attributes must not reach the policy serializer
         request.promotion_policy = None
         request.tvl_governance = None
+        request.smart_pruning = None
 
         payload = self.ops._build_session_payload(request, 20)
 
@@ -495,6 +499,7 @@ class TestBuildSessionPayload:
         request.objectives = []
         request.promotion_policy = None
         request.tvl_governance = None
+        request.smart_pruning = None
 
         payload = self.ops._build_session_payload(request, 10)
 

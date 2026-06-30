@@ -199,7 +199,10 @@ def create_mock_dataset(size: int = 10, name: str = "test_dataset") -> Dataset:
 def create_real_dataset(size: int = 3, name: str = "test_dataset") -> Dataset:
     return Dataset(
         examples=[
-            EvaluationExample(input_data=f"question_{i}", expected_output=f"output_{i}")
+            EvaluationExample(
+                input_data={"question": f"question_{i}"},
+                expected_output=f"output_{i}",
+            )
             for i in range(size)
         ],
         name=name,

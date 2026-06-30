@@ -2656,7 +2656,8 @@ class OptimizationOrchestrator:
             delay = None
         if delay is None or delay < 0:
             delay = base_backoff * (2**used)
-        assert delay is not None
+        if delay is None:
+            raise RuntimeError("vendor retry delay fallback did not produce a value")
         delay_seconds = float(delay)
 
         logger.warning(
