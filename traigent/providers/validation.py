@@ -54,6 +54,13 @@ _MSG_INSUFFICIENT_FUNDS = (
 #          gemini-* -> google
 #          mistral-*, codestral-*, pixtral-* -> mistral
 #          command-* -> cohere
+#
+# The SET of providers here (plus _KNOWN_MODELS and the _validate_<provider>
+# methods below) is pinned to the canonical provider-support table
+# (traigent/config/provider_support.py) by the drift regression test
+# (tests/unit/config/test_provider_support_drift.py): every provider with
+# detection="prefix" must appear here. HuggingFace is deliberately absent — it
+# is the last-resort bare org/model match handled in get_provider_for_model().
 _PROVIDER_PATTERNS: dict[str, re.Pattern[str]] = {
     "openai": re.compile(r"^(gpt-|o[13]-|text-davinci|text-embedding|whisper-)"),
     "anthropic": re.compile(r"^(claude-|haiku-|sonnet-|opus-)"),
@@ -439,6 +446,27 @@ class ProviderValidator:
         """
         validate_method = getattr(self, f"_validate_{provider}", None)
         if validate_method is None:
+            # Distinguish a provider that is *recognized* by the SDK but
+            # intentionally not validated (e.g. azure_openai / bedrock — present
+            # in models.yaml / discovery but with no _validate_<provider>
+            # method) from a truly unknown provider. The former gets a clearly
+            # labeled "mapping-only / not validated" status instead of the
+            # generic UnsupportedProvider error (#1568).
+            from traigent.config.provider_support import get_provider_spec
+
+            spec = get_provider_spec(provider)
+            if spec is not None and not spec.validated:
+                return ProviderStatus(
+                    provider=provider,
+                    valid=False,
+                    message=(
+                        f"Provider '{provider}' is recognized but not "
+                        "validated by the SDK (mapping-only). Its key is not "
+                        "preflight-checked; the actual LLM call will surface "
+                        "any auth error."
+                    ),
+                    error_type="NotValidated",
+                )
             return ProviderStatus(
                 provider=provider,
                 valid=False,

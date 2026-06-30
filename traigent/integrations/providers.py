@@ -33,9 +33,33 @@ import logging
 import os
 from typing import Literal
 
-from traigent.integrations.model_discovery.registry import get_model_discovery
-
 logger = logging.getLogger(__name__)
+
+
+def get_model_discovery(provider: str | None, cached: bool = True):  # type: ignore[return]
+    """Lazy wrapper around model_discovery to avoid importing PyYAML at module load.
+
+    Importing model_discovery (which requires PyYAML) is deferred until an actual
+    discovery call is made.  When PyYAML or model_discovery is unavailable, returns
+    None so callers fall back to the static tier / fallback model lists.
+
+    The module-level name is kept (rather than inlining the import) so that existing
+    tests can still patch ``traigent.integrations.providers.get_model_discovery``
+    without any patch-target changes.
+    """
+    try:
+        from traigent.integrations.model_discovery.registry import (
+            get_model_discovery as _real,
+        )
+
+        return _real(provider, cached=cached)
+    except ImportError:
+        logger.debug(
+            "model_discovery unavailable (PyYAML missing?); "
+            "tier selection will use static fallback lists."
+        )
+        return None
+
 
 # Type alias for tier names
 Tier = Literal["fast", "balanced", "quality"]
@@ -78,7 +102,14 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     (None, "quality"): ["gpt-4o"],
 }
 
-# Model tier classification based on capabilities/cost
+# Model tier classification based on capabilities/cost.
+#
+# The SET of providers here (the keys of _MODEL_TIERS, which also drives
+# list_available_providers()) is pinned to the canonical provider-support table
+# (traigent/config/provider_support.py) by the drift regression test
+# (tests/unit/config/test_provider_support_drift.py): every spec with
+# tiered=True must appear here under its registry_key (Google is keyed
+# "gemini", matching the discovery registry and models.yaml).
 _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     "openai": {
         "fast": ["gpt-4o-mini", "gpt-3.5-turbo"],

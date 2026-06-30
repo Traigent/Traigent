@@ -1,11 +1,17 @@
 # Model Configuration for Traigent
 #
-# This file defines known models and validation patterns for each provider.
-# The model discovery system uses this as a fallback when SDK discovery
-# is unavailable or when API keys are not configured.
+# This file is the richest provider model registry and the model-data source
+# for the canonical provider-support table
+# (traigent/config/provider_support.py). The model discovery system uses this
+# as a fallback when SDK discovery is unavailable or when API keys are not
+# configured.
 #
 # Structure:
 #   <provider>:
+#     support_level: "validated" (key + preflight validator) or "mapping_only"
+#                    (recognized for routing/discovery but not preflight-checked).
+#                    Must match provider_support.py; the drift test
+#                    (tests/unit/config/test_provider_support_drift.py) enforces it.
 #     known_models: List of known model IDs
 #     pattern: Regex pattern for validating unknown model IDs
 #
@@ -13,9 +19,13 @@
 #   1. Add it to the known_models list under the appropriate provider
 #   2. Models not in this list will still be accepted if they match the pattern
 #
+# To add a NEW provider, update provider_support.py and this file together; the
+# drift regression test fails CI if the registries disagree.
+#
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
 openai:
+  support_level: validated
   known_models:
     # GPT-4o family (latest)
     - gpt-4o
@@ -57,6 +67,7 @@ openai:
   pattern: "^(gpt-[0-9]|o[0-9]|text-|code-|davinci|curie|babbage|ada|chatgpt-|ft:)"
 
 anthropic:
+  support_level: validated
   known_models:
     # Claude 3.5 family
     - claude-3-5-sonnet-20241022
@@ -77,6 +88,8 @@ anthropic:
   pattern: "^claude-[0-9]"
 
 gemini:
+  # Canonical provider name is "google"; this registry keys it under "gemini".
+  support_level: validated
   known_models:
     # Gemini 2.0
     - gemini-2.0-flash-exp
@@ -98,6 +111,8 @@ gemini:
   pattern: "^(gemini-[0-9]|models/gemini-)"
 
 azure_openai:
+  # Recognized for routing + discovery, but no single-key validator.
+  support_level: mapping_only
   known_models:
     # Azure uses deployment names, but also supports base model names
     # GPT-4 family
@@ -118,6 +133,7 @@ azure_openai:
   pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
 
 cohere:
+  support_level: validated
   known_models:
     # Command R family
     - command-r-plus
@@ -132,6 +148,7 @@ cohere:
   pattern: "^command"
 
 huggingface:
+  support_level: validated
   known_models:
     # Popular inference endpoints
     - meta-llama/Meta-Llama-3-8B-Instruct
@@ -143,6 +160,7 @@ huggingface:
   pattern: "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$"
 
 mistral:
+  support_level: validated
   known_models:
     # Latest aliases
     - mistral-small-latest
@@ -167,6 +185,8 @@ mistral:
   pattern: "^(mistral-|open-mistral-|open-mixtral-|codestral-|pixtral-|ministral-|ft:mistral-)"
 
 bedrock:
+  # Authenticates via AWS credentials; recognized for routing, not validated.
+  support_level: mapping_only
   known_models:
     # Anthropic on Bedrock
     - anthropic.claude-3-5-sonnet-20241022-v2:0
