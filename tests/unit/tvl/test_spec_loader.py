@@ -1929,9 +1929,19 @@ objectives:
         spec_file = tmp_path / "test.tvl.yml"
         spec_file.write_text(spec_content)
 
-        # Should complete without validation
+        # validate_schema=False skips early schema validation but the spec
+        # must still be fully parsed: tvars, the derived configuration
+        # space, and the objective schema all reflect the file's contents.
         artifact = load_tvl_spec(spec_path=spec_file, validate_schema=False)
-        assert artifact is not None
+
+        assert artifact.configuration_space == {"temperature": [0.0, 1.0]}
+        assert artifact.tvars is not None
+        assert len(artifact.tvars) == 1
+        assert artifact.tvars[0].name == "temperature"
+        assert artifact.tvars[0].type == "float"
+        assert artifact.objective_schema is not None
+        objective_names = [o.name for o in artifact.objective_schema.objectives]
+        assert objective_names == ["accuracy"]
 
     def test_validate_dict_objectives_invalid_direction(self) -> None:
         """Dict-style objectives with invalid direction are flagged."""

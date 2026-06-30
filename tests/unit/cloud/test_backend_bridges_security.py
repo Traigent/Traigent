@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from traigent.cloud.backend_bridges import bridge
+from traigent.cloud.backend_bridges import BackendExperimentRequest, bridge
 from traigent.cloud.dataset_converter import converter
 from traigent.cloud.models import AgentSpecification, OptimizationRequest
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -181,17 +181,19 @@ class TestBackendBridgeValidation:
             model_parameters={},
         )
 
-        # Current implementation may be more permissive during development
-        try:
-            result = bridge.agent_specification_to_backend(incomplete_agent)
-            # If it succeeds, verify basic structure is maintained
-            assert result is not None
-        except ValueError:
-            # If it raises ValueError, that's the expected behavior
-            pass
-        except AttributeError:
-            # Method may not be implemented yet
-            pytest.skip("Agent specification validation not yet implemented")
+        # Documented contract (agent_specification_to_backend docstring):
+        # the payload uses the canonical backend field names agent_type_id /
+        # agent_platform, preserves pass-through fields verbatim, and falls
+        # back to the "default" agent type mapping for unrecognized
+        # agent_type values rather than raising or dropping data silently.
+        result = bridge.agent_specification_to_backend(incomplete_agent)
+
+        assert result["agent_id"] == "test"
+        assert result["name"] == ""
+        assert result["agent_type_id"] == "agent-type-1"  # falls back to default
+        assert result["agent_platform"] == "unknown_platform"
+        assert result["prompt_template"] == ""
+        assert result["model_parameters"] == {}
 
     def test_prevents_memory_exhaustion(self):
         """Test prevention of memory exhaustion attacks."""
@@ -270,17 +272,16 @@ class TestConfigurationValidation:
                 objectives=["accuracy"],
             )
 
-            # Backend bridge must either accept the config (returning a non-None
-            # backend request) or reject it with a typed validation error.
-            # AttributeError (unimplemented method) is NOT acceptable: it would
-            # mean the public conversion API is broken.
-            try:
-                result = bridge.optimization_request_to_backend(opt_request)
-            except (ValueError, TypeError):
-                continue
-            assert result is not None, (
-                f"optimization_request_to_backend returned None for {invalid_config!r}"
-            )
+            # The current implementation does not reject any of these
+            # shapes; it passes configuration_space through unchanged into
+            # experiment_parameters rather than dropping, mutating, or
+            # raising on it. Assert that documented pass-through behavior.
+            result = bridge.optimization_request_to_backend(opt_request)
+
+            assert isinstance(result, BackendExperimentRequest)
+            assert (
+                result.experiment_parameters["configuration_space"] == invalid_config
+            ), f"configuration_space was not preserved for {invalid_config!r}"
 
     def test_prevents_code_injection_in_objectives(self):
         """Test prevention of code injection through objectives."""

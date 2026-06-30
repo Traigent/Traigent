@@ -806,7 +806,14 @@ class TestConvenienceFunctions:
                 run_name="custom_run",
             )
 
-        assert run_id is not None
+        # Returns the MLflow run ID produced by the started run, and the
+        # explicit tracking_uri/experiment_name/dataset_path args must
+        # actually reach the underlying mlflow calls rather than being
+        # ignored.
+        assert run_id == "mock_run_123"
+        assert patched_mlflow.tracking_uri == "http://localhost:5000"
+        assert patched_mlflow.active_experiment == "custom_exp"
+        assert (str(dataset_path), "datasets") in patched_mlflow.logged_artifacts
 
     def test_compare_traigent_runs(self, patched_mlflow: MockMLflow) -> None:
         """Test compare_traigent_runs function."""
