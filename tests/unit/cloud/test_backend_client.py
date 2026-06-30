@@ -208,6 +208,178 @@ class TestBackendIntegratedClient:
         assert reader._auth_headers() == {"Authorization": "Bearer stored.header.sig"}
 
     @pytest.mark.asyncio
+    async def test_experiment_groups_facade_uses_read_client(self, backend_client):
+        """Experiment-group namespace is read-only and delegates to the read client."""
+        sentinel = object()
+
+        class FakeReadClient:
+            def __init__(self):
+                self.calls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            async def list_experiment_groups(self, *args, **kwargs):
+                self.calls.append(("list", args, kwargs))
+                return sentinel
+
+            async def get_experiment_group(self, *args, **kwargs):
+                self.calls.append(("get", args, kwargs))
+                return sentinel
+
+            async def list_experiment_group_configuration_runs(self, *args, **kwargs):
+                self.calls.append(("configuration_runs", args, kwargs))
+                return sentinel
+
+        fake_reader = FakeReadClient()
+
+        with (
+            patch(
+                "traigent.cloud.analytics_auth.resolve_analytics_read_client_credentials",
+                new=AsyncMock(return_value={"api_key": "uk_read"}),
+            ),
+            patch(
+                "traigent.cloud.analytics_client.BackendAnalyticsClient",
+                return_value=fake_reader,
+            ),
+        ):
+            list_result = await backend_client.experiment_groups.list(
+                "proj_abc",
+                agent_id="agent_1",
+                dataset_id="dataset_1",
+                page=2,
+                page_size=25,
+            )
+            get_result = await backend_client.experiment_groups.get("grp_1", "proj_abc")
+            configuration_runs_result = (
+                await backend_client.experiment_groups.configuration_runs(
+                    "grp_1", "proj_abc", page=3, page_size=10
+                )
+            )
+            with pytest.raises(ValueError, match="project_id"):
+                await backend_client.experiment_groups.list("  ")
+            with pytest.raises(TypeError):
+                await backend_client.experiment_groups.list()
+            with pytest.raises(TypeError):
+                await backend_client.experiment_groups.get("grp_1")
+            with pytest.raises(TypeError):
+                await backend_client.experiment_groups.configuration_runs("grp_1")
+
+        assert list_result is sentinel
+        assert get_result is sentinel
+        assert configuration_runs_result is sentinel
+        assert fake_reader.calls == [
+            (
+                "list",
+                ("proj_abc",),
+                {
+                    "agent_id": "agent_1",
+                    "dataset_id": "dataset_1",
+                    "page": 2,
+                    "page_size": 25,
+                },
+            ),
+            ("get", ("grp_1", "proj_abc"), {}),
+            (
+                "configuration_runs",
+                ("grp_1", "proj_abc"),
+                {"page": 3, "page_size": 10},
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_analytics_experiment_groups_alias_forwards_filters(
+        self, backend_client
+    ):
+        """Analytics compatibility alias forwards documented group filters."""
+        sentinel = object()
+
+        class FakeReadClient:
+            def __init__(self):
+                self.calls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            async def list_experiment_groups(self, *args, **kwargs):
+                self.calls.append(("list", args, kwargs))
+                return sentinel
+
+            async def get_experiment_group(self, *args, **kwargs):
+                self.calls.append(("get", args, kwargs))
+                return sentinel
+
+            async def list_experiment_group_configuration_runs(self, *args, **kwargs):
+                self.calls.append(("configuration_runs", args, kwargs))
+                return sentinel
+
+        fake_reader = FakeReadClient()
+
+        with (
+            patch(
+                "traigent.cloud.analytics_auth.resolve_analytics_read_client_credentials",
+                new=AsyncMock(return_value={"api_key": "uk_read"}),
+            ),
+            patch(
+                "traigent.cloud.analytics_client.BackendAnalyticsClient",
+                return_value=fake_reader,
+            ),
+        ):
+            list_result = await backend_client.analytics.list_experiment_groups(
+                "proj_abc",
+                agent_id="agent_1",
+                dataset_id="dataset_1",
+                page=2,
+                page_size=25,
+            )
+            get_result = await backend_client.analytics.get_experiment_group(
+                "grp_1", "proj_abc"
+            )
+            configuration_runs_result = (
+                await backend_client.analytics.list_experiment_group_configuration_runs(
+                    "grp_1", "proj_abc", page=3, page_size=10
+                )
+            )
+            with pytest.raises(ValueError, match="project_id"):
+                await backend_client.analytics.list_experiment_groups("  ")
+            with pytest.raises(TypeError):
+                await backend_client.analytics.list_experiment_groups()
+            with pytest.raises(TypeError):
+                await backend_client.analytics.get_experiment_group("grp_1")
+            with pytest.raises(TypeError):
+                await backend_client.analytics.list_experiment_group_configuration_runs(
+                    "grp_1"
+                )
+
+        assert list_result is sentinel
+        assert get_result is sentinel
+        assert configuration_runs_result is sentinel
+        assert fake_reader.calls == [
+            (
+                "list",
+                ("proj_abc",),
+                {
+                    "agent_id": "agent_1",
+                    "dataset_id": "dataset_1",
+                    "page": 2,
+                    "page_size": 25,
+                },
+            ),
+            ("get", ("grp_1", "proj_abc"), {}),
+            (
+                "configuration_runs",
+                ("grp_1", "proj_abc"),
+                {"page": 3, "page_size": 10},
+            ),
+        ]
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("facade_method", "reader_method", "kwargs"),
         [

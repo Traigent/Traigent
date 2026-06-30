@@ -165,6 +165,13 @@ STATIC_POLICY_TEXT = (
 )
 
 
+def _require_project_id(project_id: str) -> str:
+    text = (project_id or "").strip()
+    if not text:
+        raise ValueError("project_id must be a non-empty string.")
+    return text
+
+
 class _SyncBackendTransientError(RetryableError):
     """Retryable wrapper for transient sync backend transport failures."""
 
@@ -255,6 +262,7 @@ __all__ = [
     "AnalyticsNamespace",
     "BackendClientConfig",
     "BackendIntegratedClient",
+    "ExperimentGroupsNamespace",
 ]
 
 
@@ -413,6 +421,121 @@ class AnalyticsNamespace:
             return cast(
                 dict[str, Any],
                 await reader.get_example_insights(project_id, run_id),
+            )
+
+    async def list_experiment_groups(
+        self,
+        project_id: str,
+        *,
+        agent_id: str | None = None,
+        dataset_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Any:
+        """Compatibility alias for ``client.experiment_groups.list``."""
+        project_id = _require_project_id(project_id)
+        async with await self._new_read_client() as reader:
+            return await reader.list_experiment_groups(
+                project_id,
+                agent_id=agent_id,
+                dataset_id=dataset_id,
+                page=page,
+                page_size=page_size,
+            )
+
+    async def get_experiment_group(
+        self,
+        group_id: str,
+        project_id: str,
+    ) -> Any:
+        """Compatibility alias for ``client.experiment_groups.get``."""
+        project_id = _require_project_id(project_id)
+        async with await self._new_read_client() as reader:
+            return await reader.get_experiment_group(group_id, project_id)
+
+    async def list_experiment_group_configuration_runs(
+        self,
+        group_id: str,
+        project_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Any:
+        """Compatibility alias for ``client.experiment_groups.configuration_runs``."""
+        project_id = _require_project_id(project_id)
+        async with await self._new_read_client() as reader:
+            return await reader.list_experiment_group_configuration_runs(
+                group_id,
+                project_id,
+                page=page,
+                page_size=page_size,
+            )
+
+
+class ExperimentGroupsNamespace:
+    """Read-only ``client.experiment_groups`` accessor for group/cohort reads."""
+
+    def __init__(self, client: "BackendIntegratedClient") -> None:
+        self._client = client
+
+    async def _new_read_client(self) -> Any:
+        from traigent.cloud.analytics_auth import (
+            resolve_analytics_read_client_credentials,
+        )
+        from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+        credential_kwargs = await resolve_analytics_read_client_credentials(
+            self._client.auth_manager.auth,
+            api_key_fallback=self._client._api_key_fallback,
+        )
+        return BackendAnalyticsClient(
+            backend_url=self._client.base_url,
+            timeout=self._client.timeout,
+            **credential_kwargs,
+        )
+
+    async def list(
+        self,
+        project_id: str,
+        *,
+        agent_id: str | None = None,
+        dataset_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Any:
+        """List experiment groups/cohorts."""
+        project_id = _require_project_id(project_id)
+        async with await self._new_read_client() as reader:
+            return await reader.list_experiment_groups(
+                project_id,
+                agent_id=agent_id,
+                dataset_id=dataset_id,
+                page=page,
+                page_size=page_size,
+            )
+
+    async def get(self, group_id: str, project_id: str) -> Any:
+        """Read one experiment group/cohort."""
+        project_id = _require_project_id(project_id)
+        async with await self._new_read_client() as reader:
+            return await reader.get_experiment_group(group_id, project_id)
+
+    async def configuration_runs(
+        self,
+        group_id: str,
+        project_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Any:
+        """List source-preserving configuration rows for a group/cohort."""
+        project_id = _require_project_id(project_id)
+        async with await self._new_read_client() as reader:
+            return await reader.list_experiment_group_configuration_runs(
+                group_id,
+                project_id,
+                page=page,
+                page_size=page_size,
             )
 
 
@@ -661,6 +784,7 @@ class BackendIntegratedClient:
         # Read-only analytics accessor (lazily exposed via the ``analytics``
         # property). Kept separate from the write paths above.
         self._analytics_ns: AnalyticsNamespace | None = None
+        self._experiment_groups_ns: ExperimentGroupsNamespace | None = None
         self._interaction_policy_cache: dict[
             tuple[str | None, str | None], dict[str, Any]
         ] = {}
@@ -678,6 +802,18 @@ class BackendIntegratedClient:
         if self._analytics_ns is None:
             self._analytics_ns = AnalyticsNamespace(self)
         return self._analytics_ns
+
+    @property
+    def experiment_groups(self) -> "ExperimentGroupsNamespace":
+        """Read-only ``client.experiment_groups`` namespace.
+
+        Provides backend reads for experiment groups/cohorts and their source
+        configuration rows. This namespace performs no writes and does not reuse
+        or mutate active optimization sessions.
+        """
+        if self._experiment_groups_ns is None:
+            self._experiment_groups_ns = ExperimentGroupsNamespace(self)
+        return self._experiment_groups_ns
 
     def _log_local_interaction_policy_once(self) -> None:
         if self._interaction_policy_fallback_logged:
