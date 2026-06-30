@@ -58,18 +58,28 @@ class TestMockMCPClasses:
                 ClientSession()
 
     def test_stdio_server_parameters_mock(self):
-        """Test StdioServerParameters mock initialization."""
+        """When MCP is unavailable, StdioServerParameters is documented as a
+        stub "never used at runtime": it must accept the exact kwargs that
+        ProductionMCPClient.connect() passes (command/args/env) without
+        raising, and the resulting instance is of the stub type (it has no
+        documented attributes or methods beyond construction -- there is
+        nothing else in its public contract to assert).
+        """
         if not MCP_AVAILABLE:
-            # Should not raise an error
-            params = StdioServerParameters()
-            assert params is not None
+            params = StdioServerParameters(command="python", args=["-m", "x"], env=None)
+            assert isinstance(params, StdioServerParameters)
 
     def test_stdio_client_transport_mock(self):
-        """Test StdioClientTransport mock initialization."""
+        """When MCP is unavailable, StdioClientTransport is documented as a
+        stub "never used at runtime": it must accept the positional
+        server-params argument used by ProductionMCPClient.connect() without
+        raising, and the resulting instance is of the stub type (it has no
+        documented attributes or methods beyond construction -- there is
+        nothing else in its public contract to assert).
+        """
         if not MCP_AVAILABLE:
-            # Should not raise an error
-            transport = StdioClientTransport()
-            assert transport is not None
+            transport = StdioClientTransport(StdioServerParameters())
+            assert isinstance(transport, StdioClientTransport)
 
 
 class TestProductionMCPClientBasics:
@@ -245,50 +255,110 @@ class TestMCPRequestHandling:
 
     @pytest.mark.asyncio
     async def test_send_request_mocked(self):
-        """Test sending MCP request with mocked session."""
+        """ProductionMCPClient has no send_request method; call_tool is its
+        real request/response mechanism. Verify it forwards the exact
+        tool/arguments to the session and surfaces the session's text
+        content as MCPResponse.data.
+        """
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
-            mock_session.call_tool = AsyncMock(return_value=self.sample_response)
+            mock_result = Mock()
+            mock_result.content = [Mock(text=json.dumps(self.sample_response["result"]))]
+            mock_session.call_tool = AsyncMock(return_value=mock_result)
+            self.client._session = mock_session
 
-            if hasattr(self.client, "_session"):
-                self.client._session = mock_session
+            async def fake_execute_async(func):
+                res = await func()
+                return Mock(success=True, result=res, last_exception=None)
 
-                if hasattr(self.client, "send_request"):
-                    response = await self.client.send_request(self.sample_request)
-                    assert response is not None
+            self.client._retry_handler.execute_async = fake_execute_async
+
+            with patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_connected:
+                mock_connected.return_value = True
+                response = await self.client.call_tool(
+                    self.sample_request["method"], self.sample_request["params"]
+                )
+
+            mock_session.call_tool.assert_called_once_with("list_tools", {})
+            assert response.success is True
+            assert response.data == json.dumps(self.sample_response["result"])
+            assert response.is_fallback is False
 
     @pytest.mark.asyncio
     async def test_list_tools_operation(self):
-        """Test listing available tools."""
+        """ProductionMCPClient has no list_tools method; list_resources is
+        its real "list available things" capability. Verify it converts the
+        session's dataclass resources into plain dicts under "resources".
+        """
+        from dataclasses import dataclass as _dataclass
+
+        @_dataclass
+        class _FakeResource:
+            uri: str
+            name: str
+
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
-            mock_session.list_tools = AsyncMock(
-                return_value=self.sample_response["result"]
-            )
+            mock_resource = _FakeResource(uri="mcp://tool/create_agent", name="create_agent")
+            mock_result = Mock(resources=[mock_resource])
+            mock_session.list_resources = AsyncMock(return_value=mock_result)
+            self.client._session = mock_session
 
-            if hasattr(self.client, "_session"):
-                self.client._session = mock_session
+            with patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_connected:
+                mock_connected.return_value = True
+                response = await self.client.list_resources()
 
-                if hasattr(self.client, "list_tools"):
-                    tools = await self.client.list_tools()
-                    assert tools is not None
+            assert response.success is True
+            assert response.data == {
+                "resources": [{"uri": "mcp://tool/create_agent", "name": "create_agent"}]
+            }
 
     @pytest.mark.asyncio
     async def test_call_tool_operation(self):
-        """Test calling a specific tool."""
+        """Test calling a specific tool via the real (non-fallback) call
+        path.
+
+        The class-wide setup_method mocks RetryHandler/RetryConfig with a
+        plain (non-async) Mock, which (combined with a session result that
+        doesn't match the real ``.content[0].text`` shape) would silently
+        force call_tool's exception-driven fallback path -- making any
+        assertion here pass for the wrong reason. This test instead wires
+        ``_retry_handler.execute_async`` to actually invoke the wrapped
+        coroutine (matching the real RetryHandler contract) and gives the
+        mocked session a spec-correct result, so the assertions exercise
+        call_tool's genuine success path.
+        """
         tool_name = "create_agent"
         tool_args = {"name": "test_agent", "type": "optimization"}
+        tool_result_payload = {"agent_id": "agent-42", "status": "created"}
 
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
-            mock_session.call_tool = AsyncMock(return_value={"success": True})
+            mock_result = Mock()
+            mock_result.content = [Mock(text=json.dumps(tool_result_payload))]
+            mock_session.call_tool = AsyncMock(return_value=mock_result)
+            self.client._session = mock_session
 
-            if hasattr(self.client, "_session"):
-                self.client._session = mock_session
+            async def fake_execute_async(func):
+                res = await func()
+                return Mock(success=True, result=res, last_exception=None)
 
-                if hasattr(self.client, "call_tool"):
-                    result = await self.client.call_tool(tool_name, tool_args)
-                    assert result is not None
+            self.client._retry_handler.execute_async = fake_execute_async
+
+            with patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_connected:
+                mock_connected.return_value = True
+                result = await self.client.call_tool(tool_name, tool_args)
+
+            mock_session.call_tool.assert_called_once_with(tool_name, tool_args)
+            assert result.success is True
+            assert result.is_fallback is False
+            assert result.data == json.dumps(tool_result_payload)
 
     @pytest.mark.asyncio
     async def test_request_timeout_handling(self):
@@ -360,24 +430,47 @@ class TestMCPRetryMechanism:
 
     @pytest.mark.asyncio
     async def test_retry_on_network_error(self):
-        """Test retry mechanism on network errors."""
+        """ProductionMCPClient has no call_tool_with_retry method; retrying
+        is built into call_tool itself via the retry handler. Drive a fake
+        retry loop (first two session calls raise, third succeeds) and
+        verify call_tool keeps retrying until it gets the real result.
+        """
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
+            mock_result = Mock()
+            mock_result.content = [Mock(text='{"agent_id": "agent_123"}')]
             # First two calls fail, third succeeds
             mock_session.call_tool = AsyncMock(
                 side_effect=[
-                    Exception("Network error"),
-                    Exception("Network error"),
-                    {"success": True},
+                    ConnectionError("Network error"),
+                    ConnectionError("Network error"),
+                    mock_result,
                 ]
             )
+            self.client._session = mock_session
 
-            if hasattr(self.client, "_session"):
-                self.client._session = mock_session
+            async def fake_execute_async(func):
+                last_exc = None
+                for _ in range(3):
+                    try:
+                        res = await func()
+                        return Mock(success=True, result=res, last_exception=None)
+                    except Exception as exc:  # simulate the real retry loop
+                        last_exc = exc
+                return Mock(success=False, result=None, last_exception=last_exc)
 
-                if hasattr(self.client, "call_tool_with_retry"):
-                    result = await self.client.call_tool_with_retry("test_tool", {})
-                    assert result is not None
+            self.client._retry_handler.execute_async = fake_execute_async
+
+            with patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_connected:
+                mock_connected.return_value = True
+                result = await self.client.call_tool("test_tool", {})
+
+            assert mock_session.call_tool.call_count == 3
+            assert result.success is True
+            assert result.data == '{"agent_id": "agent_123"}'
+            assert result.is_fallback is False
 
     @pytest.mark.asyncio
     async def test_retry_exhaustion(self):
@@ -583,83 +676,131 @@ class TestMCPIntegrationScenarios:
 
     @pytest.mark.asyncio
     async def test_agent_creation_workflow(self):
-        """Test complete agent creation workflow."""
+        """Test complete agent creation workflow via the real (non-fallback)
+        call path.
+
+        The class-wide setup_method mocks RetryHandler/RetryConfig with a
+        plain (non-async) Mock, which (combined with a session result that
+        doesn't match the real ``.content[0].text`` shape) would silently
+        force call_tool's exception-driven fallback path -- making any
+        assertion here pass for the wrong reason. This test instead wires
+        ``_retry_handler.execute_async`` to actually invoke the wrapped
+        coroutine and gives the mocked session a spec-correct result, so the
+        assertions exercise the real AgentSpecification -> backend tool-call
+        conversion and the genuine parsed MCPResponse.
+        """
         from traigent.cloud.models import AgentSpecification
 
-        # Create proper AgentSpecification object
         agent_spec = AgentSpecification(
             name="test_optimization_agent", agent_type="optimization"
         )
+        backend_payload = {"agent_id": "agent_123", "status": "created"}
 
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
+            mock_result = Mock()
+            mock_result.content = [Mock(text=json.dumps(backend_payload))]
+            mock_session.call_tool = AsyncMock(return_value=mock_result)
+            self.client._session = mock_session
 
-            # Mock successful tool calls
-            mock_session.call_tool = AsyncMock(
-                return_value={"result": {"agent_id": "agent_123", "status": "created"}}
-            )
+            async def fake_execute_async(func):
+                res = await func()
+                return Mock(success=True, result=res, last_exception=None)
 
-            if hasattr(self.client, "_session"):
-                self.client._session = mock_session
+            self.client._retry_handler.execute_async = fake_execute_async
 
-                if hasattr(self.client, "create_agent"):
-                    result = await self.client.create_agent(agent_spec)
-                    assert result is not None
+            with patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_connected:
+                mock_connected.return_value = True
+                result = await self.client.create_agent(agent_spec)
+
+            called_tool_name, called_args = mock_session.call_tool.call_args[0]
+            assert called_tool_name == "create_agent"
+            assert called_args["name"] == "test_optimization_agent"
+
+            assert result.success is True
+            assert result.is_fallback is False
+            assert json.loads(result.data) == backend_payload
 
     @pytest.mark.asyncio
     async def test_optimization_request_workflow(self):
-        """Test optimization request workflow."""
-        optimization_request = {
-            "agent_id": "agent_123",
-            "dataset_id": "dataset_456",
-            "optimization_type": "hyperparameter_tuning",
-            "target_metric": "accuracy",
-        }
+        """ProductionMCPClient has no start_optimization method; its real
+        coordinated entry point is create_optimization_workflow(), which
+        chains create_agent -> upload_dataset -> create_experiment ->
+        start_experiment_run and returns their resolved IDs as a tuple.
+        """
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
 
-        with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
-            mock_session = AsyncMock()
+        agent_spec = AgentSpecification(name="opt_agent", agent_type="optimization")
+        example = EvaluationExample(input_data={"x": 1}, expected_output="y")
+        dataset = Dataset(name="opt_dataset", examples=[example])
+        optimization_request = OptimizationRequest(
+            function_name="test_function",
+            dataset=dataset,
+            configuration_space={"temperature": [0.1, 0.9]},
+            objectives=["maximize"],
+            max_trials=5,
+            agent_specification=agent_spec,
+        )
 
-            mock_session.call_tool = AsyncMock(
-                return_value={
-                    "result": {
-                        "optimization_id": "opt_789",
-                        "status": "started",
-                        "estimated_duration": 3600,
-                    }
-                }
-            )
+        call_tool_responses = [
+            MCPResponse(success=True, data=json.dumps({"agent_id": "agent_123"})),
+            MCPResponse(success=True, data=json.dumps({"example_set_id": "es_456"})),
+            MCPResponse(success=True, data=json.dumps({"experiment_id": "exp_789"})),
+            MCPResponse(success=True, data=json.dumps({"experiment_run_id": "run_001"})),
+        ]
 
-            if hasattr(self.client, "_session"):
-                self.client._session = mock_session
+        with patch.object(
+            self.client, "call_tool", new=AsyncMock(side_effect=call_tool_responses)
+        ) as mock_call_tool:
+            result = await self.client.create_optimization_workflow(optimization_request)
 
-                if hasattr(self.client, "start_optimization"):
-                    result = await self.client.start_optimization(optimization_request)
-                    assert result is not None
+        assert result == ("agent_123", "exp_789", "run_001")
+        called_tool_names = [c.args[0] for c in mock_call_tool.call_args_list]
+        assert called_tool_names == [
+            "create_agent",
+            "upload_example_set",
+            "create_experiment",
+            "start_experiment_run",
+        ]
 
     @pytest.mark.asyncio
     async def test_status_monitoring_workflow(self):
-        """Test status monitoring workflow."""
+        """ProductionMCPClient has no get_task_status method; operation
+        progress/status is monitored via get_statistics(), whose counters
+        must track each call_tool invocation made against a task.
+        """
         task_id = "opt_789"
 
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
+            mock_result = Mock()
+            mock_result.content = [Mock(text='{"status": "running"}')]
+            mock_session.call_tool = AsyncMock(return_value=mock_result)
+            self.client._session = mock_session
 
-            # Mock status progression
-            status_responses = [
-                {"result": {"status": "running", "progress": 0.3}},
-                {"result": {"status": "running", "progress": 0.7}},
-                {"result": {"status": "completed", "progress": 1.0}},
-            ]
+            async def fake_execute_async(func):
+                res = await func()
+                return Mock(success=True, result=res, last_exception=None)
 
-            mock_session.call_tool = AsyncMock(side_effect=status_responses)
+            self.client._retry_handler.execute_async = fake_execute_async
 
-            if hasattr(self.client, "_session"):
-                self.client._session = mock_session
+            with patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_connected:
+                mock_connected.return_value = True
+                for i in range(3):
+                    await self.client.call_tool(
+                        "get_status", {"task_id": task_id}, operation_id=f"op-{i}"
+                    )
 
-                if hasattr(self.client, "get_task_status"):
-                    for _expected_response in status_responses:
-                        result = await self.client.get_task_status(task_id)
-                        assert result is not None
+            stats = self.client.get_statistics()
+            assert stats["total_requests"] == 3
+            assert stats["successful_requests"] == 3
+            assert stats["cached_results"] == 3
 
 
 class TestMCPServerConfigValidation:
@@ -1181,9 +1322,7 @@ class TestGlobalMCPClientFunctions:
     def test_get_production_mcp_client_creates_new(self):
         """Test get_production_mcp_client creates new client."""
         from traigent.cloud import production_mcp_client
-        from traigent.cloud.production_mcp_client import (
-            get_production_mcp_client,
-        )
+        from traigent.cloud.production_mcp_client import get_production_mcp_client
 
         # Ensure no client exists
         production_mcp_client._production_client = None
@@ -1236,9 +1375,7 @@ class TestGlobalMCPClientFunctions:
 
     def test_get_production_mcp_client_returns_existing(self):
         """Test get_production_mcp_client returns existing client."""
-        from traigent.cloud.production_mcp_client import (
-            get_production_mcp_client,
-        )
+        from traigent.cloud.production_mcp_client import get_production_mcp_client
 
         with patch(
             "traigent.cloud.production_mcp_client.RetryConfig"
@@ -1326,7 +1463,20 @@ class TestMCPConfiguration:
 
                 for config in valid_configs:
                     client = ProductionMCPClient(config)
-                    assert client is not None
+                    # The documented configuration contract: the client
+                    # surfaces the accepted/defaulted field VALUES on
+                    # server_config, not merely an object reference.
+                    assert client.server_config.server_path == "python"
+                    assert client.server_config.timeout == 30.0
+                    assert client.server_config.max_retries == 3
+                    assert client.server_config.retry_delay == 1.0
+
+                # server_args, when provided, is preserved (whitespace-
+                # stripped) on the documented config contract.
+                client_with_args = ProductionMCPClient(
+                    MCPServerConfig(server_path="python", server_args=["-m", "server"])
+                )
+                assert client_with_args.server_config.server_args == ["-m", "server"]
 
     def test_configuration_defaults(self):
         """Test default configuration values."""
