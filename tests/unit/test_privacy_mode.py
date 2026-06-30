@@ -110,6 +110,10 @@ class TestPrivacyCompliance:
             "promotion_policy",
             "tvl_governance",
             "optimization_strategy",
+            # Non-sensitive smart-pruning config (label + numeric bounds only; no
+            # dataset/example content). The server content-scanner above proves it
+            # carries no raw data (violation_count == 0 / compliant is True).
+            "smart_pruning",
             "user_id",
             "billing_tier",
             "metadata",
