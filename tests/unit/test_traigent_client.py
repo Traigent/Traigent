@@ -444,11 +444,17 @@ class TestOptimizeValidation:
         config_space = {}  # No model specified — edge_analytics auto-fills it
         objectives = ["accuracy"]
 
-        # Should not raise; edge_analytics fills model with default
         result = await client.optimize(
             test_func, dataset, config_space, objectives, max_trials=1
         )
-        assert result is not None
+
+        assert result["execution_mode"] == "edge_analytics"
+        assert result["status"] == "completed"
+        assert result["completed_trials"] == 1
+        assert (
+            result["best_configuration"]["configuration"]["model"]
+            == "gpt-3.5-turbo"
+        )
 
     @pytest.mark.asyncio
     async def test_optimize_edge_analytics_missing_agent_builder(self) -> None:
@@ -784,7 +790,7 @@ class TestOptimizeSaaS:
     async def test_optimize_saas_invalid_poll_interval(
         self, mock_client: TraigentClient
     ) -> None:
-        """Test SaaS optimization handles invalid poll interval."""
+        """A non-positive poll_interval is clamped to the 0.1s minimum."""
 
         def test_func() -> str:
             return "test"
@@ -804,22 +810,33 @@ class TestOptimizeSaaS:
             return_value={"session_id": "session_456"}
         )
         mock_client.backend_client.get_session_status = AsyncMock(
-            return_value={"status": "COMPLETED", "completed_trials": 5}
+            side_effect=[
+                {"status": "RUNNING", "completed_trials": 1},
+                {"status": "COMPLETED", "completed_trials": 5},
+            ]
         )
         mock_client.backend_client.get_optimization_results = AsyncMock(
             return_value={"best_configuration": {"model": "gpt-4"}}
         )
 
-        # Should use 0.1 as minimum poll interval
-        result = await mock_client.optimize(
-            test_func,
-            dataset,
-            config_space,
-            objectives,
-            max_trials=5,
-            optimization_config={"poll_interval": -1.0},
-        )
-        assert result is not None  # Method returns results
+        with patch(
+            "traigent.traigent_client.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep:
+            result = await mock_client.optimize(
+                test_func,
+                dataset,
+                config_space,
+                objectives,
+                max_trials=5,
+                optimization_config={"poll_interval": -1.0},
+            )
+
+        # Non-positive poll_interval must be clamped to the 0.1s minimum
+        mock_sleep.assert_awaited_once_with(0.1)
+        assert result == {
+            "best_configuration": {"model": "gpt-4"},
+            "execution_mode": "cloud",
+        }
 
 
 class TestOptimizeLocal:

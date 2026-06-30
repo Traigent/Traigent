@@ -6,6 +6,7 @@ Run with: TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/langchain/ -v
 
 from __future__ import annotations
 
+import logging
 import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -402,13 +403,21 @@ class TestTraigentHandlerLLMCallbacks:
         assert call.total_tokens == 30
         assert call.end_time is not None
 
-    def test_on_llm_end_unknown_call(self, handler):
-        """Test on_llm_end for unknown call doesn't crash."""
+    def test_on_llm_end_unknown_call(self, handler, caplog):
+        """on_llm_end for an unknown run_id is a no-op that logs a warning."""
         mock_response = MagicMock()
         mock_response.llm_output = {}
 
-        # Should not raise
-        handler.on_llm_end(response=mock_response, run_id="unknown-id")
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.integrations.langchain.handler"
+        ):
+            handler.on_llm_end(response=mock_response, run_id="unknown-id")
+
+        assert any(
+            "LLM end for unknown call: unknown-id" in record.message
+            for record in caplog.records
+        )
+        assert handler.get_metrics().llm_calls == []
 
     def test_on_llm_error(self, handler):
         """Test on_llm_error callback."""
