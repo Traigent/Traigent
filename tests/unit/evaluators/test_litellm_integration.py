@@ -298,22 +298,28 @@ class TestTokencostIntegration:
         response = MockOpenAIResponse("positive", 15, 8)
         model_name = "gpt-4o-mini"
 
-        with (
-            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
-            patch(
-                "traigent.evaluators.metrics_tracker.calculate_prompt_cost"
-            ) as mock_prompt_cost,
-        ):
-            # Make litellm raise an exception
-            mock_prompt_cost.side_effect = Exception("litellm API error")
+        # Token usage is present, so _compute_cost takes the preferred
+        # cost_from_tokens() path (not the deprecated calculate_prompt_cost
+        # text path) - patch the function actually on the call path so the
+        # injected exception is really exercised.
+        with patch(
+            "traigent.utils.cost_calculator.cost_from_tokens"
+        ) as mock_cost_from_tokens:
+            mock_cost_from_tokens.side_effect = Exception("litellm API error")
 
             # Should not raise exception, should fallback gracefully
             metrics = extract_llm_metrics(response=response, model_name=model_name)
 
-            # Verify tokens still extracted - cost may or may not be calculated
-            # depending on whether the mock worked
+            mock_cost_from_tokens.assert_called_once_with(
+                15, 8, "gpt-4o-mini", strict=False
+            )
+            # Tokens are extracted independently of cost calculation
             assert metrics.tokens.total_tokens == 23
-            # Just verify it doesn't crash - cost calculation is handled elsewhere
+            # On a cost-calculation failure, cost falls back to zero rather
+            # than a stale or partially-computed value
+            assert metrics.cost.total_cost == 0.0
+            assert metrics.cost.input_cost == 0.0
+            assert metrics.cost.output_cost == 0.0
 
 
 class TestLocalEvaluatorWithTokencost:

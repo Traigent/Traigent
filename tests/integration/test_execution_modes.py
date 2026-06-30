@@ -180,6 +180,20 @@ class TestExecutionModes:
         assert mode == "edge_analytics"
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "OptimizerDirectClient.submit_metrics buffers under a lock and "
+            "flushes whenever buffer_size==1 (optimizer_client.py "
+            "submit_metrics), so each sequential call self-flushes before "
+            "the next item can join it. With batch_size=2 and 2 sequential "
+            "submissions this issues two single-item POSTs to "
+            "'{endpoint}/{session_id}' instead of one batched POST to "
+            "'{endpoint}/{session_id}/batch' with both submissions - "
+            "contradicts the documented batching contract. "
+            "weak-test-ratchet bug candidate."
+        ),
+    )
     async def test_metric_submission_batching(self, monkeypatch):
         """Test metric submission batching in optimizer client."""
         monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
@@ -193,7 +207,16 @@ class TestExecutionModes:
             mock_response.json = AsyncMock(return_value={"status": "accepted"})
             mock_response.raise_for_status = Mock()
 
-            mock_session.post = AsyncMock(return_value=mock_response)
+            # `session.post(...)` must behave like aiohttp's real API: a
+            # synchronous call returning an async context manager. A bare
+            # AsyncMock here makes `session.post(...)` return a coroutine,
+            # which breaks `async with` and silently routes every call
+            # through the except-and-log error path - masking the actual
+            # request behavior being tested.
+            post_cm = AsyncMock()
+            post_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            post_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_session.post = Mock(return_value=post_cm)
             mock_session.close = AsyncMock()
             MockSession.return_value = mock_session
 
@@ -225,8 +248,14 @@ class TestExecutionModes:
                 # Should trigger batch submission
                 await asyncio.sleep(0.2)
 
-            # Verify batch submission was called
-            assert mock_session.post.called
+            # With batch_size=2, two submissions for the same session should
+            # be flushed together as a single batched POST to the
+            # "/batch" endpoint, carrying both submissions.
+            assert mock_session.post.call_count == 1
+            call_url, call_kwargs = mock_session.post.call_args
+            assert call_url[0] == "http://optimizer:8000/api/v1/metrics/session1/batch"
+            submissions = call_kwargs["json"]["submissions"]
+            assert [s["trial_id"] for s in submissions] == ["trial1", "trial2"]
 
     def test_invalid_mode_raises_configuration_error(self, mock_agent_builder):
         """Test that invalid modes raise ConfigurationError."""

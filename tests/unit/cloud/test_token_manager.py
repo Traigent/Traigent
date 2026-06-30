@@ -293,7 +293,10 @@ class TestScheduleRefresh:
 
         token_manager.schedule_refresh(credentials)
 
-        assert token_manager.refresh_task is not None
+        # schedule_refresh creates and tracks a live asyncio.Task that sleeps
+        # until the refresh window, rather than e.g. running synchronously.
+        assert isinstance(token_manager.refresh_task, asyncio.Task)
+        assert not token_manager.refresh_task.done()
         # Clean up
         token_manager.refresh_task.cancel()
         try:
@@ -312,7 +315,8 @@ class TestScheduleRefresh:
 
         token_manager.schedule_refresh(credentials)
 
-        assert token_manager.refresh_task is not None
+        assert isinstance(token_manager.refresh_task, asyncio.Task)
+        assert not token_manager.refresh_task.done()
         # Clean up
         token_manager.refresh_task.cancel()
         try:
