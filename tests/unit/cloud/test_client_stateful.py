@@ -10,6 +10,7 @@ from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     OptimizationSessionStatus,
     SessionObjectiveDefinition,
+    SessionSummary,
     TrialResultSubmission,
     TrialStatus,
 )
@@ -727,3 +728,125 @@ class TestErrorHandling:
         message = str(excinfo.value)
         assert "Forbidden" in message
         assert "Re-authenticate" in message
+
+
+class TestListSessions:
+    """GET /api/v1/sessions -> typed SessionSummary list (P3 orphan cleanup)."""
+
+    @staticmethod
+    def _mock_list_response(mock_session, payload):
+        response = Mock()
+        response.status = 200
+        response.json = AsyncMock(return_value=payload)
+        mock_session.get.return_value.__aenter__.return_value = response
+        return response
+
+    @pytest.mark.asyncio
+    async def test_parses_backend_response_into_typed_summaries(
+        self, cloud_client, mock_session
+    ):
+        cloud_client._aio_session = mock_session
+        self._mock_list_response(
+            mock_session,
+            {
+                "sessions": [
+                    {
+                        "session_id": "s-1",
+                        "status": "running",
+                        "created_at": "2026-01-01T00:00:00",
+                        "progress": {"completed": 5, "total": 10},
+                    },
+                    {"session_id": "s-2", "status": "completed"},
+                ],
+                "total": 2,
+            },
+        )
+
+        result = await cloud_client.list_sessions()
+
+        assert len(result) == 2
+        assert all(isinstance(s, SessionSummary) for s in result)
+        assert result[0].session_id == "s-1"
+        assert result[0].status == "running"
+        assert result[0].created_at == "2026-01-01T00:00:00"
+        assert result[0].progress == {"completed": 5, "total": 10}
+        assert result[1].session_id == "s-2"
+        # Real endpoint call, not a stub.
+        called_url = mock_session.get.call_args[0][0]
+        expected = f"{BackendConfig.get_backend_api_url().rstrip('/')}/sessions"
+        assert called_url == expected
+
+    @pytest.mark.asyncio
+    async def test_passes_status_and_pattern_query_params(
+        self, cloud_client, mock_session
+    ):
+        cloud_client._aio_session = mock_session
+        self._mock_list_response(mock_session, {"sessions": [], "total": 0})
+
+        await cloud_client.list_sessions(status="running", pattern="exp-*")
+
+        params = mock_session.get.call_args.kwargs["params"]
+        assert params == {"status": "running", "pattern": "exp-*"}
+
+    @pytest.mark.asyncio
+    async def test_omits_unset_query_params(self, cloud_client, mock_session):
+        cloud_client._aio_session = mock_session
+        self._mock_list_response(mock_session, {"sessions": [], "total": 0})
+
+        await cloud_client.list_sessions()
+
+        assert mock_session.get.call_args.kwargs["params"] == {}
+
+    @pytest.mark.asyncio
+    async def test_applies_client_side_limit(self, cloud_client, mock_session):
+        cloud_client._aio_session = mock_session
+        self._mock_list_response(
+            mock_session,
+            {
+                "sessions": [
+                    {"session_id": f"s-{i}", "status": "running"} for i in range(3)
+                ],
+                "total": 3,
+            },
+        )
+
+        result = await cloud_client.list_sessions(limit=2)
+
+        assert [s.session_id for s in result] == ["s-0", "s-1"]
+
+    @pytest.mark.asyncio
+    async def test_empty_list_and_forward_compatible_extra_fields(
+        self, cloud_client, mock_session
+    ):
+        cloud_client._aio_session = mock_session
+        # empty
+        self._mock_list_response(mock_session, {"sessions": [], "total": 0})
+        assert await cloud_client.list_sessions() == []
+        # extra/unknown server field preserved in .extra, not dropped
+        self._mock_list_response(
+            mock_session,
+            {
+                "sessions": [
+                    {"session_id": "s-1", "status": "running", "tenant_id": "t-1"}
+                ],
+                "total": 1,
+            },
+        )
+        result = await cloud_client.list_sessions()
+        assert result[0].extra == {"tenant_id": "t-1"}
+
+    @pytest.mark.asyncio
+    async def test_delete_session_defaults_to_non_destructive(
+        self, cloud_client, mock_session
+    ):
+        cloud_client._aio_session = mock_session
+        response = Mock()
+        response.status = 200
+        response.text = AsyncMock(return_value="")
+        mock_session.delete = Mock(return_value=AsyncMock())
+        mock_session.delete.return_value.__aenter__ = AsyncMock(return_value=response)
+        mock_session.delete.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        await cloud_client.delete_session("s-1")
+
+        assert mock_session.delete.call_args.kwargs["params"] == {"cascade": "false"}
