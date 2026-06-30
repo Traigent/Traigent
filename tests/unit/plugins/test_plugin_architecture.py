@@ -627,10 +627,20 @@ class TestPluginVersionEnforcement:
 
         # Should register without error
         registry.register_plugin(plugin)
-        assert registry.get_plugin("test-compatible-plugin") is not None
+
+        # get_plugin documents "Returns: Plugin instance" - the returned
+        # plugin's public identity and feature should match what was
+        # registered, and its feature should be queryable via has_feature.
+        retrieved = registry.get_plugin("test-compatible-plugin")
+        assert retrieved.name == plugin.name
+        assert retrieved.version == plugin.version
+        assert retrieved.provides_features() == plugin.provides_features()
+        assert registry.has_feature("test_compat_feature") is True
 
         # Cleanup
         registry.unregister_plugin("test-compatible-plugin")
+        assert registry.get_plugin("test-compatible-plugin") is None
+        assert registry.has_feature("test_compat_feature") is False
 
     def test_incompatible_plugin_raises_version_error(self):
         """Plugin requiring future version should fail to register."""

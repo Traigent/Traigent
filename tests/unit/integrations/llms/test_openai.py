@@ -215,7 +215,7 @@ class TestModuleLevelFunctions:
         """Test enable_openai_optimization with specific client types."""
         client_types = ["openai.OpenAI"]
         enable_openai_optimization(client_types)
-        assert mock_enable.called
+        mock_enable.assert_called_once_with(["openai.OpenAI"])
 
     def test_get_supported_openai_clients(self) -> None:
         """Test get_supported_openai_clients returns correct list."""
@@ -393,11 +393,15 @@ class TestStreamingOptimization:
     def test_streaming_optimization_attempts_config_set(
         self, mock_enable: MagicMock
     ) -> None:
-        """Test enable_streaming_optimization attempts to set config."""
-        # Just verify it doesn't crash - actual config setting depends
-        # on the broken import
+        """Test enable_streaming_optimization sets stream=True in the config."""
         enable_streaming_optimization()
-        assert mock_enable.called
+
+        mock_enable.assert_called_once_with()
+
+        mock_set_config = sys.modules["traigent.integrations.config"].context.set_config
+        mock_set_config.assert_called_once()
+        config = mock_set_config.call_args[0][0]
+        assert config.custom_params == {"stream": True}
 
 
 class TestToolsOptimization:
@@ -438,7 +442,7 @@ class TestToolsOptimization:
     def test_tools_optimization_accepts_tools_parameter(
         self, mock_enable: MagicMock
     ) -> None:
-        """Test enable_tools_optimization accepts tools parameter."""
+        """Test enable_tools_optimization includes the tools in config."""
         tools = [
             {
                 "type": "function",
@@ -453,15 +457,25 @@ class TestToolsOptimization:
             }
         ]
         enable_tools_optimization(tools)
-        assert mock_enable.called
+
+        mock_enable.assert_called_once_with()
+        mock_set_config = sys.modules["traigent.integrations.config"].context.set_config
+        mock_set_config.assert_called_once()
+        config = mock_set_config.call_args[0][0]
+        assert config.custom_params == {"tools": tools}
 
     @patch("traigent.integrations.llms.openai.enable_openai_optimization")
     def test_tools_optimization_accepts_empty_list(
         self, mock_enable: MagicMock
     ) -> None:
-        """Test enable_tools_optimization accepts empty tools list."""
+        """Test enable_tools_optimization omits tools key for an empty list."""
         enable_tools_optimization([])
-        assert mock_enable.called
+
+        mock_enable.assert_called_once_with()
+        mock_set_config = sys.modules["traigent.integrations.config"].context.set_config
+        mock_set_config.assert_called_once()
+        config = mock_set_config.call_args[0][0]
+        assert config.custom_params == {}
 
 
 class TestGlobalIntegrationInstance:
@@ -480,7 +494,12 @@ class TestGlobalIntegrationInstance:
     @patch("traigent.integrations.llms.openai.enable_framework_overrides")
     def test_module_functions_use_global_instance(self, mock_enable: MagicMock) -> None:
         """Test that module-level functions use the global instance."""
-        # Call module function
+        # Call module function with no explicit client types
         enable_openai_optimization()
-        # Should have been called (proving global instance is being used)
-        assert mock_enable.called
+
+        # The global instance's supported_clients (both OpenAI client types)
+        # should have been passed through, proving the call was routed via
+        # the global _openai_integration instance rather than a fresh one.
+        mock_enable.assert_called_once()
+        called_clients = mock_enable.call_args[0][0]
+        assert sorted(called_clients) == ["openai.AsyncOpenAI", "openai.OpenAI"]
