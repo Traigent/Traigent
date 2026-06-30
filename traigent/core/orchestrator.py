@@ -101,6 +101,7 @@ from traigent.core.workflow_trace_manager import WorkflowTraceManager
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
+from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
 from traigent.utils.env_config import (  # noqa: F401
@@ -2588,6 +2589,10 @@ class OptimizationOrchestrator:
                 self._stop_reason = "vendor_error"
                 return trial_count, "break"
             return trial_count, "continue"  # User chose to resume
+        except CloudBrainOptimizationComplete as complete:
+            self._stop_reason = cast(StopReason, complete.stop_reason)
+            logger.info("Cloud brain completed optimization: %s", complete.reason)
+            return trial_count, "break"
 
     @staticmethod
     def _vendor_retry_settings() -> tuple[int, float]:

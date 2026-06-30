@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 from traigent.api.types import TrialResult
 from traigent.api.types import TrialStatus as SDKTrialStatus
@@ -94,7 +94,7 @@ def _coerce_trial_status(status: TrialStatusLike) -> Any:
 
 def _is_completed_status(status: TrialStatusLike) -> bool:
     """Check completion across SDK and cloud status enums."""
-    return getattr(status, "value", status) == "completed"
+    return bool(getattr(status, "value", status) == "completed")
 
 
 def _string_sequence(value: Any) -> tuple[str, ...]:
@@ -102,6 +102,23 @@ def _string_sequence(value: Any) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple, set)):
         return ()
     return tuple(str(item) for item in value if item)
+
+
+class CloudBrainOptimizationComplete(RuntimeError):
+    """Normal cloud-brain terminal signal from the next-trial API."""
+
+    def __init__(self, reason: str | None = None) -> None:
+        self.reason = reason or "cloud brain completed optimization"
+        super().__init__(self.reason)
+
+    @property
+    def stop_reason(self) -> str:
+        normalized = self.reason.lower().replace("-", "_").replace(" ", "_")
+        if "max" in normalized and "trial" in normalized:
+            return "max_trials_reached"
+        if "conver" in normalized:
+            return "convergence"
+        return "optimizer"
 
 
 class RemoteGuidanceService(Protocol):
@@ -185,6 +202,7 @@ class InteractiveOptimizer(BaseOptimizer):
         self._pending_trials: dict[str, TrialSuggestion] = {}
         self._completed_trials: list[TrialResultSubmission] = []
         self._start_time: float | None = None
+        self._completion_reason: str | None = None
 
     async def initialize_session(
         self,
@@ -288,9 +306,13 @@ class InteractiveOptimizer(BaseOptimizer):
                 self.session.status = response.session_status
 
             if not response.should_continue or not response.suggestion:
-                logger.info(f"Optimization complete: {response.reason}")
+                self._completion_reason = (
+                    response.reason or "cloud brain completed optimization"
+                )
+                logger.info(f"Optimization complete: {self._completion_reason}")
                 return None
 
+            self._completion_reason = None
             suggestion = response.suggestion
 
             # Store pending trial
@@ -323,7 +345,7 @@ class InteractiveOptimizer(BaseOptimizer):
             dataset_size=max(dataset_size, 1),
         )
         if suggestion is None:
-            raise OptimizationError("Cloud brain returned no further suggestions")
+            raise CloudBrainOptimizationComplete(self._completion_reason)
 
         config = dict(suggestion.config or {})
         config["_traigent_backend_trial_id"] = suggestion.trial_id
@@ -509,8 +531,8 @@ class InteractiveOptimizer(BaseOptimizer):
         # Simple comparison on primary objective
         if self.objectives and self.objectives[0] in metrics:
             primary = self.objectives[0]
-            current = metrics.get(primary, 0)
-            best = self.session.best_metrics.get(primary, 0)
+            current = float(metrics.get(primary, 0.0))
+            best = float(self.session.best_metrics.get(primary, 0.0))
 
             # Assume higher is better for now
             return current > best
@@ -568,7 +590,10 @@ class InteractiveOptimizer(BaseOptimizer):
                 ),
                 effectuation_events=result_metadata.get("effectuation_events"),
             )
-            return merge_tvar_observation_metadata(result_metadata, observation)
+            return cast(
+                dict[str, Any],
+                merge_tvar_observation_metadata(result_metadata, observation),
+            )
         except Exception as exc:
             logger.debug(
                 "Skipping TVAR observation metadata for trial %s: %s",
