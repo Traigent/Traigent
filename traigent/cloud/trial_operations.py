@@ -11,6 +11,7 @@ import concurrent.futures
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,30 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class TrialSlotResult:
+    """Neutral result for a backend trial-slot request."""
+
+    trial_id: str | None = None
+    optimization_complete: bool = False
+    reason: str | None = None
+
+    def __bool__(self) -> bool:
+        return bool(self.trial_id)
+
+    @classmethod
+    def acquired(cls, trial_id: str) -> "TrialSlotResult":
+        return cls(trial_id=trial_id)
+
+    @classmethod
+    def complete(cls, reason: str | None = None) -> "TrialSlotResult":
+        return cls(optimization_complete=True, reason=reason)
+
+    @classmethod
+    def unavailable(cls) -> "TrialSlotResult":
+        return cls()
 
 
 class TrialOperations:
@@ -380,7 +405,7 @@ class TrialOperations:
     async def request_trial_slot(
         self,
         session_id: str,
-    ) -> str | None:
+    ) -> TrialSlotResult:
         """Acquire a BACKEND-minted trial id (configuration_run) for a session.
 
         The backend mints configuration_run ids only through its
@@ -392,25 +417,26 @@ class TrialOperations:
         and the backend's own suggested config is irrelevant to the SDK.
 
         Returns:
-            The backend-minted trial id, or ``None`` when no slot could be
-            acquired (offline mode, transport unavailable, non-2xx, or the
-            backend declined to suggest a further trial). ``None`` NEVER means
-            "use a client id" — callers fail closed on it (Rule 2: no fake
-            trial acknowledgment).
+            A neutral slot result. ``trial_id`` means a backend-minted slot was
+            acquired. ``optimization_complete`` means a successful next-trial
+            response explicitly returned ``should_continue=False`` without a
+            trial id. Any other no-slot/error condition returns an unavailable
+            result; callers still fail closed on it (Rule 2: no fake trial
+            acknowledgment).
         """
-        # Skip backend calls in offline mode — None lets callers distinguish
-        # "skipped" from "acquired" (Rule 2: no fake completion).
+        # Skip backend calls in offline mode — an unavailable result lets
+        # callers distinguish "skipped" from "acquired" (Rule 2: no fake completion).
         if is_backend_offline():
             logger.debug(
                 "Offline mode: skipping trial-slot request for session %s",
                 session_id,
             )
-            return None
+            return TrialSlotResult.unavailable()
         self._raise_if_backend_egress_disabled("get next trial")
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping trial-slot request")
-            return None
+            return TrialSlotResult.unavailable()
 
         try:
             headers = await self.client.auth_manager.augment_headers(
@@ -446,7 +472,21 @@ class TrialOperations:
                                 trial_id,
                                 session_id,
                             )
-                            return trial_id
+                            return TrialSlotResult.acquired(trial_id)
+                        if (
+                            isinstance(data, dict)
+                            and data.get("should_continue") is False
+                        ):
+                            reason = data.get("stop_reason") or data.get("reason")
+                            logger.info(
+                                "Backend next-trial completed optimization for session %s "
+                                "(reason=%s)",
+                                session_id,
+                                reason,
+                            )
+                            return TrialSlotResult.complete(
+                                str(reason) if reason else None
+                            )
                         logger.info(
                             "Backend next-trial returned no slot for session %s "
                             "(should_continue=%s)",
@@ -457,7 +497,7 @@ class TrialOperations:
                                 else None
                             ),
                         )
-                        return None
+                        return TrialSlotResult.unavailable()
                     if response.status == 403:
                         error_msg = await response.text()
                         self._log_ownership_forbidden(
@@ -466,26 +506,26 @@ class TrialOperations:
                             response.status,
                             error_msg,
                         )
-                        return None
+                        return TrialSlotResult.unavailable()
                     logger.warning(
                         "Failed to acquire trial slot for session %s: HTTP %s",
                         session_id,
                         response.status,
                     )
-                    return None
+                    return TrialSlotResult.unavailable()
         except Exception as exc:
             if is_backend_offline():
                 logger.debug(
                     "Offline mode: trial-slot request encountered %s; skipping",
                     exc,
                 )
-                return None
+                return TrialSlotResult.unavailable()
             logger.exception(
                 "Error requesting trial slot for session %s (%s)",
                 session_id,
                 self._describe_backend(),
             )
-            return None
+            return TrialSlotResult.unavailable()
 
     def _extract_measures_from_metrics(
         self, metrics: dict[str, Any]

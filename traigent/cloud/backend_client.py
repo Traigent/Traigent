@@ -64,7 +64,7 @@ from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
-from traigent.cloud.trial_operations import TrialOperations
+from traigent.cloud.trial_operations import TrialOperations, TrialSlotResult
 from traigent.cloud.url_security import (
     CloudUrlUnreachableError,
     validate_cloud_base_url,
@@ -2015,16 +2015,15 @@ class BackendIntegratedClient:
             self._trial_ops.register_trial_start_sync(session_id, trial_id, config),
         )
 
-    async def request_trial_slot(self, session_id: str) -> str | None:
+    async def request_trial_slot(self, session_id: str) -> TrialSlotResult:
         """Acquire a backend-minted trial id (configuration_run) for a session.
         Delegates to trial_operations module.
 
         Returns:
-            The backend-minted trial id, or ``None`` when no slot could be
-            acquired (offline / transport unavailable / non-2xx / backend
-            declined). ``None`` never means "use a client id".
+            A neutral slot result: acquired backend trial id, explicit
+            optimization-complete signal, or unavailable/error.
         """
-        return cast(str | None, await self._trial_ops.request_trial_slot(session_id))
+        return await self._trial_ops.request_trial_slot(session_id)
 
     def _generate_trial_id(
         self,

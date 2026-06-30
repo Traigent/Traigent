@@ -431,11 +431,7 @@ class TrialLifecycle:
                     lambda: frozenset(),
                 )(),
             )
-            if isinstance(backend_trial_id, str) and backend_trial_id:
-                metadata = dict(result.metadata or {})
-                metadata["backend_trial_id_acquired"] = True
-                metadata["backend_trial_id_source"] = "cloud_brain"
-                result.metadata = metadata
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
 
@@ -463,6 +459,7 @@ class TrialLifecycle:
                 prune_error,
                 is_pruned=True,
             )
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="pruned", error=str(prune_error))
             end_time = time.time()
@@ -479,6 +476,7 @@ class TrialLifecycle:
                 optuna_trial_id,
                 constraint_error,
             )
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="failed", error=str(constraint_error))
             end_time = time.time()
@@ -523,6 +521,7 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="failed", error=str(exc))
             end_time = time.time()
@@ -532,6 +531,18 @@ class TrialLifecycle:
         finally:
             if lease is not None and closure is None:
                 closure = self._finalize_budget_lease(lease)
+
+    @staticmethod
+    def _mark_backend_trial_id_acquired(
+        result: TrialResult,
+        backend_trial_id: str | None,
+    ) -> None:
+        if not isinstance(backend_trial_id, str) or not backend_trial_id:
+            return
+        metadata = dict(result.metadata or {})
+        metadata["backend_trial_id_acquired"] = True
+        metadata["backend_trial_id_source"] = "cloud_brain"
+        result.metadata = metadata
 
     def _apply_effectuation_metadata(
         self,

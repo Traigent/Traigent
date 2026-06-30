@@ -175,6 +175,24 @@ class RecordingSmartPruningManager:
         return {"prune": False, "prune_reason": None}
 
 
+class LowScorePruningManager(RecordingSmartPruningManager):
+    """Prune only when the streamed running score is below the configured floor."""
+
+    def __init__(self, *, score_floor: float) -> None:
+        super().__init__(enabled=True)
+        self.score_floor = score_floor
+
+    def report_intermediate_progress(self, payload: dict[str, object]):
+        self.reports.append(dict(payload))
+        running_score = float(payload.get("running_score") or 0.0)
+        if running_score < self.score_floor:
+            return {
+                "prune": True,
+                "prune_reason": "optimistic ceiling below best",
+            }
+        return {"prune": False, "prune_reason": None}
+
+
 class RaisingIntermediateReportClient:
     """Backend client test double whose intermediate report POST fails."""
 
@@ -428,6 +446,33 @@ class TestCreateProgressTracking:
         assert "output" not in manager.reports[0]
 
     @pytest.mark.asyncio
+    async def test_pruned_cloud_trial_marks_backend_id_acquired(self):
+        """A pruned cloud trial reuses its already-minted backend trial id."""
+        orchestrator = MockOrchestrator()
+        orchestrator.evaluator = SmartPruningEvaluator()
+        manager = RecordingSmartPruningManager(prune_after=1)
+        orchestrator.backend_session_manager = manager
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_real_dataset(size=2)
+
+        result = await lifecycle.run_trial(
+            func=lambda value: value,
+            config={
+                "temperature": 0.2,
+                "_traigent_backend_trial_id": "be-pruned-123",
+            },
+            dataset=dataset,
+            trial_number=1,
+            session_id="session-123",
+        )
+
+        assert result.status == TrialStatus.PRUNED
+        assert result.trial_id == "be-pruned-123"
+        assert result.metadata["backend_trial_id_acquired"] is True
+        assert result.metadata["backend_trial_id_source"] == "cloud_brain"
+        assert manager.reports[0]["trial_id"] == "be-pruned-123"
+
+    @pytest.mark.asyncio
     async def test_cloud_smart_pruning_uses_real_per_example_accuracy(self):
         """Real evaluator progress reports true partial accuracy, not success rate."""
         orchestrator = MockOrchestrator()
@@ -494,6 +539,50 @@ class TestCreateProgressTracking:
         assert "secret prompt" not in reports_text
         assert "correct-" not in reports_text
         assert "wrong-b" not in reports_text
+
+    @pytest.mark.asyncio
+    async def test_cloud_smart_pruning_metric_function_good_config_not_pruned(self):
+        """Detailed progress streams custom objective metrics despite empty expected."""
+        orchestrator = MockOrchestrator()
+
+        def metric(output: dict[str, float], expected: dict[str, object]) -> float:
+            assert expected == {}
+            return float(output["score"])
+
+        orchestrator.evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            metric_functions={"accuracy": metric},
+        )
+        manager = LowScorePruningManager(score_floor=50.0)
+        orchestrator.backend_session_manager = manager
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = Dataset(
+            examples=[
+                EvaluationExample({"score": 90.0}, {}),
+                EvaluationExample({"score": 95.0}, {}),
+            ],
+            name="smart-pruning-custom-metric",
+        )
+
+        def answer(score: float) -> dict[str, float]:
+            return {"score": score}
+
+        result = await lifecycle.run_trial(
+            func=answer,
+            config={"temperature": 0.2},
+            dataset=dataset,
+            trial_number=1,
+            session_id="session-123",
+        )
+
+        assert result.status == TrialStatus.COMPLETED
+        assert result.metrics["accuracy"] == pytest.approx(92.5)
+        assert manager.reports
+        assert manager.reports[0]["running_score"] == pytest.approx(90.0)
+        assert manager.reports[1]["running_score"] == pytest.approx(92.5)
+        assert all(float(report["running_score"]) >= 50.0 for report in manager.reports)
+        assert "output" not in str(manager.reports)
 
     @pytest.mark.asyncio
     async def test_cloud_smart_pruning_report_failure_continues_trial(

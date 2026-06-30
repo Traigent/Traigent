@@ -1646,6 +1646,7 @@ class BaseEvaluator(ABC):
                         config,
                         example,
                         i,
+                        dataset,
                         executor=None,
                         progress_callback=progress_callback,
                     )
@@ -2009,6 +2010,7 @@ class BaseEvaluator(ABC):
             consumed, exhausted = await self._run_concurrent_tasks(
                 func,
                 config,
+                dataset,
                 examples,
                 sample_lease,
                 detailed,
@@ -2043,6 +2045,7 @@ class BaseEvaluator(ABC):
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
+        dataset: Dataset,
         examples: list[EvaluationExample],
         sample_lease: SampleBudgetLease | None,
         detailed: bool,
@@ -2066,6 +2069,7 @@ class BaseEvaluator(ABC):
                         config,
                         example,
                         idx,
+                        dataset,
                         executor=None,
                         progress_callback=progress_callback,
                     )
@@ -2238,18 +2242,31 @@ class BaseEvaluator(ABC):
         result: ExampleResult,
         config: dict[str, Any],
         error: str | None,
+        dataset: Dataset,
+        example_index: int,
     ) -> dict[str, Any]:
         """Build progress callback payload with metrics."""
-        metrics_payload = self._build_progress_accuracy_metrics(
-            output=result.actual_output,
-            expected_output=example.expected_output,
-            error=error,
-            example_id=example_id,
-        )
-
         metrics_update, _ = self._extract_response_metrics(
             example_id, example, result, config
         )
+        llm_metrics = dict(result.metrics or metrics_update)
+
+        metrics_payload = self._build_progress_objective_metrics(
+            example=example,
+            result=result,
+            config=config,
+            error=error,
+            dataset=dataset,
+            example_index=example_index,
+            llm_metrics=llm_metrics or None,
+        )
+        if not metrics_payload and not self._has_configured_progress_objective():
+            metrics_payload = self._build_progress_accuracy_metrics(
+                output=result.actual_output,
+                expected_output=example.expected_output,
+                error=error,
+                example_id=example_id,
+            )
         metrics_payload.update(metrics_update)
 
         payload: dict[str, Any] = {
@@ -2260,6 +2277,157 @@ class BaseEvaluator(ABC):
         if metrics_payload:
             payload["metrics"] = metrics_payload
         return payload
+
+    def _has_configured_progress_objective(self) -> bool:
+        """Return True when callers configured a custom per-example objective."""
+        return bool(
+            getattr(self, "metric_functions", None)
+            or getattr(self, "scoring_function", None)
+        )
+
+    def _build_progress_objective_metrics(
+        self,
+        *,
+        example: EvaluationExample,
+        result: ExampleResult,
+        config: dict[str, Any],
+        error: str | None,
+        dataset: Dataset,
+        example_index: int,
+        llm_metrics: dict[str, Any] | None,
+    ) -> dict[str, float]:
+        """Return configured per-example objective metrics for detailed progress."""
+        if error is not None:
+            return {}
+
+        metric_functions = getattr(self, "metric_functions", None) or {}
+        if metric_functions:
+            metrics = self._call_progress_metric_functions(
+                metric_functions=metric_functions,
+                output=result.actual_output,
+                example=example,
+                config=config,
+                dataset=dataset,
+                example_index=example_index,
+                llm_metrics=llm_metrics,
+            )
+            if metrics:
+                return metrics
+
+        scoring_function = getattr(self, "scoring_function", None)
+        if scoring_function is not None:
+            metrics = self._call_progress_scoring_function(
+                output=result.actual_output,
+                example=example,
+                config=config,
+                dataset=dataset,
+                example_index=example_index,
+                llm_metrics=llm_metrics,
+            )
+            if metrics:
+                return metrics
+
+        return {}
+
+    def _call_progress_metric_functions(
+        self,
+        *,
+        metric_functions: Mapping[str, Callable[..., Any]],
+        output: Any,
+        example: EvaluationExample,
+        config: dict[str, Any],
+        dataset: Dataset,
+        example_index: int,
+        llm_metrics: dict[str, Any] | None,
+    ) -> dict[str, float]:
+        """Call configured metric functions using the evaluator's scoring helper."""
+        call_metric_functions = getattr(self, "_call_metric_functions", None)
+        if callable(call_metric_functions):
+            return self._coerce_progress_metrics(
+                call_metric_functions(
+                    output, example, config, dataset, example_index, llm_metrics
+                )
+            )
+
+        invoke_metric = getattr(self, "_invoke_metric_function", None)
+        if callable(invoke_metric):
+            metrics: dict[str, float] = {}
+            for metric_name, metric_func in metric_functions.items():
+                value = invoke_metric(
+                    metric_func,
+                    metric_name,
+                    output,
+                    example,
+                    config,
+                    llm_metrics or {},
+                    example_index,
+                )
+                if isinstance(value, Mapping):
+                    metrics.update(self._coerce_progress_metrics(value))
+                elif value is not None:
+                    try:
+                        metrics[metric_name] = float(value)
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Metric function %s returned non-numeric progress value "
+                            "for example %s",
+                            metric_name,
+                            getattr(example, "example_id", None) or example_index,
+                        )
+            return metrics
+
+        return {}
+
+    def _call_progress_scoring_function(
+        self,
+        *,
+        output: Any,
+        example: EvaluationExample,
+        config: dict[str, Any],
+        dataset: Dataset,
+        example_index: int,
+        llm_metrics: dict[str, Any] | None,
+    ) -> dict[str, float]:
+        """Call configured scoring function using the evaluator's scoring helper."""
+        compute_example_metrics = getattr(self, "_compute_example_metrics", None)
+        if callable(compute_example_metrics):
+            try:
+                return self._coerce_progress_metrics(
+                    compute_example_metrics(
+                        output, example, config, dataset, example_index, llm_metrics
+                    )
+                )
+            except TypeError:
+                logger.debug(
+                    "Evaluator _compute_example_metrics signature does not support "
+                    "detailed progress scoring; trying scoring helper",
+                    exc_info=True,
+                )
+
+        call_scoring_function = getattr(self, "_call_scoring_function", None)
+        if callable(call_scoring_function):
+            return self._coerce_progress_metrics(
+                call_scoring_function(output, example, llm_metrics)
+            )
+
+        return {}
+
+    @staticmethod
+    def _coerce_progress_metrics(values: Mapping[str, Any] | None) -> dict[str, float]:
+        """Keep only finite numeric metrics for the progress payload."""
+        metrics: dict[str, float] = {}
+        if not values:
+            return metrics
+        for name, value in values.items():
+            if isinstance(value, bool) or value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number):
+                metrics[str(name)] = number
+        return metrics
 
     def _build_progress_accuracy_metrics(
         self,
@@ -2435,6 +2603,7 @@ class BaseEvaluator(ABC):
         config: dict[str, Any],
         example: EvaluationExample,
         example_index: int,
+        dataset: Dataset,
         executor: Any | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
     ) -> ExampleResult:
@@ -2501,7 +2670,7 @@ class BaseEvaluator(ABC):
 
             if progress_callback:
                 progress_payload = self._build_progress_payload(
-                    example_id, example, result, config, error
+                    example_id, example, result, config, error, dataset, example_index
                 )
                 try:
                     progress_callback(example_index, progress_payload)

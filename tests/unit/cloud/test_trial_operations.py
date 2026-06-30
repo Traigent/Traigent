@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from traigent.cloud.trial_operations import TrialOperations
+from traigent.cloud.trial_operations import TrialOperations, TrialSlotResult
 
 
 class TestRedactSensitiveFields:
@@ -851,17 +851,17 @@ class TestRequestTrialSlot:
         ):
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
             mock_aiohttp.ClientTimeout = Mock()
-            trial_id = await ops.request_trial_slot("sess-1")
+            slot = await ops.request_trial_slot("sess-1")
 
-        assert trial_id == "trial_be_minted_abc"
+        assert slot == TrialSlotResult.acquired("trial_be_minted_abc")
+        assert slot
         # It hit the next-trial endpoint (where the backend mints the slot).
         url = mock_session.post.call_args.args[0]
         assert url.endswith("/sessions/sess-1/next-trial")
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_suggestion(self) -> None:
-        """Backend declines to suggest a further trial ⇒ None (fail closed;
-        never fabricate a client id)."""
+    async def test_should_continue_false_returns_completion_result(self) -> None:
+        """Graceful backend completion is distinct from genuine no-slot/error."""
         ops = TrialOperations(_mk_slot_client())
 
         mock_response = Mock()
@@ -881,15 +881,21 @@ class TestRequestTrialSlot:
         ):
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
             mock_aiohttp.ClientTimeout = Mock()
-            assert await ops.request_trial_slot("sess-1") is None
+            slot = await ops.request_trial_slot("sess-1")
+
+        assert slot == TrialSlotResult.complete()
+        assert not slot
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_non_2xx(self) -> None:
+    async def test_should_continue_true_without_id_returns_unavailable(self) -> None:
+        """A malformed/empty continuation response is not terminal completion."""
         ops = TrialOperations(_mk_slot_client())
 
         mock_response = Mock()
-        mock_response.status = 404
-        mock_response.text = AsyncMock(return_value="not found")
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"should_continue": True, "suggestion": {}}
+        )
         mock_session_ctx, _ = _aiohttp_post_returning(mock_response)
 
         with (
@@ -902,10 +908,56 @@ class TestRequestTrialSlot:
         ):
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
             mock_aiohttp.ClientTimeout = Mock()
-            assert await ops.request_trial_slot("sess-1") is None
+            slot = await ops.request_trial_slot("sess-1")
+
+        assert slot == TrialSlotResult.unavailable()
+        assert not slot.optimization_complete
 
     @pytest.mark.asyncio
-    async def test_returns_none_in_offline_mode(self) -> None:
+    async def test_non_2xx_returns_unavailable(self) -> None:
+        ops = TrialOperations(_mk_slot_client())
+
+        mock_response = Mock()
+        mock_response.status = 500
+        mock_response.text = AsyncMock(return_value="server error")
+        mock_session_ctx, _ = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+            slot = await ops.request_trial_slot("sess-1")
+
+        assert slot == TrialSlotResult.unavailable()
+        assert not slot.optimization_complete
+
+    @pytest.mark.asyncio
+    async def test_transport_error_returns_unavailable(self) -> None:
+        ops = TrialOperations(_mk_slot_client())
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(side_effect=ConnectionError("boom"))
+            mock_aiohttp.ClientTimeout = Mock()
+            slot = await ops.request_trial_slot("sess-1")
+
+        assert slot == TrialSlotResult.unavailable()
+        assert not slot.optimization_complete
+
+    @pytest.mark.asyncio
+    async def test_offline_mode_returns_unavailable(self) -> None:
         """Offline mode skips the backend entirely (no fake slot)."""
         mock_client = _mk_slot_client()
         ops = TrialOperations(mock_client)
@@ -913,7 +965,8 @@ class TestRequestTrialSlot:
             "traigent.cloud.trial_operations.is_backend_offline",
             return_value=True,
         ):
-            assert await ops.request_trial_slot("sess-1") is None
+            slot = await ops.request_trial_slot("sess-1")
+        assert slot == TrialSlotResult.unavailable()
         mock_client.auth_manager.augment_headers.assert_not_awaited()
 
 

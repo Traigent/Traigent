@@ -33,9 +33,12 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.config.types import TraigentConfig
+from traigent.core.backend_session_manager import BackendTrialSubmissionOutcome
+from traigent.core.cost_enforcement import Permit
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.orchestrator_helpers import allocate_parallel_ceilings
+from traigent.core.parallel_execution_manager import PermittedTrialResult
 from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
@@ -43,6 +46,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
 )
 from traigent.optimizers.base import BaseOptimizer
+from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.utils.exceptions import OptimizationError, TrialPrunedError
 from traigent.utils.file_versioning import FileVersionManager
 
@@ -99,6 +103,32 @@ class MockOptimizer(BaseOptimizer):
     def force_stop(self):
         """Force optimizer to stop."""
         self._should_stop = True
+
+
+class CloudBrainCompletingOptimizer(MockOptimizer):
+    """Async optimizer that completes normally after completed and pruned trials."""
+
+    async def suggest_next_trial_async(
+        self,
+        history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if len(history) == 0:
+            return {"param1": 0, "mode": "complete"}
+        if len(history) == 1:
+            return {"param1": 1, "mode": "prune"}
+        raise CloudBrainOptimizationComplete("max_trials_reached")
+
+
+class CloudBrainFailingOptimizer(MockOptimizer):
+    """Async optimizer that fails suggestion with a genuine transport error."""
+
+    async def suggest_next_trial_async(
+        self,
+        history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        raise OptimizationError("transport failure")
 
 
 class MockEvaluator(BaseEvaluator):
@@ -176,6 +206,31 @@ class MockEvaluator(BaseEvaluator):
     def set_metrics(self, metrics: dict[str, float]):
         """Set metrics to return."""
         self.metrics_to_return = metrics
+
+
+class PruningModeEvaluator(MockEvaluator):
+    """Evaluator that prunes configs marked with mode='prune'."""
+
+    async def evaluate(
+        self,
+        func: Callable,
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        sample_lease=None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        **kwargs,
+    ) -> EvaluationResult:
+        if config.get("mode") == "prune":
+            raise TrialPrunedError("backend pruned", step=1)
+        return await super().evaluate(
+            func,
+            config,
+            dataset,
+            sample_lease=sample_lease,
+            progress_callback=progress_callback,
+            **kwargs,
+        )
 
 
 class TestOptimizationOrchestrator:
@@ -361,6 +416,264 @@ class TestOptimizationOrchestrator:
         for trial_result in result.trials:
             assert trial_result.status == TrialStatus.COMPLETED
             assert trial_result.config is not None
+
+    @pytest.mark.asyncio
+    async def test_cloud_brain_completion_finalizes_completed_and_pruned_trials(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """Normal cloud-brain completion finalizes instead of failing suggestion."""
+        optimizer = CloudBrainCompletingOptimizer(config_space, objectives)
+        evaluator = PruningModeEvaluator()
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "session-cloud-complete"
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=10,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert isinstance(result, OptimizationResult)
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason == "max_trials_reached"
+        assert [trial.status for trial in result.trials] == [
+            TrialStatus.COMPLETED,
+            TrialStatus.PRUNED,
+        ]
+        assert len(result.trials) == 2
+
+    @pytest.mark.asyncio
+    async def test_cloud_brain_suggestion_failure_still_raises(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """Transport or backend suggestion failures are not treated as completion."""
+        optimizer = CloudBrainFailingOptimizer(config_space, objectives)
+        evaluator = MockEvaluator()
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "session-cloud-failure"
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=10,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+
+            with pytest.raises(OptimizationError, match="transport failure"):
+                await orchestrator.optimize(mock_function, sample_dataset)
+
+    @pytest.mark.asyncio
+    async def test_submission_completion_finalizes_cloud_result_with_pruned_trial(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+        monkeypatch,
+    ):
+        """Submission-time completion breaks the loop without local fallback."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        optimizer = MockOptimizer(config_space, objectives)
+        evaluator = PruningModeEvaluator()
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "test_session_123"
+            mapping = MagicMock()
+            mapping.experiment_id = "exp_submission_complete"
+            mapping.experiment_run_id = "run_submission_complete"
+            mock_client.get_session_mapping.return_value = mapping
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=5,
+                timeout=5.0,
+                default_config={"param1": 1, "mode": "prune"},
+            )
+            orchestrator.backend_client = mock_client
+            orchestrator.traigent_config.execution_mode = "hybrid"
+            orchestrator.traigent_config.result_source = "cloud_brain"
+            orchestrator.traigent_config.fallback_reason = None
+            orchestrator.traigent_config.no_egress = False
+            orchestrator._submit_usage_analytics = AsyncMock()
+            orchestrator._workflow_trace_manager.submit_traces = AsyncMock()
+
+            manager = orchestrator.backend_session_manager
+            manager._backend_tracking_enabled = True
+            manager._runtime_degraded = False
+            manager._no_egress = False
+            manager._acknowledged_trials.add(("test_session_123", "previous-trial"))
+            manager.submit_trial = AsyncMock(
+                return_value=BackendTrialSubmissionOutcome.complete("converged")
+            )
+            manager.update_weighted_scores = AsyncMock(return_value=0)
+            manager.submit_session_aggregation = MagicMock()
+            manager.finalize_session = MagicMock(
+                return_value={"status": "completed", "metadata": {}}
+            )
+
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        manager.submit_trial.assert_awaited_once()
+        manager.finalize_session.assert_called_once()
+        assert result.stop_reason == "convergence"
+        assert result.source == "cloud_brain"
+        assert result.metadata["source"] == "cloud_brain"
+        assert result.experiment_id == "exp_submission_complete"
+        assert result.experiment_run_id == "run_submission_complete"
+        assert result.cloud_url is not None
+        assert "exp_submission_complete" in result.cloud_url
+        assert len(result.trials) == 1
+        assert result.trials[0].status == TrialStatus.PRUNED
+        assert orchestrator.traigent_config.result_source == "cloud_brain"
+
+    @pytest.mark.asyncio
+    async def test_parallel_submission_completion_drains_batch_before_finalizing(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+        monkeypatch,
+    ):
+        """Terminal completion in a parallel batch drains already-computed siblings."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        optimizer = MockOptimizer(config_space, objectives)
+        optimizer.set_max_suggestions(3)
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "parallel-session-complete"
+            mapping = MagicMock()
+            mapping.experiment_id = "exp_parallel_complete"
+            mapping.experiment_run_id = "run_parallel_complete"
+            mock_client.get_session_mapping.return_value = mapping
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=5,
+                parallel_trials=3,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+            orchestrator.traigent_config.execution_mode = "hybrid"
+            orchestrator.traigent_config.result_source = "cloud_brain"
+            orchestrator.traigent_config.fallback_reason = None
+            orchestrator.traigent_config.no_egress = False
+            orchestrator._submit_usage_analytics = AsyncMock()
+            orchestrator._workflow_trace_manager.submit_traces = AsyncMock()
+
+            manager = orchestrator.backend_session_manager
+            manager._backend_tracking_enabled = True
+            manager._runtime_degraded = False
+            manager._no_egress = False
+            manager.submit_trial = AsyncMock(
+                side_effect=[
+                    True,
+                    BackendTrialSubmissionOutcome.complete("converged"),
+                ]
+            )
+            manager.update_weighted_scores = AsyncMock(return_value=0)
+            manager.submit_session_aggregation = MagicMock()
+            manager.finalize_session = MagicMock(
+                return_value={"status": "completed", "metadata": {}}
+            )
+
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason == "convergence"
+        assert len(result.trials) == 3
+        assert [trial.config["param1"] for trial in result.trials] == [0, 1, 2]
+        assert [trial.trial_id for trial in orchestrator._trials] == [
+            trial.trial_id for trial in result.trials
+        ]
+        assert manager.submit_trial.await_count == 2
+        submitted_param_values = [
+            call.kwargs["trial_result"].config["param1"]
+            for call in manager.submit_trial.await_args_list
+        ]
+        assert submitted_param_values == [0, 1]
+        manager.finalize_session.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_parallel_result_processing_propagates_non_terminal_exception(
+        self, orchestrator
+    ):
+        """Non-terminal processing errors still stop the batch immediately."""
+        trial_results = [
+            TrialResult(
+                trial_id=f"trial-{index}",
+                config={"param1": index},
+                metrics={"accuracy": 0.5},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            )
+            for index in range(3)
+        ]
+        permitted_results = [
+            PermittedTrialResult(
+                result=trial_result,
+                permit=Permit(id=index, amount=0.0, active=False),
+            )
+            for index, trial_result in enumerate(trial_results)
+        ]
+        handled_trial_ids: list[str] = []
+
+        async def handle_result(**kwargs):
+            handled_trial_ids.append(kwargs["trial_result"].trial_id)
+            if len(handled_trial_ids) == 2:
+                raise RuntimeError("non-terminal failure")
+            return kwargs["current_trial_index"] + 1
+
+        orchestrator._handle_trial_result = AsyncMock(side_effect=handle_result)
+
+        with pytest.raises(RuntimeError, match="non-terminal failure"):
+            await orchestrator._process_parallel_results(
+                scheduled_configs=[trial.config for trial in trial_results],
+                results=permitted_results,
+                scheduled_optuna_ids=[None, None, None],
+                session_id="session-123",
+                trial_count=0,
+            )
+
+        assert handled_trial_ids == ["trial-0", "trial-1"]
 
     @pytest.mark.asyncio
     async def test_default_config_is_evaluated_first(
