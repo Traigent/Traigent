@@ -30,6 +30,10 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
 )
+from traigent.cloud.smart_pruning import (
+    normalize_intermediate_report_payload,
+    normalize_smart_pruning_options,
+)
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
@@ -661,6 +665,10 @@ class ApiOperations:
             payload["tvl_governance"] = wire_governance
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
+        smart_pruning = getattr(session_request, "smart_pruning", None)
+        wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
+        if wire_smart_pruning:
+            payload["smart_pruning"] = wire_smart_pruning
         self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
@@ -705,6 +713,10 @@ class ApiOperations:
         # BE may not consume it yet; the SDK must still forward it.
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
+        smart_pruning = getattr(session_request, "smart_pruning", None)
+        wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
+        if wire_smart_pruning:
+            payload["smart_pruning"] = wire_smart_pruning
         self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
@@ -796,6 +808,75 @@ class ApiOperations:
             return None
         normalized = str(value).strip()
         return normalized or None
+
+    async def report_intermediate_progress(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Report per-trial intermediate progress for cloud smart pruning."""
+        wire_payload = normalize_intermediate_report_payload(payload)
+        session_id = str(wire_payload.get("session_id", "")).strip()
+        trial_id = str(wire_payload.get("trial_id", "")).strip()
+        if not session_id or not trial_id:
+            return {"prune": False, "prune_reason": None}
+        if is_backend_offline():
+            logger.debug(
+                "Offline mode: skipping intermediate report for session %s trial %s",
+                session_id,
+                trial_id,
+            )
+            return {"prune": False, "prune_reason": None}
+
+        self._raise_if_backend_egress_disabled("intermediate report")
+        if not AIOHTTP_AVAILABLE:
+            logger.debug("aiohttp not available, skipping intermediate report")
+            return {"prune": False, "prune_reason": None}
+
+        try:
+            headers = await self.client.auth_manager.augment_headers(
+                {"Content-Type": _JSON_CONTENT_TYPE}
+            )
+            async with cast(Any, aiohttp).ClientSession(
+                connector=self._build_connector()
+            ) as session:
+                api_base = (
+                    self.client.backend_config.api_base_url
+                    or BackendConfig.get_backend_api_url()
+                )
+                url = f"{api_base}/sessions/{session_id}/intermediate-report"
+                timeout = cast(Any, aiohttp).ClientTimeout(total=10)
+                async with session.post(
+                    url,
+                    json=wire_payload,
+                    headers=headers,
+                    timeout=timeout,
+                ) as response:
+                    if response.status == 200:
+                        decision = await response.json()
+                        if isinstance(decision, dict):
+                            return {
+                                "prune": bool(decision.get("prune", False)),
+                                "prune_reason": decision.get("prune_reason"),
+                            }
+                        return {"prune": False, "prune_reason": None}
+
+                    error_msg = await response.text()
+                    logger.debug(
+                        "Intermediate report rejected for session %s trial %s: "
+                        "HTTP %s %s",
+                        session_id,
+                        trial_id,
+                        response.status,
+                        error_msg[:300],
+                    )
+                    return {"prune": False, "prune_reason": None}
+        except aiohttp.ClientError as exc:
+            logger.debug(
+                "Network error sending intermediate report for session %s trial %s: %s",
+                session_id,
+                trial_id,
+                exc,
+            )
+            return {"prune": False, "prune_reason": None}
 
     def _handle_session_error(self, status_code: int, error_msg: str) -> None:
         """Raise structured exceptions for non-success HTTP responses.

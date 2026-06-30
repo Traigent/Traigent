@@ -10,7 +10,7 @@ import os
 import time
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, NoReturn, cast
@@ -66,6 +66,7 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+from .smart_pruning import normalize_smart_pruning_options
 from .subset_selection import SmartSubsetSelector
 from .url_security import validate_cloud_base_url
 
@@ -131,7 +132,7 @@ def _session_is_closed(session: Any) -> bool:
     return False
 
 
-def _log_finalizer_close_task_result(task: asyncio.Task[Any], owner: str) -> None:
+def _log_finalizer_close_task_result(task: asyncio.Future[Any], owner: str) -> None:
     try:
         task.result()
     except asyncio.CancelledError:
@@ -163,7 +164,10 @@ def _schedule_aiohttp_session_close(
         try:
             close_result = close_method()
             if inspect.isawaitable(close_result):
-                task = loop.create_task(close_result)
+                task: asyncio.Future[Any] = asyncio.ensure_future(
+                    cast(Awaitable[Any], close_result),
+                    loop=loop,
+                )
                 task.add_done_callback(
                     lambda done_task: _log_finalizer_close_task_result(done_task, owner)
                 )
@@ -1936,6 +1940,9 @@ class TraigentCloudClient(BaseTraigentClient):
         # Warm-start: prior experiment id (empty string treated as absent).
         if request.warm_start_from:
             payload["warm_start_from"] = request.warm_start_from
+        smart_pruning = normalize_smart_pruning_options(request.smart_pruning)
+        if smart_pruning:
+            payload["smart_pruning"] = smart_pruning
         artifact_fingerprints = artifact_fingerprints_to_wire(
             getattr(request, "artifact_fingerprints", None)
         )

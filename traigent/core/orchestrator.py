@@ -210,6 +210,7 @@ class OptimizationOrchestrator:
             "strategy_preset", None
         )
         self._warm_start_from: str | None = kwargs.pop("warm_start_from", None)
+        self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
 
@@ -282,6 +283,7 @@ class OptimizationOrchestrator:
                 if self.strategy_preset is not None
                 else None
             ),
+            smart_pruning=self._smart_pruning,
         )
 
         self.cache_policy_handler = CachePolicyHandler(
@@ -1145,8 +1147,8 @@ class OptimizationOrchestrator:
         if _primary_scores_tied(new_score_value, current_score_value):
             return self._secondary_tie_breaks_incumbent(trial_result, primary_objective)
         if minimization:
-            return new_score_value < current_score_value
-        return new_score_value > current_score_value
+            return bool(new_score_value < current_score_value)
+        return bool(new_score_value > current_score_value)
 
     def _secondary_tie_breaks_incumbent(
         self,
@@ -1341,7 +1343,10 @@ class OptimizationOrchestrator:
         self._logger = OptimizationLogger(
             experiment_name=experiment_name,
             session_id=session_id,
-            execution_mode=self.traigent_config.execution_mode or "edge_analytics",
+            execution_mode=cast(
+                ExecutionMode | str,
+                self.traigent_config.execution_mode or "edge_analytics",
+            ),
         )
         self._logger_facade.attach(self._logger)
 
@@ -2200,6 +2205,7 @@ class OptimizationOrchestrator:
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
             warm_start_from=self._warm_start_from,
+            smart_pruning=self._smart_pruning,
             artifact_fingerprints=self.artifact_fingerprints,
             fingerprint_meta=self.fingerprint_meta,
         )
@@ -2269,7 +2275,8 @@ class OptimizationOrchestrator:
                 original=exc,
             ) from exc
 
-        self.optimizer.session = OptimizationSession(
+        optimizer = cast(Any, self.optimizer)
+        optimizer.session = OptimizationSession(
             session_id=session_id,
             function_name=function_name,
             configuration_space=getattr(self.optimizer, "config_space", {}) or {},
@@ -2283,8 +2290,8 @@ class OptimizationOrchestrator:
                 "source": SOURCE_CLOUD_BRAIN,
             },
         )
-        self.optimizer.session_id = session_id
-        self.optimizer._start_time = time.time()
+        optimizer.session_id = session_id
+        optimizer._start_time = time.time()
 
     @property
     def max_trials(self) -> int | None:
@@ -2369,6 +2376,7 @@ class OptimizationOrchestrator:
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
                 metadata=metadata,
+                smart_pruning=self._smart_pruning,
                 artifact_fingerprints=self.artifact_fingerprints,
                 fingerprint_meta=self.fingerprint_meta,
             )
@@ -2648,6 +2656,9 @@ class OptimizationOrchestrator:
             delay = None
         if delay is None or delay < 0:
             delay = base_backoff * (2**used)
+        if delay is None:
+            raise RuntimeError("vendor retry delay fallback did not produce a value")
+        delay_seconds = float(delay)
 
         logger.warning(
             "traigent.vendor_auto_retry category=%s attempt=%s/%s backoff=%.2fs "
@@ -2655,10 +2666,10 @@ class OptimizationOrchestrator:
             category.value,
             used + 1,
             max_retries,
-            delay,
+            delay_seconds,
         )
-        if delay > 0:
-            await asyncio.sleep(delay)
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
         return "continue"
 
     async def _handle_vendor_pause(self, exc: VendorPauseError) -> str:

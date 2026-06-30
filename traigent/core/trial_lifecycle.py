@@ -138,7 +138,7 @@ class TrialLifecycle:
                     )
                     raise
                 logger.info("Optimizer could not suggest another trial: %s", e)
-                orchestrator._stop_reason = stop_reason
+                orchestrator._stop_reason = cast(Any, stop_reason)
                 return trial_count, "break"
             except (ValueError, TypeError, KeyError, AttributeError) as e:
                 logger.exception("Optimizer failed to suggest the next trial: %s", e)
@@ -322,7 +322,7 @@ class TrialLifecycle:
 
         # Phase 2: Setup progress tracking and budget
         progress_callback, progress_state = self._create_progress_tracking(
-            optuna_trial_id, dataset, trial_id
+            optuna_trial_id, dataset, trial_id, session_id
         )
         lease = self._setup_trial_budget_lease(dataset, trial_id, sample_ceiling)
 
@@ -683,14 +683,147 @@ class TrialLifecycle:
         optuna_trial_id: int | None,
         dataset: Dataset,
         trial_id: str,
+        session_id: str | None,
     ) -> tuple[Callable[[int, dict[str, Any]], None] | None, dict[str, Any] | None]:
         """Return progress callback state.
 
-        Local Optuna-backed intermediate reporting has been evicted. Generic
-        pruned-trial result handling remains in the lifecycle for future callers
-        that raise :class:`TrialPrunedError` directly.
+        Local Optuna-backed intermediate reporting remains evicted. Cloud
+        smart-pruning reporting is enabled only when the backend session manager
+        confirms this run is managed/cloud, backend-tracked, and configured with
+        smart_pruning.
         """
-        return None, None
+        orchestrator = self._orchestrator
+        manager = getattr(orchestrator, "backend_session_manager", None)
+        should_report = getattr(manager, "should_report_intermediate_progress", None)
+        if not callable(should_report) or not should_report(session_id):
+            return None, None
+
+        try:
+            total_examples = len(dataset)
+        except TypeError:
+            total_examples = 0
+
+        objective_name = self._primary_objective_name()
+        state: dict[str, Any] = {
+            "session_id": session_id,
+            "trial_id": trial_id,
+            "optuna_trial_id": optuna_trial_id,
+            "evaluated": 0,
+            "total_examples": total_examples,
+            "correct_sum": 0.0,
+            "metric_sum": 0.0,
+            "last_running_score": 0.0,
+            "partial_cost_usd": 0.0,
+            "objective_name": objective_name,
+        }
+
+        def _progress_callback(step: int, data: dict[str, Any]) -> None:
+            state["last_step"] = step
+            if not isinstance(data, dict):
+                data = {}
+            if data.get("stop_reason"):
+                return
+
+            state["evaluated"] = int(state.get("evaluated", 0)) + 1
+            metric_value = self._extract_progress_value(data, objective_name)
+            if metric_value is None:
+                success = data.get("success")
+                if isinstance(success, bool):
+                    metric_value = 1.0 if success else 0.0
+            if metric_value is None:
+                metric_value = float(state.get("last_running_score", 0.0))
+
+            state["metric_sum"] = float(state.get("metric_sum", 0.0)) + metric_value
+            state["correct_sum"] = float(state.get("correct_sum", 0.0)) + metric_value
+            evaluated = max(1, int(state["evaluated"]))
+            running_score = float(state["metric_sum"]) / evaluated
+            state["last_running_score"] = running_score
+
+            cost_delta = self._extract_progress_cost(data)
+            if cost_delta is not None:
+                state["partial_cost_usd"] = (
+                    float(state.get("partial_cost_usd", 0.0)) + cost_delta
+                )
+
+            payload: dict[str, Any] = {
+                "session_id": session_id,
+                "trial_id": trial_id,
+                "running_score": running_score,
+                "examples_attempted": int(state["evaluated"]),
+            }
+            if objective_name:
+                payload["objective_name"] = objective_name
+            partial_cost = float(state.get("partial_cost_usd", 0.0))
+            if partial_cost > 0:
+                payload["partial_cost_usd"] = partial_cost
+
+            report = getattr(manager, "report_intermediate_progress", None)
+            decision = report(payload) if callable(report) else {}
+            if isinstance(decision, dict) and decision.get("prune") is True:
+                reason = decision.get("prune_reason") or "cloud smart pruning"
+                raise TrialPrunedError(str(reason), step=int(state["evaluated"]))
+
+        return _progress_callback, state
+
+    def _primary_objective_name(self) -> str | None:
+        objectives = getattr(self._orchestrator, "objectives", None)
+        if objectives:
+            first = objectives[0]
+            if first is not None:
+                return str(first)
+        optimizer_objectives = getattr(
+            getattr(self._orchestrator, "optimizer", None), "objectives", None
+        )
+        if optimizer_objectives:
+            return str(optimizer_objectives[0])
+        return None
+
+    @staticmethod
+    def _coerce_progress_float(value: Any) -> float | None:
+        if isinstance(value, bool) or value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        return number
+
+    @classmethod
+    def _extract_progress_value(
+        cls, data: dict[str, Any], objective_name: str | None
+    ) -> float | None:
+        metrics = data.get("metrics")
+        if isinstance(metrics, dict):
+            candidate_names = [
+                name
+                for name in (objective_name, "score", "accuracy")
+                if isinstance(name, str) and name
+            ]
+            for name in candidate_names:
+                value = cls._coerce_progress_float(metrics.get(name))
+                if value is not None:
+                    return value
+        for key in (objective_name, "score", "accuracy"):
+            if isinstance(key, str) and key:
+                value = cls._coerce_progress_float(data.get(key))
+                if value is not None:
+                    return value
+        return None
+
+    @classmethod
+    def _extract_progress_cost(cls, data: dict[str, Any]) -> float | None:
+        metrics = data.get("metrics")
+        sources = [data]
+        if isinstance(metrics, dict):
+            sources.insert(0, metrics)
+        for source in sources:
+            for key in ("partial_cost_usd", "total_example_cost", "total_cost", "cost"):
+                value = cls._coerce_progress_float(source.get(key))
+                if value is not None and value >= 0:
+                    return value
+        return None
 
     def _record_pre_constraint_pruned_result(
         self,
@@ -997,6 +1130,7 @@ class TrialLifecycle:
                 progress_state=progress_state or {},
                 optuna_trial_id=optuna_trial_id,
             )
+            trial_result.error_message = str(error)
         else:
             trial_result = build_failed_result(
                 trial_id=trial_id,

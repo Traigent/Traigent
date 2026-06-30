@@ -584,6 +584,7 @@ class BackendIntegratedClient:
 
         self.enable_fallback = enable_fallback
         self.no_egress = bool(no_egress)
+        self.cloud_egress_intent = False
         self._api_key_fallback = api_key
         self.enable_rate_limiting = enable_rate_limiting
         self.rate_limit_calls = rate_limit_calls
@@ -1285,8 +1286,11 @@ class BackendIntegratedClient:
     ) -> TrialSuggestion | None:
         """Get next trial suggestion for privacy-first optimization.
         Delegates to privacy_operations module."""
-        return await self._privacy_ops.get_next_privacy_trial(
-            session_id, previous_results
+        return cast(
+            TrialSuggestion | None,
+            await self._privacy_ops.get_next_privacy_trial(
+                session_id, previous_results
+            ),
         )
 
     async def submit_privacy_trial_results(
@@ -1319,8 +1323,16 @@ class BackendIntegratedClient:
     ) -> AgentOptimizationResponse:
         """Start reserved cloud agent optimization.
         Delegates to cloud_operations module."""
-        return await self._cloud_ops.start_agent_optimization(
-            agent_spec, dataset, configuration_space, objectives, max_trials, user_id
+        return cast(
+            AgentOptimizationResponse,
+            await self._cloud_ops.start_agent_optimization(
+                agent_spec,
+                dataset,
+                configuration_space,
+                objectives,
+                max_trials,
+                user_id,
+            ),
         )
 
     async def execute_agent(
@@ -1331,8 +1343,11 @@ class BackendIntegratedClient:
     ) -> AgentExecutionResponse:
         """Execute agent through the reserved cloud path.
         Delegates to cloud_operations module."""
-        return await self._cloud_ops.execute_agent(
-            agent_spec, input_data, config_overrides
+        return cast(
+            AgentExecutionResponse,
+            await self._cloud_ops.execute_agent(
+                agent_spec, input_data, config_overrides
+            ),
         )
 
     # Session Operations
@@ -1348,6 +1363,7 @@ class BackendIntegratedClient:
         warm_start_from: str | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
+        smart_pruning: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1364,6 +1380,7 @@ class BackendIntegratedClient:
             warm_start_from=warm_start_from,
             artifact_fingerprints=artifact_fingerprints,
             fingerprint_meta=fingerprint_meta,
+            smart_pruning=smart_pruning,
         )
 
     async def create_hybrid_session(
@@ -2057,6 +2074,15 @@ class BackendIntegratedClient:
         return cast(
             bool,
             await self._api_ops.update_config_run_status(config_run_id, status),
+        )
+
+    async def _report_intermediate_progress(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Report intermediate trial progress for smart pruning."""
+        return cast(
+            dict[str, Any],
+            await self._api_ops.report_intermediate_progress(payload),
         )
 
     async def _update_config_run_measures(

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+import threading
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
 from traigent.api.types import (
@@ -117,7 +118,7 @@ def _format_raw_reason(result: SessionCreationResult) -> str | None:
         raw_reason = detail.raw_body
     if not raw_reason:
         return None
-    return raw_reason.replace("\n", "\\n")[:500]
+    return cast(str, raw_reason.replace("\n", "\\n")[:500])
 
 
 def _backend_disabled_label(reason: SessionCreationFailureReason | None) -> str:
@@ -226,6 +227,7 @@ class BackendSessionManager:
         optimization_id: str,
         optimization_status: OptimizationStatus,
         strategy_preset_metadata: dict[str, Any] | None = None,
+        smart_pruning: dict[str, Any] | None = None,
     ) -> None:
         """Initialize backend session manager.
 
@@ -248,6 +250,7 @@ class BackendSessionManager:
         self._strategy_preset_metadata = (
             dict(strategy_preset_metadata) if strategy_preset_metadata else None
         )
+        self._smart_pruning = dict(smart_pruning) if smart_pruning else None
 
         # Run-scoped circuit breaker — once disabled, all backend writes skip
         self._no_egress = backend_egress_disabled(traigent_config)
@@ -342,23 +345,23 @@ class BackendSessionManager:
         if configured_source == SOURCE_OFFLINE or (
             policy is not None and policy.offline
         ):
-            return SOURCE_OFFLINE
+            return cast(str, SOURCE_OFFLINE)
         if configured_source in RESULT_SOURCES:
             if configured_source == SOURCE_CLOUD_BRAIN and (
                 self._runtime_degraded
                 or (trial_count > 0 and not self._acknowledged_trials)
             ):
-                return SOURCE_LOCAL_FALLBACK
+                return cast(str, SOURCE_LOCAL_FALLBACK)
             return str(configured_source)
         if self._traigent_config.is_edge_analytics_mode():
-            return SOURCE_EXPLICIT_LOCAL
+            return cast(str, SOURCE_EXPLICIT_LOCAL)
         if self._egress_disabled():
-            return SOURCE_OFFLINE
+            return cast(str, SOURCE_OFFLINE)
         if not self._backend_tracking_enabled or self._runtime_degraded:
-            return SOURCE_LOCAL_FALLBACK
+            return cast(str, SOURCE_LOCAL_FALLBACK)
         if trial_count > 0 and not self._acknowledged_trials:
-            return SOURCE_LOCAL_FALLBACK
-        return SOURCE_CLOUD_BRAIN
+            return cast(str, SOURCE_LOCAL_FALLBACK)
+        return cast(str, SOURCE_CLOUD_BRAIN)
 
     def disable_backend_tracking(self, reason: SessionCreationFailureReason) -> None:
         """Disable backend tracking for this run. Idempotent — keeps first reason."""
@@ -661,6 +664,7 @@ class BackendSessionManager:
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
         warm_start_from: str | None = None,
+        smart_pruning: dict[str, Any] | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionContext:
@@ -698,6 +702,15 @@ class BackendSessionManager:
 
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
+            effective_smart_pruning = (
+                dict(smart_pruning)
+                if smart_pruning is not None
+                else (
+                    dict(self._smart_pruning)
+                    if self._smart_pruning is not None
+                    else None
+                )
+            )
 
             max_trials_value = max_trials if max_trials is not None else 10
             max_samples_value = (
@@ -780,6 +793,7 @@ class BackendSessionManager:
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
                 warm_start_from=warm_start_from,
+                smart_pruning=effective_smart_pruning,
                 artifact_fingerprints=artifact_fingerprints,
                 fingerprint_meta=fingerprint_meta,
             )
@@ -839,6 +853,86 @@ class BackendSessionManager:
         """Swap the backend client while preserving existing session state."""
 
         self._backend_client = backend_client
+
+    def should_report_intermediate_progress(self, session_id: str | None) -> bool:
+        """Return whether smart-pruning intermediate reports are allowed."""
+        if (
+            not self._smart_pruning
+            or self._egress_disabled()
+            or not self._backend_client
+            or not session_id
+            or not self._backend_tracking_enabled
+        ):
+            return False
+
+        policy = policy_from_config(self._traigent_config)
+        return bool(policy_requires_cloud(policy) or policy_is_cloud_brain(policy))
+
+    @staticmethod
+    def _resolve_maybe_awaitable(value: Any) -> Any:
+        """Resolve an awaitable from a synchronous progress callback."""
+        if not inspect.isawaitable(value):
+            return value
+
+        coroutine = cast(Coroutine[Any, Any, Any], value)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+
+        result_box: dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                result_box["result"] = asyncio.run(coroutine)
+            except BaseException as exc:  # pragma: no cover - defensive bridge
+                result_box["error"] = exc
+
+        thread = threading.Thread(
+            target=_runner,
+            name="traigent-smart-pruning-report",
+            daemon=True,
+        )
+        thread.start()
+        thread.join()
+        error = result_box.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return result_box.get("result")
+
+    def report_intermediate_progress(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send a smart-pruning intermediate report and return the prune decision."""
+        session_id = payload.get("session_id")
+        if not self.should_report_intermediate_progress(
+            session_id if isinstance(session_id, str) else None
+        ):
+            return {"prune": False, "prune_reason": None}
+
+        reporter = getattr(self._backend_client, "_report_intermediate_progress", None)
+        if not callable(reporter):
+            return {"prune": False, "prune_reason": None}
+
+        try:
+            decision = self._resolve_maybe_awaitable(reporter(payload))
+        except Exception as exc:
+            logger.debug(
+                "Skipping smart-pruning decision for session %s trial %s: %s",
+                payload.get("session_id"),
+                payload.get("trial_id"),
+                exc,
+            )
+            return {"prune": False, "prune_reason": None}
+
+        if not isinstance(decision, dict):
+            return {"prune": False, "prune_reason": None}
+
+        prune_reason = decision.get("prune_reason")
+        return {
+            "prune": bool(decision.get("prune", False)),
+            "prune_reason": (
+                prune_reason if prune_reason is None else str(prune_reason)
+            ),
+        }
 
     async def submit_trial(
         self,
@@ -1140,7 +1234,7 @@ class BackendSessionManager:
                 metrics=metrics_payload,
                 status=status,
                 error_message=trial_result.error_message,
-                execution_mode=self._traigent_config.execution_mode,
+                execution_mode=cast(str | None, self._traigent_config.execution_mode),
                 metadata=metadata_payload,
             )
             submitted = (
@@ -1488,7 +1582,7 @@ class BackendSessionManager:
 
         self._backend_client.submit_result(
             session_id=session_id,
-            config=result.best_config,
+            config=cast(dict[str, Any], result.best_config),
             score=result.best_score,
             metadata=submission_metadata,
         )
