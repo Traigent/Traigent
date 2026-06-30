@@ -111,6 +111,7 @@ __all__ = [
     "HybridAPIOptions",
     "ExternalServiceEvaluator",
     "ExecutionOptions",
+    "SmartPruningOptions",
     "MockModeOptions",
     "optimize",
 ]
@@ -197,6 +198,21 @@ class ExternalServiceEvaluator(BaseModel):
     hybrid_api: HybridAPIOptions = Field(default_factory=HybridAPIOptions)
 
 
+class SmartPruningOptions(BaseModel):
+    """Cloud smart-pruning profile sent on session creation."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    label: Literal["aggressive", "balanced", "conservative"]
+    min_completed_trials: int | None = Field(default=None, ge=1)
+    warmup_steps: int | None = Field(default=None, ge=0)
+    epsilon: float | None = Field(default=None, ge=0)
+    cost_threshold: float | None = Field(default=None, ge=0)
+    confidence: float | None = Field(default=None, gt=0, lt=1)
+    min_samples_per_config: int | None = Field(default=None, ge=1)
+    warmup_trials: int | None = Field(default=None, ge=0)
+
+
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
@@ -215,6 +231,9 @@ class ExecutionOptions(BaseModel):
         parallel_config: Configuration for parallel execution.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
+        smart_pruning: Optional cloud-side pruning profile. When configured on a
+            managed/cloud run, the SDK reports content-free per-example progress
+            to the backend and honors prune decisions.
         reps_per_trial: Number of repetitions per configuration for statistical
             stability. Only the default ``1`` (no repetition) is available in the
             OSS SDK; passing any other value raises ``pydantic.ValidationError`` at
@@ -248,6 +267,7 @@ class ExecutionOptions(BaseModel):
     parallel_config: ParallelConfig | dict[str, Any] | None = None
     max_total_examples: int | None = None
     samples_include_pruned: bool = True
+    smart_pruning: SmartPruningOptions | dict[str, Any] | None = None
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
 
@@ -295,7 +315,7 @@ class ExecutionOptions(BaseModel):
     @field_validator("algorithm")
     @classmethod
     def _validate_algorithm(cls, v: str) -> str:
-        return validate_algorithm_name(v)
+        return cast(str, validate_algorithm_name(v))
 
     @field_validator("offline")
     @classmethod
@@ -556,6 +576,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "parallel_config": None,
     "max_total_examples": None,
     "samples_include_pruned": True,
+    "smart_pruning": None,
     "mock_mode_config": None,
     "custom_evaluator": None,
     "scoring_function": None,
@@ -932,6 +953,22 @@ def _resolve_tvl_options(
     return TVLOptions(spec_path=str(tvl_spec_value), environment=tvl_environment_value)
 
 
+def _normalize_smart_pruning_options(value: Any) -> dict[str, Any] | None:
+    """Normalize smart-pruning config to the schema-shaped wire dict."""
+    if value is None:
+        return None
+    if isinstance(value, SmartPruningOptions):
+        model = value
+    elif isinstance(value, dict):
+        model = SmartPruningOptions.model_validate(value)
+    else:
+        raise TypeError(
+            "smart_pruning must be a dict or SmartPruningOptions, "
+            f"got {type(value).__name__}"
+        )
+    return cast(dict[str, Any], model.model_dump(exclude_none=True))
+
+
 def _apply_tvl_artifact(
     *,
     artifact: TVLSpecArtifact,
@@ -1258,6 +1295,7 @@ class ResolvedExecutionOptions:
     parallel_config: Any
     max_total_examples: Any
     samples_include_pruned: Any
+    smart_pruning: Any
     legacy_options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1350,6 +1388,12 @@ def _resolve_execution_bundle_options(
             "samples_include_pruned",
             base_options.samples_include_pruned,
             execution_bundle.samples_include_pruned,
+            defaults,
+        ),
+        smart_pruning=_resolve_option(
+            "smart_pruning",
+            base_options.smart_pruning,
+            execution_bundle.smart_pruning,
             defaults,
         ),
         legacy_options=legacy_options,
@@ -1546,7 +1590,7 @@ def _runtime_algorithm_for_policy(
         policy.intent is ExecutionIntent.LOCAL_ONLY or external_evaluator is not None
     ):
         return "random"
-    return policy.algorithm
+    return cast(str, policy.algorithm)
 
 
 def _runtime_execution_mode_for_policy(
@@ -2107,6 +2151,7 @@ def optimize(  # NOSONAR(S107)
     offline: bool = False,
     strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
+    smart_pruning: SmartPruningOptions | dict[str, Any] | None = None,
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None,
     agent_prefixes: list[str] | None = None,
@@ -2235,6 +2280,11 @@ def optimize(  # NOSONAR(S107)
                 or dict). Preferred path for controlling concurrency.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
+            smart_pruning: Optional cloud smart-pruning profile. Accepts a dict or
+                ``SmartPruningOptions`` matching
+                ``optimization/smart_pruning_schema.json``. The SDK sends it on
+                session creation and emits content-free intermediate reports only
+                for managed/cloud runs.
 
         Mock mode options:
             mock: Grouped mock-mode preferences (MockModeOptions or dict).
@@ -2438,6 +2488,7 @@ def optimize(  # NOSONAR(S107)
         "mock": mock,
         "algorithm": algorithm,
         "offline": offline,
+        "smart_pruning": smart_pruning,
         "agents": agents,
         "agent_prefixes": agent_prefixes,
         "agent_measures": agent_measures,
@@ -2529,6 +2580,7 @@ def optimize(  # NOSONAR(S107)
     parallel_config = combined_settings["parallel_config"]
     max_total_examples = combined_settings["max_total_examples"]
     samples_include_pruned = combined_settings["samples_include_pruned"]
+    smart_pruning_value = combined_settings["smart_pruning"]
     mock_mode_config = combined_settings["mock_mode_config"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
@@ -2639,6 +2691,7 @@ def optimize(  # NOSONAR(S107)
         parallel_config=parallel_config,
         max_total_examples=max_total_examples,
         samples_include_pruned=samples_include_pruned,
+        smart_pruning=smart_pruning_value,
         legacy_options=legacy_execution_options,
     )
     resolved_execution = _resolve_execution_bundle_options(
@@ -2656,7 +2709,9 @@ def optimize(  # NOSONAR(S107)
     parallel_config = resolved_execution.parallel_config
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
+    smart_pruning_value = resolved_execution.smart_pruning
     legacy_execution_options = resolved_execution.legacy_options
+    smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
         legacy_execution_options,
@@ -2894,6 +2949,7 @@ def optimize(  # NOSONAR(S107)
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
+            smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
             mock_mode_config=mock_mode_config,
             custom_evaluator=custom_evaluator,

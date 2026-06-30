@@ -9,7 +9,7 @@ Tests core decorator behavior including:
 
 import pytest
 
-from traigent.api.decorators import optimize
+from traigent.api.decorators import ExecutionOptions, SmartPruningOptions, optimize
 from traigent.core.optimized_function import OptimizedFunction
 
 from .mock_infrastructure import create_simple_dataset
@@ -30,6 +30,34 @@ class TestDecoratorBasics(DecoratorTestBase):
 
         assert isinstance(test_func, OptimizedFunction)
         assert test_func.__name__ == "test_func"
+
+    def test_decorator_accepts_direct_smart_pruning(self):
+        """smart_pruning is a first-class optimize() option."""
+
+        @optimize(
+            configuration_space={"model": ["cheap", "strong"]},
+            objectives=["accuracy"],
+            smart_pruning={"label": "balanced", "warmup_steps": 1},
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert test_func.smart_pruning == {"label": "balanced", "warmup_steps": 1}
+
+    def test_execution_options_accepts_smart_pruning(self):
+        """ExecutionOptions can carry the smart-pruning profile."""
+
+        @optimize(
+            configuration_space={"model": ["cheap", "strong"]},
+            objectives=["accuracy"],
+            execution=ExecutionOptions(
+                smart_pruning=SmartPruningOptions(label="conservative")
+            ),
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert test_func.smart_pruning == {"label": "conservative"}
 
     def test_decorator_preserves_function_signature(self):
         """Test that decorator preserves original function signature."""

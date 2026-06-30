@@ -1659,8 +1659,10 @@ class BaseEvaluator(ABC):
                 consumed += 1
         except TrialPrunedError as e:
             # Attach partial results that were collected before pruning
-            if detailed and example_results:
-                e.example_results = [r for r in example_results if r is not None]
+            if detailed:
+                collected_results = [r for r in example_results if r is not None]
+                if collected_results or e.example_results:
+                    e.example_results = collected_results + list(e.example_results)
             raise
 
         return outputs, errors, example_results, consumed, exhausted
@@ -1762,10 +1764,12 @@ class BaseEvaluator(ABC):
         except TrialPrunedError as e:
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
             # Attach partial example results to the exception before re-raising
-            if detailed and example_results_by_index:
-                e.example_results = self._collect_partial_results(
+            if detailed:
+                collected_results = self._collect_partial_results(
                     example_results_by_index
                 )
+                if collected_results or e.example_results:
+                    e.example_results = collected_results + list(e.example_results)
             raise
         except asyncio.CancelledError:
             # S7497: CancelledError must be re-raised after cleanup
@@ -2005,10 +2009,12 @@ class BaseEvaluator(ABC):
             )
         except TrialPrunedError as e:
             # Attach partial results that were collected before pruning
-            if detailed and example_results_by_index:
-                e.example_results = self._collect_partial_results(
+            if detailed:
+                collected_results = self._collect_partial_results(
                     example_results_by_index
                 )
+                if collected_results or e.example_results:
+                    e.example_results = collected_results + list(e.example_results)
             raise
 
         outputs, errors, example_results = self._collect_ordered_results(
@@ -2448,7 +2454,11 @@ class BaseEvaluator(ABC):
                 progress_payload = self._build_progress_payload(
                     example_id, example, result, config, error
                 )
-                progress_callback(example_index, progress_payload)
+                try:
+                    progress_callback(example_index, progress_payload)
+                except TrialPrunedError as exc:
+                    exc.example_results = list(exc.example_results) + [result]
+                    raise
 
             if error is None:
                 logger.debug(
@@ -3098,6 +3108,10 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 errors.append(None)
 
             except asyncio.CancelledError:
+                raise
+            except TrialPrunedError as e:
+                if example_results or e.example_results:
+                    e.example_results = list(example_results) + list(e.example_results)
                 raise
             except Exception as e:
                 logger.warning(f"Evaluation failed for example {i}: {e}")

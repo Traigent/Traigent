@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from traigent.security.config import get_security_flags
 
 try:
-    import bleach
+    import bleach  # type: ignore[import-untyped]
 
     BLEACH_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dependency

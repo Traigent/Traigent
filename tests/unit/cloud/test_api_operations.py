@@ -945,6 +945,79 @@ class TestPostSessionCreation:
             )
 
 
+class TestIntermediateReport:
+    """Test smart-pruning intermediate-report operation."""
+
+    def setup_method(self):
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.no_egress = False
+        self.ops = ApiOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_successful_intermediate_report_posts_schema_payload(self):
+        payload = {
+            "session_id": "session_123",
+            "trial_id": "trial_abc",
+            "running_score": 0.75,
+            "examples_attempted": 3,
+            "partial_cost_usd": 0.03,
+            "objective_name": "accuracy",
+        }
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"prune": True, "prune_reason": "below threshold"}
+        )
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response),
+                __aexit__=AsyncMock(),
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            decision = await self.ops.report_intermediate_progress(payload)
+
+        assert decision == {"prune": True, "prune_reason": "below threshold"}
+        assert (
+            mock_session.post.call_args.args[0]
+            == "https://api.example.com/sessions/session_123/intermediate-report"
+        )
+        assert mock_session.post.call_args.kwargs["json"] == payload
+
+    @pytest.mark.asyncio
+    async def test_offline_intermediate_report_skips_without_post(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        payload = {
+            "session_id": "session_123",
+            "trial_id": "trial_abc",
+            "running_score": 0.75,
+            "examples_attempted": 3,
+        }
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            decision = await self.ops.report_intermediate_progress(payload)
+
+        assert decision == {"prune": False, "prune_reason": None}
+        mock_aiohttp.ClientSession.assert_not_called()
+
+
 class TestParseSessionResponse:
     """Test _parse_session_response method."""
 

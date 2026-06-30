@@ -367,7 +367,7 @@ class SessionOperations:
                     },
                 )
                 logger.debug("Created local fallback session: %s", session_id)
-                return session_id
+                return cast(str, session_id)
             except Exception as storage_e:
                 logger.debug("Local storage fallback failed: %s", storage_e)
 
@@ -498,6 +498,7 @@ class SessionOperations:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         warm_start_from: str | None = None,
+        smart_pruning: dict[str, Any] | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
@@ -629,6 +630,7 @@ class SessionOperations:
                 # reading objectives[0] as its optimization_goal).
                 objectives=list(objectives) if objectives else [optimization_goal],
                 warm_start_from=warm_start_from or None,
+                smart_pruning=dict(smart_pruning) if smart_pruning else None,
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
                     # Carry the dataset label (content is not submitted) so the

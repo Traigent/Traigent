@@ -105,11 +105,11 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
+from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.cost_calculator import (
     UnknownModelError,
     find_models_missing_price_coverage,
 )
-from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -714,6 +714,9 @@ class OptimizedFunction(Generic[_P, _R]):
         self.samples_include_pruned = self._store_optional_param(
             kwargs, sentinel, "samples_include_pruned", True, as_bool=True
         )
+        self.smart_pruning = self._store_optional_param(
+            kwargs, sentinel, "smart_pruning", None
+        )
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -769,6 +772,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "mock_mode_config",
             "max_total_examples",
             "samples_include_pruned",
+            "smart_pruning",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -1792,7 +1796,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 force_auto_discover_tvars=force_auto_discover_tvars
             ),
         )
-        return evaluator
+        return cast(BaseEvaluator, evaluator)
 
     def _build_artifact_fingerprint_payload(
         self,
@@ -1811,14 +1815,17 @@ class OptimizedFunction(Generic[_P, _R]):
         elif getattr(self, "external_service_evaluator", None) is not None:
             external = getattr(self, "external_service_evaluator", None)
 
-        return build_artifact_fingerprints(
-            dataset=dataset,
-            func=self.func,
-            custom_evaluator=custom_evaluator or self.custom_evaluator,
-            scoring_function=self.scoring_function,
-            metric_functions=self.metric_functions,
-            external=external,
-            configuration_space=configuration_space,
+        return cast(
+            dict[str, dict[str, Any]],
+            build_artifact_fingerprints(
+                dataset=dataset,
+                func=self.func,
+                custom_evaluator=custom_evaluator or self.custom_evaluator,
+                scoring_function=self.scoring_function,
+                metric_functions=self.metric_functions,
+                external=external,
+                configuration_space=configuration_space,
+            ),
         )
 
     def _build_optimization_orchestrator(
@@ -1866,6 +1873,7 @@ class OptimizedFunction(Generic[_P, _R]):
             objective_schema=self.objective_schema,
             workflow_traces_tracker=workflow_traces_tracker,
             strategy_preset=getattr(self, "strategy_preset", None),
+            smart_pruning=getattr(self, "smart_pruning", None),
             **orchestrator_kwargs,
         )
 

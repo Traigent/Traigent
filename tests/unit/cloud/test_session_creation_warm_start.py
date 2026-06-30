@@ -160,6 +160,55 @@ class TestSessionCreationRequestField:
 
 
 # ---------------------------------------------------------------------------
+# Tests: smart_pruning threading through session creation
+# ---------------------------------------------------------------------------
+
+
+SMART_PRUNING = {
+    "label": "balanced",
+    "warmup_steps": 1,
+    "confidence": 0.8,
+}
+
+
+class TestSessionCreationSmartPruning:
+    def test_request_field_round_trips(self):
+        req = SessionCreationRequest(function_name="f", smart_pruning=SMART_PRUNING)
+        assert req.smart_pruning == SMART_PRUNING
+
+    def test_typed_payload_includes_top_level_smart_pruning(self):
+        ops = _make_api_ops()
+        request = _typed_request(smart_pruning=SMART_PRUNING)
+        payload = ops._build_typed_session_payload(request, max_trials=5)
+        assert payload["smart_pruning"] == SMART_PRUNING
+
+    def test_legacy_payload_includes_top_level_smart_pruning(self):
+        ops = _make_api_ops()
+        request = _typed_request(smart_pruning=SMART_PRUNING)
+        payload = ops._build_legacy_session_payload(request, max_trials=5)
+        assert payload["smart_pruning"] == SMART_PRUNING
+
+    def test_cloud_client_serializer_includes_top_level_smart_pruning(self):
+        from traigent.cloud.client import TraigentCloudClient
+
+        fake_self = SimpleNamespace(
+            _ensure_owner_metadata=lambda metadata: metadata or {},
+            _serialize_session_objective=lambda objective: objective,
+        )
+        request = SessionCreationRequest(
+            function_name="f",
+            configuration_space={"p": [1, 2]},
+            objectives=["accuracy"],
+            dataset_metadata={"size": 1},
+            smart_pruning=SMART_PRUNING,
+        )
+
+        payload = TraigentCloudClient._serialize_session_request(fake_self, request)
+
+        assert payload["smart_pruning"] == SMART_PRUNING
+
+
+# ---------------------------------------------------------------------------
 # Tests: SessionOperations.create_session threads warm_start_from
 # ---------------------------------------------------------------------------
 
@@ -203,6 +252,17 @@ class TestSessionOperationsWarmStartThreading:
         )
         assert client.captured_session_request is not None
         assert client.captured_session_request.warm_start_from is None
+
+    def test_smart_pruning_threads_to_session_request(self):
+        ops, client = self._make_ops()
+        ops.create_session(
+            "my_func",
+            {"model": ["a", "b"]},
+            metadata={"max_trials": 5, "dataset_size": 10, "evaluation_set": "test"},
+            smart_pruning=SMART_PRUNING,
+        )
+        assert client.captured_session_request is not None
+        assert client.captured_session_request.smart_pruning == SMART_PRUNING
 
 
 # ---------------------------------------------------------------------------

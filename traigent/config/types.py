@@ -585,7 +585,9 @@ class TraigentConfig:
     comparability_mode: Literal["legacy", "warn", "strict"] = "warn"
 
     # Analytics and telemetry settings
-    enable_usage_analytics: bool = True  # Send privacy-safe usage stats when backend/portal integration is configured
+    enable_usage_analytics: bool = (
+        True  # Send privacy-safe usage stats when backend/portal integration is configured
+    )
     analytics_endpoint: str | None = None  # Custom analytics endpoint
     anonymous_user_id: str | None = None  # Anonymous identifier (auto-generated)
 
@@ -636,7 +638,9 @@ class TraigentConfig:
                 self, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
             )
         elif supplied_execution_mode is not None:
-            _warn_deprecated_config_execution_mode(supplied_execution_mode)
+            _warn_deprecated_config_execution_mode(
+                cast(ExecutionMode | str, supplied_execution_mode)
+            )
 
         if self.privacy_enabled is _CONFIG_VALUE_UNSET:
             object.__setattr__(self, "privacy_enabled", False)
@@ -644,7 +648,9 @@ class TraigentConfig:
             _warn_deprecated_config_privacy_enabled()
 
         # Validate deprecated compatibility selector against supported runtime modes.
-        mode_enum = validate_execution_mode(self.execution_mode)
+        mode_enum = validate_execution_mode(
+            cast(ExecutionMode | str | None, self.execution_mode)
+        )
         object.__setattr__(self, "execution_mode", cast(str, mode_enum.value))
         object.__setattr__(self, "_warn_legacy_config_assignments", True)
 
@@ -855,7 +861,9 @@ class TraigentConfig:
     @property
     def execution_mode_enum(self) -> ExecutionMode:
         """Return internal compatibility selector as an enum."""
-        return resolve_execution_mode(self.execution_mode)
+        return resolve_execution_mode(
+            cast(ExecutionMode | str | None, self.execution_mode)
+        )
 
     def is_edge_analytics_mode(self) -> bool:
         """Return whether the compatibility selector maps to local-only runtime."""
@@ -1091,7 +1099,7 @@ def _public_config_param(name: str, default: Any, annotation: Any) -> Parameter:
     )
 
 
-TraigentConfig.__signature__ = Signature(
+TraigentConfig.__signature__ = Signature(  # type: ignore[attr-defined]
     parameters=[
         _public_config_param("model", None, str | None),
         _public_config_param("temperature", None, float | None),

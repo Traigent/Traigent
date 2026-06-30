@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.api.types import ExampleResult
 from traigent.core.sample_budget import (
     LeaseClosure,
     SampleBudgetLease,
@@ -26,7 +27,12 @@ from traigent.core.sample_budget import (
 )
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.types import TrialResult, TrialStatus
-from traigent.evaluators.base import BaseEvaluator, Dataset
+from traigent.evaluators.base import (
+    BaseEvaluator,
+    Dataset,
+    EvaluationExample,
+    EvaluationResult,
+)
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TrialPrunedError
 
@@ -59,6 +65,51 @@ class MockEvaluator(BaseEvaluator):
         return result
 
 
+class SmartPruningEvaluator(BaseEvaluator):
+    """Evaluator that reports per-example progress and preserves prune partials."""
+
+    async def evaluate(self, func, config, dataset, **kwargs):
+        progress_callback = kwargs.get("progress_callback")
+        example_results: list[ExampleResult] = []
+        try:
+            for index, example in enumerate(dataset.examples):
+                result = ExampleResult(
+                    example_id=f"example_{index}",
+                    input_data=example.input_data,
+                    expected_output=example.expected_output,
+                    actual_output=f"output_{index}",
+                    metrics={"accuracy": 1.0 if index == 0 else 0.0},
+                    execution_time=0.01,
+                    success=True,
+                    error_message=None,
+                    metadata={},
+                )
+                example_results.append(result)
+                if progress_callback is not None:
+                    progress_callback(
+                        index,
+                        {
+                            "success": result.success,
+                            "metrics": result.metrics,
+                            "partial_cost_usd": 0.01,
+                            "output": result.actual_output,
+                        },
+                    )
+        except TrialPrunedError as exc:
+            exc.example_results = example_results
+            raise
+
+        return EvaluationResult(
+            config=config,
+            example_results=example_results,
+            aggregated_metrics={"accuracy": 0.5},
+            total_examples=len(example_results),
+            successful_examples=len(example_results),
+            duration=0.02,
+            metrics={"accuracy": 0.5, "examples_attempted": len(example_results)},
+        )
+
+
 class MockOrchestrator:
     """Mock orchestrator for TrialLifecycle testing."""
 
@@ -82,6 +133,8 @@ class MockOrchestrator:
         self._default_config = None
         self._default_config_used = False
         self.objective_schema = None  # For band-based pruning support
+        self.objectives = ["accuracy"]
+        self.backend_session_manager = None
 
     def _apply_knob_resolution(self, config):
         """Mirror of OptimizationOrchestrator._apply_knob_resolution (RFC 0001):
@@ -98,6 +151,27 @@ class MockOrchestrator:
         return kwargs.get("current_trial_index", 0) + 1
 
 
+class RecordingSmartPruningManager:
+    """Backend-session manager test double for smart-pruning reports."""
+
+    def __init__(self, *, enabled: bool = True, prune_after: int | None = None):
+        self.enabled = enabled
+        self.prune_after = prune_after
+        self.reports: list[dict[str, object]] = []
+
+    def should_report_intermediate_progress(self, session_id: str | None) -> bool:
+        return self.enabled and session_id == "session-123"
+
+    def report_intermediate_progress(self, payload: dict[str, object]):
+        self.reports.append(dict(payload))
+        if self.prune_after is not None and len(self.reports) >= self.prune_after:
+            return {
+                "prune": True,
+                "prune_reason": "running score below smart-pruning threshold",
+            }
+        return {"prune": False, "prune_reason": None}
+
+
 def create_mock_dataset(size: int = 10, name: str = "test_dataset") -> Dataset:
     """Create a mock dataset for testing."""
     dataset = MagicMock(spec=Dataset)
@@ -105,6 +179,16 @@ def create_mock_dataset(size: int = 10, name: str = "test_dataset") -> Dataset:
     dataset.examples = [{"input": f"test_{i}"} for i in range(size)]
     dataset.__len__ = MagicMock(return_value=size)
     return dataset
+
+
+def create_real_dataset(size: int = 3, name: str = "test_dataset") -> Dataset:
+    return Dataset(
+        examples=[
+            EvaluationExample(input_data=f"question_{i}", expected_output=f"output_{i}")
+            for i in range(size)
+        ],
+        name=name,
+    )
 
 
 # =============================================================================
@@ -240,6 +324,7 @@ class TestCreateProgressTracking:
             optuna_trial_id=None,
             dataset=dataset,
             trial_id="test-trial",
+            session_id=None,
         )
 
         assert callback is None
@@ -256,10 +341,66 @@ class TestCreateProgressTracking:
             optuna_trial_id=42,
             dataset=dataset,
             trial_id="test-trial",
+            session_id="session-123",
         )
 
         assert callback is None
         assert state is None
+
+    def test_returns_none_when_smart_pruning_disabled(self):
+        """No smart-pruning config means no callback and no intermediate egress."""
+        orchestrator = MockOrchestrator()
+        manager = RecordingSmartPruningManager(enabled=False)
+        orchestrator.backend_session_manager = manager
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_mock_dataset()
+
+        callback, state = lifecycle._create_progress_tracking(
+            optuna_trial_id=None,
+            dataset=dataset,
+            trial_id="test-trial",
+            session_id="session-123",
+        )
+
+        assert callback is None
+        assert state is None
+        assert manager.reports == []
+
+    @pytest.mark.asyncio
+    async def test_cloud_smart_pruning_posts_and_returns_pruned_result(self):
+        """prune=true stops the trial and preserves partial example results."""
+        orchestrator = MockOrchestrator()
+        orchestrator.evaluator = SmartPruningEvaluator()
+        manager = RecordingSmartPruningManager(prune_after=2)
+        orchestrator.backend_session_manager = manager
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_real_dataset(size=3)
+
+        result = await lifecycle.run_trial(
+            func=lambda value: value,
+            config={"temperature": 0.2},
+            dataset=dataset,
+            trial_number=1,
+            session_id="session-123",
+        )
+
+        assert result.status == TrialStatus.PRUNED
+        assert result.error_message == "running score below smart-pruning threshold"
+        assert result.metadata["pruned"] is True
+        assert result.metadata["examples_attempted"] == 2
+        assert len(result.metadata["example_results"]) == 2
+        assert len(manager.reports) == 2
+        assert manager.reports[0] == {
+            "session_id": "session-123",
+            "trial_id": result.trial_id,
+            "running_score": 1.0,
+            "examples_attempted": 1,
+            "objective_name": "accuracy",
+            "partial_cost_usd": 0.01,
+        }
+        assert manager.reports[1]["examples_attempted"] == 2
+        assert manager.reports[1]["running_score"] == 0.5
+        assert "output" not in manager.reports[0]
 
 
 # =============================================================================
