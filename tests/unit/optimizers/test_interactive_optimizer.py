@@ -16,6 +16,7 @@ from traigent.cloud.models import (
     TrialSuggestion,
 )
 from traigent.optimizers.interactive_optimizer import (
+    CloudBrainOptimizationComplete,
     InteractiveOptimizer,
     RemoteGuidanceService,
 )
@@ -158,6 +159,56 @@ class TestInteractiveOptimizer:
 
         assert result is None
         assert optimizer.session.status == OptimizationSessionStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_suggest_next_trial_async_completion_raises_cloud_complete(
+        self, optimizer, mock_remote_service
+    ):
+        """should_continue=False without a suggestion is normal cloud completion."""
+        mock_remote_service.create_session.return_value = SessionCreationResponse(
+            session_id="session-123",
+            status=OptimizationSessionStatus.ACTIVE,
+            optimization_strategy={},
+        )
+        await optimizer.initialize_session("test_function", 50)
+
+        mock_remote_service.get_next_trial.return_value = NextTrialResponse(
+            suggestion=None,
+            should_continue=False,
+            reason="fallback reason",
+            stop_reason="max_trials_reached",
+            session_status=OptimizationSessionStatus.COMPLETED,
+        )
+
+        with pytest.raises(CloudBrainOptimizationComplete) as exc_info:
+            await optimizer.suggest_next_trial_async(history=[])
+
+        assert exc_info.value.reason == "max_trials_reached"
+        assert optimizer.session.status == OptimizationSessionStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_suggest_next_trial_async_errors_when_continuing_without_suggestion(
+        self, optimizer, mock_remote_service
+    ):
+        """should_continue=True without a suggestion is a backend contract error."""
+        mock_remote_service.create_session.return_value = SessionCreationResponse(
+            session_id="session-123",
+            status=OptimizationSessionStatus.ACTIVE,
+            optimization_strategy={},
+        )
+        await optimizer.initialize_session("test_function", 50)
+
+        mock_remote_service.get_next_trial.return_value = NextTrialResponse(
+            suggestion=None,
+            should_continue=True,
+            session_status=OptimizationSessionStatus.ACTIVE,
+        )
+
+        with pytest.raises(
+            OptimizationError,
+            match="Cloud brain returned no suggestion while should_continue=True",
+        ):
+            await optimizer.suggest_next_trial_async(history=[])
 
     @pytest.mark.asyncio
     async def test_report_results(self, optimizer, mock_remote_service):

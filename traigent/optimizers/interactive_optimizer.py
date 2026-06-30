@@ -289,46 +289,52 @@ class InteractiveOptimizer(BaseOptimizer):
         if not self.session_id:
             raise OptimizationError("No active session. Call initialize_session first.")
 
+        request = NextTrialRequest(
+            session_id=self.session_id,
+            previous_results=previous_results or self._completed_trials[-5:],
+            request_metadata={
+                "dataset_size": dataset_size,
+                "completed_trials": len(self._completed_trials),
+            },
+        )
+
         try:
-            request = NextTrialRequest(
-                session_id=self.session_id,
-                previous_results=previous_results or self._completed_trials[-5:],
-                request_metadata={
-                    "dataset_size": dataset_size,
-                    "completed_trials": len(self._completed_trials),
-                },
-            )
-
             response = await self.remote_service.get_next_trial(request)
-
-            # Update local session status
-            if self.session:
-                self.session.status = response.session_status
-
-            if not response.should_continue or not response.suggestion:
-                self._completion_reason = (
-                    response.reason or "cloud brain completed optimization"
-                )
-                logger.info(f"Optimization complete: {self._completion_reason}")
-                return None
-
-            self._completion_reason = None
-            suggestion = response.suggestion
-
-            # Store pending trial
-            self._pending_trials[suggestion.trial_id] = suggestion
-
-            logger.info(
-                f"Got suggestion {suggestion.trial_id}: "
-                f"{suggestion.exploration_type} with "
-                f"{len(suggestion.dataset_subset.indices)} examples"
-            )
-
-            return suggestion
-
         except Exception as e:
             logger.error(f"Failed to get next suggestion: {e}")
             raise OptimizationError(f"Failed to get suggestion: {e}") from e
+
+        # Update local session status
+        if self.session:
+            self.session.status = response.session_status
+
+        if not response.should_continue:
+            self._completion_reason = (
+                response.stop_reason
+                or response.reason
+                or "cloud brain completed optimization"
+            )
+            logger.info(f"Optimization complete: {self._completion_reason}")
+            return None
+
+        if not response.suggestion:
+            raise OptimizationError(
+                "Cloud brain returned no suggestion while should_continue=True"
+            )
+
+        self._completion_reason = None
+        suggestion = response.suggestion
+
+        # Store pending trial
+        self._pending_trials[suggestion.trial_id] = suggestion
+
+        logger.info(
+            f"Got suggestion {suggestion.trial_id}: "
+            f"{suggestion.exploration_type} with "
+            f"{len(suggestion.dataset_subset.indices)} examples"
+        )
+
+        return suggestion
 
     async def suggest_next_trial_async(
         self,

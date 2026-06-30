@@ -443,6 +443,7 @@ class TestOptimizationOrchestrator:
 
             result = await orchestrator.optimize(mock_function, sample_dataset)
 
+        assert isinstance(result, OptimizationResult)
         assert result.status == OptimizationStatus.COMPLETED
         assert result.stop_reason == "max_trials_reached"
         assert [trial.status for trial in result.trials] == [
