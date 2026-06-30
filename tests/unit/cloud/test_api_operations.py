@@ -1002,6 +1002,19 @@ class TestIntermediateReport:
         assert mock_session.post.call_args.kwargs["json"] == payload
 
     @pytest.mark.asyncio
+    async def test_intermediate_report_rejects_extra_payload_field(self):
+        payload = {
+            "session_id": "session_123",
+            "trial_id": "trial_abc",
+            "running_score": 0.75,
+            "examples_attempted": 3,
+            "output": "must-not-egress",
+        }
+
+        with pytest.raises(ValueError, match="intermediate report.*output"):
+            await self.ops.report_intermediate_progress(payload)
+
+    @pytest.mark.asyncio
     async def test_offline_intermediate_report_skips_without_post(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
         payload = {

@@ -33,6 +33,7 @@ from traigent.cloud.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
 )
+from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
@@ -522,6 +523,7 @@ class SessionOperations:
         self._validate_non_empty_string(optimization_goal, "optimization_goal")
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
+        normalized_smart_pruning = normalize_smart_pruning_options(smart_pruning)
 
         # Phase 8 (review round 2): the local-availability fallback is for
         # NON-governed sessions only. A governed/strict session that cannot
@@ -630,7 +632,7 @@ class SessionOperations:
                 # reading objectives[0] as its optimization_goal).
                 objectives=list(objectives) if objectives else [optimization_goal],
                 warm_start_from=warm_start_from or None,
-                smart_pruning=dict(smart_pruning) if smart_pruning else None,
+                smart_pruning=normalized_smart_pruning,
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
                     # Carry the dataset label (content is not submitted) so the
@@ -1589,7 +1591,9 @@ class SessionOperations:
     def get_active_sessions(self) -> dict[str, OptimizationSession]:
         """Get all active optimization sessions."""
         with self.client._active_sessions_lock:
-            return self.client._active_sessions.copy()
+            return cast(
+                dict[str, OptimizationSession], self.client._active_sessions.copy()
+            )
 
     def get_session_mapping(self, session_id: str) -> SessionExperimentMapping | None:
         """Get session to experiment mapping."""

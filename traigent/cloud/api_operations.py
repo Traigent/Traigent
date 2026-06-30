@@ -30,6 +30,10 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
 )
+from traigent.cloud.smart_pruning import (
+    normalize_intermediate_report_payload,
+    normalize_smart_pruning_options,
+)
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
@@ -662,8 +666,9 @@ class ApiOperations:
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
         smart_pruning = getattr(session_request, "smart_pruning", None)
-        if smart_pruning:
-            payload["smart_pruning"] = dict(smart_pruning)
+        wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
+        if wire_smart_pruning:
+            payload["smart_pruning"] = wire_smart_pruning
         self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
@@ -709,8 +714,9 @@ class ApiOperations:
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
         smart_pruning = getattr(session_request, "smart_pruning", None)
-        if smart_pruning:
-            payload["smart_pruning"] = dict(smart_pruning)
+        wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
+        if wire_smart_pruning:
+            payload["smart_pruning"] = wire_smart_pruning
         self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
@@ -807,8 +813,9 @@ class ApiOperations:
         self, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Report per-trial intermediate progress for cloud smart pruning."""
-        session_id = str(payload.get("session_id", "")).strip()
-        trial_id = str(payload.get("trial_id", "")).strip()
+        wire_payload = normalize_intermediate_report_payload(payload)
+        session_id = str(wire_payload.get("session_id", "")).strip()
+        trial_id = str(wire_payload.get("trial_id", "")).strip()
         if not session_id or not trial_id:
             return {"prune": False, "prune_reason": None}
         if is_backend_offline():
@@ -839,7 +846,7 @@ class ApiOperations:
                 timeout = cast(Any, aiohttp).ClientTimeout(total=10)
                 async with session.post(
                     url,
-                    json=payload,
+                    json=wire_payload,
                     headers=headers,
                     timeout=timeout,
                 ) as response:

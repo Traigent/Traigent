@@ -70,6 +70,10 @@ from traigent.api.strategy_presets import (
     normalize_strategy_preset,
 )
 from traigent.api.types import AgentDefinition
+from traigent.cloud.smart_pruning import SmartPruningOptions
+from traigent.cloud.smart_pruning import (
+    normalize_smart_pruning_options as _normalize_smart_pruning_options,
+)
 from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
@@ -196,21 +200,6 @@ class ExternalServiceEvaluator(BaseModel):
 
     kind: Literal["hybrid_api"] = "hybrid_api"
     hybrid_api: HybridAPIOptions = Field(default_factory=HybridAPIOptions)
-
-
-class SmartPruningOptions(BaseModel):
-    """Cloud smart-pruning profile sent on session creation."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
-
-    label: Literal["aggressive", "balanced", "conservative"]
-    min_completed_trials: int | None = Field(default=None, ge=1)
-    warmup_steps: int | None = Field(default=None, ge=0)
-    epsilon: float | None = Field(default=None, ge=0)
-    cost_threshold: float | None = Field(default=None, ge=0)
-    confidence: float | None = Field(default=None, gt=0, lt=1)
-    min_samples_per_config: int | None = Field(default=None, ge=1)
-    warmup_trials: int | None = Field(default=None, ge=0)
 
 
 class ExecutionOptions(BaseModel):
@@ -951,22 +940,6 @@ def _resolve_tvl_options(
         return bundle
 
     return TVLOptions(spec_path=str(tvl_spec_value), environment=tvl_environment_value)
-
-
-def _normalize_smart_pruning_options(value: Any) -> dict[str, Any] | None:
-    """Normalize smart-pruning config to the schema-shaped wire dict."""
-    if value is None:
-        return None
-    if isinstance(value, SmartPruningOptions):
-        model = value
-    elif isinstance(value, dict):
-        model = SmartPruningOptions.model_validate(value)
-    else:
-        raise TypeError(
-            "smart_pruning must be a dict or SmartPruningOptions, "
-            f"got {type(value).__name__}"
-        )
-    return cast(dict[str, Any], model.model_dump(exclude_none=True))
 
 
 def _apply_tvl_artifact(

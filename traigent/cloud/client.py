@@ -66,6 +66,7 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+from .smart_pruning import normalize_smart_pruning_options
 from .subset_selection import SmartSubsetSelector
 from .url_security import validate_cloud_base_url
 
@@ -1939,8 +1940,9 @@ class TraigentCloudClient(BaseTraigentClient):
         # Warm-start: prior experiment id (empty string treated as absent).
         if request.warm_start_from:
             payload["warm_start_from"] = request.warm_start_from
-        if request.smart_pruning:
-            payload["smart_pruning"] = dict(request.smart_pruning)
+        smart_pruning = normalize_smart_pruning_options(request.smart_pruning)
+        if smart_pruning:
+            payload["smart_pruning"] = smart_pruning
         artifact_fingerprints = artifact_fingerprints_to_wire(
             getattr(request, "artifact_fingerprints", None)
         )

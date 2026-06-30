@@ -20,13 +20,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from traigent.api.types import ExampleResult
+from traigent.config.types import TraigentConfig, resolve_execution_policy
+from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.sample_budget import (
     LeaseClosure,
     SampleBudgetLease,
     SampleBudgetManager,
 )
 from traigent.core.trial_lifecycle import TrialLifecycle
-from traigent.core.types import TrialResult, TrialStatus
+from traigent.core.types import OptimizationStatus, TrialResult, TrialStatus
 from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
@@ -170,6 +172,19 @@ class RecordingSmartPruningManager:
                 "prune_reason": "running score below smart-pruning threshold",
             }
         return {"prune": False, "prune_reason": None}
+
+
+class RaisingIntermediateReportClient:
+    """Backend client test double whose intermediate report POST fails."""
+
+    no_egress = False
+
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, object]] = []
+
+    async def _report_intermediate_progress(self, payload: dict[str, object]):
+        self.payloads.append(dict(payload))
+        raise RuntimeError("report POST failed")
 
 
 def create_mock_dataset(size: int = 10, name: str = "test_dataset") -> Dataset:
@@ -401,6 +416,55 @@ class TestCreateProgressTracking:
         assert manager.reports[1]["examples_attempted"] == 2
         assert manager.reports[1]["running_score"] == 0.5
         assert "output" not in manager.reports[0]
+
+    @pytest.mark.asyncio
+    async def test_cloud_smart_pruning_report_failure_continues_trial(
+        self, monkeypatch
+    ):
+        """Report POST failures fail open at the manager boundary."""
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+        orchestrator = MockOrchestrator()
+        orchestrator.evaluator = SmartPruningEvaluator()
+        traigent_config = TraigentConfig(algorithm="auto")
+        traigent_config.execution_policy = resolve_execution_policy(
+            algorithm="auto",
+            offline=False,
+        )
+        failing_client = RaisingIntermediateReportClient()
+        orchestrator.backend_session_manager = BackendSessionManager(
+            backend_client=failing_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=None,
+            optimizer=orchestrator.optimizer,
+            optimization_id="test-optimization-123",
+            optimization_status=OptimizationStatus.RUNNING,
+            smart_pruning={"label": "balanced"},
+        )
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_real_dataset(size=3)
+
+        decision = orchestrator.backend_session_manager.report_intermediate_progress(
+            {
+                "session_id": "session-123",
+                "trial_id": "trial-direct",
+                "running_score": 0.5,
+                "examples_attempted": 1,
+            }
+        )
+        result = await lifecycle.run_trial(
+            func=lambda value: value,
+            config={"temperature": 0.2},
+            dataset=dataset,
+            trial_number=1,
+            session_id="session-123",
+        )
+
+        assert decision == {"prune": False, "prune_reason": None}
+        assert result.status == TrialStatus.COMPLETED
+        assert result.metrics["accuracy"] == 0.5
+        assert len(failing_client.payloads) == 4
 
 
 # =============================================================================

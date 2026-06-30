@@ -2,7 +2,7 @@
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,7 +25,7 @@ class TrackingLock:
         self.enter_count += 1
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
         return False
 
 
@@ -176,17 +176,40 @@ class TestSessionCreationSmartPruning:
         req = SessionCreationRequest(function_name="f", smart_pruning=SMART_PRUNING)
         assert req.smart_pruning == SMART_PRUNING
 
+    def test_request_rejects_extra_smart_pruning_field(self):
+        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+            SessionCreationRequest(
+                function_name="f",
+                smart_pruning={**SMART_PRUNING, "unexpected": "value"},
+            )
+
     def test_typed_payload_includes_top_level_smart_pruning(self):
         ops = _make_api_ops()
         request = _typed_request(smart_pruning=SMART_PRUNING)
         payload = ops._build_typed_session_payload(request, max_trials=5)
         assert payload["smart_pruning"] == SMART_PRUNING
 
+    def test_typed_payload_rejects_mutated_extra_smart_pruning_field(self):
+        ops = _make_api_ops()
+        request = _typed_request(smart_pruning=SMART_PRUNING)
+        request.smart_pruning = {**SMART_PRUNING, "unexpected": "value"}
+
+        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+            ops._build_typed_session_payload(request, max_trials=5)
+
     def test_legacy_payload_includes_top_level_smart_pruning(self):
         ops = _make_api_ops()
         request = _typed_request(smart_pruning=SMART_PRUNING)
         payload = ops._build_legacy_session_payload(request, max_trials=5)
         assert payload["smart_pruning"] == SMART_PRUNING
+
+    def test_legacy_payload_rejects_mutated_extra_smart_pruning_field(self):
+        ops = _make_api_ops()
+        request = _typed_request(smart_pruning=SMART_PRUNING)
+        request.smart_pruning = {**SMART_PRUNING, "unexpected": "value"}
+
+        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+            ops._build_legacy_session_payload(request, max_trials=5)
 
     def test_cloud_client_serializer_includes_top_level_smart_pruning(self):
         from traigent.cloud.client import TraigentCloudClient
@@ -206,6 +229,25 @@ class TestSessionCreationSmartPruning:
         payload = TraigentCloudClient._serialize_session_request(fake_self, request)
 
         assert payload["smart_pruning"] == SMART_PRUNING
+
+    def test_cloud_client_serializer_rejects_mutated_extra_smart_pruning_field(self):
+        from traigent.cloud.client import TraigentCloudClient
+
+        fake_self = SimpleNamespace(
+            _ensure_owner_metadata=lambda metadata: metadata or {},
+            _serialize_session_objective=lambda objective: objective,
+        )
+        request = SessionCreationRequest(
+            function_name="f",
+            configuration_space={"p": [1, 2]},
+            objectives=["accuracy"],
+            dataset_metadata={"size": 1},
+            smart_pruning=SMART_PRUNING,
+        )
+        request.smart_pruning = {**SMART_PRUNING, "unexpected": "value"}
+
+        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+            TraigentCloudClient._serialize_session_request(fake_self, request)
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +305,21 @@ class TestSessionOperationsWarmStartThreading:
         )
         assert client.captured_session_request is not None
         assert client.captured_session_request.smart_pruning == SMART_PRUNING
+
+    def test_smart_pruning_rejects_extra_field(self):
+        ops, _client = self._make_ops()
+
+        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+            ops.create_session(
+                "my_func",
+                {"model": ["a", "b"]},
+                metadata={
+                    "max_trials": 5,
+                    "dataset_size": 10,
+                    "evaluation_set": "test",
+                },
+                smart_pruning={**SMART_PRUNING, "unexpected": "value"},
+            )
 
 
 # ---------------------------------------------------------------------------

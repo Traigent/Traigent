@@ -19,6 +19,7 @@ from typing import Any
 # enum lives in ``traigent.api.types``. Re-export it here so the cloud layer and
 # the public API can never drift into two disagreeing ``TrialStatus`` enums.
 from traigent.api.types import TrialStatus as TrialStatus
+from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.evaluators.base import Dataset
 
 
@@ -252,6 +253,7 @@ class SessionCreationRequest:
             self.objectives: list[Any] = []
         if self.dataset_metadata is None:
             self.dataset_metadata: dict[str, Any] = {"size": 100, "type": "test"}
+        self.smart_pruning = normalize_smart_pruning_options(self.smart_pruning)
         # Ensure max_trials is never None
         if self.max_trials is None:
             self.max_trials = 10
