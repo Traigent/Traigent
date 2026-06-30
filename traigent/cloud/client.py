@@ -33,13 +33,13 @@ else:  # pragma: no cover - minimal environments without aiohttp
 
 from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset
-from traigent.utils.env_config import is_backend_offline
-from traigent.utils.error_handler import OfflineModeError
-from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
+from traigent.utils.env_config import is_backend_offline
+from traigent.utils.error_handler import OfflineModeError
+from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
@@ -62,6 +62,7 @@ from .models import (
     SessionCreationRequest,
     SessionCreationResponse,
     SessionObjectiveDefinition,
+    SessionSummary,
     TrialResultSubmission,
     TrialSuggestion,
 )
@@ -1517,8 +1518,16 @@ class TraigentCloudClient(BaseTraigentClient):
                 f"Failed to finalize session: {e}", "session_finalization", e
             ) from e
 
-    async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
-        """Delete a session using the backend cleanup endpoint."""
+    async def delete_session(self, session_id: str, cascade: bool = False) -> bool:
+        """Delete a session via ``DELETE /api/v1/sessions/<id>``.
+
+        Non-destructive by default (``cascade=False``), matching the backend
+        default: only the session and its run artifacts are removed. Pass
+        ``cascade=True`` to additionally hard-delete the parent experiment when
+        the deleted session was its last run. Use this with
+        :meth:`list_sessions` to enumerate and clean up orphaned / zombie
+        "running" sessions from the client.
+        """
         if not session_id:
             raise ValueError("session_id is required")
 
@@ -1555,6 +1564,68 @@ class TraigentCloudClient(BaseTraigentClient):
             raise StandardizedClientError(
                 f"Failed to delete session: {exc}", "session_delete", exc
             ) from exc
+
+    async def list_sessions(
+        self,
+        status: str | None = None,
+        pattern: str | None = None,
+        limit: int | None = None,
+    ) -> list[SessionSummary]:
+        """List sessions via ``GET /api/v1/sessions``.
+
+        Enumerates the caller's optimization sessions so orphaned / zombie
+        "running" sessions can be found and cleaned up with
+        :meth:`delete_session`. Returns typed :class:`SessionSummary` objects.
+
+        Args:
+            status: Optional lifecycle filter (server-side ``status`` query param).
+            pattern: Optional session-id match (server-side ``pattern`` query
+                param).
+            limit: Optional cap on the number of summaries returned. The backend
+                does not support a server-side limit, so this is applied
+                client-side after the response is received.
+
+        Returns:
+            A list of :class:`SessionSummary` (empty when there are none).
+        """
+        self._raise_if_backend_egress_disabled("list sessions")
+        await self._ensure_session()
+        if self._aio_session is None:
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
+
+        params: dict[str, str] = {}
+        if status is not None:
+            params["status"] = str(status)
+        if pattern is not None:
+            params["pattern"] = str(pattern)
+
+        url = f"{self.api_base_url}/sessions"
+        try:
+            async with self._aio_session.get(url, params=params) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise CloudServiceError(
+                        f"Failed to list sessions: status={response.status} "
+                        f"body={error_text[:200]}"
+                    )
+                data = await response.json()
+        except aiohttp.ClientError as exc:
+            await self._reset_http_session("list_sessions network error")
+            raise StandardizedClientError(
+                f"Failed to list sessions: {exc}", "session_list", exc
+            ) from exc
+
+        raw_sessions = data.get("sessions") if isinstance(data, dict) else None
+        if not isinstance(raw_sessions, list):
+            raw_sessions = []
+        summaries = [
+            SessionSummary.from_dict(item)
+            for item in raw_sessions
+            if isinstance(item, dict)
+        ]
+        if limit is not None and limit >= 0:
+            summaries = summaries[:limit]
+        return summaries
 
     # Stateful optimization methods for interactive model
 

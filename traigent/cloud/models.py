@@ -140,6 +140,40 @@ class OptimizationSession:
 
 
 @dataclass
+class SessionSummary:
+    """Lightweight summary of a session from ``GET /api/v1/sessions``.
+
+    Returned by :meth:`traigent.cloud.client.TraigentCloudClient.list_sessions`.
+    Maps the backend session-list contract
+    (``optimization/optimization_session_list_response_schema.json``):
+    ``session_id`` and
+    ``status`` are always present; ``created_at`` / ``progress`` when the server
+    provides them. Forward-compatible — any additional server fields are kept in
+    ``extra`` rather than dropped, so the SDK can enumerate and clean up orphaned
+    sessions without a release per new field.
+    """
+
+    session_id: str
+    status: str
+    created_at: str | None = None
+    progress: dict[str, Any] | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionSummary:
+        """Build a summary from one backend session object, tolerating extras."""
+        known = {"session_id", "status", "created_at", "progress"}
+        progress = data.get("progress")
+        return cls(
+            session_id=str(data.get("session_id", "")),
+            status=str(data.get("status", "")),
+            created_at=data.get("created_at"),
+            progress=progress if isinstance(progress, dict) else None,
+            extra={k: v for k, v in data.items() if k not in known},
+        )
+
+
+@dataclass
 class DatasetSubsetIndices:
     """Indices for selecting a subset of the dataset."""
 
