@@ -761,6 +761,11 @@ class TrialLifecycle:
             decision = report(payload) if callable(report) else {}
             if isinstance(decision, dict) and decision.get("prune") is True:
                 reason = decision.get("prune_reason") or "cloud smart pruning"
+                logger.info(
+                    "Cloud smart pruning requested trial pruning after %s examples: %s",
+                    state["evaluated"],
+                    reason,
+                )
                 raise TrialPrunedError(str(reason), step=int(state["evaluated"]))
 
         return _progress_callback, state

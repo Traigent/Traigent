@@ -35,6 +35,7 @@ from traigent.evaluators.base import (
     EvaluationExample,
     EvaluationResult,
 )
+from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TrialPrunedError
 
@@ -385,7 +386,9 @@ class TestCreateProgressTracking:
         assert manager.reports == []
 
     @pytest.mark.asyncio
-    async def test_cloud_smart_pruning_posts_and_returns_pruned_result(self):
+    async def test_cloud_smart_pruning_posts_and_returns_pruned_result(
+        self, caplog: pytest.LogCaptureFixture
+    ):
         """prune=true stops the trial and preserves partial example results."""
         orchestrator = MockOrchestrator()
         orchestrator.evaluator = SmartPruningEvaluator()
@@ -394,16 +397,20 @@ class TestCreateProgressTracking:
         lifecycle = TrialLifecycle(orchestrator)
         dataset = create_real_dataset(size=3)
 
-        result = await lifecycle.run_trial(
-            func=lambda value: value,
-            config={"temperature": 0.2},
-            dataset=dataset,
-            trial_number=1,
-            session_id="session-123",
-        )
+        with caplog.at_level("INFO", logger="traigent.core.trial_lifecycle"):
+            result = await lifecycle.run_trial(
+                func=lambda value: value,
+                config={"temperature": 0.2},
+                dataset=dataset,
+                trial_number=1,
+                session_id="session-123",
+            )
 
         assert result.status == TrialStatus.PRUNED
         assert result.error_message == "running score below smart-pruning threshold"
+        assert "running score below smart-pruning threshold" in " ".join(
+            record.getMessage() for record in caplog.records
+        )
         assert result.metadata["pruned"] is True
         assert result.metadata["examples_attempted"] == 2
         assert len(result.metadata["example_results"]) == 2
@@ -419,6 +426,74 @@ class TestCreateProgressTracking:
         assert manager.reports[1]["examples_attempted"] == 2
         assert manager.reports[1]["running_score"] == 0.5
         assert "output" not in manager.reports[0]
+
+    @pytest.mark.asyncio
+    async def test_cloud_smart_pruning_uses_real_per_example_accuracy(self):
+        """Real evaluator progress reports true partial accuracy, not success rate."""
+        orchestrator = MockOrchestrator()
+        orchestrator.evaluator = LocalEvaluator(metrics=["accuracy"], detailed=False)
+        manager = RecordingSmartPruningManager(prune_after=4)
+        orchestrator.backend_session_manager = manager
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = Dataset(
+            examples=[
+                EvaluationExample(
+                    input_data={"question": "secret prompt one"},
+                    expected_output="correct-a",
+                ),
+                EvaluationExample(
+                    input_data={"question": "secret prompt two"},
+                    expected_output="correct-b",
+                ),
+                EvaluationExample(
+                    input_data={"question": "secret prompt three"},
+                    expected_output="correct-c",
+                ),
+                EvaluationExample(
+                    input_data={"question": "secret prompt four"},
+                    expected_output="correct-d",
+                ),
+            ],
+            name="smart-pruning-accuracy",
+        )
+        outputs: dict[str, str] = {
+            "secret prompt one": "correct-a",
+            "secret prompt two": "wrong-b",
+            "secret prompt three": "correct-c",
+            "secret prompt four": "correct-d",
+        }
+
+        def answer(question: str) -> str:
+            return outputs[question]
+
+        result = await lifecycle.run_trial(
+            func=answer,
+            config={"temperature": 0.2},
+            dataset=dataset,
+            trial_number=1,
+            session_id="session-123",
+        )
+
+        allowed_keys = {
+            "session_id",
+            "trial_id",
+            "running_score",
+            "examples_attempted",
+            "objective_name",
+            "partial_cost_usd",
+        }
+        assert result.status == TrialStatus.PRUNED
+        assert result.error_message == "running score below smart-pruning threshold"
+        assert result.metrics["accuracy"] == pytest.approx(0.75)
+        assert result.metrics["examples_attempted"] == 4
+        assert result.metadata["examples_attempted"] == 4
+        assert manager.reports[-1]["running_score"] == pytest.approx(0.75)
+        assert manager.reports[-1]["examples_attempted"] == 4
+        assert all(set(report) <= allowed_keys for report in manager.reports)
+        reports_text = str(manager.reports)
+        assert "secret prompt" not in reports_text
+        assert "correct-" not in reports_text
+        assert "wrong-b" not in reports_text
 
     @pytest.mark.asyncio
     async def test_cloud_smart_pruning_report_failure_continues_trial(
