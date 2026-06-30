@@ -1379,6 +1379,7 @@ class OptimizationOrchestrator:
         *,
         log_on_success: bool,
         permit: Permit | None = None,
+        submit_to_backend: bool = True,
     ) -> int:
         """Update orchestrator state after a single trial completes.
 
@@ -1445,7 +1446,7 @@ class OptimizationOrchestrator:
             self._register_examples_attempted(trial_result)
 
         submission_outcome: Any = None
-        if self.backend_client and session_id:
+        if submit_to_backend and self.backend_client and session_id:
             pre_submit_trial_id = (
                 str(trial_result.trial_id)
                 if getattr(trial_result, "trial_id", None) is not None
@@ -1846,6 +1847,9 @@ class OptimizationOrchestrator:
         - Exceptions (due to return_exceptions=True in gather)
         - None for trials cancelled due to cost limit
         """
+        terminal_completion: CloudBrainOptimizationComplete | None = None
+        submit_to_backend = True
+
         for batch_offset, (config, permitted_result, optuna_id) in enumerate(
             zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
         ):
@@ -1903,7 +1907,13 @@ class OptimizationOrchestrator:
                     optuna_trial_id=optuna_id,
                     log_on_success=False,
                     permit=permit,
+                    submit_to_backend=submit_to_backend,
                 )
+            except CloudBrainOptimizationComplete as complete:
+                if terminal_completion is None:
+                    terminal_completion = complete
+                submit_to_backend = False
+                trial_count = len(self._trials)
             except Exception:
                 # Release permit on any exception to prevent stranding
                 # (only if permit is still active - wasn't already released)
@@ -1914,6 +1924,8 @@ class OptimizationOrchestrator:
                         permit.id,
                     )
                 raise
+        if terminal_completion is not None:
+            raise terminal_completion
         return trial_count
 
     def _apply_cap_and_prevent_excess(
