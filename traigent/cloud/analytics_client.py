@@ -29,6 +29,9 @@ Wired analytics endpoints:
 * ``GET /api/v1/analytics/runs/{run_id}/leaderboard``
 * ``GET /api/v1/analytics/runs/{run_id}/parameter-insights``
 * ``GET /api/v1/analytics/runs/{run_id}/example-insights``
+* ``GET /api/v1/experiment-groups``
+* ``GET /api/v1/experiment-groups/{group_id}``
+* ``GET /api/v1/experiment-groups/{group_id}/configuration-runs``
 """
 
 # Traceability: CONC-Layer-Infra CONC-Security FUNC-CLOUD-HYBRID FUNC-ANALYTICS REQ-CLOUD-009
@@ -41,6 +44,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from urllib.parse import quote
 
+from traigent.cloud.dtos import (
+    ExperimentGroupDetailDTO,
+    ExperimentGroupsPageDTO,
+    GroupedConfigurationRunsPageDTO,
+)
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.utils.logging import get_logger
@@ -752,6 +760,66 @@ class BackendAnalyticsClient:
                 what="redactions",
             ),
         }
+
+    async def list_experiment_groups(
+        self,
+        project_id: str,
+        *,
+        agent_id: str | None = None,
+        dataset_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> ExperimentGroupsPageDTO:
+        """Return experiment groups/cohorts visible to the authenticated user."""
+        payload = await self._get_json(
+            "/api/v1/experiment-groups",
+            what="experiment groups",
+            headers=self._project_headers(project_id),
+            params=_without_none(
+                {
+                    "agent_id": str(agent_id) if agent_id is not None else None,
+                    "dataset_id": str(dataset_id) if dataset_id is not None else None,
+                    "page": str(page),
+                    "page_size": str(page_size),
+                }
+            ),
+        )
+        return ExperimentGroupsPageDTO.from_dict(payload)
+
+    async def get_experiment_group(
+        self,
+        group_id: str,
+        project_id: str,
+    ) -> ExperimentGroupDetailDTO:
+        """Return one experiment group/cohort detail payload."""
+        path = f"/api/v1/experiment-groups/{_quote_segment(group_id, field='group_id')}"
+        payload = await self._get_json(
+            path,
+            what="experiment group",
+            headers=self._project_headers(project_id),
+        )
+        return ExperimentGroupDetailDTO.from_dict(payload)
+
+    async def list_experiment_group_configuration_runs(
+        self,
+        group_id: str,
+        project_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> GroupedConfigurationRunsPageDTO:
+        """Return source-preserving configuration rows for one group/cohort."""
+        path = (
+            "/api/v1/experiment-groups/"
+            f"{_quote_segment(group_id, field='group_id')}/configuration-runs"
+        )
+        payload = await self._get_json(
+            path,
+            what="experiment group configuration runs",
+            headers=self._project_headers(project_id),
+            params={"page": str(page), "page_size": str(page_size)},
+        )
+        return GroupedConfigurationRunsPageDTO.from_dict(payload)
 
 
 def _require_non_empty(value: str, *, field: str) -> str:

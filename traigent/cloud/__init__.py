@@ -30,6 +30,34 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.cloud.dtos",
         "WalletTopUpPacksResponseDTO",
     ),
+    "ExperimentGroupSourceExperimentDTO": (
+        "traigent.cloud.dtos",
+        "ExperimentGroupSourceExperimentDTO",
+    ),
+    "GroupedConfigurationRunRowDTO": (
+        "traigent.cloud.dtos",
+        "GroupedConfigurationRunRowDTO",
+    ),
+    "ExperimentGroupOverviewDTO": (
+        "traigent.cloud.dtos",
+        "ExperimentGroupOverviewDTO",
+    ),
+    "ExperimentGroupDetailDTO": (
+        "traigent.cloud.dtos",
+        "ExperimentGroupDetailDTO",
+    ),
+    "ExperimentGroupStatusSummaryDTO": (
+        "traigent.cloud.dtos",
+        "ExperimentGroupStatusSummaryDTO",
+    ),
+    "ExperimentGroupsPageDTO": (
+        "traigent.cloud.dtos",
+        "ExperimentGroupsPageDTO",
+    ),
+    "GroupedConfigurationRunsPageDTO": (
+        "traigent.cloud.dtos",
+        "GroupedConfigurationRunsPageDTO",
+    ),
     "UsageTracker": ("traigent.cloud.billing", "UsageTracker"),
     "SmartSubsetSelector": ("traigent.cloud.subset_selection", "SmartSubsetSelector"),
     "DiverseSampling": ("traigent.cloud.subset_selection", "DiverseSampling"),
@@ -54,6 +82,13 @@ __all__ = [
     "WalletInsufficientBalanceErrorDTO",
     "WalletTopUpPackDTO",
     "WalletTopUpPacksResponseDTO",
+    "ExperimentGroupSourceExperimentDTO",
+    "GroupedConfigurationRunRowDTO",
+    "ExperimentGroupOverviewDTO",
+    "ExperimentGroupDetailDTO",
+    "ExperimentGroupStatusSummaryDTO",
+    "ExperimentGroupsPageDTO",
+    "GroupedConfigurationRunsPageDTO",
     "UsageTracker",
     "SmartSubsetSelector",
     "DiverseSampling",
