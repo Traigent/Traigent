@@ -20,8 +20,12 @@ from traigent.cloud.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
 )
+from traigent.cloud.trial_operations import TrialSlotResult
 from traigent.config.types import TraigentConfig
-from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.core.backend_session_manager import (
+    BackendSessionManager,
+    BackendTrialSubmissionOutcome,
+)
 from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.storage.local_storage import LocalStorageManager
@@ -430,7 +434,11 @@ class TestBackendSessionManagerTrialSubmission:
 
     @pytest.mark.asyncio
     async def test_submit_trial_fails_closed_when_no_backend_slot(
-        self, backend_session_manager, mock_trial_result, mock_backend_client
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
     ):
         """When the backend declines to mint a trial slot (next-trial returns
         no id), the manager MUST NOT submit a result under a client-hashed id
@@ -452,6 +460,59 @@ class TestBackendSessionManagerTrialSubmission:
         assert not backend_session_manager.is_trial_backend_acknowledged(
             "test-session-id", original_id
         )
+        assert backend_session_manager.backend_degraded is True
+        assert traigent_config.result_source == "local_fallback"
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_completion_slot_does_not_degrade(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
+    ):
+        """Graceful should_continue=False is terminal completion, not outage."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value=TrialSlotResult.complete("converged")
+        )
+        degrade = Mock(wraps=backend_session_manager._flag_backend_degraded)
+        backend_session_manager._flag_backend_degraded = degrade
+
+        outcome = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert isinstance(outcome, BackendTrialSubmissionOutcome)
+        assert outcome.optimization_complete is True
+        assert outcome.reason == "converged"
+        degrade.assert_not_called()
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert backend_session_manager.backend_degraded is False
+        assert traigent_config.result_source != "local_fallback"
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_connectivity_slot_failure_still_degrades(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
+    ):
+        """Transport failure remains the existing local-fallback path."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            side_effect=ConnectionError("network down")
+        )
+
+        result = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert result is True
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert backend_session_manager.backend_degraded is True
+        assert traigent_config.result_source == "local_fallback"
 
     @pytest.mark.asyncio
     async def test_submission_carries_only_the_tuned_projection(
@@ -600,6 +661,38 @@ class TestBackendSessionManagerTrialSubmission:
         mock_backend_client._submit_trial_result_via_session.assert_called_once()
         call_kwargs = mock_backend_client._submit_trial_result_via_session.call_args
         assert call_kwargs.kwargs["status"] == "PRUNED"
+
+    @pytest.mark.asyncio
+    async def test_pruned_trial_with_acquired_backend_id_reuses_slot(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """A pruned result from a backend-id config must not burn another slot."""
+        pruned_trial = Mock(spec=TrialResult)
+        pruned_trial.trial_id = "be-pruned-456"
+        pruned_trial.config = {"param1": 1}
+        pruned_trial.metrics = {"accuracy": 0.7, "cost": 0.3}
+        pruned_trial.is_successful = False
+        pruned_trial.status = TrialStatus.PRUNED
+        pruned_trial.duration = 0.5
+        pruned_trial.error_message = "Early stopping triggered"
+        pruned_trial.metadata = {
+            "pruned": True,
+            "backend_trial_id_acquired": True,
+            "backend_trial_id_source": "cloud_brain",
+        }
+        pruned_trial.get_metric = Mock(
+            side_effect=lambda key, default=None: pruned_trial.metrics.get(key, default)
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=pruned_trial,
+            session_id="test-session-id",
+        )
+
+        mock_backend_client.request_trial_slot.assert_not_called()
+        kwargs = mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        assert kwargs["trial_id"] == "be-pruned-456"
+        assert kwargs["status"] == "PRUNED"
 
     @pytest.mark.asyncio
     async def test_submit_trial_metrics_keys_are_measuresdict_compatible(

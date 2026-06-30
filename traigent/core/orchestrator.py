@@ -1444,13 +1444,14 @@ class OptimizationOrchestrator:
             # on _consumed_examples during parallel trial execution
             self._register_examples_attempted(trial_result)
 
+        submission_outcome: Any = None
         if self.backend_client and session_id:
             pre_submit_trial_id = (
                 str(trial_result.trial_id)
                 if getattr(trial_result, "trial_id", None) is not None
                 else None
             )
-            await self.backend_session_manager.submit_trial(
+            submission_outcome = await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
                 session_id=session_id,
                 dataset_name=getattr(self, "_dataset_name", "dataset"),
@@ -1487,6 +1488,12 @@ class OptimizationOrchestrator:
 
         if should_log:
             self._log_progress(new_count)
+
+        if getattr(submission_outcome, "optimization_complete", False) is True:
+            reason = getattr(submission_outcome, "reason", None)
+            raise CloudBrainOptimizationComplete(
+                str(reason) if reason else "cloud brain completed optimization"
+            )
 
         return new_count
 
@@ -2592,7 +2599,7 @@ class OptimizationOrchestrator:
         except CloudBrainOptimizationComplete as complete:
             self._stop_reason = cast(StopReason, complete.stop_reason)
             logger.info("Cloud brain completed optimization: %s", complete.reason)
-            return trial_count, "break"
+            return len(self._trials), "break"
 
     @staticmethod
     def _vendor_retry_settings() -> tuple[int, float]:

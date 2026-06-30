@@ -446,6 +446,33 @@ class TestCreateProgressTracking:
         assert "output" not in manager.reports[0]
 
     @pytest.mark.asyncio
+    async def test_pruned_cloud_trial_marks_backend_id_acquired(self):
+        """A pruned cloud trial reuses its already-minted backend trial id."""
+        orchestrator = MockOrchestrator()
+        orchestrator.evaluator = SmartPruningEvaluator()
+        manager = RecordingSmartPruningManager(prune_after=1)
+        orchestrator.backend_session_manager = manager
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_real_dataset(size=2)
+
+        result = await lifecycle.run_trial(
+            func=lambda value: value,
+            config={
+                "temperature": 0.2,
+                "_traigent_backend_trial_id": "be-pruned-123",
+            },
+            dataset=dataset,
+            trial_number=1,
+            session_id="session-123",
+        )
+
+        assert result.status == TrialStatus.PRUNED
+        assert result.trial_id == "be-pruned-123"
+        assert result.metadata["backend_trial_id_acquired"] is True
+        assert result.metadata["backend_trial_id_source"] == "cloud_brain"
+        assert manager.reports[0]["trial_id"] == "be-pruned-123"
+
+    @pytest.mark.asyncio
     async def test_cloud_smart_pruning_uses_real_per_example_accuracy(self):
         """Real evaluator progress reports true partial accuracy, not success rate."""
         orchestrator = MockOrchestrator()

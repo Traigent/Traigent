@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import threading
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
@@ -131,6 +132,27 @@ def _backend_disabled_label(reason: SessionCreationFailureReason | None) -> str:
     if reason == SessionCreationFailureReason.SESSION_FAILED:
         return "session-create-failed"
     return "unknown"
+
+
+@dataclass(frozen=True)
+class BackendTrialSlotAcquisition:
+    """Core-local interpretation of a backend trial-slot request."""
+
+    trial_id: str | None = None
+    optimization_complete: bool = False
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class BackendTrialSubmissionOutcome:
+    """Terminal submission outcome consumed by the orchestrator."""
+
+    optimization_complete: bool = False
+    reason: str | None = None
+
+    @classmethod
+    def complete(cls, reason: str | None = None) -> BackendTrialSubmissionOutcome:
+        return cls(optimization_complete=True, reason=reason)
 
 
 def _format_untracked_warning_block(
@@ -940,7 +962,7 @@ class BackendSessionManager:
         session_id: str | None,
         dataset_name: str = "dataset",
         content_scores: dict[str, dict[int, float]] | None = None,
-    ) -> bool:
+    ) -> bool | BackendTrialSubmissionOutcome:
         """Submit trial to backend.
 
         Args:
@@ -951,7 +973,9 @@ class BackendSessionManager:
                 per-run features once at session creation.
 
         Returns:
-            True if submission succeeded
+            True if submission succeeded, False if skipped, or a terminal
+            optimization-complete outcome when the backend gracefully closed the
+            cloud run.
         """
         if self._egress_disabled() or not self._backend_client or not session_id:
             return False
@@ -990,12 +1014,14 @@ class BackendSessionManager:
             )
             return False
 
-        await self._log_trial_to_backend(
+        submission_outcome = await self._log_trial_to_backend(
             session_id=session_id,
             trial_result=trial_result,
             score=score,
             metadata=trial_metadata,
         )
+        if submission_outcome is not None and submission_outcome.optimization_complete:
+            return submission_outcome
 
         return True
 
@@ -1045,36 +1071,53 @@ class BackendSessionManager:
         """
         return (session_id, trial_id) in self._acknowledged_trials
 
+    @staticmethod
+    def _coerce_backend_trial_slot(slot: Any) -> BackendTrialSlotAcquisition:
+        """Normalize legacy string/None and structured slot results."""
+
+        if isinstance(slot, str) and slot:
+            return BackendTrialSlotAcquisition(trial_id=slot)
+        if getattr(slot, "optimization_complete", False) is True:
+            reason = getattr(slot, "reason", None)
+            return BackendTrialSlotAcquisition(
+                optimization_complete=True,
+                reason=str(reason) if reason else None,
+            )
+        trial_id = getattr(slot, "trial_id", None)
+        if isinstance(trial_id, str) and trial_id:
+            return BackendTrialSlotAcquisition(trial_id=trial_id)
+        return BackendTrialSlotAcquisition()
+
     async def _acquire_backend_trial_id(
         self, session_id: str, trial_result: TrialResult
-    ) -> str | None:
+    ) -> BackendTrialSlotAcquisition:
         """Acquire (once per started trial) a backend-minted trial id.
 
         Reuses a previously acquired backend id for the same client trial so
-        retries of submit_trial don't burn extra slots. Returns ``None`` when
-        the backend declined to mint a slot (offline / transport / non-2xx),
-        in which case the caller fails closed.
+        retries of submit_trial don't burn extra slots. Returns a structured
+        outcome so graceful backend completion is not collapsed into the genuine
+        no-slot/error path.
         """
         client = self._backend_client
         if self._egress_disabled() or client is None:
-            return None
+            return BackendTrialSlotAcquisition()
 
         client_trial_id = str(trial_result.trial_id)
         if (trial_result.metadata or {}).get("backend_trial_id_acquired"):
             self._started_trials.add((session_id, client_trial_id))
-            return client_trial_id
+            return BackendTrialSlotAcquisition(trial_id=client_trial_id)
         # If this trial already mapped to an acknowledged backend id, reuse it.
         for sid, bid in self._started_trials:
             if sid == session_id and bid == client_trial_id:
                 # client_trial_id already IS a backend id from a prior pass.
-                return client_trial_id
+                return BackendTrialSlotAcquisition(trial_id=client_trial_id)
 
         requester = getattr(client, "request_trial_slot", None)
         if not callable(requester):
-            return None
+            return BackendTrialSlotAcquisition()
         try:
             slot = requester(session_id)
-            backend_trial_id = await slot if inspect.isawaitable(slot) else slot
+            slot_result = await slot if inspect.isawaitable(slot) else slot
         except Exception as exc:
             logger.debug(
                 "Backend trial-slot request failed for session %s trial %s: %s",
@@ -1082,12 +1125,12 @@ class BackendSessionManager:
                 client_trial_id,
                 exc,
             )
-            return None
+            return BackendTrialSlotAcquisition()
 
-        if isinstance(backend_trial_id, str) and backend_trial_id:
-            self._started_trials.add((session_id, backend_trial_id))
-            return backend_trial_id
-        return None
+        acquisition = self._coerce_backend_trial_slot(slot_result)
+        if acquisition.trial_id:
+            self._started_trials.add((session_id, acquisition.trial_id))
+        return acquisition
 
     async def _log_trial_to_backend(
         self,
@@ -1095,14 +1138,14 @@ class BackendSessionManager:
         trial_result: TrialResult,
         score: float | None,
         metadata: dict[str, Any],
-    ) -> None:
+    ) -> BackendTrialSubmissionOutcome | None:
         """Submit trial metrics to backend when possible."""
 
         if self._egress_disabled() or not self._backend_client or not session_id:
-            return
+            return None
 
         if not self._backend_tracking_enabled:
-            return
+            return None
 
         sanitized_score = float(score) if score is not None else None
         metadata_payload = dict(metadata)
@@ -1122,7 +1165,7 @@ class BackendSessionManager:
                 session_id,
                 trial_result.trial_id,
             )
-            return
+            return None
 
         logger.debug(
             "Submitting trial %s for session %s",
@@ -1151,7 +1194,7 @@ class BackendSessionManager:
                 session_id,
                 trial_result.trial_id,
             )
-            return
+            return None
 
         # Build payload for backend session endpoint.
         metrics_payload: dict[str, Any] = dict(trial_result.metrics or {})
@@ -1194,9 +1237,17 @@ class BackendSessionManager:
             # "Trial ... not found in session". So acquire a backend slot and
             # rebind this trial to it BEFORE submitting. The optimizer still
             # owns the config; the slot is purely the backend's trial handle.
-            backend_trial_id = await self._acquire_backend_trial_id(
-                session_id, trial_result
-            )
+            acquisition = await self._acquire_backend_trial_id(session_id, trial_result)
+            if acquisition.optimization_complete:
+                logger.info(
+                    "Backend reported optimization complete for session %s while "
+                    "submitting client trial %s (reason=%s)",
+                    session_id,
+                    trial_result.trial_id,
+                    acquisition.reason,
+                )
+                return BackendTrialSubmissionOutcome.complete(acquisition.reason)
+            backend_trial_id = acquisition.trial_id
             if backend_trial_id is None:
                 # Fail closed: no acknowledged backend slot ⇒ NO submission and
                 # NO acknowledgment. The certified-selection report will then
@@ -1210,7 +1261,7 @@ class BackendSessionManager:
                     session_id,
                     trial_result.trial_id,
                 )
-                return
+                return None
             # Rebind in place: _best_trial_cached holds this same object, so the
             # incumbent's trial_id becomes the backend id the report needs.
             trial_result.trial_id = backend_trial_id
