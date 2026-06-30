@@ -895,7 +895,10 @@ class TestPrivacyFirstOptimization:
 
                 suggestion = await backend_client.get_next_privacy_trial(session_id)
 
-                assert suggestion is not None
+                # get_next_privacy_trial returns the backend response's
+                # suggestion object as-is.
+                assert suggestion.trial_id == "trial_123"
+                mock_bridge.get_session_mapping.assert_called_once_with(session_id)
                 # Should not create backend config run without mapping
                 mock_bridge.add_trial_mapping.assert_not_called()
 
@@ -1384,7 +1387,12 @@ class TestEdgeCases:
                 suggestion = await backend_client.get_next_privacy_trial(
                     "nonexistent_session"
                 )
-                assert suggestion is not None
+                # get_next_privacy_trial returns the backend response's
+                # suggestion object as-is.
+                assert suggestion.trial_id == "trial_123"
+                # No active session was registered for this id, so nothing
+                # should have been added to in-memory session tracking.
+                assert "nonexistent_session" not in backend_client.get_active_sessions()
 
         import asyncio
 

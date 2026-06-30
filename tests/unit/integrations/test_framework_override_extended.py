@@ -770,9 +770,15 @@ class TestActivateOverrides:
         # Try to override a non-existent framework
         override_manager.activate_overrides(["nonexistent.Framework"])
 
-        # Should log debug message but not raise - verify no exception occurred
-        # and manager is still functional
-        assert override_manager._override_active is not None
+        # Import failure means the target must never be registered as overridden
+        assert not override_manager.is_override_registered("nonexistent.Framework")
+        # The overall override system stays enabled despite the per-target failure
+        assert override_manager.is_override_active() is True
+        # A debug message documenting the unavailable framework must be logged
+        mock_logger.debug.assert_called_once()
+        debug_msg = mock_logger.debug.call_args.args[0]
+        assert "nonexistent.Framework" in debug_msg
+        assert "not available" in debug_msg
 
     @patch("traigent.integrations.framework_override.logger")
     def test_activate_overrides_pydantic_error(self, mock_logger, override_manager):
@@ -784,8 +790,15 @@ class TestActivateOverrides:
             # Try to activate
             override_manager.activate_overrides(["test.Framework"])
 
-            # Should log warning but not raise - verify manager is still functional
-            assert override_manager._override_active is not None
+        # Pydantic-related failures must not register the target as overridden
+        assert not override_manager.is_override_registered("test.Framework")
+        # A warning documenting the Pydantic compatibility issue must be logged
+        warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
+        assert any(
+            "Pydantic compatibility issue with test.Framework" in msg
+            for msg in warning_messages
+        )
+        assert any("PydanticUserError: test" in msg for msg in warning_messages)
 
     def test_activate_overrides_sets_flag(self, override_manager):
         """Test that activate_overrides sets the active flag."""
@@ -895,9 +908,11 @@ class TestOverrideContextManager:
 
         try:
             with override_manager.override_context():
-                # Should not activate any specific targets
-                # Verify context manager works
-                assert override_manager is not None
+                # With no targets, activate_overrides() is never invoked, so
+                # the manager must remain inactive inside the context.
+                assert override_manager.is_override_active() is False
+            # And it must still be inactive after the context exits.
+            assert override_manager.is_override_active() is False
         finally:
             config_context.reset(token)
 

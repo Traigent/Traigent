@@ -10,6 +10,7 @@ import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.config.types import TraigentConfig
+from traigent.core.session_types import SessionCreationFailureReason
 
 
 @pytest.mark.integration
@@ -130,14 +131,23 @@ class TestBackendIntegration:
         )
 
         # Should not raise exception due to fallback mode
-        session_id = client.create_session(
+        result = client.create_session(
             function_name="test_function",
             search_space={"temperature": [0.1, 0.5, 0.9]},
             optimization_goal="maximize",
         )
 
-        # In fallback mode, should still return a session ID
-        assert session_id is not None
+        # The test suite runs with TRAIGENT_OFFLINE_MODE=true (see
+        # tests/conftest.py), so the SDK never attempts to reach the
+        # (unreachable) backend at all and returns a structured local-only
+        # result documenting why, rather than raising or hanging.
+        assert isinstance(result.session_id, str)
+        assert len(result.session_id) > 0
+        assert result.backend_connected is False
+        assert result.execution_path == "local_fallback"
+        assert result.backend_fallback is True
+        assert result.failure_reason == SessionCreationFailureReason.SESSION_FAILED
+        assert result.failure_detail == "Offline mode enabled"
 
 
 @pytest.mark.integration
@@ -229,19 +239,35 @@ class TestBackendIntegrationWithMocks:
             backend_base_url="http://localhost:5000", enable_session_sync=True
         )
 
+        # enable_fallback=True so a local session actually exists for
+        # submit_result to write into (with fallback=False neither the
+        # local-storage write nor the in-memory session lookup in
+        # submit_result has anything to act on, so the call is a no-op).
         client = BackendIntegratedClient(
-            api_key=None, backend_config=backend_config, enable_fallback=False
+            api_key=None, backend_config=backend_config, enable_fallback=True
         )
 
-        # Should not raise exception
-        client.submit_result(
-            session_id="test-session-123",
+        # No API key configured, so create_session falls back to local-only
+        # tracking and never reaches the mocked HTTP backend.
+        session_result = client.create_session(
+            function_name="test_function",
+            search_space={"temperature": [0.1, 0.5, 0.9]},
+            optimization_goal="maximize",
+        )
+        session_id = session_result.session_id
+
+        result = client.submit_result(
+            session_id=session_id,
             config={"temperature": 0.7},
             score=0.85,
             metadata={"cost": 0.002},
         )
 
-        # Verify client was created and submit_result completed without exception
-        # Note: In fallback=False mode, the client may not make actual HTTP calls
-        # if internal validation fails or session sync is disabled
-        assert client is not None, "Client should be created successfully"
+        # submit_result is a fire-and-forget compatibility shim documented
+        # to return None.
+        assert result is None
+        # The trial must be durably persisted to local storage (#1279) so
+        # the result survives even though no backend session exists.
+        summary = client.local_storage.get_session_summary(session_id)
+        assert summary["completed_trials"] == 1
+        assert summary["best_score"] == 0.85

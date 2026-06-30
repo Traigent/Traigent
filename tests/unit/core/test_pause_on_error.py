@@ -282,16 +282,21 @@ class TestParallelBatchVendorDetection:
 
     def test_all_vendor_failures_detected(self):
         """When all results have vendor error messages, classify detects them."""
-        from traigent.core.exception_handler import classify_vendor_error
+        from traigent.core.exception_handler import (
+            VendorErrorCategory,
+            classify_vendor_error,
+        )
 
-        error_messages = [
-            "429 Too Many Requests",
-            "Rate limit exceeded",
-            "quota exhausted for model",
-        ]
-        for msg in error_messages:
+        error_messages_to_category = {
+            "429 Too Many Requests": VendorErrorCategory.RATE_LIMIT,
+            "Rate limit exceeded": VendorErrorCategory.RATE_LIMIT,
+            "quota exhausted for model": VendorErrorCategory.QUOTA_EXHAUSTED,
+        }
+        for msg, expected_category in error_messages_to_category.items():
             category = classify_vendor_error(RuntimeError(msg))
-            assert category is not None, f"Failed to classify: {msg}"
+            assert category == expected_category, (
+                f"Expected {expected_category} for {msg!r}, got {category}"
+            )
 
     def test_mixed_results_not_detected(self):
         """When some results are non-vendor, don't classify as vendor outage."""

@@ -774,11 +774,23 @@ class TestProductionFailClosed_SDK896:
         monkeypatch.setenv("TRAIGENT_ENV", "development")
         monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
 
-        storage = get_credential_storage()
+        with pytest.warns(UserWarning, match="ephemeral encryption key"):
+            storage = get_credential_storage()
         # In dev with cryptography available, SecureCredentialStorage's
         # __init__ generates an ephemeral key with a warning — and that's
-        # what we accept here. The point is no RuntimeError.
-        assert storage is not None
+        # what we accept here. The point is no RuntimeError, and the real
+        # encryption-backed storage is returned (not silently downgraded
+        # to the base64-only FallbackCredentialStorage).
+        assert isinstance(storage, SecureCredentialStorage)
+        assert storage.algorithm == "AES-256-GCM"
+        # Prove the fallback storage is genuinely encryption-backed: a
+        # round-trip through the public API must recover the original data,
+        # and the ciphertext must not contain the plaintext.
+        secret = {"api_key": "sk-fallback-round-trip"}
+        encrypted = storage.encrypt_credentials(secret)
+        assert encrypted["encrypted"] is True
+        assert "sk-fallback-round-trip" not in str(encrypted)
+        assert storage.decrypt_credentials(encrypted) == secret
 
     def test_test_env_without_encryption_key_does_not_raise(self, monkeypatch):
         """`TRAIGENT_ENV=test` is the env pytest uses for security tests
@@ -787,7 +799,10 @@ class TestProductionFailClosed_SDK896:
         monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
 
         storage = get_credential_storage()
-        assert storage is not None
+        # test env is non-production, so the real encryption-backed
+        # storage is constructed (ephemeral key), not the fallback.
+        assert isinstance(storage, SecureCredentialStorage)
+        assert storage.algorithm == "AES-256-GCM"
 
     def test_production_without_cryptography_library_raises(self, monkeypatch):
         """Codex Q4 of PR #964: when `CRYPTOGRAPHY_AVAILABLE=False`
@@ -822,9 +837,20 @@ class TestProductionFailClosed_SDK896:
         # If the two checks disagree, this would either raise from
         # __init__ (treating as prod) OR succeed silently with the
         # factory falling back to FallbackCredentialStorage. With
-        # the shared helper, both classify as non-prod → no raise.
+        # the shared helper, both classify as non-prod → __init__
+        # succeeds directly and the factory never needs its own
+        # fallback branch, so the real SecureCredentialStorage is
+        # returned (not FallbackCredentialStorage).
         storage = get_credential_storage()
-        assert storage is not None
+        assert isinstance(storage, SecureCredentialStorage)
+        # Confirm it's the real encryption-backed storage (not the
+        # FallbackCredentialStorage the two classifiers would disagree
+        # into) by round-tripping through the public encrypt/decrypt API.
+        secret = {"api_key": "sk-classifier-round-trip"}
+        encrypted = storage.encrypt_credentials(secret)
+        assert encrypted["encrypted"] is True
+        assert "sk-classifier-round-trip" not in str(encrypted)
+        assert storage.decrypt_credentials(encrypted) == secret
 
     def test_factory_tail_guard_fails_closed_if_singleton_remains_unset(
         self, monkeypatch
