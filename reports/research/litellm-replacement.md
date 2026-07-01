@@ -1,4 +1,6 @@
-Claude SDK (codebase-grounded) research + Gemini web deep-research, combined and reconciled. 3 parts below: action summary, SDK research, Gemini research.
+# LiteLLM Replacement Research
+
+Claude SDK (codebase-grounded) research + Gemini web deep-research, combined and reconciled. 3 parts below, in this order: action summary, SDK research, Gemini research.
 
 ---
 
