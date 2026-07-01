@@ -1,5 +1,6 @@
 """Unit tests for interactive optimizer."""
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
@@ -159,6 +160,81 @@ class TestInteractiveOptimizer:
 
         assert result is None
         assert optimizer.session.status == OptimizationSessionStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_get_next_suggestion_times_out_when_optimizer_never_ready(
+        self, mock_remote_service
+    ):
+        """Cloud-only optimizer readiness is bounded instead of hanging forever."""
+        optimizer = InteractiveOptimizer(
+            config_space={"temperature": [0.0, 1.0]},
+            objectives=["accuracy"],
+            remote_service=mock_remote_service,
+            optimization_strategy={"algorithm": "bayesian"},
+            optimizer_ready_timeout=0.01,
+        )
+        mock_remote_service.create_session.return_value = SessionCreationResponse(
+            session_id="session-123",
+            status=OptimizationSessionStatus.ACTIVE,
+            optimization_strategy={"algorithm": "bayesian"},
+        )
+
+        async def never_ready(_request):
+            await asyncio.Future()
+
+        mock_remote_service.get_next_trial.side_effect = never_ready
+        await optimizer.initialize_session("test_function", 50)
+
+        with pytest.raises(
+            OptimizationError,
+            match=(
+                "Cloud optimizer service did not become available.*"
+                "Bayesian.*backend optimizer service"
+            ),
+        ):
+            await optimizer.get_next_suggestion(dataset_size=1000)
+
+    @pytest.mark.asyncio
+    async def test_get_next_suggestion_ready_path_does_not_timeout(
+        self, mock_remote_service
+    ):
+        """Prompt cloud readiness preserves the normal next-suggestion path."""
+        optimizer = InteractiveOptimizer(
+            config_space={"temperature": [0.0, 1.0]},
+            objectives=["accuracy"],
+            remote_service=mock_remote_service,
+            optimization_strategy={"algorithm": "bayesian"},
+            optimizer_ready_timeout=1.0,
+        )
+        mock_remote_service.create_session.return_value = SessionCreationResponse(
+            session_id="session-123",
+            status=OptimizationSessionStatus.ACTIVE,
+            optimization_strategy={"algorithm": "bayesian"},
+        )
+        suggestion = TrialSuggestion(
+            trial_id="trial-ready",
+            session_id="session-123",
+            trial_number=1,
+            config={"temperature": 0.7},
+            dataset_subset=DatasetSubsetIndices(
+                indices=[0],
+                selection_strategy="single",
+                confidence_level=1.0,
+                estimated_representativeness=1.0,
+            ),
+            exploration_type="exploration",
+        )
+        mock_remote_service.get_next_trial.return_value = NextTrialResponse(
+            suggestion=suggestion,
+            should_continue=True,
+            session_status=OptimizationSessionStatus.ACTIVE,
+        )
+
+        await optimizer.initialize_session("test_function", 50)
+        result = await optimizer.get_next_suggestion(dataset_size=1000)
+
+        assert result is suggestion
+        assert optimizer._pending_trials["trial-ready"] is suggestion
 
     @pytest.mark.asyncio
     async def test_suggest_next_trial_async_completion_raises_cloud_complete(

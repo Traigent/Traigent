@@ -9,6 +9,8 @@ dataset subset suggestions from a remote service.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
@@ -72,6 +74,10 @@ except (
 
 logger = get_logger(__name__)
 
+_DEFAULT_OPTIMIZER_READY_TIMEOUT_SECONDS = 60.0
+_OPTIMIZER_READY_TIMEOUT_ENV = "TRAIGENT_OPTIMIZER_READY_TIMEOUT_SECONDS"
+_LEGACY_OPTIMIZER_READY_TIMEOUT_ENV = "TRAIGENT_CLOUD_OPTIMIZER_READY_TIMEOUT"
+
 
 def _require_cloud_models() -> None:
     """Raise FeatureNotAvailableError if cloud models are not available."""
@@ -102,6 +108,29 @@ def _string_sequence(value: Any) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple, set)):
         return ()
     return tuple(str(item) for item in value if item)
+
+
+def _resolve_optimizer_ready_timeout(value: Any = None) -> float:
+    """Resolve the cloud optimizer readiness timeout in seconds."""
+
+    raw = value
+    if raw is None:
+        raw = os.getenv(_OPTIMIZER_READY_TIMEOUT_ENV)
+    if raw is None:
+        raw = os.getenv(_LEGACY_OPTIMIZER_READY_TIMEOUT_ENV)
+    if raw is None:
+        return _DEFAULT_OPTIMIZER_READY_TIMEOUT_SECONDS
+
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "optimizer_ready_timeout must be a positive number of seconds"
+        ) from exc
+
+    if timeout <= 0:
+        raise ValueError("optimizer_ready_timeout must be a positive number of seconds")
+    return timeout
 
 
 class CloudBrainOptimizationComplete(RuntimeError):
@@ -186,6 +215,9 @@ class InteractiveOptimizer(BaseOptimizer):
             FeatureNotAvailableError: If cloud models are not installed
         """
         _require_cloud_models()
+        optimizer_ready_timeout = kwargs.pop("optimizer_ready_timeout", None)
+        if optimizer_ready_timeout is None:
+            optimizer_ready_timeout = kwargs.pop("cloud_optimizer_ready_timeout", None)
         super().__init__(config_space, objectives, context, **kwargs)
 
         self.remote_service = remote_service
@@ -193,6 +225,9 @@ class InteractiveOptimizer(BaseOptimizer):
         self.optimization_strategy = optimization_strategy
         self.artifact_fingerprints = artifact_fingerprints
         self.fingerprint_meta = fingerprint_meta
+        self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
+            optimizer_ready_timeout
+        )
 
         # Session management
         self.session: OptimizationSession | None = None
@@ -239,7 +274,10 @@ class InteractiveOptimizer(BaseOptimizer):
                 fingerprint_meta=self.fingerprint_meta,
             )
 
-            response = await self.remote_service.create_session(request)
+            response = await self._await_optimizer_service(
+                "session-create",
+                self.remote_service.create_session(request),
+            )
 
             # Create local session object
             self.session = OptimizationSession(
@@ -299,7 +337,10 @@ class InteractiveOptimizer(BaseOptimizer):
         )
 
         try:
-            response = await self.remote_service.get_next_trial(request)
+            response = await self._await_optimizer_service(
+                "next-trial readiness",
+                self.remote_service.get_next_trial(request),
+            )
         except Exception as e:
             logger.error(f"Failed to get next suggestion: {e}")
             raise OptimizationError(f"Failed to get suggestion: {e}") from e
@@ -361,6 +402,24 @@ class InteractiveOptimizer(BaseOptimizer):
         if subset_indices:
             config["__subset_indices__"] = list(subset_indices)
         return config
+
+    async def _await_optimizer_service(self, stage: str, awaitable: Any) -> Any:
+        """Await a cloud optimizer operation with a bounded readiness deadline."""
+
+        try:
+            return await asyncio.wait_for(
+                awaitable,
+                timeout=self.optimizer_ready_timeout,
+            )
+        except TimeoutError as exc:
+            raise OptimizationError(
+                f"Cloud optimizer service did not become available during {stage} "
+                f"within {self.optimizer_ready_timeout:g}s. "
+                "Bayesian and other managed/cloud optimization algorithms require "
+                "the backend optimizer service and cannot fall back to the local SDK. "
+                "Check that the optimizer service is deployed and healthy "
+                "(BE#1831/#1146), then retry."
+            ) from exc
 
     async def report_results(
         self,
