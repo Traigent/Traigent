@@ -191,7 +191,7 @@ class TestExecutionModes:
             "'{endpoint}/{session_id}' instead of one batched POST to "
             "'{endpoint}/{session_id}/batch' with both submissions - "
             "contradicts the documented batching contract. "
-            "weak-test-ratchet bug candidate."
+            "weak-test-ratchet bug candidate; tracked in #1604."
         ),
     )
     async def test_metric_submission_batching(self, monkeypatch):

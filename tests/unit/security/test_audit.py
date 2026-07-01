@@ -446,7 +446,7 @@ class TestAuditLogger:
             "add_alert_handler() is documented as registering a handler "
             "'for high-severity events', but AuditLogger.log_event() never "
             "invokes any registered alert_handlers entry (the list is "
-            "appended to and never read) -- weak-test-ratchet bug candidate"
+            "appended to and never read) -- weak-test-ratchet bug candidate; tracked in #1605"
         ),
     )
     def test_alert_handling(self):

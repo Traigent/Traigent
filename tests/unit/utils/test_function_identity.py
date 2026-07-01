@@ -488,7 +488,7 @@ class TestFunctionIdentityEdgeCases:
         reason=(
             "FunctionDescriptor loses wrapped/callable identity -> returns "
             "_unknown/functools instead of documented path+module+qualname; "
-            "weak-test-ratchet bug candidate"
+            "weak-test-ratchet bug candidate; tracked in #1603"
         ),
     )
     def test_partial_function(self):
@@ -517,7 +517,7 @@ class TestFunctionIdentityEdgeCases:
         reason=(
             "FunctionDescriptor loses wrapped/callable identity -> returns "
             "_unknown/functools instead of documented path+module+qualname; "
-            "weak-test-ratchet bug candidate"
+            "weak-test-ratchet bug candidate; tracked in #1603"
         ),
     )
     def test_class_as_callable(self):
