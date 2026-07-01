@@ -21,18 +21,18 @@ jobs:
 
     steps:
       - name: Checkout base branch
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: baseline
 
       - name: Checkout PR branch
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7
         with:
           path: work
 
       - name: Setup Python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
