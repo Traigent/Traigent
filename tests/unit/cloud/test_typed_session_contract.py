@@ -20,6 +20,7 @@ from traigent.cloud.api_operations import ApiOperations
 from traigent.cloud.client import CloudServiceError
 from traigent.cloud.governance import build_tvl_governance, promotion_policy_to_wire
 from traigent.cloud.models import SessionCreationRequest
+from traigent.config.types import _reset_deprecation_warning_state_for_tests
 from traigent.core.session_types import SessionCreationFailureDetail
 
 STRICT_POLICY = {
@@ -53,6 +54,13 @@ def _ops() -> ApiOperations:
     return ApiOperations(Mock())
 
 
+@pytest.fixture(autouse=True)
+def reset_deprecation_warning_state():
+    _reset_deprecation_warning_state_for_tests()
+    yield
+    _reset_deprecation_warning_state_for_tests()
+
+
 class TestContractGate:
     def test_default_contract_builds_typed_payload(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
@@ -79,11 +87,30 @@ class TestContractGate:
             _ops()._build_session_payload(_request(promotion_policy=STRICT_POLICY), 5)
 
     def test_legacy_contract_for_ungoverned_keeps_old_shape(self, monkeypatch):
+        import warnings
+
         monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
-        payload = _ops()._build_session_payload(_request(), 5)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            payload = _ops()._build_session_payload(_request(), 5)
+            duplicate_payload = _ops()._build_session_payload(_request(), 5)
+
+        messages = [
+            str(warning.message)
+            for warning in caught
+            if issubclass(warning.category, DeprecationWarning)
+        ]
+        assert len(messages) == 1
+        assert "TRAIGENT_SESSION_CONTRACT=legacy is deprecated" in messages[0]
+        assert "typed session contract" in messages[0]
+        assert "algorithm='grid'" in messages[0]
+        assert "algorithm='random'" in messages[0]
+        assert "prefer local over edge_analytics" in messages[0]
+        assert "future major" in messages[0]
         assert payload["problem_statement"] == "answer_question"
         assert "configuration_space" not in payload
         assert "promotion_policy" not in payload
+        assert duplicate_payload == payload
 
     def test_invalid_contract_value_fails_loud(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "yolo")
@@ -142,6 +169,8 @@ class TestAutoFallback:
     async def test_ungoverned_typed_failure_falls_back_to_legacy_once(
         self, monkeypatch
     ):
+        import warnings
+
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         ops = _ops()
@@ -157,10 +186,25 @@ class TestAutoFallback:
         monkeypatch.setattr(ops, "_post_session_creation", fake_post)
         monkeypatch.setattr(ops, "_build_connector", lambda: None)
 
-        result = await ops.create_traigent_session_via_api(_request())
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = await ops.create_traigent_session_via_api(_request())
+
+        messages = [
+            str(warning.message)
+            for warning in caught
+            if issubclass(warning.category, DeprecationWarning)
+        ]
         assert result == ("s-1", "e-1", "r-1")
         assert len(attempts) == 2
         assert "problem_statement" in attempts[1]
+        assert len(messages) == 1
+        assert (
+            "Auto retry from typed session contract to legacy session contract"
+            in (messages[0])
+        )
+        assert "typed session contract" in messages[0]
+        assert "future major" in messages[0]
 
     @pytest.mark.asyncio
     async def test_governed_typed_failure_raises_no_laundering(self, monkeypatch):

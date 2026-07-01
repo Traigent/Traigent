@@ -35,6 +35,7 @@ from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options,
 )
 from traigent.config.backend_config import BackendConfig
+from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
@@ -88,6 +89,15 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 logger = get_logger(__name__)
+
+_LEGACY_SESSION_CONTRACT_DEPRECATION = (
+    "Legacy session contract payloads are deprecated. Use the typed session "
+    "contract by leaving TRAIGENT_SESSION_CONTRACT unset or setting "
+    "TRAIGENT_SESSION_CONTRACT=typed; use offline=True with algorithm='grid' "
+    "or algorithm='random' for local-only optimization, and prefer local over "
+    "edge_analytics where a compatibility wire value is still required. The "
+    "legacy session contract will be removed in a future major release."
+)
 
 
 class TraigentSessionApiResult(tuple):
@@ -518,6 +528,12 @@ class ApiOperations:
                     "legacy contract (non-governed session, "
                     "TRAIGENT_SESSION_CONTRACT=auto)"
                 )
+                _warn_deprecated_once(
+                    "session_contract:auto_legacy_retry",
+                    "Auto retry from typed session contract to legacy session "
+                    f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
+                    stacklevel=3,
+                )
                 legacy_payload = self._build_legacy_session_payload(
                     session_request,
                     max_trials_value,
@@ -571,7 +587,7 @@ class ApiOperations:
         if value is None:
             logger.debug("max_trials is None in session_request, using default 10")
             return 10
-        return value
+        return cast(int, value)
 
     @staticmethod
     def _session_contract() -> str:
@@ -621,6 +637,12 @@ class ApiOperations:
                     "promotion_policy/tvl_governance (refusing to launder "
                     "strict mode)"
                 )
+            _warn_deprecated_once(
+                "session_contract:TRAIGENT_SESSION_CONTRACT=legacy",
+                "TRAIGENT_SESSION_CONTRACT=legacy is deprecated. "
+                f"{_LEGACY_SESSION_CONTRACT_DEPRECATION}",
+                stacklevel=3,
+            )
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
 

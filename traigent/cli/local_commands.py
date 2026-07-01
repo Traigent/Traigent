@@ -681,7 +681,10 @@ def edge_analytics_commands(ctx: click.Context) -> None:
     """Deprecated hidden alias for `traigent local`."""
     if ctx.invoked_subcommand:
         click.echo(
-            "Warning: `traigent edge-analytics` is deprecated; use `traigent local`.",
+            "Warning: `traigent edge-analytics` is deprecated; use "
+            "`traigent local`, or use offline=True with algorithm='grid' or "
+            "algorithm='random' in Python. Prefer local over edge_analytics; "
+            "this alias will be removed in a future major release.",
             err=True,
         )
 
