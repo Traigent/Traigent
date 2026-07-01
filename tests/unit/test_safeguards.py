@@ -3,7 +3,7 @@
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -567,7 +567,7 @@ class TestCIApproval:
 
             # Create valid token file
             token_file = Path(tmpdir) / "approval.token"
-            expires_at = (datetime.now() + timedelta(hours=1)).isoformat()
+            expires_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
             token_data = {
                 "approved_by": "test_user",
                 "expires_at": expires_at,
@@ -597,7 +597,7 @@ class TestCIApproval:
 
             # Create expired token file
             token_file = Path(tmpdir) / "approval.token"
-            expires_at = (datetime.now() - timedelta(hours=1)).isoformat()
+            expires_at = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
             token_data = {
                 "approved_by": "test_user",
                 "expires_at": expires_at,
@@ -633,7 +633,7 @@ class TestCIApproval:
         # Create token with valid HMAC signature
         secret = b"test_secret"
         approver = "test_approver"
-        expires_iso = (datetime.now() + timedelta(hours=1)).isoformat()
+        expires_iso = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         nonce = "test_nonce_123"
 
         # Compute HMAC signature
@@ -680,7 +680,7 @@ class TestCIApproval:
         # Create token with invalid signature
         token_data = {
             "approver": "test_approver",
-            "expires_iso": (datetime.now() + timedelta(hours=1)).isoformat(),
+            "expires_iso": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
             "nonce": "test_nonce",
             "signature": "invalid_signature",
         }

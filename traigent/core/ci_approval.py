@@ -27,6 +27,19 @@ _UTC_TIMEZONE_SUFFIX = "+00:00"
 _LEGACY_TOKEN_MAX_TTL = timedelta(hours=24)
 
 
+def _parse_expiry_utc(expires_str: str) -> datetime:
+    """Parse an ISO 8601 expiry timestamp as an aware UTC datetime.
+
+    A naive timestamp (no offset) is interpreted as UTC rather than the
+    host's local wall-clock time, so token expiry is not skewed by the
+    host's timezone.
+    """
+    expires_at = datetime.fromisoformat(expires_str.replace("Z", _UTC_TIMEZONE_SUFFIX))
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at.astimezone(UTC)
+
+
 def _is_ci_environment() -> bool:
     """Detect if running in a CI environment (robust detection - 10 providers)."""
     return (
@@ -66,13 +79,8 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
     if "approved_by" not in token_data or "expires_at" not in token_data:
         return False
     try:
-        expires_str = token_data["expires_at"]
-        expires_at = datetime.fromisoformat(
-            expires_str.replace("Z", _UTC_TIMEZONE_SUFFIX)
-        )
-        now = datetime.now()
-        if expires_at.tzinfo:
-            now = datetime.now(UTC)
+        expires_at = _parse_expiry_utc(token_data["expires_at"])
+        now = datetime.now(UTC)
         if expires_at - now > _LEGACY_TOKEN_MAX_TTL:
             logger.warning("Legacy CI approval token TTL exceeds 24 hours, rejecting")
             return False
@@ -116,13 +124,11 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
 
     # Check expiration
     try:
-        expires_at = datetime.fromisoformat(
-            token_data["expires_iso"].replace("Z", _UTC_TIMEZONE_SUFFIX)
-        )
-        now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
+        expires_at = _parse_expiry_utc(token_data["expires_iso"])
+        now = datetime.now(UTC)
 
         # Enforce max TTL of 24 hours from creation
-        if expires_at - now > timedelta(hours=24):
+        if expires_at - now > _LEGACY_TOKEN_MAX_TTL:
             logger.warning("Token TTL exceeds 24 hours, rejecting")
             return False
         if expires_at > now:
@@ -201,8 +207,8 @@ To approve, use one of these methods:
    export TRAIGENT_RUN_APPROVED=1
    export TRAIGENT_APPROVED_BY="your_name"
 
-2. Approval token file:
-   echo '{"approved_by": "your_name", "expires_at": "2024-12-31T23:59:59"}' > ~/.traigent/approval.token
+2. Approval token file (timestamps are interpreted as UTC):
+   echo '{"approved_by": "your_name", "expires_at": "2024-12-31T23:59:59Z"}' > ~/.traigent/approval.token
 
 3. GitHub Actions with environment protection:
    Use 'environment: production' with required reviewers
