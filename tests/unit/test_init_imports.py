@@ -419,4 +419,23 @@ class TestOptimizersInit:
         """Test that optimizers module imports successfully."""
         from traigent import optimizers
 
-        assert optimizers is not None
+        # Documented public surface: __all__ entries are real attributes.
+        for name in (
+            "BaseOptimizer",
+            "GridSearchOptimizer",
+            "RandomSearchOptimizer",
+            "BatchOptimizationConfig",
+            "ParallelBatchOptimizer",
+            "MultiObjectiveBatchOptimizer",
+            "AdaptiveBatchOptimizer",
+            "get_optimizer",
+            "register_optimizer",
+            "list_optimizers",
+        ):
+            assert name in optimizers.__all__
+            assert hasattr(optimizers, name)
+
+        # Concrete optimizer implementations subclass BaseOptimizer.
+        assert issubclass(optimizers.GridSearchOptimizer, optimizers.BaseOptimizer)
+        assert issubclass(optimizers.RandomSearchOptimizer, optimizers.BaseOptimizer)
+        assert callable(optimizers.get_optimizer)

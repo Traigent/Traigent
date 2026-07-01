@@ -13,6 +13,7 @@ from traigent.cloud.models import (
     AgentOptimizationRequest,
     AgentSpecification,
     NextTrialRequest,
+    OptimizationSessionStatus,
     SessionCreationRequest,
     TrialResultSubmission,
     TrialStatus,
@@ -405,7 +406,7 @@ class TestResultAggregation:
 
     @pytest.mark.asyncio
     async def test_optimization_finalization(self, mock_cloud_client, sample_dataset):
-        """Test finalizing optimization and getting aggregated results."""
+        """Test running an optimization session through to its final trial."""
         # Create and run optimization session
         session_request = SessionCreationRequest(
             function_name="final_test_function",
@@ -420,13 +421,19 @@ class TestResultAggregation:
         )
         session_id = session_response.session_id
 
+        assert session_response.status == OptimizationSessionStatus.CREATED
+
         # Run all trials
+        trial_ids = []
         for i in range(5):
             trial_request = NextTrialRequest(session_id=session_id)
             trial_response = await mock_cloud_client.get_next_trial(trial_request)
 
             if not trial_response.should_continue:
                 break
+
+            assert trial_response.suggestion is not None
+            trial_ids.append(trial_response.suggestion.trial_id)
 
             # Submit results
             TrialResultSubmission(
@@ -437,9 +444,10 @@ class TestResultAggregation:
                 status=TrialStatus.COMPLETED,
             )
 
-        # In a real implementation, finalization would aggregate results
-        # and return the best configuration found
-        assert session_id is not None
+        # All five trials for this session should have been suggested, each
+        # with a distinct trial_id.
+        assert len(trial_ids) == 5
+        assert len(set(trial_ids)) == 5
 
 
 if __name__ == "__main__":

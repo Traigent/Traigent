@@ -800,7 +800,21 @@ class TestWandBOptimizationCallback:
             wandb_config={"extra": "value"},
         )
 
-        assert tracker.current_run is not None
+        # The W&B run must be created with the caller's wandb_tags merged
+        # into the default tags, and wandb_config merged alongside the
+        # traigent-namespaced run config.
+        assert tracker.current_run.id == "mock_run_123"
+        assert "custom" in tracker.current_run.tags
+        assert "traigent" in tracker.current_run.tags
+        assert "test_function" in tracker.current_run.tags
+        assert tracker.current_run.config["extra"] == "value"
+        assert (
+            tracker.current_run.config["traigent"]["function_name"] == "test_function"
+        )
+        assert tracker.current_run.config["traigent"]["objectives"] == ["accuracy"]
+        assert tracker.current_run.config["traigent"]["configuration_space"] == {
+            "temp": [0.5, 1.0]
+        }
 
     def test_on_trial_complete(
         self, mock_wandb_available: MockWandB, sample_trial: TrialResult

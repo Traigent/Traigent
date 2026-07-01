@@ -89,11 +89,25 @@ class TestExampleInsightsClientAsyncContextManager:
 
     @pytest.mark.asyncio
     async def test_async_context_manager_entry(self) -> None:
-        """Test async context manager entry."""
+        """Test async context manager entry returns a live, functioning client."""
         from traigent.analytics.example_insights import ExampleInsightsClient
 
-        async with ExampleInsightsClient(api_key="test") as client:
-            assert client is not None
+        instance = ExampleInsightsClient(
+            api_key="test", backend_url="https://example.com"
+        )
+        mock_http = AsyncMock()
+        instance._client = mock_http
+
+        async with instance as client:
+            assert isinstance(client, ExampleInsightsClient)
+            assert client.api_key == "test"
+            assert client.backend_url == "https://example.com"
+
+        # __aexit__ calls close() on the object __aenter__ returned; observing
+        # the mocked HTTP transport actually get closed proves the returned
+        # object is the live, connected client rather than merely a same-typed
+        # lookalike.
+        mock_http.aclose.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_context_manager_closes_client(self) -> None:

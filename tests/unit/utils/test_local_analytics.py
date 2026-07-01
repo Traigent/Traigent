@@ -130,6 +130,11 @@ class TestLocalAnalyticsInitialization:
         except ValueError:
             pytest.fail("User ID should be a valid UUID")
 
+        # The generated ID must be persisted to the analytics ID file so
+        # future LocalAnalytics instances reuse the same identifier.
+        analytics_file = Path(analytics.storage.storage_path) / ".analytics_id"
+        assert analytics_file.read_text().strip() == analytics.user_id
+
     def test_user_id_persistence(self, temp_storage_path: str) -> None:
         """Test that user ID is persisted and reused."""
         config = TraigentConfig(
@@ -159,12 +164,22 @@ class TestLocalAnalyticsInitialization:
             anonymous_user_id=None,
         )
 
+        # Pre-create the on-disk ID file so the patched read_text actually
+        # gets exercised by _get_or_create_user_id (it is only called when
+        # the file already exists).
+        storage = LocalStorageManager(temp_storage_path)
+        analytics_file = Path(storage.storage_path) / ".analytics_id"
+        analytics_file.write_text("00000000-0000-0000-0000-000000000000")
+
         with patch(
             "pathlib.Path.read_text", side_effect=PermissionError("Access denied")
         ):
             analytics = LocalAnalytics(config)
-            # Should create new user ID despite read error
+            # Should fall back to generating a fresh UUID rather than
+            # crashing or returning the unreadable on-disk value verbatim.
             assert analytics.user_id is not None
+            assert analytics.user_id != "00000000-0000-0000-0000-000000000000"
+            uuid.UUID(analytics.user_id)
 
     def test_user_id_persistence_file_write_error(self, temp_storage_path: str) -> None:
         """Test user ID creation when analytics file cannot be written."""
@@ -179,8 +194,15 @@ class TestLocalAnalyticsInitialization:
             "pathlib.Path.write_text", side_effect=PermissionError("Access denied")
         ):
             analytics = LocalAnalytics(config)
-            # Should still create user ID but fail to persist
+            # Should still create a valid user ID despite the write failure.
             assert analytics.user_id is not None
+            uuid.UUID(analytics.user_id)
+
+        # Persistence genuinely failed silently: the ID file was never
+        # written to disk, confirming the failure was swallowed (not
+        # masked by some other code path actually succeeding).
+        analytics_file = Path(analytics.storage.storage_path) / ".analytics_id"
+        assert not analytics_file.exists()
 
 
 class TestCollectUsageStats:

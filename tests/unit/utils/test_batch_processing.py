@@ -13,7 +13,6 @@ This test suite covers:
 import asyncio
 import math
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -666,17 +665,28 @@ class TestPartialResultsManager:
         # Now complete
         assert manager.is_complete(10)
 
-    def test_buffer_flushing(self):
+    def test_buffer_flushing(self, caplog):
         """Test automatic buffer flushing."""
         manager = PartialResultsManager(buffer_size=3)
 
         # Add results that exceed buffer size
         results = [InvocationResult(is_successful=True) for _ in range(5)]
 
-        with patch.object(manager, "_flush_buffer") as mock_flush:
+        # Exercise the real (unmocked) flush so its documented effect
+        # (clearing the buffer) actually runs, then observe it via the
+        # debug log it emits: appends 0-2 cross the buffer_size=3
+        # threshold and flush, clearing the buffer, so appends 3-4 only
+        # reach size 2 and never re-trigger. If the buffer weren't
+        # actually cleared, the threshold would keep firing on every
+        # subsequent append (3 messages, as with a no-op mock) instead
+        # of exactly once.
+        with caplog.at_level("DEBUG", logger="traigent.utils.batch_processing"):
             manager.add_results(results, start_index=0)
-            # Should have triggered flush when buffer exceeded size
-            assert mock_flush.called
+
+        flush_messages = [
+            record.message for record in caplog.records if "Flushing" in record.message
+        ]
+        assert flush_messages == ["Flushing 3 results from buffer"]
 
 
 class TestProcessWithRetryAndRecovery:

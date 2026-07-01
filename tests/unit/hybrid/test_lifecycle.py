@@ -157,8 +157,10 @@ class TestAgentLifecycleManager:
 
         info = manager.get_session_info("test")
         assert info is not None
-        # Heartbeat should have been called
-        mock_transport.keep_alive.assert_called()
+        assert info.heartbeat_count >= 1
+        assert info.keep_alive_status == "alive"
+        assert info.last_heartbeat > 0
+        mock_transport.keep_alive.assert_called_with("test")
 
         await manager.release()
 

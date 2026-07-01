@@ -336,7 +336,7 @@ class TestSendVerificationCode:
     def test_send_code_cleans_old_rate_limit_entries(
         self, provider: SMSAuthProvider
     ) -> None:
-        """Test that old rate limit entries are cleaned up."""
+        """Old rate limit entries age out, freeing a previously full hourly quota."""
         mock_message = MagicMock()
         mock_message.sid = "SM123456789"
         provider.client.messages.create.return_value = mock_message
@@ -345,15 +345,32 @@ class TestSendVerificationCode:
             base_time = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
             mock_datetime.now.return_value = base_time
 
-            # Send first code
-            provider.send_verification_code("+15559876543", "user123")
+            # Exhaust the hourly quota.
+            for i in range(provider.max_codes_per_hour):
+                mock_datetime.now.return_value = base_time + timedelta(minutes=i * 2)
+                provider.send_verification_code("+15559876543", "user123")
 
-            # Advance time by over an hour
+            # Without the quota's entries aging out, one more send is blocked.
+            mock_datetime.now.return_value = base_time + timedelta(
+                minutes=provider.max_codes_per_hour * 2
+            )
+            with pytest.raises(
+                AuthenticationError, match="Too many verification codes requested"
+            ):
+                provider.send_verification_code("+15559876543", "user123")
+
+            # Advance over an hour past the first send: every prior entry ages
+            # out, so the previously-full hourly quota is available again.
             mock_datetime.now.return_value = base_time + timedelta(hours=2)
+            sid = provider.send_verification_code("+15559876543", "user123")
 
-            # Should succeed because old entry is cleaned
-            result = provider.send_verification_code("+15559876543", "user123")
-            assert result is not None  # Returns message SID on success
+        assert sid == "SM123456789"
+        # The blocked attempt never reaches Twilio; only the quota-exhausting
+        # sends plus the final, now-unblocked send actually call the API.
+        assert (
+            provider.client.messages.create.call_count
+            == provider.max_codes_per_hour + 1
+        )
 
     def test_send_code_twilio_exception_wrapped(
         self, provider: SMSAuthProvider

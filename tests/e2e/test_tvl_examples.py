@@ -72,11 +72,10 @@ class TestTVLExamplesContent:
         ids=[_get_spec_id(p) for p in TVL_SPECS],
     )
     def test_metadata_present(self, spec_path: Path) -> None:
-        """Each spec should have metadata section."""
+        """Each spec's metadata records the resolved path it was loaded from."""
         artifact = load_tvl_spec(spec_path=spec_path)
 
-        # Check for basic metadata
-        assert artifact.metadata.get("spec_path") is not None
+        assert artifact.metadata.get("spec_path") == str(spec_path)
 
     @pytest.mark.parametrize(
         "spec_path",
@@ -176,8 +175,18 @@ class TestSpecificExamples:
 
         artifact = load_tvl_spec(spec_path=spec_path)
 
-        # Should have promotion policy defined
-        assert artifact.promotion_policy is not None
+        # Should have promotion policy defined with the values from the spec
+        policy = artifact.promotion_policy
+        assert policy is not None
+        assert policy.dominance == "epsilon_pareto"
+        assert policy.adjust == "BH"
+        assert policy.alpha == pytest.approx(0.05)
+        assert policy.min_effect == {
+            "task_accuracy": 0.02,
+            "response_latency": 50.0,
+            "cost_per_request": 0.001,
+            "safety_score": 0.01,
+        }
 
     def test_constraints_example_loads(self) -> None:
         """The constraints_units example should load with structural constraints."""

@@ -4,7 +4,8 @@ This module tests that all public APIs are properly exported from the
 traigent.integrations.langfuse package and are importable by external users.
 """
 
-import pytest
+import dataclasses
+
 
 import traigent.integrations.langfuse as langfuse_module
 
@@ -13,8 +14,19 @@ class TestLangfuseModuleImports:
     """Test that traigent.integrations.langfuse module can be imported."""
 
     def test_langfuse_module_importable(self):
-        """Test that traigent.integrations.langfuse can be imported."""
-        assert langfuse_module is not None
+        """Test that traigent.integrations.langfuse exposes its documented
+        public API surface (the quick-start symbols from the module
+        docstring), not merely that the module object exists."""
+        assert langfuse_module.__name__ == "traigent.integrations.langfuse"
+        for name in (
+            "LangfuseClient",
+            "LangfuseTracker",
+            "create_langfuse_tracker",
+            "LANGFUSE_AVAILABLE",
+        ):
+            assert hasattr(langfuse_module, name), f"missing public symbol {name}"
+        assert callable(langfuse_module.create_langfuse_tracker)
+        assert isinstance(langfuse_module.LangfuseClient, type)
 
     def test_langfuse_has_all_attribute(self):
         """Test that langfuse module has __all__ attribute."""
@@ -87,44 +99,101 @@ class TestLangfuseClientClasses:
     """Test that client-related classes are accessible and not None."""
 
     def test_langfuse_client_not_none(self):
-        """Test that LangfuseClient is not None."""
-        assert langfuse_module.LangfuseClient is not None
+        """LangfuseClient must be a class exposing the documented
+        get_trace_metrics() API used throughout the module's quick-start."""
+        cls = langfuse_module.LangfuseClient
+        assert isinstance(cls, type)
+        assert hasattr(cls, "get_trace_metrics")
+        assert callable(cls.get_trace_metrics)
 
     def test_langfuse_observation_not_none(self):
-        """Test that LangfuseObservation is not None."""
-        assert langfuse_module.LangfuseObservation is not None
+        """LangfuseObservation must be a dataclass with the documented
+        per-observation fields (id, name, type, cost, latency)."""
+        cls = langfuse_module.LangfuseObservation
+        assert dataclasses.is_dataclass(cls)
+        field_names = {f.name for f in dataclasses.fields(cls)}
+        assert {"id", "name", "observation_type", "cost", "latency_ms"} <= field_names
 
     def test_langfuse_trace_metrics_not_none(self):
-        """Test that LangfuseTraceMetrics is not None."""
-        assert langfuse_module.LangfuseTraceMetrics is not None
+        """LangfuseTraceMetrics must be a dataclass exposing the documented
+        aggregate fields and the to_measures_dict() conversion method."""
+        cls = langfuse_module.LangfuseTraceMetrics
+        assert dataclasses.is_dataclass(cls)
+        field_names = {f.name for f in dataclasses.fields(cls)}
+        assert {"trace_id", "total_cost", "per_agent_costs"} <= field_names
+        assert callable(cls.to_measures_dict)
 
 
 class TestLangfuseCallbackClasses:
     """Test that callback-related classes are accessible."""
 
     def test_langfuse_optimization_callback_not_none(self):
-        """Test that LangfuseOptimizationCallback is not None."""
-        assert langfuse_module.LangfuseOptimizationCallback is not None
+        """LangfuseOptimizationCallback must be a concrete subclass of the
+        shared OptimizationCallback base so it can be registered via
+        @optimize(..., callbacks=[...])."""
+        from traigent.utils.callbacks import OptimizationCallback
+
+        cls = langfuse_module.LangfuseOptimizationCallback
+        assert isinstance(cls, type)
+        assert issubclass(cls, OptimizationCallback)
 
     def test_trace_id_resolver_not_none(self):
-        """Test that TraceIdResolver is not None."""
-        assert langfuse_module.TraceIdResolver is not None
+        """TraceIdResolver is a runtime-checkable Protocol describing a
+        trial -> trace_id callable; a matching callable satisfies it and a
+        non-callable does not."""
+        resolver_protocol = langfuse_module.TraceIdResolver
+        assert isinstance(
+            lambda trial: trial.metadata.get("trace_id"), resolver_protocol
+        )
+        assert not isinstance(object(), resolver_protocol)
 
 
 class TestLangfuseTrackerClasses:
     """Test that tracker-related classes and functions are accessible."""
 
     def test_langfuse_tracker_not_none(self):
-        """Test that LangfuseTracker is not None."""
-        assert langfuse_module.LangfuseTracker is not None
+        """LangfuseTracker must expose the documented client property and
+        get_callback() method used by the recommended high-level API."""
+        cls = langfuse_module.LangfuseTracker
+        assert isinstance(cls, type)
+        assert isinstance(cls.client, property)
+        assert hasattr(cls, "get_callback")
+        assert callable(cls.get_callback)
 
     def test_create_langfuse_tracker_callable(self):
         """Test that create_langfuse_tracker is callable."""
         assert callable(langfuse_module.create_langfuse_tracker)
 
     def test_create_langfuse_tracker_not_none(self):
-        """Test that create_langfuse_tracker is not None."""
-        assert langfuse_module.create_langfuse_tracker is not None
+        """create_langfuse_tracker must build a LangfuseTracker whose public
+        client is a real LangfuseClient, and whose callback (from
+        get_callback()) actually invokes the given resolver and feeds its
+        return value into client.get_trace_metrics -- proving the resolver
+        passed to the factory is the one wired into the tracker, observed
+        purely through the public API."""
+        from unittest.mock import MagicMock, patch
+
+        from traigent.core.types import TrialResult
+        from traigent.utils.callbacks import ProgressInfo
+
+        resolver = MagicMock(return_value="trace-1")
+        tracker = langfuse_module.create_langfuse_tracker(trace_id_resolver=resolver)
+        assert isinstance(tracker, langfuse_module.LangfuseTracker)
+        assert isinstance(tracker.client, langfuse_module.LangfuseClient)
+
+        trial = MagicMock(spec=TrialResult)
+        trial.trial_id = "trial-1"
+        trial.metrics = {}
+        progress = MagicMock(spec=ProgressInfo)
+
+        callback = tracker.get_callback()
+        with patch.object(
+            tracker.client, "get_trace_metrics", return_value=None
+        ) as mock_get_metrics:
+            callback.on_trial_complete(trial, progress)
+
+        resolver.assert_called_once_with(trial)
+        mock_get_metrics.assert_called_once_with("trace-1")
 
 
 class TestLangfuseLogger:
