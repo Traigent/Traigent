@@ -180,20 +180,6 @@ class TestExecutionModes:
         assert mode == "edge_analytics"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "OptimizerDirectClient.submit_metrics buffers under a lock and "
-            "flushes whenever buffer_size==1 (optimizer_client.py "
-            "submit_metrics), so each sequential call self-flushes before "
-            "the next item can join it. With batch_size=2 and 2 sequential "
-            "submissions this issues two single-item POSTs to "
-            "'{endpoint}/{session_id}' instead of one batched POST to "
-            "'{endpoint}/{session_id}/batch' with both submissions - "
-            "contradicts the documented batching contract. "
-            "weak-test-ratchet bug candidate; tracked in #1604."
-        ),
-    )
     async def test_metric_submission_batching(self, monkeypatch):
         """Test metric submission batching in optimizer client."""
         monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)

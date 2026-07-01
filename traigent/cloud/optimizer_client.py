@@ -134,8 +134,10 @@ class OptimizerDirectClient:
             self._metric_buffer.append((session_id, submission))
             buffer_size = len(self._metric_buffer)
 
-            # Flush if buffer is full or this is the first item
-            if buffer_size >= self._batch_size or buffer_size == 1:
+            # Flush once the buffer reaches the configured batch size. For
+            # batch_size == 1 this still flushes on every submission
+            # (immediate single POST), since buffer_size is always >= 1.
+            if buffer_size >= self._batch_size:
                 return await self._flush_buffer()
 
         return {
