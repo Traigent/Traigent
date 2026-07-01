@@ -53,7 +53,11 @@ from traigent.core.cost_enforcement import (
     normalize_cost_approved,
 )
 from traigent.core.cost_estimator import CostEstimator
-from traigent.core.exception_handler import VendorErrorCategory
+from traigent.core.exception_handler import (
+    VendorErrorCategory,
+    classify_systematic_provider_failure,
+    provider_failure_action_hint,
+)
 from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
@@ -711,6 +715,11 @@ class OptimizationOrchestrator:
         # before the run loop gives up. Cumulative per category so the run always
         # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
         self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
+        self._provider_call_attempts = 0
+        self._provider_call_failures = 0
+        self._provider_consecutive_call_failures = 0
+        self._provider_failure_first_error: str | None = None
+        self._provider_failure_category: str | None = None
         self._logger: OptimizationLogger | None = None
         self._logger_v2: Any | None = None
         self._logger_facade = LoggerFacade()
@@ -1235,6 +1244,89 @@ class OptimizationOrchestrator:
             return
         self._consumed_examples += attempted
 
+    def _extract_provider_failure_summary(
+        self,
+        trial_result: TrialResult,
+    ) -> dict[str, Any] | None:
+        """Extract fatal provider-call failure counts from trial metadata/error text."""
+
+        metadata = trial_result.metadata or {}
+        summary = metadata.get("provider_failure_summary")
+        if isinstance(summary, dict):
+            return summary
+
+        if trial_result.status != TrialStatus.FAILED or not trial_result.error_message:
+            return None
+
+        category = classify_systematic_provider_failure(trial_result.error_message)
+        if category is None:
+            return None
+
+        attempted = extract_examples_attempted(trial_result, default=1)
+        if attempted <= 0:
+            attempted = 1
+        return {
+            "attempted_calls": attempted,
+            "fatal_failures": attempted,
+            "failure_rate": 1.0,
+            "category": category.value,
+            "category_counts": {category.value: attempted},
+            "sample_error": trial_result.error_message,
+        }
+
+    def _record_provider_failure_signal(self, trial_result: TrialResult) -> None:
+        """Abort when provider/auth/quota failures dominate attempted calls."""
+
+        summary = self._extract_provider_failure_summary(trial_result)
+        if summary is None:
+            self._provider_consecutive_call_failures = 0
+            return
+
+        attempted = max(int(summary.get("attempted_calls") or 0), 0)
+        fatal_failures = max(int(summary.get("fatal_failures") or 0), 0)
+        if attempted <= 0 or fatal_failures <= 0:
+            return
+
+        self._provider_call_attempts += attempted
+        self._provider_call_failures += fatal_failures
+        if fatal_failures >= attempted:
+            self._provider_consecutive_call_failures += fatal_failures
+        else:
+            self._provider_consecutive_call_failures = 0
+
+        sample_error = summary.get("sample_error")
+        if self._provider_failure_first_error is None and sample_error:
+            self._provider_failure_first_error = str(sample_error)
+        category = summary.get("category")
+        if self._provider_failure_category is None and category:
+            self._provider_failure_category = str(category)
+
+        failure_rate = (
+            self._provider_call_failures / self._provider_call_attempts
+            if self._provider_call_attempts
+            else 0.0
+        )
+        consecutive_abort = self._provider_consecutive_call_failures >= 3
+        high_fraction_abort = (
+            self._provider_call_attempts >= 5
+            and self._provider_call_failures >= 3
+            and failure_rate >= 0.80
+        )
+        if not (consecutive_abort or high_fraction_abort):
+            return
+
+        hint = provider_failure_action_hint(self._provider_failure_category)
+        first_error = self._provider_failure_first_error or "provider call failed"
+        self._stop_reason = "vendor_error"
+        self._status = OptimizationStatus.FAILED
+        raise OptimizationError(
+            "Aborting optimization because provider calls are failing "
+            "systematically before they can be scored. "
+            f"{self._provider_call_failures}/{self._provider_call_attempts} "
+            f"attempted call(s) failed with {self._provider_failure_category or 'provider'} "
+            f"errors. Likely cause: {hint} First provider error: {first_error}"
+        )
+
     async def _cleanup_backend_client(self) -> None:
         """Close backend HTTP session if one was opened."""
 
@@ -1444,6 +1536,7 @@ class OptimizationOrchestrator:
             # Track consumed examples inside lock to prevent race conditions
             # on _consumed_examples during parallel trial execution
             self._register_examples_attempted(trial_result)
+            self._record_provider_failure_signal(trial_result)
 
         submission_outcome: Any = None
         if submit_to_backend and self.backend_client and session_id:
@@ -2768,10 +2861,11 @@ class OptimizationOrchestrator:
         # Non-recoverable categories get priority so we don't offer "resume" on
         # insufficient funds just because rate_limit happened to come first.
         category_priority = {
-            VendorErrorCategory.INSUFFICIENT_FUNDS: 0,
-            VendorErrorCategory.QUOTA_EXHAUSTED: 1,
-            VendorErrorCategory.SERVICE_UNAVAILABLE: 2,
-            VendorErrorCategory.RATE_LIMIT: 3,
+            VendorErrorCategory.AUTHENTICATION: 0,
+            VendorErrorCategory.INSUFFICIENT_FUNDS: 1,
+            VendorErrorCategory.QUOTA_EXHAUSTED: 2,
+            VendorErrorCategory.SERVICE_UNAVAILABLE: 3,
+            VendorErrorCategory.RATE_LIMIT: 4,
         }
 
         def _classify(r: PermittedTrialResult) -> VendorErrorCategory | None:
