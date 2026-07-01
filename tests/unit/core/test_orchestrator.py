@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from traigent.api.types import (
+    ExampleResult,
     OptimizationResult,
     OptimizationStatus,
     TrialResult,
@@ -208,6 +209,72 @@ class MockEvaluator(BaseEvaluator):
         self.metrics_to_return = metrics
 
 
+class PatternEvaluator(MockEvaluator):
+    """Evaluator that returns explicit per-example successes/errors."""
+
+    def __init__(self, *, patterns: list[list[str | None]], accuracy: float):
+        super().__init__()
+        self._patterns = patterns
+        self._accuracy = accuracy
+
+    async def evaluate(
+        self,
+        func: Callable,
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        sample_lease=None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        **_kwargs,
+    ) -> EvaluationResult:
+        self.evaluation_count += 1
+        pattern = self._patterns[
+            min(self.evaluation_count - 1, len(self._patterns) - 1)
+        ]
+        example_results = []
+        errors: list[str | None] = []
+        for index, example in enumerate(dataset.examples):
+            error = pattern[index] if index < len(pattern) else None
+            success = error is None
+            errors.append(error)
+            example_results.append(
+                ExampleResult(
+                    example_id=f"example_{index}",
+                    input_data=example.input_data,
+                    expected_output=example.expected_output,
+                    actual_output=f"output_{index}" if success else None,
+                    metrics={"accuracy": self._accuracy if success else 0.0},
+                    execution_time=0.01,
+                    success=success,
+                    error_message=error,
+                    metadata={},
+                )
+            )
+            if progress_callback:
+                progress_callback(
+                    index,
+                    {
+                        "success": success,
+                        "error": error,
+                        "metrics": {"accuracy": self._accuracy if success else 0.0},
+                    },
+                )
+
+        successful = sum(1 for error in errors if error is None)
+        metrics = {"accuracy": self._accuracy, "examples_attempted": len(errors)}
+        return EvaluationResult(
+            config=config,
+            example_results=example_results,
+            aggregated_metrics=metrics,
+            total_examples=len(errors),
+            successful_examples=successful,
+            duration=0.1,
+            metrics=metrics,
+            outputs=[result.actual_output for result in example_results],
+            errors=errors,
+        )
+
+
 class PruningModeEvaluator(MockEvaluator):
     """Evaluator that prunes configs marked with mode='prune'."""
 
@@ -336,6 +403,108 @@ class TestOptimizationOrchestrator:
         assert orchestrator.trial_count == 0
         assert orchestrator.best_result is None
         assert orchestrator.status == OptimizationStatus.PENDING
+
+    @pytest.mark.asyncio
+    async def test_systematic_provider_credit_failures_abort_run(
+        self, config_space, objectives, sample_dataset, mock_function
+    ):
+        """All provider auth/quota failures abort instead of plateauing at 0 score."""
+
+        provider_error = (
+            "litellm.APIError: OpenRouter returned HTTP 402 "
+            "Insufficient credits for this API key"
+        )
+        fatal_dataset = Dataset(
+            [
+                EvaluationExample({"query": f"case {index}"}, f"answer {index}")
+                for index in range(5)
+            ],
+            name="fatal_provider_dataset",
+        )
+        evaluator = PatternEvaluator(
+            patterns=[[provider_error for _ in fatal_dataset.examples]],
+            accuracy=0.0,
+        )
+        optimizer = MockOptimizer(config_space, objectives)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        )
+
+        with pytest.raises(OptimizationError) as exc_info:
+            await orchestrator.optimize(mock_function, fatal_dataset)
+
+        message = str(exc_info.value)
+        assert "provider calls are failing systematically" in message
+        assert "insufficient credits" in message.lower()
+        assert "billing" in message.lower() or "credits" in message.lower()
+        assert orchestrator._stop_reason == "vendor_error"
+        assert orchestrator.status == OptimizationStatus.FAILED
+        assert len(orchestrator._trials) == 1
+        assert orchestrator._trials[0].status == TrialStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_few_transient_call_failures_complete_normally(
+        self, config_space, objectives, sample_dataset, mock_function
+    ):
+        """A small number of non-fatal/transient call failures does not abort."""
+
+        evaluator = PatternEvaluator(
+            patterns=[
+                [
+                    "temporary socket reset while reading provider response",
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+                [None for _ in sample_dataset.examples],
+                [None for _ in sample_dataset.examples],
+            ],
+            accuracy=0.7,
+        )
+        optimizer = MockOptimizer(config_space, objectives)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=3,
+            config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason in {"max_trials_reached", "optimizer"}
+        assert len(result.trials) == 3
+        assert evaluator.evaluation_count == 3
+
+    @pytest.mark.asyncio
+    async def test_real_zero_accuracy_is_not_provider_failure_abort(
+        self, config_space, objectives, sample_dataset, mock_function
+    ):
+        """Successful calls that score 0.0 remain legitimate low-accuracy trials."""
+
+        evaluator = PatternEvaluator(
+            patterns=[[None for _ in sample_dataset.examples]],
+            accuracy=0.0,
+        )
+        optimizer = MockOptimizer(config_space, objectives)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=3,
+            config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason in {"max_trials_reached", "optimizer"}
+        assert len(result.trials) == 3
+        assert all(trial.status == TrialStatus.COMPLETED for trial in result.trials)
+        assert result.best_score == 0.0
 
     def test_orchestrator_creation_with_none_params(
         self, mock_optimizer, mock_evaluator

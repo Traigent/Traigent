@@ -16,6 +16,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.core.exception_handler import classify_systematic_provider_failure
 from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
@@ -283,7 +284,59 @@ def _build_success_trial_metadata(
         except (TypeError, ValueError):
             pass
 
+    provider_summary = _provider_failure_summary(eval_result, examples_attempted)
+    if provider_summary is not None:
+        trial_metadata["provider_failure_summary"] = provider_summary
+
     return trial_metadata
+
+
+def _provider_failure_summary(
+    eval_result: Any,
+    examples_attempted: int | None,
+) -> dict[str, Any] | None:
+    """Summarize fatal provider/auth/quota call failures without scoring them."""
+
+    errors = getattr(eval_result, "errors", None) or []
+    if not isinstance(errors, list):
+        return None
+
+    attempted = (
+        _coerce_optional_non_negative_int(examples_attempted)
+        or _coerce_optional_non_negative_int(
+            getattr(eval_result, "total_examples", None)
+        )
+        or len(errors)
+    )
+    if attempted <= 0:
+        return None
+
+    category_counts: dict[str, int] = {}
+    first_error: str | None = None
+    fatal_failures = 0
+    for error in errors:
+        if not error:
+            continue
+        category = classify_systematic_provider_failure(str(error))
+        if category is None:
+            continue
+        fatal_failures += 1
+        category_counts[category.value] = category_counts.get(category.value, 0) + 1
+        if first_error is None:
+            first_error = redact_sensitive_text(str(error))
+
+    if fatal_failures == 0:
+        return None
+
+    dominant_category = max(category_counts, key=category_counts.get)
+    return {
+        "attempted_calls": attempted,
+        "fatal_failures": fatal_failures,
+        "failure_rate": fatal_failures / attempted,
+        "category": dominant_category,
+        "category_counts": category_counts,
+        "sample_error": first_error,
+    }
 
 
 def _all_attempted_examples_failed(
