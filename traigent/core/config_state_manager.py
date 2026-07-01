@@ -26,6 +26,7 @@ from traigent.core.best_config_runtime import (
     BestConfigSourceMode,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
+    SafetySensitiveBestConfigError,
     canonical_json,
     compute_spec_hash,
     function_ref_for,
@@ -305,6 +306,8 @@ class ConfigStateManager:
                 provenance=thaw_config(snapshot.provenance),
             )
         except Exception as spec_exc:
+            if isinstance(spec_exc, SafetySensitiveBestConfigError):
+                raise
             if self._path_has_best_config_schema(path):
                 if self.best_config_strict:
                     if isinstance(spec_exc, ConfigurationError):
@@ -468,6 +471,8 @@ class ConfigStateManager:
                 else:
                     snapshot = None
             except Exception as exc:
+                if isinstance(exc, SafetySensitiveBestConfigError):
+                    raise
                 mode_value = (
                     self.best_config_source.value
                     if isinstance(self.best_config_source, BestConfigSourceMode)
