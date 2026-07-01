@@ -1304,6 +1304,57 @@ class ResponseHandlerFactory:
         return openai
 
 
+def _infer_model_name_from_response(response: Any) -> str | None:
+    """Infer a model name from an LLM response when the config supplies none.
+
+    Multi-model/multi-step agents often have no single ``model`` key in the
+    optimization config, so the central cost-calculation chokepoint must be
+    able to recover the model from the response itself (the SDK-side
+    equivalent of ``LocalEvaluator._infer_model_name_from_output`` /
+    ``CustomEvaluatorWrapper``'s response fallback, but shared by every path
+    that funnels through ``extract_llm_metrics``, e.g. #1599).
+
+    Must never raise: a response whose ``model``/``response_metadata``/
+    ``llm_output`` accessor is a property that raises on access would
+    otherwise propagate out of ``extract_llm_metrics`` and abort cost
+    calculation entirely, instead of the intended "skip cost, log a
+    warning" degradation.
+    """
+    try:
+        # 1. Direct attributes (e.g. OpenAI ChatCompletion, Anthropic Message)
+        for attr in ("model", "model_name"):
+            val = getattr(response, attr, None)
+            if isinstance(val, str) and val:
+                return val
+
+        # 2. Dict-shaped response
+        if isinstance(response, dict):
+            for key in ("model", "model_name"):
+                val = response.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        # 3. LangChain response_metadata
+        response_metadata = getattr(response, "response_metadata", None)
+        if isinstance(response_metadata, dict):
+            for key in ("model", "model_name"):
+                val = response_metadata.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        # 4. LangChain llm_output
+        llm_output = getattr(response, "llm_output", None)
+        if isinstance(llm_output, dict):
+            for key in ("model", "model_name"):
+                val = llm_output.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        return None
+    except Exception:
+        return None
+
+
 def _calculate_cost_for_metrics(
     metrics: ExampleMetrics,
     model_name: str | None,
@@ -1651,10 +1702,13 @@ def extract_llm_metrics(
         metrics = ExampleMetrics()
         logger.warning("No handler could process the response, using empty metrics")
 
-    # Calculate cost using canonical cost_from_tokens path
+    # Calculate cost using canonical cost_from_tokens path. Fall back to the
+    # model name carried on the response itself when the config supplies none
+    # (multi-model/multi-step agents have no single config 'model' key; #1599).
+    effective_model_name = model_name or _infer_model_name_from_response(response)
     _calculate_cost_for_metrics(
         metrics,
-        model_name,
+        effective_model_name,
         original_prompt,
         response_text,
         prompt_length=prompt_length,
