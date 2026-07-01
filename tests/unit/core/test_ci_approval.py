@@ -144,7 +144,9 @@ class TestSanitizeForLog:
 class TestValidateLegacyToken:
     def test_valid_token_with_future_expiry(self) -> None:
         # Naive datetimes are interpreted as UTC (not host local time).
-        future = (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        future = (
+            (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        )
         token = {"approved_by": "tester", "expires_at": future}
         assert _validate_legacy_token(token) is True
 
@@ -363,7 +365,9 @@ class TestValidateHmacTokenUtcConsistency:
                 _simulated_local_tz(tz),
                 patch.dict(
                     os.environ,
-                    {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+                    {
+                        "TRAIGENT_APPROVAL_SECRET": "test-secret"
+                    },  # pragma: allowlist secret
                 ),
             ):
                 assert _validate_hmac_token(token) is True
@@ -380,7 +384,9 @@ class TestCheckTokenFileApproval:
         assert _check_token_file_approval(missing, tmp_path) is False
 
     def test_valid_legacy_token_file(self, tmp_path: Path) -> None:
-        future = (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        future = (
+            (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        )
         token = {"approved_by": "tester", "expires_at": future}
         token_file = tmp_path / "approval.token"
         token_file.write_text(json.dumps(token))
