@@ -228,7 +228,9 @@ class PatternEvaluator(MockEvaluator):
         **_kwargs,
     ) -> EvaluationResult:
         self.evaluation_count += 1
-        pattern = self._patterns[min(self.evaluation_count - 1, len(self._patterns) - 1)]
+        pattern = self._patterns[
+            min(self.evaluation_count - 1, len(self._patterns) - 1)
+        ]
         example_results = []
         errors: list[str | None] = []
         for index, example in enumerate(dataset.examples):

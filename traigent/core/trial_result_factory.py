@@ -303,7 +303,9 @@ def _provider_failure_summary(
 
     attempted = (
         _coerce_optional_non_negative_int(examples_attempted)
-        or _coerce_optional_non_negative_int(getattr(eval_result, "total_examples", None))
+        or _coerce_optional_non_negative_int(
+            getattr(eval_result, "total_examples", None)
+        )
         or len(errors)
     )
     if attempted <= 0:
