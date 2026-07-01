@@ -433,7 +433,7 @@ class TestOptimizationAnalyzer:
         mock_ax = MagicMock()
         mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_convergence(
+        analyzer.plot_convergence(
             "test_exp", "run_001", objective="accuracy", show=False
         )
 
@@ -477,7 +477,7 @@ class TestOptimizationAnalyzer:
         mock_ax = MagicMock()
         mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_convergence("test_exp", "run_001", show=False)
+        analyzer.plot_convergence("test_exp", "run_001", show=False)
 
         # No explicit objective: the first string in the objectives list
         # ("accuracy") must be the one selected and plotted.
@@ -570,7 +570,7 @@ class TestOptimizationAnalyzer:
         mock_ax = MagicMock()
         mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_pareto_front(
+        analyzer.plot_pareto_front(
             "test_exp", "run_001", objectives=["accuracy", "latency"], show=False
         )
 
@@ -651,7 +651,7 @@ class TestOptimizationAnalyzer:
         mock_ax = MagicMock()
         mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_pareto_front("test_exp", "run_001", show=False)
+        analyzer.plot_pareto_front("test_exp", "run_001", show=False)
 
         # Under maximize-both semantics none of these 3 points dominates
         # another, so all 3 survive onto the Pareto front, sorted by the

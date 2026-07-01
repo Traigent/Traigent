@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from traigent.api.types import OptimizationResult
-from traigent.core.types import TrialResult, TrialStatus
+from traigent.core.types import TrialResult
 from traigent.integrations.langfuse.callback import LangfuseOptimizationCallback
 from traigent.integrations.langfuse.client import LangfuseClient, LangfuseTraceMetrics
 from traigent.utils.callbacks import ProgressInfo

@@ -6,7 +6,6 @@ traigent.integrations.langfuse package and are importable by external users.
 
 import dataclasses
 
-import pytest
 
 import traigent.integrations.langfuse as langfuse_module
 

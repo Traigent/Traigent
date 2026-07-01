@@ -828,7 +828,6 @@ class TestProductionFailClosed_SDK896:
         helper did `.strip().lower()`, so `" test "` would be
         classified as non-prod by the factory but prod by __init__.
         Now both go through `_is_non_production_environment()`."""
-        import traigent.security.crypto_utils as crypto_module
 
         # Whitespace-padded value: must be treated as non-prod by both
         # paths since they share the helper.
