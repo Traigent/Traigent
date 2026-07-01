@@ -663,6 +663,8 @@ class ApiOperations:
         wire_governance = tvl_governance_to_wire(session_request.tvl_governance)
         if wire_governance:
             payload["tvl_governance"] = wire_governance
+        if getattr(session_request, "budget", None):
+            payload["budget"] = session_request.budget
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
         smart_pruning = getattr(session_request, "smart_pruning", None)

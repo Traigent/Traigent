@@ -502,6 +502,7 @@ class SessionOperations:
         smart_pruning: dict[str, Any] | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
+        cost_limit: float | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -623,6 +624,16 @@ class SessionOperations:
                     f"Using max_trials from metadata: {max_trials_from_metadata}"
                 )
 
+            # Server-side cost cap (defense-in-depth alongside the client-side
+            # CostEnforcer): only arm it when the user actually set a positive
+            # cost_limit — an unset/zero/negative limit must stay uncapped on
+            # the wire exactly as it is uncapped locally.
+            budget = (
+                {"max_cost_usd": float(cost_limit)}
+                if cost_limit is not None and float(cost_limit) > 0
+                else None
+            )
+
             session_request = SessionCreationRequest(
                 function_name=function_name,
                 configuration_space=search_space,
@@ -641,6 +652,7 @@ class SessionOperations:
                     "privacy_mode": True,
                 },
                 max_trials=max_trials_from_metadata,
+                budget=budget,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
                 optimization_strategy={"mode": "local_execution"},
