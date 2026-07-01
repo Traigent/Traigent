@@ -133,6 +133,14 @@ class EvaluationOptions(BaseModel):
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
+    #: Optional cheap "surrogate" (pre-screen) scorer applied to the SAME outputs
+    #: the primary evaluator already produced, per example. It scores captured
+    #: outputs only and NEVER re-executes the decorated function. Same calling
+    #: convention as ``scoring_function`` — ``(output, expected_output=None,
+    #: example=None)`` — returning a float in [0, 1] (or a dict with
+    #: ``surrogate_score``/``score``). Results ride alongside primary metrics as
+    #: ``surrogate_score`` and feed the backend's per-evaluator score tensor.
+    surrogate_evaluator: Callable[..., Any] | None = None
 
 
 class InjectionOptions(BaseModel):
@@ -461,6 +469,67 @@ def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
             "custom_evaluator expects (func, config, example), not (prediction, expected, input_data). "
             "Did you mean to use metric_functions instead?",
             found_suspicious,
+        )
+
+
+def _validate_surrogate_evaluator_signature(surrogate: Callable[..., Any]) -> None:
+    """Validate a surrogate (pre-screen) evaluator at decoration time.
+
+    A surrogate SCORES already-captured outputs — it must accept the output as
+    its first argument (like ``scoring_function``), and must NOT look like a
+    func-executor (``func, config, example``) which would imply re-execution.
+
+    Raises:
+        ValidationError: If not callable, or the signature looks like a
+            func-executor / cannot accept the captured output.
+    """
+    if not callable(surrogate):
+        raise ValidationError("surrogate_evaluator must be callable")
+
+    if inspect.isfunction(surrogate) or inspect.ismethod(surrogate):
+        callable_to_check: Any = surrogate
+    else:
+        callable_to_check = getattr(surrogate, "__call__", surrogate)  # noqa: B004
+
+    try:
+        sig = inspect.signature(callable_to_check)
+    except (ValueError, TypeError):
+        logger.debug(
+            "Could not inspect surrogate_evaluator signature, skipping validation"
+        )
+        return
+
+    params = list(sig.parameters.values())
+    if params and params[0].name == "self":
+        params = params[1:]
+
+    param_names = {p.name for p in params}
+    if {"func", "config"} <= param_names:
+        raise ValidationError(
+            "surrogate_evaluator scores already-captured outputs and must not "
+            "re-execute the decorated function.\n\n"
+            "Expected: surrogate_evaluator(output, expected_output=None, example=None) "
+            "-> float in [0, 1]\n"
+            f"Got:      ({', '.join(p.name for p in params)})\n\n"
+            "This looks like a custom_evaluator (func, config, example). A "
+            "surrogate is a cheap scorer of outputs, like scoring_function."
+        )
+
+    accepts_output = any(
+        p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        )
+        for p in params
+    )
+    if not accepts_output:
+        raise ValidationError(
+            "surrogate_evaluator must accept the captured output as its first "
+            "argument, e.g. surrogate_evaluator(output, expected_output=None, "
+            "example=None)."
         )
 
 
@@ -2634,6 +2703,15 @@ def optimize(  # NOSONAR(S107)
     if custom_evaluator is not None:
         _validate_custom_evaluator_signature(custom_evaluator)
 
+    # Optional surrogate (pre-screen) scorer from the evaluation bundle. Resolved
+    # here (decorator source only) and validated early; stashed on the
+    # OptimizedFunction below so the evaluator factory can attach it.
+    surrogate_evaluator = (
+        evaluation_bundle.surrogate_evaluator if evaluation_bundle is not None else None
+    )
+    if surrogate_evaluator is not None:
+        _validate_surrogate_evaluator_signature(surrogate_evaluator)
+
     (
         injection_mode,
         config_param,
@@ -2964,6 +3042,11 @@ def optimize(  # NOSONAR(S107)
         optimized_func.external_service_evaluator = external_service_evaluator
         optimized_func.hybrid_api_options = hybrid_api_options
         optimized_func.offline = execution_policy.offline
+        # Surrogate (pre-screen) scorer: read via getattr by the evaluator
+        # factory (_create_effective_evaluator). Absent when unconfigured, so the
+        # no-surrogate path stays byte-identical.
+        if surrogate_evaluator is not None:
+            optimized_func._surrogate_evaluator = surrogate_evaluator
 
         logger.info(
             f"Created optimizable function: {func.__name__} (experiment_name={effective_experiment_name!r})"

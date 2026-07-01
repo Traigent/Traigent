@@ -411,6 +411,9 @@ class OptimizedFunction(Generic[_P, _R]):
         self.external_service_evaluator: Any = None
         self.hybrid_api_options: Any = None
         self.offline: bool = False
+        # Surrogate (pre-screen) scorer; set post-construction by the optimize
+        # decorator and read by _create_effective_evaluator. None when unconfigured.
+        self._surrogate_evaluator: Callable[..., Any] | None = None
         # Config persistence parameters
         self._auto_load_best = kwargs.pop("auto_load_best", False)
         self._load_from = kwargs.pop("load_from", None)
@@ -1792,6 +1795,9 @@ class OptimizedFunction(Generic[_P, _R]):
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
+            # Surrogate (pre-screen) scorer set by the optimize decorator; stashed
+            # on the evaluator so the trial lifecycle can score captured outputs.
+            decorator_surrogate_evaluator=self._surrogate_evaluator,
             **self._hybrid_api_evaluator_kwargs(
                 force_auto_discover_tvars=force_auto_discover_tvars
             ),

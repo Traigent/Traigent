@@ -99,13 +99,28 @@ def test_evaluator_fingerprint_variants() -> None:
     assert metric_fp == _fp_text(
         inspect.getsource(metric_a) + inspect.getsource(metric_b)
     )
-    assert af.compute_evaluator_fingerprint(
-        external={
-            "kind": "hybrid_api",
-            "endpoint": "https://user:secret@example.test:8443/evaluate?token=x#frag",
-        }
-    ) == _fp_text("hybrid_api:https://example.test:8443/evaluate")
+    assert (
+        af.compute_evaluator_fingerprint(
+            external={
+                "kind": "hybrid_api",
+                "endpoint": "https://user:secret@example.test:8443/evaluate?token=x#frag",  # pragma: allowlist secret
+            }
+        )
+        == _fp_text("hybrid_api:https://example.test:8443/evaluate")
+    )
     assert af.compute_evaluator_fingerprint() == _fp_text("none")
+
+
+def test_surrogate_fingerprint_hashes_source_and_matches_wire_shape() -> None:
+    def surrogate(output, expected_output=None, example=None) -> float:
+        return 0.5
+
+    fp = af.compute_surrogate_fingerprint(surrogate)
+    assert fp == _fp_text(inspect.getsource(surrogate))
+    assert af.FP_WIRE_RE.fullmatch(fp)
+    assert af.compute_surrogate_fingerprint(None) is None
+    # Uninspectable source (a builtin) falls back to None, never raises.
+    assert af.compute_surrogate_fingerprint(len) is None
 
 
 def test_config_space_fingerprint_uses_canonical_json() -> None:
