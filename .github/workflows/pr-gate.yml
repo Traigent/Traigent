@@ -37,7 +37,7 @@ jobs:
       py_changed: ${{ steps.changed.outputs.py_changed }}
       code_changed: ${{ steps.changed.outputs.code_changed }}
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Classify changed files
@@ -79,10 +79,10 @@ jobs:
     timeout-minutes: 10
     needs: changes
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install ruff
@@ -113,12 +113,12 @@ jobs:
     timeout-minutes: 45
     needs: [changes, preflight]
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Cache pip dependencies
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-sdk-pr-gate-${{ hashFiles('**/requirements*.txt') }}-${{ hashFiles('**/pyproject.toml') }}

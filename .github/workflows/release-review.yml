@@ -44,8 +44,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.lint_type_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.LINT_PYTHON_VERSION }}
       - name: Install lint and type tooling
@@ -79,8 +79,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.tests_unit_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
@@ -111,8 +111,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.tests_integration_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
@@ -143,8 +143,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.security_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install security tooling
@@ -176,12 +176,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7
       - name: PR dependency review
         id: dependency_review_pr
         if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@v5.0.0
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/setup-python@v6
         if: github.event_name != 'pull_request'
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -232,13 +232,13 @@ jobs:
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7
         if: steps.codeql_capability.outputs.enabled == 'true'
       - name: Initialize CodeQL
         id: codeql_init
         continue-on-error: true
         if: steps.codeql_capability.outputs.enabled == 'true'
-        uses: github/codeql-action/init@v4.36.0
+        uses: github/codeql-action/init@v4.36.2
         with:
           languages: python
           # security-extended adds CodeQL's deeper data-flow/taint queries on
@@ -249,7 +249,7 @@ jobs:
         id: codeql_analyze
         continue-on-error: true
         if: steps.codeql_capability.outputs.enabled == 'true'
-        uses: github/codeql-action/analyze@v4.36.0
+        uses: github/codeql-action/analyze@v4.36.2
       - name: Skip unavailable CodeQL upload
         if: steps.codeql_capability.outputs.enabled != 'true'
         run: echo "CodeQL upload is disabled for this repository until GitHub code scanning is enabled."
@@ -280,8 +280,8 @@ jobs:
       - dependency_review
       - codeql
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Detect release-review automation
@@ -411,8 +411,8 @@ jobs:
       contents: write
       issues: write
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Validate required emergency fields
