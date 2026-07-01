@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
-from traigent.cloud.session_types import SessionCreationFailureReason, SessionCreationResult
+from traigent.cloud.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
 from traigent.config.types import TraigentConfig
 
 

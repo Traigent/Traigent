@@ -263,7 +263,9 @@ class TestMCPRequestHandling:
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
             mock_result = Mock()
-            mock_result.content = [Mock(text=json.dumps(self.sample_response["result"]))]
+            mock_result.content = [
+                Mock(text=json.dumps(self.sample_response["result"]))
+            ]
             mock_session.call_tool = AsyncMock(return_value=mock_result)
             self.client._session = mock_session
 
@@ -301,7 +303,9 @@ class TestMCPRequestHandling:
 
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
-            mock_resource = _FakeResource(uri="mcp://tool/create_agent", name="create_agent")
+            mock_resource = _FakeResource(
+                uri="mcp://tool/create_agent", name="create_agent"
+            )
             mock_result = Mock(resources=[mock_resource])
             mock_session.list_resources = AsyncMock(return_value=mock_result)
             self.client._session = mock_session
@@ -314,7 +318,9 @@ class TestMCPRequestHandling:
 
             assert response.success is True
             assert response.data == {
-                "resources": [{"uri": "mcp://tool/create_agent", "name": "create_agent"}]
+                "resources": [
+                    {"uri": "mcp://tool/create_agent", "name": "create_agent"}
+                ]
             }
 
     @pytest.mark.asyncio
@@ -750,13 +756,17 @@ class TestMCPIntegrationScenarios:
             MCPResponse(success=True, data=json.dumps({"agent_id": "agent_123"})),
             MCPResponse(success=True, data=json.dumps({"example_set_id": "es_456"})),
             MCPResponse(success=True, data=json.dumps({"experiment_id": "exp_789"})),
-            MCPResponse(success=True, data=json.dumps({"experiment_run_id": "run_001"})),
+            MCPResponse(
+                success=True, data=json.dumps({"experiment_run_id": "run_001"})
+            ),
         ]
 
         with patch.object(
             self.client, "call_tool", new=AsyncMock(side_effect=call_tool_responses)
         ) as mock_call_tool:
-            result = await self.client.create_optimization_workflow(optimization_request)
+            result = await self.client.create_optimization_workflow(
+                optimization_request
+            )
 
         assert result == ("agent_123", "exp_789", "run_001")
         called_tool_names = [c.args[0] for c in mock_call_tool.call_args_list]

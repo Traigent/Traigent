@@ -143,7 +143,9 @@ class TestLangfuseCallbackClasses:
         trial -> trace_id callable; a matching callable satisfies it and a
         non-callable does not."""
         resolver_protocol = langfuse_module.TraceIdResolver
-        assert isinstance(lambda trial: trial.metadata.get("trace_id"), resolver_protocol)
+        assert isinstance(
+            lambda trial: trial.metadata.get("trace_id"), resolver_protocol
+        )
         assert not isinstance(object(), resolver_protocol)
 
 

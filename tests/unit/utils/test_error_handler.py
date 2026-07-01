@@ -142,7 +142,10 @@ class TestConfigurationError:
         """Test configuration error includes docs link."""
         error = ConfigurationError("param", "issue")
 
-        assert error.docs_link == "https://github.com/Traigent/Traigent#configuration-space"
+        assert (
+            error.docs_link
+            == "https://github.com/Traigent/Traigent#configuration-space"
+        )
 
 
 class TestEvaluationError:

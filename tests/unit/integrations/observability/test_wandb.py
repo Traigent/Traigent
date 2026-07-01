@@ -809,8 +809,7 @@ class TestWandBOptimizationCallback:
         assert "test_function" in tracker.current_run.tags
         assert tracker.current_run.config["extra"] == "value"
         assert (
-            tracker.current_run.config["traigent"]["function_name"]
-            == "test_function"
+            tracker.current_run.config["traigent"]["function_name"] == "test_function"
         )
         assert tracker.current_run.config["traigent"]["objectives"] == ["accuracy"]
         assert tracker.current_run.config["traigent"]["configuration_space"] == {
