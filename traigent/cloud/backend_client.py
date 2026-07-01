@@ -1500,6 +1500,7 @@ class BackendIntegratedClient:
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
         smart_pruning: dict[str, Any] | None = None,
+        cost_limit: float | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1517,6 +1518,7 @@ class BackendIntegratedClient:
             artifact_fingerprints=artifact_fingerprints,
             fingerprint_meta=fingerprint_meta,
             smart_pruning=smart_pruning,
+            cost_limit=cost_limit,
         )
 
     async def create_hybrid_session(

@@ -2228,6 +2228,7 @@ class OptimizationOrchestrator:
             smart_pruning=self._smart_pruning,
             artifact_fingerprints=self.artifact_fingerprints,
             fingerprint_meta=self.fingerprint_meta,
+            cost_limit=self.config.get("cost_limit"),
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id

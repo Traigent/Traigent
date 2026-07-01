@@ -689,6 +689,7 @@ class BackendSessionManager:
         smart_pruning: dict[str, Any] | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
+        cost_limit: float | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -818,6 +819,7 @@ class BackendSessionManager:
                 smart_pruning=effective_smart_pruning,
                 artifact_fingerprints=artifact_fingerprints,
                 fingerprint_meta=fingerprint_meta,
+                cost_limit=cost_limit,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(
