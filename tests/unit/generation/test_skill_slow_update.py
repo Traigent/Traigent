@@ -10,6 +10,7 @@ from traigent.generation.skill_train.document import SLOW_UPDATE_END, SLOW_UPDAT
 from traigent.generation.skill_train.edits import EditOp
 from traigent.generation.skill_train.slow_update import (
     apply_slow_update,
+    build_slow_update_probe,
     categorize_slow_update_rollouts,
 )
 from traigent.generation.skill_train.trainer import RolloutRecord, SkillTrainer
@@ -274,6 +275,21 @@ def test_slow_update_categorization_uses_per_example_rollouts() -> None:
         "persistent"
     ]
     assert [case.example_id for case in categorized["stable_success"]] == ["stable"]
+
+
+def test_slow_update_probe_is_deterministic_by_seed() -> None:
+    train = _dataset(20)
+
+    first = build_slow_update_probe(train, probe_size=5, seed=7)
+    second = build_slow_update_probe(train, probe_size=5, seed=7)
+    third = build_slow_update_probe(train, probe_size=5, seed=8)
+
+    first_ids = [example.input_data["i"] for example in first.examples]
+    second_ids = [example.input_data["i"] for example in second.examples]
+    third_ids = [example.input_data["i"] for example in third.examples]
+    assert first_ids == second_ids
+    assert first_ids != third_ids
+    assert first.name == "slow__slow_update_probe"
 
 
 def test_meta_skill_written_to_artifacts_but_not_best_document(tmp_path) -> None:
