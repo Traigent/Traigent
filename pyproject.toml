@@ -137,7 +137,7 @@ mcp = [
 
 # Internal schema validation support for DTO strict-validation paths.
 internal_schema = [
-    "traigent-schema==4.1.0",
+    "traigent-schema==4.7.1",
 ]
 
 # Testing dependencies
