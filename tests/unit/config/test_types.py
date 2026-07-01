@@ -7,6 +7,7 @@ import pytest
 from traigent.config.types import (
     ExecutionMode,
     TraigentConfig,
+    _reset_deprecation_warning_state_for_tests,
     accepted_algorithm_values,
     accepted_execution_mode_values,
     resolve_execution_mode,
@@ -14,6 +15,13 @@ from traigent.config.types import (
     validate_execution_mode,
 )
 from traigent.utils.exceptions import ConfigurationError, ValidationError
+
+
+@pytest.fixture(autouse=True)
+def reset_deprecation_warning_state():
+    _reset_deprecation_warning_state_for_tests()
+    yield
+    _reset_deprecation_warning_state_for_tests()
 
 
 class TestTraigentConfig:
@@ -32,6 +40,47 @@ class TestTraigentConfig:
         assert config.model == "GPT-4o"
         assert config.temperature == 0.7
         assert config.max_tokens == 1000
+
+    def test_deprecated_edge_analytics_config_warns_once_but_still_works(self):
+        """Deprecated edge_analytics config remains behavior-compatible."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            first = TraigentConfig(execution_mode="edge_analytics")
+            second = TraigentConfig(execution_mode="edge_analytics")
+
+        messages = [
+            str(warning.message)
+            for warning in caught
+            if issubclass(warning.category, DeprecationWarning)
+        ]
+        assert len(messages) == 1
+        assert "execution_mode='edge_analytics' is deprecated" in messages[0]
+        assert "algorithm='grid'" in messages[0]
+        assert "algorithm='random'" in messages[0]
+        assert "prefer local over edge_analytics" in messages[0].lower()
+        assert "future major" in messages[0]
+        assert first.execution_mode == "edge_analytics"
+        assert second.execution_mode == "edge_analytics"
+        assert first.is_edge_analytics_mode() is True
+        assert second.is_edge_analytics_mode() is True
+
+    @pytest.mark.parametrize("algorithm", ("grid", "random"))
+    def test_preferred_local_config_emits_no_deprecation_warning(self, algorithm):
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = TraigentConfig(algorithm=algorithm, offline=True)
+
+        assert config.algorithm == algorithm
+        assert config.offline is True
+        assert not [
+            warning
+            for warning in caught
+            if issubclass(warning.category, DeprecationWarning)
+        ]
 
     def test_temperature_validation(self):
         """Test temperature validation."""
@@ -348,16 +397,22 @@ class TestValidateExecutionMode:
             validate_execution_mode("privacy")
 
     def test_local_alias_validates_as_edge_analytics(self) -> None:
-        """Local is accepted as a public alias for edge_analytics."""
-        with pytest.warns(DeprecationWarning):
+        """Local is accepted as the preferred compatibility wire value."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             assert resolve_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
-        with pytest.warns(DeprecationWarning):
             assert validate_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
-        with pytest.warns(DeprecationWarning):
             assert (
                 TraigentConfig(execution_mode="local").execution_mode
                 == "edge_analytics"
             )
+        assert not [
+            warning
+            for warning in caught
+            if issubclass(warning.category, DeprecationWarning)
+        ]
 
     def test_deprecated_standard_mode_warns_and_resolves_to_hybrid(self) -> None:
         """The removed standard mode emits DeprecationWarning and maps to hybrid."""
@@ -375,11 +430,7 @@ class TestValidateExecutionMode:
             "local",
         ]
         for mode in accepted_execution_mode_values():
-            if mode == "local":
-                with pytest.warns(DeprecationWarning):
-                    result = validate_execution_mode(mode)
-            else:
-                result = validate_execution_mode(mode)
+            result = validate_execution_mode(mode)
             assert result in {
                 ExecutionMode.EDGE_ANALYTICS,
                 ExecutionMode.HYBRID,

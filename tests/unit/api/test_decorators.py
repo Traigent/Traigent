@@ -166,7 +166,11 @@ class TestOptimizeDecorator:
 
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.execution_mode == "edge_analytics"
-        assert any(issubclass(w.category, DeprecationWarning) for w in local_warnings)
+        # "local" is now the PREFERRED client-side value and must NOT warn; edge_analytics
+        # is the deprecated alias. "local" still resolves to the edge_analytics internal value.
+        assert not any(
+            issubclass(w.category, DeprecationWarning) for w in local_warnings
+        )
 
         # "standard" is now a deprecated alias (emits DeprecationWarning, resolves to hybrid)
         with warnings.catch_warnings(record=True) as caught:

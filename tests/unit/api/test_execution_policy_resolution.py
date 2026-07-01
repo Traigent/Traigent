@@ -10,12 +10,12 @@ import pytest
 from traigent.api.decorators import ExecutionOptions, HybridAPIOptions, optimize
 from traigent.config.types import (
     ExecutionIntent,
+    _reset_deprecation_warning_state_for_tests,
     accepted_algorithm_values,
     resolve_execution_policy,
 )
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.utils.exceptions import ConfigurationError
-
 
 FAIL_CLOSED_MESSAGE_PARTS = (
     "execution_mode=",
@@ -23,6 +23,13 @@ FAIL_CLOSED_MESSAGE_PARTS = (
     "algorithm='auto'",
     "offline=True",
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_deprecation_warning_state():
+    _reset_deprecation_warning_state_for_tests()
+    yield
+    _reset_deprecation_warning_state_for_tests()
 
 
 def _assert_legacy_mode_fails_closed(exc: BaseException, legacy_mode: str) -> None:
@@ -67,7 +74,56 @@ def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
     ]
     assert sample.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
     assert sample.execution_policy.offline is True
-    assert any("preserve the legacy no-egress guarantee" in msg for msg in messages)
+    assert len(messages) == 1
+    assert "execution_mode='edge_analytics' is deprecated" in messages[0]
+    assert "algorithm='grid'" in messages[0]
+    assert "algorithm='random'" in messages[0]
+    assert "prefer local over edge_analytics" in messages[0].lower()
+    assert "future major" in messages[0]
+
+
+def test_legacy_edge_analytics_warning_is_once_per_process() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        first = resolve_execution_policy(execution_mode="edge_analytics")
+        second = resolve_execution_policy(execution_mode="edge_analytics")
+
+    messages = [
+        str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
+    ]
+    assert first == second
+    assert first.intent is ExecutionIntent.LOCAL_ONLY
+    assert len(messages) == 1
+
+
+@pytest.mark.parametrize("algorithm", ("grid", "random"))
+def test_preferred_local_policy_emits_no_deprecation_warning(algorithm: str) -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        policy = resolve_execution_policy(algorithm=algorithm, offline=True)
+
+    assert policy.intent is ExecutionIntent.LOCAL_ONLY
+    assert policy.offline is True
+    assert policy.algorithm == algorithm
+    assert not [
+        warning
+        for warning in caught
+        if issubclass(warning.category, DeprecationWarning)
+    ]
+
+
+def test_local_execution_mode_wire_value_emits_no_deprecation_warning() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        policy = resolve_execution_policy(execution_mode="local")
+
+    assert policy.intent is ExecutionIntent.LOCAL_ONLY
+    assert policy.offline is True
+    assert not [
+        warning
+        for warning in caught
+        if issubclass(warning.category, DeprecationWarning)
+    ]
 
 
 @pytest.mark.parametrize("legacy_mode", ("privacy", "cloud"))

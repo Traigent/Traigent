@@ -84,6 +84,7 @@ from traigent.config.types import (
     ExecutionMode,
     InjectionMode,
     ResolvedExecutionPolicy,
+    _warn_deprecated_once,
     is_traigent_disabled,
     resolve_execution_policy,
     validate_algorithm_name,
@@ -666,34 +667,28 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
 
 def _warn_for_legacy_execution_options(keys: set[str]) -> None:
     """Emit coarse deprecation warnings for legacy execution option names."""
-    import warnings
-
-    if keys & {"execution_mode"}:
-        warnings.warn(
-            "execution_mode is deprecated as a public optimizer selector. Use "
-            "algorithm='auto'|'grid'|'random' and offline=True for no egress.",
-            DeprecationWarning,
-            stacklevel=4,
-        )
     if keys & {"privacy_enabled"}:
-        warnings.warn(
+        _warn_deprecated_once(
+            "optimize.privacy_enabled",
             "privacy_enabled is deprecated and has no effect. Use offline=True "
-            "for no egress.",
-            DeprecationWarning,
+            "for no egress. This compatibility option will be removed in a "
+            "future major release.",
             stacklevel=4,
         )
     if keys & {"cloud_fallback_policy"}:
-        warnings.warn(
+        _warn_deprecated_once(
+            "optimize.cloud_fallback_policy",
             "cloud_fallback_policy is deprecated and has no effect. Set "
-            "TRAIGENT_REQUIRE_CLOUD=1 to disable fallback.",
-            DeprecationWarning,
+            "TRAIGENT_REQUIRE_CLOUD=1 to disable fallback. This compatibility "
+            "option will be removed in a future major release.",
             stacklevel=4,
         )
     if keys & set(_LEGACY_HYBRID_API_OPTION_MAP):
-        warnings.warn(
+        _warn_deprecated_once(
+            "optimize.hybrid_api_flat_options",
             "Flat hybrid_api_* optimize options are deprecated. Pass an "
-            "ExternalServiceEvaluator or evaluator options dict instead.",
-            DeprecationWarning,
+            "ExternalServiceEvaluator or evaluator options dict instead. This "
+            "compatibility option will be removed in a future major release.",
             stacklevel=4,
         )
 
