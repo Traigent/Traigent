@@ -390,6 +390,140 @@ class TestExtractLLMMetrics:
         assert metrics.response.response_time_ms == 0.0
         assert metrics.cost.total_cost == 0.0
 
+    def test_extract_llm_metrics_uses_response_model_when_model_name_missing(
+        self, monkeypatch
+    ):
+        """Cost is computed from response.model when config has no 'model' key.
+
+        Multi-model/multi-step agents have no single config 'model' key, so the
+        central extractor must fall back to the model carried on the response
+        itself instead of skipping cost calculation entirely (#1599).
+        """
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        class MockResponse:
+            model = "gpt-4o-mini"
+            usage = MockUsage()
+
+        metrics = extract_llm_metrics(MockResponse(), model_name=None)
+
+        assert metrics.tokens.input_tokens == 100
+        assert metrics.tokens.output_tokens == 50
+        assert metrics.cost.total_cost > 0
+
+    def test_extract_llm_metrics_uses_response_metadata_model(self, monkeypatch):
+        """Cost falls back to response_metadata['model'] (LangChain shape)."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        class MockResponse:
+            usage = MockUsage()
+            response_metadata = {"model": "gpt-4o-mini"}
+
+        metrics = extract_llm_metrics(MockResponse(), model_name=None)
+
+        assert metrics.tokens.input_tokens == 100
+        assert metrics.tokens.output_tokens == 50
+        assert metrics.cost.total_cost > 0
+
+    def test_extract_llm_metrics_uses_llm_output_model(self, monkeypatch):
+        """Cost falls back to llm_output['model_name'] (LangChain shape)."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        class MockResponse:
+            usage = MockUsage()
+            llm_output = {"model_name": "gpt-4o-mini"}
+
+        metrics = extract_llm_metrics(MockResponse(), model_name=None)
+
+        assert metrics.tokens.input_tokens == 100
+        assert metrics.tokens.output_tokens == 50
+        assert metrics.cost.total_cost > 0
+
+    def test_extract_llm_metrics_skips_cost_when_no_model_anywhere(
+        self, monkeypatch, caplog
+    ):
+        """Cost stays $0 and the skip warning still fires when neither the
+        config nor the response yields a model name (unchanged behavior)."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        class MockResponse:
+            usage = MockUsage()
+
+        with caplog.at_level("WARNING"):
+            metrics = extract_llm_metrics(MockResponse(), model_name=None)
+
+        assert metrics.tokens.input_tokens == 100
+        assert metrics.tokens.output_tokens == 50
+        assert metrics.cost.total_cost == 0.0
+        assert any(
+            "Cost calculation skipped: model_name is None/empty" in record.message
+            for record in caplog.records
+        )
+
+    def test_extract_llm_metrics_survives_raising_model_property(
+        self, monkeypatch, caplog
+    ):
+        """A response whose ``model`` accessor raises must not blow up
+        ``extract_llm_metrics``; it should degrade to skipped-cost, matching
+        the "no model anywhere" behavior (#1599 follow-up)."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        class MockResponse:
+            usage = MockUsage()
+
+            @property
+            def model(self):
+                raise RuntimeError("boom")
+
+            @property
+            def response_metadata(self):
+                raise RuntimeError("boom")
+
+            @property
+            def llm_output(self):
+                raise RuntimeError("boom")
+
+        with caplog.at_level("WARNING"):
+            metrics = extract_llm_metrics(MockResponse(), model_name=None)
+
+        assert metrics.tokens.input_tokens == 100
+        assert metrics.tokens.output_tokens == 50
+        assert metrics.cost.total_cost == 0.0
+        assert any(
+            "Cost calculation skipped: model_name is None/empty" in record.message
+            for record in caplog.records
+        )
+
 
 class TestOpenRouterCostExtraction:
     """Tests for OpenRouter provider-reported cost extraction (issue #1317).
