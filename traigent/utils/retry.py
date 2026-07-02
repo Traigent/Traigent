@@ -31,6 +31,7 @@ from traigent.utils.exceptions import (
     RetryableError,
     RetryError,
 )
+from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -472,7 +473,7 @@ def retry(
             return await handler.execute_async(func, *args, **kwargs)
 
         # Return appropriate wrapper based on function type
-        if asyncio.iscoroutinefunction(func):
+        if is_coroutine_callable(func):
             return async_wrapper  # type: ignore[return-value]
         return wrapper
 
@@ -501,7 +502,7 @@ def retry_with_config(config: RetryConfig) -> Callable[..., Any]:
             return await handler.execute_async(func, *args, **kwargs)
 
         # Return appropriate wrapper based on function type
-        if asyncio.iscoroutinefunction(func):
+        if is_coroutine_callable(func):
             return async_wrapper  # type: ignore[return-value]
         return wrapper
 
@@ -596,6 +597,6 @@ class RetryWithCircuitBreaker:
         async def async_wrapper(*args, **kwargs) -> T:
             return await self.handler.execute_async(func, *args, **kwargs)
 
-        if asyncio.iscoroutinefunction(func):
+        if is_coroutine_callable(func):
             return async_wrapper  # type: ignore[return-value]
         return wrapper
