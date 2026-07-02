@@ -446,7 +446,7 @@ async def test_local_adapter_get_execution_mode():
 
     adapter = LocalExecutionAdapter(Mock())
     mode = await adapter.get_execution_mode()
-    assert mode == "edge_analytics"
+    assert mode == "local"
 
 
 # =============================================================================

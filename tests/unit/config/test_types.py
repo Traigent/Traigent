@@ -61,10 +61,10 @@ class TestTraigentConfig:
         assert "algorithm='random'" in messages[0]
         assert "prefer local over edge_analytics" in messages[0].lower()
         assert "future major" in messages[0]
-        assert first.execution_mode == "edge_analytics"
-        assert second.execution_mode == "edge_analytics"
-        assert first.is_edge_analytics_mode() is True
-        assert second.is_edge_analytics_mode() is True
+        assert first.execution_mode == "local"
+        assert second.execution_mode == "local"
+        assert first.is_local_mode() is True
+        assert second.is_local_mode() is True
 
     @pytest.mark.parametrize("algorithm", ("grid", "random"))
     def test_preferred_local_config_emits_no_deprecation_warning(self, algorithm):
@@ -256,9 +256,9 @@ class TestTraigentConfig:
         """Dict overrides preserve explicitly supplied default values."""
         base = TraigentConfig(execution_mode="hybrid", privacy_enabled=True)
 
-        merged = base.merge({"execution_mode": "edge_analytics"})
+        merged = base.merge({"execution_mode": "local"})
 
-        assert merged.execution_mode == "edge_analytics"
+        assert merged.execution_mode == "local"
         assert merged.privacy_enabled is True
 
     def test_repr(self):
@@ -319,18 +319,18 @@ class TestValidateAlgorithmName:
 class TestValidateExecutionMode:
     """Tests for validate_execution_mode function."""
 
-    def test_resolve_execution_mode_none_defaults_to_edge_analytics(self) -> None:
+    def test_resolve_execution_mode_none_defaults_to_local(self) -> None:
         """Omitted execution mode follows the public SDK default."""
-        assert resolve_execution_mode(None) is ExecutionMode.EDGE_ANALYTICS
+        assert resolve_execution_mode(None) is ExecutionMode.LOCAL
 
-    def test_validate_execution_mode_none_defaults_to_edge_analytics(self) -> None:
+    def test_validate_execution_mode_none_defaults_to_local(self) -> None:
         """Validation should accept the omitted-mode public default."""
-        assert validate_execution_mode(None) is ExecutionMode.EDGE_ANALYTICS
+        assert validate_execution_mode(None) is ExecutionMode.LOCAL
 
     @pytest.mark.parametrize(
         ("mode", "expected"),
         [
-            ("edge_analytics", "edge_analytics"),
+            ("edge_analytics", "local"),
             ("hybrid", "hybrid"),
             ("hybrid_api", "hybrid_api"),
         ],
@@ -396,23 +396,39 @@ class TestValidateExecutionMode:
         with pytest.raises(ConfigurationError, match="fails closed"):
             validate_execution_mode("privacy")
 
-    def test_local_alias_validates_as_edge_analytics(self) -> None:
+    def test_local_validates_as_canonical_local(self) -> None:
         """Local is accepted as the preferred compatibility wire value."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            assert resolve_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
-            assert validate_execution_mode("local") is ExecutionMode.EDGE_ANALYTICS
-            assert (
-                TraigentConfig(execution_mode="local").execution_mode
-                == "edge_analytics"
-            )
+            assert resolve_execution_mode("local") is ExecutionMode.LOCAL
+            assert validate_execution_mode("local") is ExecutionMode.LOCAL
+            assert TraigentConfig(execution_mode="local").execution_mode == "local"
         assert not [
             warning
             for warning in caught
             if issubclass(warning.category, DeprecationWarning)
         ]
+
+    def test_deprecated_edge_analytics_public_alias_still_resolves_to_local(
+        self,
+    ) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            assert ExecutionMode.EDGE_ANALYTICS is ExecutionMode.LOCAL
+            assert ExecutionMode["EDGE_ANALYTICS"] is ExecutionMode.LOCAL
+            assert ExecutionMode("edge_analytics") is ExecutionMode.LOCAL
+
+    def test_deprecated_is_edge_analytics_mode_delegates_to_is_local_mode(
+        self,
+    ) -> None:
+        config = TraigentConfig(execution_mode="local")
+
+        with pytest.warns(DeprecationWarning, match="is_local_mode"):
+            assert config.is_edge_analytics_mode() == config.is_local_mode()
 
     def test_deprecated_standard_mode_warns_and_resolves_to_hybrid(self) -> None:
         """The removed standard mode emits DeprecationWarning and maps to hybrid."""
@@ -432,7 +448,7 @@ class TestValidateExecutionMode:
         for mode in accepted_execution_mode_values():
             result = validate_execution_mode(mode)
             assert result in {
-                ExecutionMode.EDGE_ANALYTICS,
+                ExecutionMode.LOCAL,
                 ExecutionMode.HYBRID,
                 ExecutionMode.HYBRID_API,
             }

@@ -30,7 +30,7 @@ def test_setitem_rejects_unknown_execution_mode() -> None:
 
 
 def test_local_storage_path_expands() -> None:
-    config = TraigentConfig(execution_mode=ExecutionMode.EDGE_ANALYTICS.value)
+    config = TraigentConfig(execution_mode=ExecutionMode.LOCAL.value)
     config["local_storage_path"] = "~/tmp"
 
     expected = str(Path(os.path.expanduser("~/tmp")).resolve())

@@ -800,7 +800,7 @@ async def test_optimization_completion_refreshes_best_config_snapshot():
 
     class RuntimeConfig:
         @staticmethod
-        def is_edge_analytics_mode():
+        def is_local_mode():
             return False
 
     opt_func.traigent_config = RuntimeConfig()

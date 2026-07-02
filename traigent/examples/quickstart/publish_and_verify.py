@@ -74,7 +74,7 @@ def build_answer(litellm_module: Any) -> Any:
     from traigent.api.decorators import EvaluationOptions
 
     # algorithm="grid" is the current local-search selector. The runtime mode for
-    # that path is edge_analytics, and backend tracking remains enabled unless the
+    # that path is local, and backend tracking remains enabled unless the
     # no-key quickstart bootstrap forced offline mode. Avoid passing the deprecated
     # execution_mode="edge_analytics" decorator option here: current policy maps
     # that legacy selector to offline=True for backward-compatible no-egress runs.
@@ -111,7 +111,7 @@ def _print_portal_verification(result: Any) -> None:
 
     if os.environ.get("TRAIGENT_API_KEY"):
         print(
-            "[traigent] Portal publish path was enabled: edge_analytics local "
+            "[traigent] Portal publish path was enabled: local "
             "search with backend session + per-trial submission."
         )
         if cloud_url:

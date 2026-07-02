@@ -362,7 +362,7 @@ class OptimizedFunction(Generic[_P, _R]):
         config_param: str | None = None,
         auto_override_frameworks: bool = False,
         framework_targets: list[str] | None = None,
-        execution_mode: str = "edge_analytics",
+        execution_mode: str = "local",
         local_storage_path: str | None = None,
         minimal_logging: bool = True,
         custom_evaluator: Callable[..., Any] | None = None,
@@ -384,9 +384,9 @@ class OptimizedFunction(Generic[_P, _R]):
             config_param: Parameter name for injection_mode="parameter"
             auto_override_frameworks: Enable automatic framework parameter overrides
             framework_targets: List of framework class names to override (e.g., ["openai.OpenAI"])
-            execution_mode: Execution mode ("edge_analytics", "hybrid", "hybrid_api"; "privacy" is a legacy alias)
-            local_storage_path: Custom path for local storage (Edge Analytics mode only)
-            minimal_logging: Use minimal logging in Edge Analytics mode
+            execution_mode: Execution mode ("local", "hybrid", "hybrid_api"; "edge_analytics" and "privacy" are legacy aliases)
+            local_storage_path: Custom path for local storage (local mode only)
+            minimal_logging: Use minimal logging in local mode
             custom_evaluator: Custom evaluation function for advanced use cases
             scoring_function: Simple scoring function that returns a score or dict of scores
             metric_functions: Dict of metric name to scoring function
@@ -1996,7 +1996,7 @@ class OptimizedFunction(Generic[_P, _R]):
         )
 
         # Show upgrade hints after optimization completion (Edge Analytics mode only)
-        if self.traigent_config.is_edge_analytics_mode():  # type: ignore[has-type]
+        if self.traigent_config.is_local_mode():  # type: ignore[has-type]
             try:
                 show_upgrade_hint(
                     "session_complete",
@@ -2992,12 +2992,12 @@ Remediation:
         llm = resolve_rewrite_llm(optimizer_llm)
         reflector = Reflector(llm, model_hint=options.optimizer_model)
         effective_mode = getattr(self, "execution_mode", None)
-        if effective_mode and effective_mode != "edge_analytics":
+        if effective_mode and effective_mode != "local":
             logger.warning(
                 "train_skill candidate evaluation follows this function's "
                 "execution mode (%s): trial payloads, including the candidate "
                 "document as a configuration value, may reach the backend. "
-                "End-to-end local training requires edge_analytics mode.",
+                "End-to-end local training requires local mode.",
                 effective_mode,
             )
         config_space = dict(self.configuration_space or {})

@@ -195,7 +195,7 @@ Configure where and how optimization runs execute.
 ```python
 @traigent.optimize(
     execution=ExecutionOptions(
-        execution_mode="edge_analytics",  # Local execution
+        execution_mode="local",  # Local execution
         local_storage_path="./results",
         privacy_enabled=True,
         # reps_per_trial / reps_aggregation are enterprise-only in this SDK
@@ -212,7 +212,7 @@ def my_func(query: str) -> str:
 
 | Mode | Description |
 |---|---|
-| `"edge_analytics"` | Default. Runs locally. Set `TRAIGENT_OFFLINE_MODE=true` for no backend communication. |
+| `"local"` | Default. Runs locally. Set `TRAIGENT_OFFLINE_MODE=true` for no backend communication. |
 | `"hybrid"` | Supported portal-tracked mode: trials run locally while backend stores sessions and metrics. |
 | `"cloud"` | Reserved for future remote execution. Not available yet; use `hybrid` for portal-tracked optimization. |
 
@@ -269,7 +269,7 @@ def exact_match(prediction: str, expected: str) -> float:
         scoring_function=exact_match,
     ),
     execution=ExecutionOptions(
-        execution_mode="edge_analytics",
+        execution_mode="local",
         local_storage_path="./optimization_results",
         # reps_per_trial / reps_aggregation are enterprise-only; keep defaults.
     ),

@@ -291,7 +291,7 @@ class FileMetadata(TypedDict):
 class StorageConfig(TypedDict):
     """Configuration for storage backends."""
 
-    backend: str  # 'edge_analytics', 's3', 'gcs', etc.
+    backend: str  # 'local', 's3', 'gcs', etc.
     base_path: str
     credentials: dict[str, str] | None
     compression: bool

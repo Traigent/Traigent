@@ -101,7 +101,7 @@ class SkillTrainOptions(BaseModel):
             "When True, optimizer calls go only to the caller-supplied LLM (no "
             "Traigent-managed optimizer); that LLM receives rollout contents in "
             "reflection prompts. Candidate evaluation follows the function's "
-            "execution mode — end-to-end local training requires edge_analytics."
+            "execution mode — end-to-end local training requires local mode."
         ),
     )
     max_optimizer_calls: int | None = Field(None, ge=0)

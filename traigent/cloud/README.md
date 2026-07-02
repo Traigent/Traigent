@@ -55,7 +55,7 @@ assert experiment.benchmark_id is None
 
 # Privacy metadata is included
 assert experiment.metadata["privacy_mode"] is True
-assert experiment.metadata["execution_mode"] == "edge_analytics"
+assert experiment.metadata["execution_mode"] == "local"
 ```
 
 ## Usage
@@ -117,7 +117,7 @@ class NewFeatureDTO:
     # Privacy metadata
     metadata: Dict[str, Any] = field(default_factory=lambda: {
         "privacy_mode": True,
-        "execution_mode": "edge_analytics"
+        "execution_mode": "local"
     })
 
     def to_dict(self) -> Dict[str, Any]:

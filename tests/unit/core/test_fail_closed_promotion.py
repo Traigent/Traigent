@@ -413,7 +413,7 @@ class TestBestConfigRuntimeInterplay:
             configuration_space={"model": ["a", "b"]},
             default_config={"model": "a"},
         )
-        fn.traigent_config = SimpleNamespace(is_edge_analytics_mode=lambda: False)
+        fn.traigent_config = SimpleNamespace(is_local_mode=lambda: False)
         orchestrator = MagicMock()
         orchestrator.optimize = AsyncMock(return_value=self._no_certified_result())
         dataset = Dataset([EvaluationExample({"text": "x"}, "x")], name="d")
@@ -466,7 +466,7 @@ class TestBestConfigRuntimeInterplay:
             configuration_space={"model": ["a", "b"]},
             default_config={"model": "a"},
         )
-        fn.traigent_config = SimpleNamespace(is_edge_analytics_mode=lambda: False)
+        fn.traigent_config = SimpleNamespace(is_local_mode=lambda: False)
         orchestrator = MagicMock()
         orchestrator.optimize = AsyncMock(return_value=winner)
         dataset = Dataset([EvaluationExample({"text": "x"}, "x")], name="d")

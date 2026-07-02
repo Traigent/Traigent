@@ -383,7 +383,7 @@ class IncentiveManager:
 def show_upgrade_hint(context: str = "general", **kwargs) -> None:
     """Global function to show upgrade hints."""
     config = TraigentConfig.from_environment()
-    if config.is_edge_analytics_mode():
+    if config.is_local_mode():
         incentive_manager = IncentiveManager(config)
         incentive_manager.update_usage_stats()
 
@@ -398,7 +398,7 @@ def show_upgrade_hint(context: str = "general", **kwargs) -> None:
 def show_achievement(achievement: str) -> None:
     """Global function to show achievement unlock."""
     config = TraigentConfig.from_environment()
-    if config.is_edge_analytics_mode():
+    if config.is_local_mode():
         incentive_manager = IncentiveManager(config)
         message = incentive_manager.show_achievement_unlock(achievement)
         if message:

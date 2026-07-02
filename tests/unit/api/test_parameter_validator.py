@@ -48,7 +48,7 @@ class TestParameterValidator:
         validation time. Privacy now fails closed instead of normalizing.
         """
         result = self.validator._validate_execution_mode("edge_analytics")
-        assert result is ExecutionMode.EDGE_ANALYTICS
+        assert result is ExecutionMode.LOCAL
         assert self.validator._validate_execution_mode("hybrid") is ExecutionMode.HYBRID
         with pytest.raises(ValidationError, match="fails closed"):
             self.validator._validate_execution_mode("privacy")
@@ -314,7 +314,7 @@ class TestValidateOptimizeParameters:
         assert isinstance(result, OptimizeParameters)
         assert result.eval_dataset == "test.jsonl"
         assert result.objectives == ["accuracy"]
-        assert result.execution_mode == "edge_analytics"
+        assert result.execution_mode == "local"
 
     def test_validate_optimize_parameters_with_kwargs(self):
         """Test parameter validation with extra kwargs."""

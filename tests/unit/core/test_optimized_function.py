@@ -844,7 +844,7 @@ class TestOptimizedFunction:
                 max_trials=3,
                 eval_dataset=sample_dataset,
             )
-        assert opt_func.execution_mode == "edge_analytics"
+        assert opt_func.execution_mode == "local"
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     @pytest.mark.asyncio

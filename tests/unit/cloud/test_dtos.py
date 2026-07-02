@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -30,9 +31,9 @@ from traigent.utils.exceptions import DTOSerializationError
 FIXTURES_DIR = Path(__file__).parents[2] / "cloud" / "fixtures"
 
 
-def _load_fixture(name: str) -> dict:
+def _load_fixture(name: str) -> dict[Any, Any]:
     with (FIXTURES_DIR / name).open(encoding="utf-8") as fixture:
-        return json.load(fixture)
+        return cast(dict[Any, Any], json.load(fixture))
 
 
 class TestInfrastructureDTO:
@@ -1158,8 +1159,8 @@ class TestExampleMeasure:
 class TestLocalDtoHelpers:
     """Regression tests for local DTO helper metadata."""
 
-    def test_local_experiment_metadata_uses_execution_mode_edge_analytics(self):
-        """Local experiment helper emits execution_mode=edge_analytics in metadata."""
+    def test_local_experiment_metadata_uses_execution_mode_local(self):
+        """Local experiment helper emits execution_mode=local in metadata."""
         experiment = cloud_dtos.create_local_experiment(
             experiment_id="exp-local",
             name="Local Experiment",
@@ -1167,11 +1168,11 @@ class TestLocalDtoHelpers:
             configuration_space={"temperature": [0.1, 0.2]},
         )
 
-        assert experiment.metadata["execution_mode"] == "edge_analytics"
+        assert experiment.metadata["execution_mode"] == "local"
         assert "mode" not in experiment.metadata
 
-    def test_local_experiment_run_metadata_uses_execution_mode_edge_analytics(self):
-        """Local run helper emits execution_mode=edge_analytics in metadata."""
+    def test_local_experiment_run_metadata_uses_execution_mode_local(self):
+        """Local run helper emits execution_mode=local in metadata."""
         run = cloud_dtos.create_local_experiment_run(
             run_id="run-local",
             experiment_id="exp-local",
@@ -1180,5 +1181,5 @@ class TestLocalDtoHelpers:
             objectives=["accuracy"],
         )
 
-        assert run.metadata["execution_mode"] == "edge_analytics"
+        assert run.metadata["execution_mode"] == "local"
         assert "mode" not in run.metadata

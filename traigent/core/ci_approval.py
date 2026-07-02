@@ -171,7 +171,7 @@ def check_ci_approval(traigent_config: TraigentConfig) -> None:
     Raises:
         OptimizationError: If running in CI without proper approval
     """
-    if not traigent_config.is_edge_analytics_mode():
+    if not traigent_config.is_local_mode():
         return
 
     # NOTE: ``TRAIGENT_MOCK_LLM`` no longer bypasses the CI approval gate

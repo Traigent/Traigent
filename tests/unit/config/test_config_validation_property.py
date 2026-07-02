@@ -114,7 +114,7 @@ def test_presence_penalty_rejects_invalid_range(penalty):
             "local",
             "hybrid",
             "hybrid_api",
-            ExecutionMode.EDGE_ANALYTICS,
+            ExecutionMode.LOCAL,
             ExecutionMode.HYBRID,
             ExecutionMode.HYBRID_API,
         ]
@@ -134,11 +134,10 @@ def test_execution_mode_accepts_valid_values(mode):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         config = TraigentConfig(execution_mode=mode)
-    if isinstance(mode, str) and mode == "local":
-        assert config.execution_mode == "edge_analytics"
-    else:
-        expected = mode.value if isinstance(mode, ExecutionMode) else mode
-        assert config.execution_mode == expected
+    expected = mode.value if isinstance(mode, ExecutionMode) else mode
+    if expected == "edge_analytics":
+        expected = "local"
+    assert config.execution_mode == expected
 
 
 @pytest.mark.parametrize("mode", ["privacy", "cloud"])
@@ -165,7 +164,7 @@ def test_execution_mode_deprecated_values_warn_and_resolve(mode):
         warnings.simplefilter("always")
         config = TraigentConfig(execution_mode=mode)
 
-    expected = "hybrid" if mode == "standard" else "edge_analytics"
+    expected = "hybrid" if mode == "standard" else "local"
     assert config.execution_mode == expected
     assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
@@ -329,7 +328,7 @@ def test_resolve_execution_mode_handles_all_valid_inputs(mode_str):
 
     # Empty strings and None should use default
     if not mode_str or (isinstance(mode_str, str) and not mode_str.strip()):
-        assert result == ExecutionMode.EDGE_ANALYTICS  # default
+        assert result == ExecutionMode.LOCAL  # default
 
 
 @pytest.mark.parametrize("mode", ["privacy", "cloud"])

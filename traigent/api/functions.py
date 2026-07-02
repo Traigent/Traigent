@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 
 # Global configuration
 _GLOBAL_CONFIG: dict[str, Any] = {
-    "default_storage_backend": "edge_analytics",
+    "default_storage_backend": "local",
     "parallel_workers": 1,
     "cache_policy": "memory",
     "logging_level": "INFO",
@@ -84,7 +84,7 @@ def configure(
     """Configure global Traigent SDK settings.
 
     Args:
-        default_storage_backend: Default storage ("edge_analytics", "s3", "gcs")
+        default_storage_backend: Default storage ("local", "s3", "gcs")
         parallel_workers: Default number of parallel workers
         cache_policy: Cache policy ("memory", "disk", "distributed")
         logging_level: Logging verbosity ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -214,7 +214,7 @@ def initialize(  # noqa: C901
 
         # Edge Analytics mode initialization (backend URL from env or config)
         # Set TRAIGENT_API_KEY environment variable for security
-        config = traigent.TraigentConfig.edge_analytics_mode()
+        config = traigent.TraigentConfig.local_mode()
         traigent.initialize(config=config)
 
         # Cloud mode with explicit URL
@@ -294,7 +294,7 @@ def _apply_config_settings(config: TraigentConfig) -> None:
         _GLOBAL_CONFIG["auto_sync"] = config.auto_sync
 
     _GLOBAL_CONFIG["default_storage_backend"] = (
-        "edge_analytics" if config.is_edge_analytics_mode() else "cloud"
+        "local" if config.is_local_mode() else "cloud"
     )
 
     logger.info(f"Traigent configured for {config.execution_mode} mode")
@@ -883,7 +883,7 @@ def list_recommendation_agent_types() -> tuple[str, ...]:
         list_recommendation_agent_types as _list_recommendation_agent_types,
     )
 
-    return _list_recommendation_agent_types()
+    return cast(tuple[str, ...], _list_recommendation_agent_types())
 
 
 def recommend_configuration_space(
@@ -918,10 +918,13 @@ def recommend_configuration_space(
         recommend_configuration_space as _recommend_configuration_space,
     )
 
-    return _recommend_configuration_space(
-        agent_type,
-        min_impact=min_impact,
-        min_confidence=min_confidence,
+    return cast(
+        dict[str, Any],
+        _recommend_configuration_space(
+            agent_type,
+            min_impact=min_impact,
+            min_confidence=min_confidence,
+        ),
     )
 
 

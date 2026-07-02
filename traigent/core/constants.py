@@ -139,14 +139,15 @@ VALIDATION_ERROR_CODES = {
 # Historical execution mode constants. Current support validation lives in
 # traigent.config.types.validate_execution_mode.
 EXECUTION_MODES = [
-    "edge_analytics",  # Client-side execution only
+    "local",  # Client-side execution only
+    "edge_analytics",  # Deprecated alias for local execution
     "privacy",  # Legacy alias handled by config normalization
     "standard",  # Removed legacy mode
     "cloud",  # Reserved future remote execution
 ]
 
 # Default execution mode
-DEFAULT_EXECUTION_MODE = "edge_analytics"
+DEFAULT_EXECUTION_MODE = "local"
 
 # =============================================================================
 # LOGGING AND DEBUGGING CONSTANTS

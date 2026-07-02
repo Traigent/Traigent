@@ -448,7 +448,7 @@ class TestOptimizeValidation:
             test_func, dataset, config_space, objectives, max_trials=1
         )
 
-        assert result["execution_mode"] == "edge_analytics"
+        assert result["execution_mode"] == "local"
         assert result["status"] == "completed"
         assert result["completed_trials"] == 1
         assert result["best_configuration"]["configuration"]["model"] == "gpt-3.5-turbo"
@@ -890,7 +890,7 @@ class TestOptimizeLocal:
                     test_func, dataset, config_space, objectives, max_trials=10
                 )
 
-                assert result["execution_mode"] == "edge_analytics"
+                assert result["execution_mode"] == "local"
                 assert result["completed_trials"] == 1
                 assert result["status"] == "completed"
                 assert result["best_configuration"] is not None

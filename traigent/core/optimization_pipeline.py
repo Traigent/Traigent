@@ -123,6 +123,7 @@ def create_traigent_config(
     return TraigentConfig(
         execution_mode=cast(
             Literal[
+                "local",
                 "edge_analytics",
                 "privacy",
                 "hybrid",

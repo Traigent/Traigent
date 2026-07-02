@@ -1645,7 +1645,7 @@ def _runtime_execution_mode_for_policy(
     if external_evaluator is not None:
         return ExecutionMode.HYBRID_API
     if policy.intent is ExecutionIntent.LOCAL_ONLY:
-        return ExecutionMode.EDGE_ANALYTICS
+        return ExecutionMode.LOCAL
     return ExecutionMode.HYBRID
 
 
@@ -1697,7 +1697,7 @@ def _resolve_actual_execution_mode(
 ) -> str:
     """Resolve legacy execution mode from provided or global config."""
     if (
-        execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        execution_mode == ExecutionMode.LOCAL.value
         and "execution_mode" in _GLOBAL_CONFIG
     ):
         result: str = str(_GLOBAL_CONFIG["execution_mode"])
@@ -1714,7 +1714,7 @@ def _log_execution_mode_warnings(
     minimal_logging: bool,
 ) -> None:
     """Log warnings for incompatible runtime settings."""
-    if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
+    if minimal_logging and execution_mode_enum is not ExecutionMode.LOCAL:
         logger.warning(
             "minimal_logging is only effective for offline local runs. "
             "It will be ignored for the selected managed execution path."

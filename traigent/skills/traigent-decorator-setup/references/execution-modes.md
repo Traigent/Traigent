@@ -12,7 +12,7 @@ from traigent.api.decorators import ExecutionOptions
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `execution_mode` | `str` | auto-selected | Auto-selected based on algorithm and transport. `"edge_analytics"` for grid/random; `"hybrid"` for smart algorithms; `"hybrid_api"` for REST external services. Portal tracking is controlled by `TRAIGENT_API_KEY`, not this field. `"cloud"` is reserved for future use. |
+| `execution_mode` | `str` | auto-selected | Auto-selected based on algorithm and transport. `"local"` for grid/random; `"hybrid"` for smart algorithms; `"hybrid_api"` for REST external services. Portal tracking is controlled by `TRAIGENT_API_KEY`, not this field. `"cloud"` is reserved for future use. |
 | `local_storage_path` | `str \| None` | `None` | Directory path for local result storage. |
 | `minimal_logging` | `bool` | `True` | Minimize logging output during optimization. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Parallel execution settings. See ParallelConfig section. |
@@ -53,7 +53,7 @@ Optimization runs on your local machine. Set `TRAIGENT_OFFLINE_MODE=true` when y
 ```python
 @traigent.optimize(
     execution=ExecutionOptions(
-        execution_mode="edge_analytics",
+        execution_mode="local",
         local_storage_path="./results",
         privacy_enabled=True,
     ),
@@ -82,7 +82,7 @@ def my_func(query: str) -> str:
     return call_llm(model=cfg[“model”], prompt=query)
 ```
 
-**When to use**: Automatically used for smart algorithm runs. For portal tracking with grid/random search, just set `TRAIGENT_API_KEY` — mode stays `edge_analytics`.
+**When to use**: Automatically used for smart algorithm runs. For portal tracking with grid/random search, just set `TRAIGENT_API_KEY` — mode stays `local`.
 
 ### Cloud
 
