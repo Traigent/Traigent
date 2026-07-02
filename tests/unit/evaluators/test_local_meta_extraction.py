@@ -203,6 +203,30 @@ class TestMetaExtraction:
         assert metrics.tokens.output_tokens == 0  # Clamped
         assert metrics.tokens.total_tokens == 0
 
+    def test_meta_extraction_clamps_implausible_reported_cost(self, caplog):
+        """with_usage-style metadata cannot under-report known model token cost."""
+        from traigent.utils.cost_calculator import cost_from_tokens
+
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+        output = {
+            "text": "answer",
+            "__traigent_meta__": {
+                "usage": {"input_tokens": 1000, "output_tokens": 500},
+                "total_cost": 0.00000001,
+            },
+        }
+        expected = sum(cost_from_tokens(1000, 500, "gpt-4o-mini", strict=False))
+
+        with caplog.at_level("WARNING"):
+            meta = evaluator._extract_and_inject_traigent_meta(
+                output, metrics, model_name="gpt-4o-mini"
+            )
+
+        assert meta is not None
+        assert metrics.cost.total_cost == expected
+        assert "implausibly below token-derived estimate" in caplog.text
+
     def test_meta_extraction_preserves_other_fields(self):
         """Should not affect other fields in the output dict."""
         evaluator = LocalEvaluator()

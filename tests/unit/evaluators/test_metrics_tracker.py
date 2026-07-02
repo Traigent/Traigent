@@ -704,3 +704,109 @@ class TestOpenRouterCostExtraction:
             "from _hidden_params['response_cost'] even when the model is not in "
             "LiteLLM's pricing table (issue #1317)"
         )
+
+    def test_reported_cost_below_token_floor_is_clamped(self, monkeypatch, caplog):
+        """Known model + real tokens prevent implausibly low reported cost."""
+        from traigent.utils.cost_calculator import cost_from_tokens
+
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 1000
+            completion_tokens = 500
+            total_tokens = 1500
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "gpt-4o-mini"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=0.00000001)
+
+        expected = sum(cost_from_tokens(1000, 500, "gpt-4o-mini", strict=False))
+
+        with caplog.at_level("WARNING"):
+            metrics = extract_llm_metrics(
+                MockLiteLLMResponse(), model_name="gpt-4o-mini"
+            )
+
+        assert metrics.cost.total_cost == pytest.approx(expected)
+        assert "implausibly below token-derived estimate" in caplog.text
+
+    def test_plausible_reported_cost_is_unchanged(self, monkeypatch, caplog):
+        """Honest provider/user costs remain authoritative when plausible."""
+        from traigent.utils.cost_calculator import cost_from_tokens
+
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 1000
+            completion_tokens = 500
+            total_tokens = 1500
+
+        class MockHiddenParams(dict):
+            pass
+
+        token_cost = sum(cost_from_tokens(1000, 500, "gpt-4o-mini", strict=False))
+        reported_cost = token_cost * 0.75
+
+        class MockLiteLLMResponse:
+            model = "gpt-4o-mini"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=reported_cost)
+
+        with caplog.at_level("WARNING"):
+            metrics = extract_llm_metrics(
+                MockLiteLLMResponse(), model_name="gpt-4o-mini"
+            )
+
+        assert metrics.cost.total_cost == pytest.approx(reported_cost)
+        assert "implausibly below token-derived estimate" not in caplog.text
+
+    def test_unknown_model_accepts_reported_cost_without_clamp(
+        self, monkeypatch, caplog
+    ):
+        """Unknown pricing is the residual BYOK trust boundary."""
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockUsage:
+            prompt_tokens = 1000
+            completion_tokens = 500
+            total_tokens = 1500
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "unknown-model-xyz-123"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=0.00000001)
+
+        with caplog.at_level("WARNING"):
+            metrics = extract_llm_metrics(
+                MockLiteLLMResponse(), model_name="unknown-model-xyz-123"
+            )
+
+        assert metrics.cost.total_cost == pytest.approx(0.00000001)
+        assert "implausibly below token-derived estimate" not in caplog.text
+
+    def test_no_tokens_accepts_reported_cost_without_clamp(self, monkeypatch, caplog):
+        """No token data means there is no token-derived floor to enforce."""
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "gpt-4o-mini"
+            _hidden_params = MockHiddenParams(response_cost=0.00000001)
+
+        with caplog.at_level("WARNING"):
+            metrics = extract_llm_metrics(
+                MockLiteLLMResponse(), model_name="gpt-4o-mini"
+            )
+
+        assert metrics.tokens.total_tokens == 0
+        assert metrics.cost.total_cost == pytest.approx(0.00000001)
+        assert "implausibly below token-derived estimate" not in caplog.text
