@@ -76,7 +76,9 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE / ad-hoc execution paths
-    _sdk = os.environ.get("TRAIGENT_SDK_PATH") or str(Path(__file__).resolve().parents[2])
+    _sdk = os.environ.get("TRAIGENT_SDK_PATH") or str(
+        Path(__file__).resolve().parents[2]
+    )
     sys.path.insert(0, _sdk)
     import traigent
 
@@ -96,12 +98,24 @@ SCENARIO_EXAMPLES: list[dict[str, str]] = [
     {"id": "ex02", "input": "Capital of France?", "expected_output": "paris"},
     {"id": "ex03", "input": "3 * 3 = ?", "expected_output": "9"},
     {"id": "ex04", "input": "Chemical symbol for gold?", "expected_output": "au"},
-    {"id": "ex05", "input": "Largest planet in the solar system?", "expected_output": "jupiter"},
+    {
+        "id": "ex05",
+        "input": "Largest planet in the solar system?",
+        "expected_output": "jupiter",
+    },
     {"id": "ex06", "input": "Square root of 144?", "expected_output": "12"},
     {"id": "ex07", "input": "Is water H2O? (yes/no)", "expected_output": "yes"},
     {"id": "ex08", "input": "Opposite of 'hot'?", "expected_output": "cold"},
-    {"id": "ex09", "input": "How many legs does a spider have?", "expected_output": "8"},
-    {"id": "ex10", "input": "Author of 'Romeo and Juliet'?", "expected_output": "shakespeare"},
+    {
+        "id": "ex09",
+        "input": "How many legs does a spider have?",
+        "expected_output": "8",
+    },
+    {
+        "id": "ex10",
+        "input": "Author of 'Romeo and Juliet'?",
+        "expected_output": "shakespeare",
+    },
 ]
 
 TRACK_A_SURROGATE = {
@@ -141,7 +155,9 @@ def polymath_synthetic_agent_impl(question: str) -> str:
 def exact_match(output, expected, llm_metrics=None) -> float:
     """Primary scoring_function: exact_match(output, expected_output) -> 1.0/0.0."""
     try:
-        return 1.0 if str(output).strip().lower() == str(expected).strip().lower() else 0.0
+        return (
+            1.0 if str(output).strip().lower() == str(expected).strip().lower() else 0.0
+        )
     except Exception:
         return 0.0
 
@@ -233,7 +249,9 @@ def _check_local_shape(trial) -> None:
         )
     for i, ex in enumerate(example_results):
         ex_metrics = ex.get("metrics") if isinstance(ex, dict) else None
-        surrogate = ex_metrics.get("surrogate_score") if isinstance(ex_metrics, dict) else None
+        surrogate = (
+            ex_metrics.get("surrogate_score") if isinstance(ex_metrics, dict) else None
+        )
         if not isinstance(surrogate, (int, float)) or isinstance(surrogate, bool):
             raise _CheckFailed(
                 f"trial {trial.trial_id}: example_results[{i}].metrics['surrogate_score']="
@@ -260,7 +278,9 @@ def _build_submission_dict(trial, *, privacy: bool) -> dict:
     unbound with ``self=None`` — no CloudClient / session / network needed.
     """
     cfg = TraigentConfig(privacy_enabled=privacy)
-    wire_metadata = build_backend_metadata(trial, "accuracy", cfg, dataset_name="dataset")
+    wire_metadata = build_backend_metadata(
+        trial, "accuracy", cfg, dataset_name="dataset"
+    )
     clean_metrics = {
         k: v
         for k, v in (trial.metrics or {}).items()
@@ -291,7 +311,10 @@ def _check_wire_carry(trial, *, privacy: bool) -> None:
     rmd = result_data.get("metadata") or {}
 
     descriptor = rmd.get("surrogate_evaluator")
-    if not isinstance(descriptor, dict) or descriptor.get("evaluator_id") != SURROGATE_NAME:
+    if (
+        not isinstance(descriptor, dict)
+        or descriptor.get("evaluator_id") != SURROGATE_NAME
+    ):
         raise _CheckFailed(
             f"trial {trial.trial_id} [{label}]: surrogate descriptor did NOT survive the "
             f"backend metadata rebuild (result_data.metadata.surrogate_evaluator={descriptor!r})"
@@ -318,7 +341,9 @@ def _check_wire_carry(trial, *, privacy: bool) -> None:
         )
     for i, m in enumerate(measures):
         m_metrics = m.get("metrics") if isinstance(m, dict) else None
-        surrogate = m_metrics.get("surrogate_score") if isinstance(m_metrics, dict) else None
+        surrogate = (
+            m_metrics.get("surrogate_score") if isinstance(m_metrics, dict) else None
+        )
         if not isinstance(surrogate, (int, float)) or isinstance(surrogate, bool):
             raise _CheckFailed(
                 f"trial {trial.trial_id} [{label}]: measures[{i}].metrics['surrogate_score']="
