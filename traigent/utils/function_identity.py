@@ -16,6 +16,7 @@ from typing import Any
 
 __all__ = [
     "FunctionDescriptor",
+    "is_coroutine_callable",
     "resolve_function_descriptor",
     "sanitize_identifier",
 ]
@@ -129,6 +130,19 @@ def resolve_function_descriptor(
         relative_path=relative_path,
         slug=slug,
     )
+
+
+def is_coroutine_callable(func: Callable[..., Any]) -> bool:
+    """Return whether *func* is an async callable after unwrap/partial resolution.
+
+    This preserves the historical ``asyncio.iscoroutinefunction`` treatment of
+    ``functools.partial(async_fn)`` while also honoring ``functools.wraps``
+    ``__wrapped__`` chains.
+    """
+    candidate: Any = inspect.unwrap(func)
+    while isinstance(candidate, functools.partial):
+        candidate = inspect.unwrap(candidate.func)
+    return inspect.iscoroutinefunction(candidate)
 
 
 def _unwrap_partial(func: Any) -> Any:

@@ -22,6 +22,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _maybe_restore_trial_context,
 )
+from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -482,7 +483,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 with _maybe_restore_trial_context(trial_ctx):
                     with ConfigurationContext(config):
                         per_example_start = time.time()
-                        if asyncio.iscoroutinefunction(self.custom_evaluator):
+                        if is_coroutine_callable(self.custom_evaluator):
                             example_result = await self.custom_evaluator(
                                 func, config, example
                             )
