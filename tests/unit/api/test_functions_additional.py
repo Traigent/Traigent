@@ -203,7 +203,7 @@ class TestInitializeFunction:
         mock_api_keys,
     ):
         """Test initialize with TraigentConfig."""
-        config = TraigentConfig.edge_analytics_mode()
+        config = TraigentConfig.local_mode()
         result = initialize(config=config)
 
         assert result is True
@@ -369,7 +369,7 @@ class TestApplyConfigSettings:
 
         _apply_config_settings(config)
 
-        assert _GLOBAL_CONFIG["default_storage_backend"] == "edge_analytics"
+        assert _GLOBAL_CONFIG["default_storage_backend"] == "local"
 
     @patch("traigent.api.functions.logger")
     def test_apply_config_settings_local_storage_path(self, mock_logger):

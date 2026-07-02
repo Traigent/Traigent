@@ -39,16 +39,23 @@ def _assert_legacy_mode_fails_closed(exc: BaseException, legacy_mode: str) -> No
         assert part in message
 
 
+def _assert_policy(sample: OptimizedFunction):
+    policy = sample.execution_policy
+    assert policy is not None
+    return policy
+
+
 def test_algorithm_auto_default_resolves_cloud_brain_policy() -> None:
     @optimize(configuration_space={"x": [1, 2]})
     def sample(x: int) -> int:
         return x
 
     assert isinstance(sample, OptimizedFunction)
-    assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
-    assert sample.execution_policy.algorithm == "auto"
-    assert sample.execution_policy.offline is False
-    assert sample.execution_policy.allows_cloud_fallback is True
+    policy = _assert_policy(sample)
+    assert policy.intent is ExecutionIntent.CLOUD_BRAIN
+    assert policy.algorithm == "auto"
+    assert policy.offline is False
+    assert policy.allows_cloud_fallback is True
 
 
 def test_offline_true_resolves_local_only_policy() -> None:
@@ -56,9 +63,10 @@ def test_offline_true_resolves_local_only_policy() -> None:
     def sample(x: int) -> int:
         return x
 
-    assert sample.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
-    assert sample.execution_policy.offline is True
-    assert sample.execution_mode == "edge_analytics"
+    policy = _assert_policy(sample)
+    assert policy.intent is ExecutionIntent.LOCAL_ONLY
+    assert policy.offline is True
+    assert sample.execution_mode == "local"
 
 
 def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
@@ -72,8 +80,9 @@ def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
     messages = [
         str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
     ]
-    assert sample.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
-    assert sample.execution_policy.offline is True
+    policy = _assert_policy(sample)
+    assert policy.intent is ExecutionIntent.LOCAL_ONLY
+    assert policy.offline is True
     assert len(messages) == 1
     assert "execution_mode='edge_analytics' is deprecated" in messages[0]
     assert "algorithm='grid'" in messages[0]
@@ -236,7 +245,7 @@ def test_initialize_hybrid_global_default_still_matches_decorator_cloud_policy()
         _GLOBAL_CONFIG.clear()
         _GLOBAL_CONFIG.update(original_config)
 
-    assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
+    assert _assert_policy(sample).intent is ExecutionIntent.CLOUD_BRAIN
     assert sample.execution_mode == "hybrid"
     assert initialized_mode == "hybrid"
 
@@ -262,8 +271,9 @@ def test_privacy_enabled_is_deprecated_noop_warning() -> None:
     messages = [
         str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
     ]
-    assert sample.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
-    assert sample.execution_policy.offline is False
+    policy = _assert_policy(sample)
+    assert policy.intent is ExecutionIntent.CLOUD_BRAIN
+    assert policy.offline is False
     assert any(
         "privacy_enabled is deprecated and has no effect" in msg for msg in messages
     )
@@ -380,7 +390,7 @@ def test_known_smart_algorithm_names_accepted() -> None:
         def sample(x: int) -> int:
             return x
 
-        assert sample.execution_policy.algorithm == name
+        assert _assert_policy(sample).algorithm == name
 
 
 def test_smart_algorithm_resolves_cloud_required_policy() -> None:

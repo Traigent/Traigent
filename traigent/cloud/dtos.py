@@ -1587,7 +1587,7 @@ def create_local_experiment(
     max_trials: int = 10,
     dataset_size: int = 100,
 ) -> ExperimentDTO:
-    """Create an experiment DTO for Edge Analytics mode with privacy-preserving defaults."""
+    """Create an experiment DTO for local mode with privacy-preserving defaults."""
     return ExperimentDTO(
         id=experiment_id,
         name=name,
@@ -1600,7 +1600,7 @@ def create_local_experiment(
             "configuration_space": configuration_space,
         },
         metadata={
-            "execution_mode": "edge_analytics",
+            "execution_mode": "local",
             "privacy_mode": True,
             "dataset_size": dataset_size,
             "created_with": "traigent-local",
@@ -1617,7 +1617,7 @@ def create_local_experiment_run(
     max_trials: int = 10,
     dataset_size: int = 100,
 ) -> ExperimentRunDTO:
-    """Create an experiment run DTO for Edge Analytics mode."""
+    """Create an experiment run DTO for local mode."""
     return ExperimentRunDTO(
         id=run_id,
         experiment_id=experiment_id,
@@ -1637,7 +1637,7 @@ def create_local_experiment_run(
             },
             "metadata": {"dataset_size": dataset_size, "privacy_mode": True},
         },
-        metadata={"execution_mode": "edge_analytics", "privacy_mode": True},
+        metadata={"execution_mode": "local", "privacy_mode": True},
         status="not_started",  # Set correct status for backend compatibility
     )
 

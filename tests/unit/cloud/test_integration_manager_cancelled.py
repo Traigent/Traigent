@@ -16,7 +16,6 @@ from traigent.cloud.integration_manager import (
     IntegrationConfig,
     IntegrationManager,
     IntegrationMode,
-    IntegrationResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -27,7 +26,7 @@ from traigent.cloud.integration_manager import (
 def _make_manager(initialized: bool = True) -> IntegrationManager:
     """Create an IntegrationManager with mocked internals."""
     cfg = IntegrationConfig(
-        mode=IntegrationMode.EDGE_ANALYTICS,
+        mode=IntegrationMode.LOCAL,
         backend_base_url="http://localhost:5000",
     )
     mgr = IntegrationManager(config=cfg)
@@ -68,16 +67,16 @@ async def test_start_optimization_integration_propagates_cancelled_error():
     request.metadata = {}
     request.dataset.examples = []
 
-    # Force _start_edge_analytics_integration to raise CancelledError
+    # Force canonical local integration to raise CancelledError.
     with patch.object(
         mgr,
-        "_start_edge_analytics_integration",
+        "_start_local_integration",
         new_callable=AsyncMock,
         side_effect=asyncio.CancelledError,
     ):
         with pytest.raises(asyncio.CancelledError):
             await mgr.start_optimization_integration(
-                request, mode=IntegrationMode.EDGE_ANALYTICS
+                request, mode=IntegrationMode.LOCAL
             )
 
 

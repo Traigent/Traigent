@@ -1438,7 +1438,7 @@ class OptimizationOrchestrator:
             session_id=session_id,
             execution_mode=cast(
                 ExecutionMode | str,
-                self.traigent_config.execution_mode or "edge_analytics",
+                self.traigent_config.execution_mode or "local",
             ),
         )
         self._logger_facade.attach(self._logger)
@@ -3522,7 +3522,7 @@ class OptimizationOrchestrator:
                 self.optimizer.objectives[0] if self.optimizer.objectives else None
             ),
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
-            aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
+            aggregate_configs=not self.traigent_config.is_local_mode(),
             tie_breakers=self._tie_breakers or None,
             band_target=self._band_target,
             objective_order=self.optimizer.objectives,

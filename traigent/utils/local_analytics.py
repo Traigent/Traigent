@@ -71,7 +71,7 @@ class LocalAnalytics:
             config.analytics_endpoint or DEFAULT_ANALYTICS_ENDPOINT
         )
         self.enabled = config.enable_usage_analytics and (
-            config.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+            config.execution_mode == ExecutionMode.LOCAL.value
         )
 
         # Get or create anonymous user ID
@@ -497,7 +497,7 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
     from traigent.utils.env_config import is_mock_llm
 
     if not config.enable_usage_analytics or config.execution_mode not in {
-        ExecutionMode.EDGE_ANALYTICS.value,
+        ExecutionMode.LOCAL.value,
     }:
         return
 

@@ -153,12 +153,12 @@ class LocalExecutionAdapter(ExecutionAdapter):
             }
 
         except Exception as e:
-            logger.error(f"Edge Analytics execution failed: {str(e)}")
+            logger.error(f"Local execution failed: {str(e)}")
             raise
 
     async def get_execution_mode(self) -> str:
         """Get execution mode."""
-        return ExecutionMode.EDGE_ANALYTICS.value
+        return ExecutionMode.LOCAL.value
 
     def _evaluate_output(
         self,

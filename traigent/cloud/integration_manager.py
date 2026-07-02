@@ -48,7 +48,8 @@ _BACKEND_CLIENT_NOT_INITIALIZED = "Backend client not initialized"
 class IntegrationMode(Enum):
     """Integration execution modes."""
 
-    EDGE_ANALYTICS = "edge_analytics"  # Client-side execution with local orchestration
+    LOCAL = "local"  # Client-side execution with local orchestration
+    EDGE_ANALYTICS = "local"  # Deprecated alias for local orchestration
     PRIVACY = "privacy"  # Client-side execution with privacy-preserving tracking
     STANDARD = "standard"  # Legacy backend-tracked mode
     CLOUD = "cloud"  # Reserved future remote execution
@@ -213,8 +214,8 @@ class IntegrationManager:
                 result = await self._start_privacy_integration(
                     optimization_request, integration_id
                 )
-            elif mode == IntegrationMode.EDGE_ANALYTICS:
-                result = await self._start_edge_analytics_integration(
+            elif mode == IntegrationMode.LOCAL:
+                result = await self._start_local_integration(
                     optimization_request, integration_id
                 )
             elif mode == IntegrationMode.STANDARD:
@@ -252,31 +253,31 @@ class IntegrationManager:
 
             return IntegrationResult(success=False, error_message=str(e))
 
-    async def _start_edge_analytics_integration(
+    async def _start_local_integration(
         self, optimization_request: OptimizationRequest, integration_id: str
     ) -> IntegrationResult:
-        """Start Edge Analytics integration with client-side orchestration.
+        """Start local integration with client-side orchestration.
 
         Args:
             optimization_request: SDK optimization request
             integration_id: Integration identifier
 
         Returns:
-            IntegrationResult with Edge Analytics workflow details
+            IntegrationResult with local workflow details
         """
-        logger.info(f"Starting edge_analytics integration: {integration_id}")
+        logger.info(f"Starting local integration: {integration_id}")
 
         try:
-            # Edge Analytics mode: client-side orchestration with optional metrics submission
+            # Local mode: client-side orchestration with optional metrics submission
             # Using local optimizers (grid, random); smart algorithms run in the Traigent cloud
 
-            session_id = f"edge_analytics_{integration_id}"
+            session_id = f"local_{integration_id}"
 
             return IntegrationResult(
                 success=True,
                 session_id=session_id,
                 metadata={
-                    "mode": "edge_analytics",
+                    "mode": "local",
                     "integration_id": integration_id,
                     "orchestration": "client-side",
                 },
@@ -287,6 +288,12 @@ class IntegrationManager:
         except Exception as e:
             logger.error(f"Local integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
+
+    async def _start_edge_analytics_integration(
+        self, optimization_request: OptimizationRequest, integration_id: str
+    ) -> IntegrationResult:
+        """Deprecated alias for :meth:`_start_local_integration`."""
+        return await self._start_local_integration(optimization_request, integration_id)
 
     async def _start_privacy_integration(
         self, optimization_request: OptimizationRequest, integration_id: str

@@ -6,23 +6,74 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import EnumType, StrEnum
 from inspect import Parameter, Signature
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from traigent.utils.validation import Validators, validate_or_raise
 
+_EMITTED_DEPRECATION_WARNINGS: set[str] = set()
 
-class ExecutionMode(StrEnum):
-    """Deprecated internal compatibility enum for runtime routing.
 
-    Public SDK code should use ``algorithm`` plus ``offline``.
+def _reset_deprecation_warning_state_for_tests() -> None:
+    """Reset once-per-process deprecation guards for isolated tests."""
+
+    _EMITTED_DEPRECATION_WARNINGS.clear()
+
+
+def _warn_deprecated_once(key: str, message: str, *, stacklevel: int = 3) -> None:
+    """Emit one DeprecationWarning per process for a deprecated SDK surface."""
+
+    if key in _EMITTED_DEPRECATION_WARNINGS:
+        return
+    _EMITTED_DEPRECATION_WARNINGS.add(key)
+
+    import warnings
+
+    warnings.warn(message, DeprecationWarning, stacklevel=stacklevel)
+
+
+def _warn_deprecated_execution_mode_member_alias(*, stacklevel: int = 3) -> None:
+    _warn_deprecated_once(
+        "ExecutionMode.EDGE_ANALYTICS",
+        "ExecutionMode.EDGE_ANALYTICS is deprecated. Use ExecutionMode.LOCAL.",
+        stacklevel=stacklevel,
+    )
+
+
+class _ExecutionModeMeta(EnumType):
+    def __getattribute__(cls, name: str) -> Any:
+        if name == "EDGE_ANALYTICS":
+            _warn_deprecated_execution_mode_member_alias(stacklevel=3)
+            return super().__getattribute__("LOCAL")
+        return super().__getattribute__(name)
+
+    def __getitem__(cls, name: str) -> Any:
+        if name == "EDGE_ANALYTICS":
+            _warn_deprecated_execution_mode_member_alias(stacklevel=3)
+            return super().__getitem__("LOCAL")
+        return super().__getitem__(name)
+
+
+class ExecutionMode(StrEnum, metaclass=_ExecutionModeMeta):
+    """Deprecated compatibility enum for runtime routing.
+
+    Public SDK code should use ``algorithm`` plus ``offline``. ``LOCAL`` is the
+    canonical local-only member; ``EDGE_ANALYTICS`` remains a deprecated public
+    alias for backwards compatibility.
     """
 
-    EDGE_ANALYTICS = "edge_analytics"
+    LOCAL = "local"
     HYBRID = "hybrid"
     HYBRID_API = "hybrid_api"
+
+    @classmethod
+    def _missing_(cls, value: object) -> ExecutionMode | None:
+        if isinstance(value, str) and value.strip().lower() == "edge_analytics":
+            _warn_deprecated_execution_mode_member_alias(stacklevel=4)
+            return cls.LOCAL
+        return None
 
 
 class ExecutionIntent(StrEnum):
@@ -47,7 +98,7 @@ class ResolvedExecutionPolicy:
     require_cloud: bool
     algorithm: str
     source_hint: str
-    legacy_execution_mode: ExecutionMode = ExecutionMode.EDGE_ANALYTICS
+    legacy_execution_mode: ExecutionMode = ExecutionMode.LOCAL
 
     @property
     def allows_cloud_fallback(self) -> bool:
@@ -64,16 +115,16 @@ class ResolvedExecutionPolicy:
 
 # Canonical runtime-supported modes and accepted public aliases.
 _SUPPORTED_MODES = (
-    ExecutionMode.EDGE_ANALYTICS,
+    ExecutionMode.LOCAL,
     ExecutionMode.HYBRID,
     ExecutionMode.HYBRID_API,
 )
-_LEGACY_CONFIG_EXECUTION_MODE_VALUES = frozenset(
-    mode.value for mode in _SUPPORTED_MODES
-)
 _EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
-    "local": ExecutionMode.EDGE_ANALYTICS,
+    "edge_analytics": ExecutionMode.LOCAL,
 }
+_DEPRECATED_CONFIG_EXECUTION_MODE_VALUES = frozenset(
+    {"edge_analytics", ExecutionMode.HYBRID.value, ExecutionMode.HYBRID_API.value}
+)
 _FAIL_CLOSED_LEGACY_EXECUTION_MODES = frozenset({"privacy", "cloud"})
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -104,25 +155,6 @@ _SMART_ALGORITHMS = frozenset(
         "cma_es",
     }
 )
-_EMITTED_DEPRECATION_WARNINGS: set[str] = set()
-
-
-def _reset_deprecation_warning_state_for_tests() -> None:
-    """Reset once-per-process deprecation guards for isolated tests."""
-
-    _EMITTED_DEPRECATION_WARNINGS.clear()
-
-
-def _warn_deprecated_once(key: str, message: str, *, stacklevel: int = 3) -> None:
-    """Emit one DeprecationWarning per process for a deprecated SDK surface."""
-
-    if key in _EMITTED_DEPRECATION_WARNINGS:
-        return
-    _EMITTED_DEPRECATION_WARNINGS.add(key)
-
-    import warnings
-
-    warnings.warn(message, DeprecationWarning, stacklevel=stacklevel)
 
 
 def _read_bool_env(name: str) -> bool:
@@ -250,10 +282,10 @@ def _warn_deprecated_config_execution_mode(
 ) -> None:
     raw_mode = mode.value if isinstance(mode, ExecutionMode) else str(mode)
     normalized = raw_mode.strip().lower()
-    if normalized not in _LEGACY_CONFIG_EXECUTION_MODE_VALUES:
+    if normalized not in _DEPRECATED_CONFIG_EXECUTION_MODE_VALUES:
         return
 
-    if normalized == ExecutionMode.EDGE_ANALYTICS.value:
+    if normalized == "edge_analytics":
         guidance = (
             "Use offline=True with algorithm='grid' or algorithm='random' for "
             "local-only, zero-egress optimization. Prefer local over "
@@ -294,7 +326,7 @@ def _warn_deprecated_config_privacy_enabled(*, stacklevel: int = 4) -> None:
 def resolve_execution_mode(
     mode: ExecutionMode | str | None,
     *,
-    default: ExecutionMode = ExecutionMode.EDGE_ANALYTICS,
+    default: ExecutionMode = ExecutionMode.LOCAL,
 ) -> ExecutionMode:
     """Normalize legacy execution-mode values into an internal enum.
 
@@ -318,7 +350,7 @@ def resolve_execution_mode(
             return ExecutionMode.HYBRID
         if normalized in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
             raise ValueError(fail_closed_legacy_execution_mode_message(mode))
-        if normalized == "local":
+        if normalized in _EXECUTION_MODE_ALIASES:
             return _EXECUTION_MODE_ALIASES[normalized]
         try:
             return ExecutionMode(normalized)
@@ -477,7 +509,7 @@ def resolve_execution_policy(
         intent = ExecutionIntent.CLOUD_REQUIRED
 
     legacy_mode = (
-        ExecutionMode.EDGE_ANALYTICS
+        ExecutionMode.LOCAL
         if intent is ExecutionIntent.LOCAL_ONLY
         else ExecutionMode.HYBRID
     )
@@ -653,9 +685,7 @@ class TraigentConfig:
             self, "_supplied_execution_mode_value", _CONFIG_VALUE_UNSET
         )
         if self.execution_mode is _CONFIG_VALUE_UNSET:
-            object.__setattr__(
-                self, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
-            )
+            object.__setattr__(self, "execution_mode", ExecutionMode.LOCAL.value)
         elif (
             supplied_execution_mode is not None
             and supplied_execution_mode is not _CONFIG_VALUE_UNSET
@@ -677,7 +707,7 @@ class TraigentConfig:
         object.__setattr__(self, "_warn_legacy_config_assignments", True)
 
         # Handle local storage path
-        if self.is_edge_analytics_mode() and self.local_storage_path:
+        if self.is_local_mode() and self.local_storage_path:
             # Validate and expand path
             self.local_storage_path = str(
                 Path(self.local_storage_path).expanduser().resolve()
@@ -706,7 +736,7 @@ class TraigentConfig:
         if include_legacy:
             defaults.update(
                 {
-                    "execution_mode": "edge_analytics",
+                    "execution_mode": "local",
                     "privacy_enabled": False,
                 }
             )
@@ -799,7 +829,7 @@ class TraigentConfig:
 
         # Override with non-default values from the other config. For dict
         # inputs, preserve explicitly supplied defaults such as
-        # {"execution_mode": "edge_analytics"} so callers can intentionally
+        # {"execution_mode": "local"} so callers can intentionally
         # reset a value without default leakage from TraigentConfig().
         override_dict = other._to_dict(include_legacy=True)
         dataclass_fields = getattr(self, "__dataclass_fields__", {})
@@ -887,9 +917,19 @@ class TraigentConfig:
             cast(ExecutionMode | str | None, self.execution_mode)
         )
 
-    def is_edge_analytics_mode(self) -> bool:
+    def is_local_mode(self) -> bool:
         """Return whether the compatibility selector maps to local-only runtime."""
-        return self.execution_mode_enum is ExecutionMode.EDGE_ANALYTICS
+        return self.execution_mode_enum is ExecutionMode.LOCAL
+
+    def is_edge_analytics_mode(self) -> bool:
+        """Deprecated alias for :meth:`is_local_mode`."""
+        _warn_deprecated_once(
+            "TraigentConfig.is_edge_analytics_mode",
+            "TraigentConfig.is_edge_analytics_mode() is deprecated. Use "
+            "TraigentConfig.is_local_mode().",
+            stacklevel=2,
+        )
+        return self.is_local_mode()
 
     def is_cloud_mode(self) -> bool:
         return False
@@ -923,7 +963,7 @@ class TraigentConfig:
             return str(Path(env_path).expanduser().resolve())
 
         # Default to ~/.traigent/ for local-only storage.
-        if self.is_edge_analytics_mode():
+        if self.is_local_mode():
             return str(Path.home() / ".traigent")
 
         return None
@@ -1001,6 +1041,24 @@ class TraigentConfig:
         return value
 
     @classmethod
+    def local_mode(
+        cls,
+        storage_path: str | None = None,
+        minimal_logging: bool = True,
+        auto_sync: bool = False,
+        **kwargs,
+    ) -> TraigentConfig:
+        """Compatibility constructor for local-only execution."""
+        return cls(
+            offline=True,
+            execution_mode=ExecutionMode.LOCAL.value,
+            local_storage_path=storage_path,
+            minimal_logging=minimal_logging,
+            auto_sync=auto_sync,
+            **kwargs,
+        )
+
+    @classmethod
     def edge_analytics_mode(
         cls,
         storage_path: str | None = None,
@@ -1029,9 +1087,8 @@ class TraigentConfig:
             "constructor will be removed in a future major release.",
             stacklevel=2,
         )
-        return cls(
-            offline=True,
-            local_storage_path=storage_path,
+        return cls.local_mode(
+            storage_path=storage_path,
             minimal_logging=minimal_logging,
             auto_sync=auto_sync,
             **kwargs,
@@ -1058,9 +1115,7 @@ class TraigentConfig:
 
         if is_traigent_offline_requested():
             config.offline = True
-            object.__setattr__(
-                config, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
-            )
+            object.__setattr__(config, "execution_mode", ExecutionMode.LOCAL.value)
 
         # Deprecated local-only compatibility env var.
         if os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").lower() in (
@@ -1079,9 +1134,7 @@ class TraigentConfig:
                 stacklevel=2,
             )
             config.offline = True
-            object.__setattr__(
-                config, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
-            )
+            object.__setattr__(config, "execution_mode", ExecutionMode.LOCAL.value)
 
         # Set storage path from environment
         env_path = os.getenv("TRAIGENT_RESULTS_FOLDER")

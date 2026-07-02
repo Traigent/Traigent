@@ -314,7 +314,7 @@ def exact_match(prediction: str, expected: str) -> float:
         scoring_function=exact_match,
     ),
     execution=ExecutionOptions(
-        execution_mode="edge_analytics",
+        execution_mode="local",
         parallel_config=ParallelConfig(
             mode="parallel",
             trial_concurrency=2,

@@ -1392,7 +1392,7 @@ class TraigentCloudClient(BaseTraigentClient):
             os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").strip().lower(),
             os.getenv("TRAIGENT_EXECUTION_MODE", "").strip().lower(),
         }
-        if edge_env_values & {"true", "1", "yes", "edge_analytics"}:
+        if edge_env_values & {"true", "1", "yes", "local", "edge_analytics"}:
             return True
 
         try:

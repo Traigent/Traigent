@@ -10,7 +10,8 @@ import os
 import time
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, fields as dataclass_fields
+from dataclasses import asdict, dataclass
+from dataclasses import fields as dataclass_fields
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -46,7 +47,7 @@ def extract_trial_cost_fields(
 ) -> dict[str, float | None]:
     """Extract canonical trial cost fields from stored trial metadata.
 
-    Local edge_analytics runs have historically carried cost in metadata rather
+    Local runs have historically carried cost in metadata rather
     than first-class storage fields. Keep sync backward-compatible by accepting
     top-level metrics and the older total_example_cost alias.
     """

@@ -375,7 +375,7 @@ class BackendSessionManager:
             ):
                 return cast(str, SOURCE_LOCAL_FALLBACK)
             return str(configured_source)
-        if self._traigent_config.is_edge_analytics_mode():
+        if self._traigent_config.is_local_mode():
             return cast(str, SOURCE_EXPLICIT_LOCAL)
         if self._egress_disabled():
             return cast(str, SOURCE_OFFLINE)
@@ -541,7 +541,7 @@ class BackendSessionManager:
                         plugin_name="traigent-cloud",
                         install_hint="Use execution_mode='hybrid' for portal-tracked optimization",
                     ) from err
-                # For edge_analytics or other modes, gracefully degrade to local-only.
+                # For local or other modes, gracefully degrade to local-only.
                 logger.info(
                     f"Backend integration module not available for {traigent_config.execution_mode} mode. "
                     "Continuing with local storage only."
@@ -553,7 +553,7 @@ class BackendSessionManager:
         backend_url = BackendConfig.get_backend_url()
         api_key = BackendConfig.get_api_key()
 
-        if traigent_config.is_edge_analytics_mode() or BackendConfig.is_local_backend():
+        if traigent_config.is_local_mode() or BackendConfig.is_local_backend():
             logger.info(
                 f"Configuring for {traigent_config.execution_mode} mode "
                 f"with backend at {backend_url} (fallback enabled)"
@@ -1561,7 +1561,7 @@ class BackendSessionManager:
             self._egress_disabled()
             or not self._backend_client
             or session_id is None
-            or self._traigent_config.is_edge_analytics_mode()
+            or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
         ):
             return
@@ -1569,7 +1569,7 @@ class BackendSessionManager:
         if (
             not self._backend_client
             or session_id is None
-            or self._traigent_config.is_edge_analytics_mode()
+            or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
         ):
             return

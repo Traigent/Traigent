@@ -9,7 +9,7 @@ import os
 import secrets
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 from dotenv import load_dotenv
 
@@ -323,8 +323,11 @@ def get_api_key(provider: str) -> str | None:
 
     # Resolve LLM-provider keys via the canonical chain, preserving the
     # masked-logging behavior of this accessor.
-    return resolve_api_key_from_env(
-        normalized, getter=lambda name: get_env_var(name, mask_in_logs=True)
+    return cast(
+        str | None,
+        resolve_api_key_from_env(
+            normalized, getter=lambda name: get_env_var(name, mask_in_logs=True)
+        ),
     )
 
 
@@ -452,7 +455,7 @@ def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
     """Return True when the cloud API key notice should be shown."""
     if is_mock_llm() or is_backend_offline():
         return False
-    if traigent_config.is_edge_analytics_mode():
+    if traigent_config.is_local_mode():
         return False
 
     from traigent.config.backend_config import BackendConfig
