@@ -29,6 +29,7 @@ def test_text_to_sql_example_dataset_validates_and_run_module_imports() -> None:
     assert all("question" not in row for row in rows)
 
     env = os.environ.copy()
+    env.pop("PYTEST_CURRENT_TEST", None)
     env["TRAIGENT_MOCK_LLM"] = "true"
     completed = subprocess.run(
         [
