@@ -29,6 +29,7 @@ Built-in implementations:
 | `MetricLimitStopCondition` | Soft stop when the cumulative value of a named completed-trial metric reaches a limit. | `metric_limit`, `metric_name`, `metric_include_pruned`. |
 | `CostLimitStopCondition` | Hard money-spend guard backed by `CostEnforcer` permits before execution starts. Parallel-safe. | `cost_limit`, `cost_approved`. |
 | `HypervolumeConvergenceStopCondition` | Stops when hypervolume improvement remains below a threshold across a sliding window. | `convergence_metric="hypervolume_improvement"`, `convergence_window`, `convergence_threshold`. |
+| `SemanticSaturationStopCondition` | Stops when per-example quality vectors are stable and monitored continuous objectives are no longer improving. | `semantic_saturation={...}`. |
 
 `budget_limit` remains as a deprecated alias for `metric_limit` for compatibility.
 New code should not use it.
@@ -80,6 +81,35 @@ The orchestrator instantiates the conditions during construction via
 `_configure_stop_conditions()` and calls `reset()` for every run so state never leaks
 between optimizations. `_should_stop()` evaluates all configured conditions before
 fallback logic (timeout or optimizer-provided stop signals).
+
+## Semantic saturation
+
+`semantic_saturation` is an opt-in stop condition for runs where aggregate
+accuracy alone is not enough to decide convergence. It only reads `example_id`
+and numeric or boolean values from each example's `metrics` map. It never reads
+or emits inputs, expected outputs, actual outputs, model text, or document
+content.
+
+The condition selects the latest completed trials with distinct configuration
+signatures, warms up until `max(window, min_trials)` distinct configs are
+available, then evaluates the latest `window` configs:
+
+* Quality metrics come from `example_score_metrics`/`accuracy_metrics` or from
+  accuracy-like and binary per-example metrics.
+* Quality saturation is measured as churn across common example IDs, gated by
+  `min_overlap`, `score_tolerance`, and `churn_threshold`.
+* Continuous objectives come from `continuous_objectives`/`objectives`, the
+  `ObjectiveSchema`, or cost/latency/token-like aggregate metrics.
+* Continuous objectives use direction-aware best improvement over the window,
+  compared to `relative_improvement_epsilon` and
+  `absolute_improvement_epsilon`.
+
+The run stops only when every quality metric and every continuous objective is
+saturated. When it fires, `OptimizationResult.stop_reason` is
+`"semantic_saturation"`. The latest sanitized decision payload is emitted under
+`OptimizationResult.metadata["semantic_saturation"]` and follows TraigentSchema
+`optimization/semantic_saturation_schema.json`; example ID lists are capped by
+`max_example_ids`.
 
 ## Vendor-error pause semantics
 
@@ -175,6 +205,8 @@ All three examples share the same stop-condition machinery with no additional
 plumbing.
 
 Built-in convergence stops report `OptimizationResult.stop_reason = "convergence"`.
+Semantic saturation reports
+`OptimizationResult.stop_reason = "semantic_saturation"`.
 Custom stop-condition instances still report the generic `"condition"` reason
 unless they are explicitly mapped into the public `StopReason` contract.
 
@@ -186,6 +218,11 @@ Unit coverage lives under:
   - Max-trial threshold (including invalid inputs).
   - Plateau detection, weight handling, reset semantics, and parameter validation.
   - Metric-limit enforcement, compatibility fallback, and pruned-trial filtering.
+  - Stop-condition exports include semantic saturation.
+* `tests/unit/core/test_semantic_saturation_stop_condition.py` – verifies:
+  - Stable vectors, boolean scores, aggregate-flat no-stop behavior, repeated
+    config warmup, cost-improving continuation, schema-valid result metadata,
+    and the privacy boundary.
 * `tests/unit/core/test_orchestrator.py` – integration tests for plateau and metric limit
   within the orchestrator, ensuring early termination and reasonable counts in
   sequential runs.

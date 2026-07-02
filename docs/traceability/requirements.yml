@@ -37,7 +37,7 @@
     Coordinate optimizers and evaluators through a trial lifecycle with constraints,
     caching, stop conditions, and callbacks to control run duration and outcome quality.
   acceptance_criteria:
-    - Supports sample budgets, max trials, pruning, and cache policies to skip duplicates.
+    - Supports sample budgets, max trials, pruning, semantic saturation, and cache policies to skip duplicates.
     - Enforces pre/post-evaluation constraints and aggregates metrics for selection.
     - Selects best configuration per objectives and surfaces trial/session summaries.
   tags: [orchestration, lifecycle, constraints]

@@ -204,6 +204,7 @@ def test_stop_conditions_exports_are_explicit():
         "MaxTrialsStopCondition",
         "MetricLimitStopCondition",
         "PlateauAfterNStopCondition",
+        "SemanticSaturationStopCondition",
         "StopCondition",
     }
     for name in stop_conditions.__all__:

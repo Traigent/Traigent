@@ -1748,6 +1748,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "samples_include_pruned",
             "plateau_window",
             "plateau_epsilon",
+            "semantic_saturation",
             "tie_breakers",
             "tvl_parameter_agents",
         ):

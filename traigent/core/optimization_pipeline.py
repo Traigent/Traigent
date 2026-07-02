@@ -864,6 +864,7 @@ def collect_orchestrator_kwargs(
         "metric_include_pruned",
         "plateau_window",
         "plateau_epsilon",
+        "semantic_saturation",
         "cost_limit",
         "cost_approved",
         "tie_breakers",
