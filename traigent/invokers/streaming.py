@@ -68,6 +68,95 @@ class StreamingInvoker(LocalInvoker):
         """Streaming invoker supports batch processing via parent class."""
         return True
 
+    @staticmethod
+    def _usage_value(usage: Any, *names: str) -> int | None:
+        for name in names:
+            value = (
+                usage.get(name)
+                if isinstance(usage, dict)
+                else getattr(usage, name, None)
+            )
+            if isinstance(value, (int, float)):
+                return int(value)
+        return None
+
+    @classmethod
+    def _extract_usage_metadata(cls, chunk: Any) -> dict[str, int] | None:
+        usage = None
+        if isinstance(chunk, dict):
+            usage = chunk.get("usage")
+        else:
+            usage = getattr(chunk, "usage", None)
+        if usage is None:
+            return None
+
+        input_tokens = cls._usage_value(usage, "input_tokens", "prompt_tokens")
+        output_tokens = cls._usage_value(usage, "output_tokens", "completion_tokens")
+        total_tokens = cls._usage_value(usage, "total_tokens")
+        if input_tokens is None and output_tokens is None and total_tokens is None:
+            return None
+
+        normalized = {
+            "input_tokens": max(0, input_tokens or 0),
+            "output_tokens": max(0, output_tokens or 0),
+        }
+        normalized["total_tokens"] = max(
+            0,
+            total_tokens
+            if total_tokens is not None
+            else normalized["input_tokens"] + normalized["output_tokens"],
+        )
+        return normalized
+
+    @staticmethod
+    def _extract_chunk_content(chunk: Any) -> Any:
+        if isinstance(chunk, str):
+            return chunk
+        if isinstance(chunk, dict):
+            if "content" in chunk:
+                return chunk["content"]
+            choices = chunk.get("choices")
+        else:
+            choices = getattr(chunk, "choices", None)
+
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            delta = (
+                first.get("delta")
+                if isinstance(first, dict)
+                else getattr(first, "delta", None)
+            )
+            if isinstance(delta, dict):
+                return delta.get("content") or ""
+            content = getattr(delta, "content", None)
+            if content is not None:
+                return content
+        return chunk
+
+    @staticmethod
+    def _merge_usage_metadata(
+        current: dict[str, int] | None, chunk_usage: dict[str, int]
+    ) -> dict[str, int]:
+        if current is None:
+            return dict(chunk_usage)
+
+        # A final usage chunk normally carries cumulative totals. Prefer it
+        # when it is at least as large as the running total; otherwise treat the
+        # chunk as incremental usage and add it.
+        if (
+            chunk_usage["total_tokens"] > current["total_tokens"]
+            and chunk_usage["input_tokens"] >= current["input_tokens"]
+            and chunk_usage["output_tokens"] >= current["output_tokens"]
+        ):
+            return dict(chunk_usage)
+
+        merged = {
+            "input_tokens": current["input_tokens"] + chunk_usage["input_tokens"],
+            "output_tokens": current["output_tokens"] + chunk_usage["output_tokens"],
+        }
+        merged["total_tokens"] = merged["input_tokens"] + merged["output_tokens"]
+        return merged
+
     def invoke_streaming(
         self,
         func: Callable[..., Any],
@@ -111,6 +200,7 @@ class StreamingInvoker(LocalInvoker):
         """
         start_time = time.time()
         chunk_index = 0
+        stream_usage: dict[str, int] | None = None
 
         try:
             # Inject configuration into function
@@ -126,16 +216,27 @@ class StreamingInvoker(LocalInvoker):
                 response = await response
 
             # Stream chunks from the response
-            async for chunk_content in self._iterate_response(response):
+            async for raw_chunk in self._iterate_response(response):
                 is_final = False  # Will be set after loop completes
+                chunk_content = self._extract_chunk_content(raw_chunk)
+                chunk_usage = self._extract_usage_metadata(raw_chunk)
+                metadata: dict[str, Any] = {
+                    "elapsed_time": time.time() - start_time,
+                }
+                if chunk_usage is not None:
+                    if chunk_content == "":
+                        stream_usage = chunk_usage
+                    else:
+                        stream_usage = self._merge_usage_metadata(
+                            stream_usage, chunk_usage
+                        )
+                    metadata["usage"] = stream_usage
 
                 chunk = StreamingChunk(
                     content=chunk_content,
                     index=chunk_index,
                     is_final=is_final,
-                    metadata={
-                        "elapsed_time": time.time() - start_time,
-                    },
+                    metadata=metadata,
                 )
                 yield chunk
                 chunk_index += 1
@@ -149,14 +250,17 @@ class StreamingInvoker(LocalInvoker):
 
             # Yield final chunk marker if we got any content
             if chunk_index > 0:
+                final_metadata: dict[str, Any] = {
+                    "total_chunks": chunk_index,
+                    "total_time": time.time() - start_time,
+                }
+                if stream_usage is not None:
+                    final_metadata["usage"] = stream_usage
                 yield StreamingChunk(
                     content="",
                     index=chunk_index,
                     is_final=True,
-                    metadata={
-                        "total_chunks": chunk_index,
-                        "total_time": time.time() - start_time,
-                    },
+                    metadata=final_metadata,
                 )
 
         except TimeoutError:

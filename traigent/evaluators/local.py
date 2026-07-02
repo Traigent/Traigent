@@ -973,16 +973,22 @@ class LocalEvaluator(BaseEvaluator):
             logger.error(f"Failed to inject response_time_ms: {e}")
 
     def _extract_and_inject_traigent_meta(
-        self, output: Any, metrics: ExampleMetrics
+        self,
+        output: Any,
+        metrics: ExampleMetrics,
+        model_name: str | None = None,
     ) -> TraigentMetadata | None:
         """Extract __traigent_meta__ from output and inject into metrics.
 
         This method runs AFTER cost calculation to allow user-provided costs
-        to override SDK-calculated values (including mock mode zeros).
+        to override SDK-calculated values when plausible.
 
         Args:
             output: Raw function output (may be dict with __traigent_meta__).
             metrics: ExampleMetrics to update with user-provided values.
+            model_name: Optional model name for best-effort token-cost plausibility
+                checks. Without a model or known pricing, reported BYOK costs are
+                accepted as-is.
 
         Returns:
             The meta dict if found, None otherwise.
@@ -1020,6 +1026,12 @@ class LocalEvaluator(BaseEvaluator):
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
+            if model_name:
+                from traigent.evaluators.metrics_tracker import (
+                    _reconcile_reported_cost_with_tokens,
+                )
+
+                _reconcile_reported_cost_with_tokens(metrics, model_name)
         except Exception as e:
             logger.error(f"Failed to inject total_cost: {e}")
 
@@ -1092,9 +1104,19 @@ class LocalEvaluator(BaseEvaluator):
             output, index, config, dataset, all_captured_responses
         )
 
-        # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present
-        # This MUST happen AFTER extract_llm_metrics returns (so we can override cost)
-        self._extract_and_inject_traigent_meta(output, example_metric)
+        model_name = config.get("model") or config.get("model_name")
+        if not model_name:
+            model_name = self._infer_model_name_from_output(
+                output, index, all_captured_responses
+            )
+
+        # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present.
+        # This happens after extract_llm_metrics so honest reported costs can
+        # override SDK calculation while implausible token-priced under-reports
+        # are clamped back to the canonical token-derived estimate.
+        self._extract_and_inject_traigent_meta(
+            output, example_metric, model_name=model_name
+        )
 
         # Set success status
         example_metric.success = errors[index] is None
