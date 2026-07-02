@@ -13,6 +13,7 @@ Classes:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 import time
 import uuid
@@ -21,6 +22,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.context import TrialContext, WorkflowTraceContext
+from traigent.core.optimization_pipeline import (
+    build_surrogate_descriptor,
+    get_surrogate_evaluator,
+    get_surrogate_evaluator_name,
+)
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
     extract_cost_from_results,
@@ -56,6 +62,144 @@ if TYPE_CHECKING:
 from traigent.core.cost_enforcement import Permit
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Surrogate (pre-screen) scoring
+#
+# A configured surrogate is a cheap SECOND scorer over the outputs the primary
+# evaluator already captured. It NEVER re-executes the decorated function: the
+# helpers below only read ``example_result.actual_output``. All scoring is
+# fail-soft — any error drops the surrogate field for that example/trial and is
+# logged at most once per trial; primary metrics are never perturbed.
+# ---------------------------------------------------------------------------
+
+
+def _build_surrogate_kwargs(
+    surrogate: Callable[..., Any], output: Any, expected: Any, example: Any
+) -> dict[str, Any] | None:
+    """Map (output, expected, example) onto the surrogate's parameter names.
+
+    Mirrors the ``scoring_function`` calling convention (``output``/``actual``,
+    ``expected``): the surrogate is a scorer of outputs, not a func-executor.
+    Returns None to signal "call positionally with the single output" when the
+    signature cannot be inspected or exposes no recognised parameter names.
+    """
+    try:
+        params = inspect.signature(surrogate).parameters
+    except (TypeError, ValueError):
+        return None
+
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    names = set(params)
+    kwargs: dict[str, Any] = {}
+    if "output" in names or has_var_kw:
+        kwargs["output"] = output
+    elif "actual" in names:
+        kwargs["actual"] = output
+    if "expected_output" in names or has_var_kw:
+        kwargs["expected_output"] = expected
+    elif "expected" in names:
+        kwargs["expected"] = expected
+    if "example" in names or has_var_kw:
+        kwargs["example"] = example
+    return kwargs or None
+
+
+async def _invoke_surrogate(
+    surrogate: Callable[..., Any], output: Any, expected: Any, example: Any
+) -> Any:
+    """Invoke the surrogate over a single captured output (sync or async)."""
+    kwargs = _build_surrogate_kwargs(surrogate, output, expected, example)
+    result = surrogate(output) if kwargs is None else surrogate(**kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+def _coerce_surrogate_score(raw: Any) -> float | None:
+    """Coerce a surrogate return value to a float in [0, 1], or None to drop it.
+
+    Out-of-range (``<0`` / ``>1``) and non-finite values are DROPPED, never
+    clipped: the backend evaluator-tensor reader rejects out-of-range surrogate
+    scores, so pre-clipping here would launder garbage past that guard. A dropped
+    score simply omits the surrogate field for that example (fail-soft).
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, dict):
+        raw = raw.get("surrogate_score", raw.get("score"))
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    if value < 0.0 or value > 1.0:
+        return None
+    return value
+
+
+async def apply_surrogate_scoring(
+    eval_result: Any, surrogate: Callable[..., Any], trial_id: str
+) -> None:
+    """Score already-captured per-example outputs with the surrogate, in place.
+
+    Injects ``surrogate_score`` into each scored example's metrics and the mean
+    onto the flat trial metrics. Skips (single warning) when per-example outputs
+    are unavailable — it never triggers a second execution pass.
+    """
+    example_results = getattr(eval_result, "example_results", None)
+    if not isinstance(example_results, list) or not example_results:
+        logger.warning(
+            "Surrogate evaluator configured but trial %s has no per-example "
+            "outputs; skipping surrogate scoring (no re-execution).",
+            trial_id,
+        )
+        return
+
+    scored: list[float] = []
+    errored = 0
+    for example_result in example_results:
+        output = getattr(example_result, "actual_output", None)
+        metrics = getattr(example_result, "metrics", None)
+        if output is None or not isinstance(metrics, dict):
+            # No captured output (e.g. a failed example) — nothing to score.
+            continue
+        try:
+            raw = await _invoke_surrogate(
+                surrogate,
+                output,
+                getattr(example_result, "expected_output", None),
+                example_result,
+            )
+            value = _coerce_surrogate_score(raw)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            errored += 1
+            continue
+        if value is None:
+            errored += 1
+            continue
+        metrics["surrogate_score"] = value
+        scored.append(value)
+
+    if errored:
+        logger.warning(
+            "Surrogate evaluator dropped surrogate_score for %d example(s) in "
+            "trial %s (per-example error, non-numeric, or out-of-range [0,1] "
+            "result).",
+            errored,
+            trial_id,
+        )
+
+    if scored:
+        aggregate = getattr(eval_result, "metrics", None)
+        if isinstance(aggregate, dict):
+            aggregate["surrogate_score"] = sum(scored) / len(scored)
 
 
 class TrialLifecycle:
@@ -106,7 +250,7 @@ class TrialLifecycle:
             Tuple of (updated_trial_count, action) where action is "continue" or "break"
         """
         orchestrator = self._orchestrator
-        optimizer_trial_count_before_suggest = self._snapshot_optimizer_trial_count()
+        optimizer_state_before_suggest = self._snapshot_optimizer_state()
 
         if (
             orchestrator.max_trials is not None
@@ -130,8 +274,16 @@ class TrialLifecycle:
                         orchestrator._trials
                     )
                     config = orchestrator._apply_knob_resolution(config)
-            except OptimizationError:
-                raise
+            except OptimizationError as e:
+                stop_reason = self._terminal_optimizer_stop_reason(e)
+                if stop_reason is None:
+                    logger.exception(
+                        "Optimizer failed to suggest the next trial: %s", e
+                    )
+                    raise
+                logger.info("Optimizer could not suggest another trial: %s", e)
+                orchestrator._stop_reason = cast(Any, stop_reason)
+                return trial_count, "break"
             except (ValueError, TypeError, KeyError, AttributeError) as e:
                 logger.exception("Optimizer failed to suggest the next trial: %s", e)
                 return trial_count, "break"
@@ -191,9 +343,7 @@ class TrialLifecycle:
                     error=e,
                 )
             finally:
-                self._restore_optimizer_trial_count(
-                    optimizer_trial_count_before_suggest
-                )
+                self._restore_optimizer_state(optimizer_state_before_suggest)
             return trial_count, "continue"
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
@@ -206,6 +356,8 @@ class TrialLifecycle:
                     "Sequential trial cancelled due to cost limit reached (config=%s)",
                     config_for_run,
                 )
+                # Mid-run cost limits are graceful by contract: return a partial
+                # result and surface result.stop_reason == "cost_limit".
                 orchestrator._stop_reason = "cost_limit"
                 return trial_count, "break"
 
@@ -245,6 +397,18 @@ class TrialLifecycle:
             raise
 
         return trial_count, "continue"
+
+    def _terminal_optimizer_stop_reason(self, error: OptimizationError) -> str | None:
+        """Classify explicit optimizer terminal states without swallowing defects."""
+
+        message = str(error)
+        if "Maximum trials" in message:
+            return "max_trials_reached"
+        if message.startswith("Config space exhausted"):
+            return "space_exhausted"
+        if message == "All grid combinations have been evaluated":
+            return "space_exhausted"
+        return None
 
     # =========================================================================
     # Core Trial Execution
@@ -302,7 +466,7 @@ class TrialLifecycle:
 
         # Phase 2: Setup progress tracking and budget
         progress_callback, progress_state = self._create_progress_tracking(
-            optuna_trial_id, dataset, trial_id
+            optuna_trial_id, dataset, trial_id, session_id
         )
         lease = self._setup_trial_budget_lease(dataset, trial_id, sample_ceiling)
 
@@ -392,6 +556,13 @@ class TrialLifecycle:
                 if closure.exhausted:
                     budget_exhausted = True
 
+            # Surrogate (pre-screen) scoring: cheap second scorer over the
+            # already-captured outputs. Runs after constraint enforcement so it
+            # never perturbs primary metrics/constraints; fully fail-soft. Mutates
+            # eval_result in place BEFORE build_success_result so the per-example
+            # and aggregate surrogate_score flow into the trial payload.
+            surrogate_descriptor = await self._score_surrogate(eval_result, trial_id)
+
             result = build_success_result(
                 trial_id=trial_id,
                 evaluation_config=evaluation_config,
@@ -411,11 +582,10 @@ class TrialLifecycle:
                     lambda: frozenset(),
                 )(),
             )
-            if isinstance(backend_trial_id, str) and backend_trial_id:
-                metadata = dict(result.metadata or {})
-                metadata["backend_trial_id_acquired"] = True
-                metadata["backend_trial_id_source"] = "cloud_brain"
-                result.metadata = metadata
+            if surrogate_descriptor is not None:
+                result.metadata["surrogate_evaluator"] = surrogate_descriptor
+
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
 
@@ -443,6 +613,7 @@ class TrialLifecycle:
                 prune_error,
                 is_pruned=True,
             )
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="pruned", error=str(prune_error))
             end_time = time.time()
@@ -459,6 +630,7 @@ class TrialLifecycle:
                 optuna_trial_id,
                 constraint_error,
             )
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="failed", error=str(constraint_error))
             end_time = time.time()
@@ -503,6 +675,7 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
+            self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="failed", error=str(exc))
             end_time = time.time()
@@ -512,6 +685,18 @@ class TrialLifecycle:
         finally:
             if lease is not None and closure is None:
                 closure = self._finalize_budget_lease(lease)
+
+    @staticmethod
+    def _mark_backend_trial_id_acquired(
+        result: TrialResult,
+        backend_trial_id: str | None,
+    ) -> None:
+        if not isinstance(backend_trial_id, str) or not backend_trial_id:
+            return
+        metadata = dict(result.metadata or {})
+        metadata["backend_trial_id_acquired"] = True
+        metadata["backend_trial_id_source"] = "cloud_brain"
+        result.metadata = metadata
 
     def _apply_effectuation_metadata(
         self,
@@ -597,6 +782,18 @@ class TrialLifecycle:
             return trial_count
         return None
 
+    def _snapshot_optimizer_state(self) -> tuple[int | None, set[str] | None]:
+        """Snapshot optimizer counters that suggestion may consume."""
+
+        tried_hashes = getattr(
+            self._orchestrator.optimizer, "_tried_config_hashes", None
+        )
+        if isinstance(tried_hashes, set):
+            tried_snapshot = set(tried_hashes)
+        else:
+            tried_snapshot = None
+        return self._snapshot_optimizer_trial_count(), tried_snapshot
+
     def _restore_optimizer_trial_count(self, previous_trial_count: int | None) -> None:
         """Restore the optimizer's consumed slot for a rejected pre-constraint."""
         if previous_trial_count is None:
@@ -610,6 +807,18 @@ class TrialLifecycle:
             and current_trial_count > previous_trial_count
         ):
             self._orchestrator.optimizer._trial_count = previous_trial_count
+
+    def _restore_optimizer_state(
+        self, previous_state: tuple[int | None, set[str] | None]
+    ) -> None:
+        """Restore optimizer state for a rejected pre-constraint."""
+
+        previous_trial_count, previous_tried_hashes = previous_state
+        self._restore_optimizer_trial_count(previous_trial_count)
+        if previous_tried_hashes is not None and hasattr(
+            self._orchestrator.optimizer, "_tried_config_hashes"
+        ):
+            self._orchestrator.optimizer._tried_config_hashes = previous_tried_hashes
 
     def _generate_constraint_rejection_trial_id(
         self,
@@ -639,14 +848,152 @@ class TrialLifecycle:
         optuna_trial_id: int | None,
         dataset: Dataset,
         trial_id: str,
+        session_id: str | None,
     ) -> tuple[Callable[[int, dict[str, Any]], None] | None, dict[str, Any] | None]:
         """Return progress callback state.
 
-        Local Optuna-backed intermediate reporting has been evicted. Generic
-        pruned-trial result handling remains in the lifecycle for future callers
-        that raise :class:`TrialPrunedError` directly.
+        Local Optuna-backed intermediate reporting remains evicted. Cloud
+        smart-pruning reporting is enabled only when the backend session manager
+        confirms this run is managed/cloud, backend-tracked, and configured with
+        smart_pruning.
         """
-        return None, None
+        orchestrator = self._orchestrator
+        manager = getattr(orchestrator, "backend_session_manager", None)
+        should_report = getattr(manager, "should_report_intermediate_progress", None)
+        if not callable(should_report) or not should_report(session_id):
+            return None, None
+
+        try:
+            total_examples = len(dataset)
+        except TypeError:
+            total_examples = 0
+
+        objective_name = self._primary_objective_name()
+        state: dict[str, Any] = {
+            "session_id": session_id,
+            "trial_id": trial_id,
+            "optuna_trial_id": optuna_trial_id,
+            "evaluated": 0,
+            "total_examples": total_examples,
+            "correct_sum": 0.0,
+            "metric_sum": 0.0,
+            "last_running_score": 0.0,
+            "partial_cost_usd": 0.0,
+            "objective_name": objective_name,
+        }
+
+        def _progress_callback(step: int, data: dict[str, Any]) -> None:
+            state["last_step"] = step
+            if not isinstance(data, dict):
+                data = {}
+            if data.get("stop_reason"):
+                return
+
+            state["evaluated"] = int(state.get("evaluated", 0)) + 1
+            metric_value = self._extract_progress_value(data, objective_name)
+            if metric_value is None:
+                success = data.get("success")
+                if isinstance(success, bool):
+                    metric_value = 1.0 if success else 0.0
+            if metric_value is None:
+                metric_value = float(state.get("last_running_score", 0.0))
+
+            state["metric_sum"] = float(state.get("metric_sum", 0.0)) + metric_value
+            state["correct_sum"] = float(state.get("correct_sum", 0.0)) + metric_value
+            evaluated = max(1, int(state["evaluated"]))
+            running_score = float(state["metric_sum"]) / evaluated
+            state["last_running_score"] = running_score
+
+            cost_delta = self._extract_progress_cost(data)
+            if cost_delta is not None:
+                state["partial_cost_usd"] = (
+                    float(state.get("partial_cost_usd", 0.0)) + cost_delta
+                )
+
+            payload: dict[str, Any] = {
+                "session_id": session_id,
+                "trial_id": trial_id,
+                "running_score": running_score,
+                "examples_attempted": int(state["evaluated"]),
+            }
+            if objective_name:
+                payload["objective_name"] = objective_name
+            partial_cost = float(state.get("partial_cost_usd", 0.0))
+            if partial_cost > 0:
+                payload["partial_cost_usd"] = partial_cost
+
+            report = getattr(manager, "report_intermediate_progress", None)
+            decision = report(payload) if callable(report) else {}
+            if isinstance(decision, dict) and decision.get("prune") is True:
+                reason = decision.get("prune_reason") or "cloud smart pruning"
+                logger.info(
+                    "Cloud smart pruning requested trial pruning after %s examples: %s",
+                    state["evaluated"],
+                    reason,
+                )
+                raise TrialPrunedError(str(reason), step=int(state["evaluated"]))
+
+        return _progress_callback, state
+
+    def _primary_objective_name(self) -> str | None:
+        objectives = getattr(self._orchestrator, "objectives", None)
+        if objectives:
+            first = objectives[0]
+            if first is not None:
+                return str(first)
+        optimizer_objectives = getattr(
+            getattr(self._orchestrator, "optimizer", None), "objectives", None
+        )
+        if optimizer_objectives:
+            return str(optimizer_objectives[0])
+        return None
+
+    @staticmethod
+    def _coerce_progress_float(value: Any) -> float | None:
+        if isinstance(value, bool) or value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        return number
+
+    @classmethod
+    def _extract_progress_value(
+        cls, data: dict[str, Any], objective_name: str | None
+    ) -> float | None:
+        metrics = data.get("metrics")
+        if isinstance(metrics, dict):
+            candidate_names = [
+                name
+                for name in (objective_name, "score", "accuracy")
+                if isinstance(name, str) and name
+            ]
+            for name in candidate_names:
+                value = cls._coerce_progress_float(metrics.get(name))
+                if value is not None:
+                    return value
+        for key in (objective_name, "score", "accuracy"):
+            if isinstance(key, str) and key:
+                value = cls._coerce_progress_float(data.get(key))
+                if value is not None:
+                    return value
+        return None
+
+    @classmethod
+    def _extract_progress_cost(cls, data: dict[str, Any]) -> float | None:
+        metrics = data.get("metrics")
+        sources = [data]
+        if isinstance(metrics, dict):
+            sources.insert(0, metrics)
+        for source in sources:
+            for key in ("partial_cost_usd", "total_example_cost", "total_cost", "cost"):
+                value = cls._coerce_progress_float(source.get(key))
+                if value is not None and value >= 0:
+                    return value
+        return None
 
     def _record_pre_constraint_pruned_result(
         self,
@@ -786,6 +1133,68 @@ class TrialLifecycle:
                 orchestrator._stop_reason = "max_samples_reached"
 
         return closure
+
+    async def _score_surrogate(
+        self, eval_result: Any, trial_id: str
+    ) -> dict[str, Any] | None:
+        """Apply the configured surrogate scorer to captured outputs, fail-soft.
+
+        Returns the surrogate descriptor to attach to the trial metadata when a
+        surrogate is configured, or None otherwise. Any surrogate failure is
+        swallowed here: the surrogate fields are dropped and the trial proceeds
+        with its primary metrics untouched.
+        """
+        surrogate = get_surrogate_evaluator(self._orchestrator.evaluator)
+        if surrogate is None:
+            return None
+
+        surrogate_name = get_surrogate_evaluator_name(self._orchestrator.evaluator)
+
+        # Build the descriptor FIRST and require a valid source fingerprint. A
+        # surrogate whose source cannot be fingerprinted is unidentifiable: the
+        # descriptor's ``config.fingerprint_source`` would be None (violating the
+        # backend's ``^fp1:[0-9a-f]{64}$`` contract), and a scored-but-
+        # unidentifiable evaluator would corrupt the server-side score tensor.
+        # In that case we drop the WHOLE descriptor AND skip scoring (fail-soft),
+        # so no surrogate_score is emitted for this trial.
+        try:
+            descriptor: dict[str, Any] | None = build_surrogate_descriptor(
+                surrogate, name=surrogate_name
+            )
+        except Exception as descriptor_error:
+            logger.warning(
+                "Surrogate descriptor could not be built for trial %s: %s "
+                "(surrogate scoring skipped; primary metrics unaffected).",
+                trial_id,
+                descriptor_error,
+            )
+            return None
+
+        if not isinstance(descriptor, dict) or not isinstance(
+            descriptor.get("config"), dict
+        ):
+            return None
+        if descriptor["config"].get("fingerprint_source") is None:
+            logger.warning(
+                "Surrogate evaluator source could not be fingerprinted for trial "
+                "%s; dropping the surrogate descriptor and all surrogate scores "
+                "(an unidentifiable scorer would corrupt the server tensor).",
+                trial_id,
+            )
+            return None
+
+        try:
+            await apply_surrogate_scoring(eval_result, surrogate, trial_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as surrogate_error:
+            logger.warning(
+                "Surrogate evaluation failed for trial %s: %s (surrogate fields "
+                "dropped; primary metrics unaffected).",
+                trial_id,
+                surrogate_error,
+            )
+        return descriptor
 
     def _apply_budget_metadata(
         self,
@@ -953,6 +1362,7 @@ class TrialLifecycle:
                 progress_state=progress_state or {},
                 optuna_trial_id=optuna_trial_id,
             )
+            trial_result.error_message = str(error)
         else:
             trial_result = build_failed_result(
                 trial_id=trial_id,

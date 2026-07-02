@@ -10,6 +10,7 @@ import traigent.traigent_client as client_module
 from traigent.config import backend_config
 from traigent.config.types import ExecutionIntent, ExecutionMode
 from traigent.traigent_client import TraigentClient
+from traigent.utils.exceptions import ConfigurationError
 
 
 class _FakeBackendConfig:
@@ -60,7 +61,7 @@ def test_traigent_client_offline_uses_local_only_policy(
 
     assert client.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
     assert client.execution_policy.offline is True
-    assert client.execution_mode is ExecutionMode.EDGE_ANALYTICS
+    assert client.execution_mode is ExecutionMode.LOCAL
     assert client.backend_client is None
     backend_client_factory.assert_not_called()
 
@@ -72,31 +73,30 @@ def test_traigent_client_deprecated_execution_mode_warns_and_maps_local(
         client = TraigentClient(execution_mode="edge_analytics")
 
     assert client.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
-    assert client.execution_mode is ExecutionMode.EDGE_ANALYTICS
+    assert client.execution_mode is ExecutionMode.LOCAL
     assert client.backend_client is None
     backend_client_factory.assert_not_called()
 
 
-def test_traigent_client_deprecated_cloud_warns_and_maps_edge_analytics_mode(
+def test_traigent_client_deprecated_cloud_fails_closed(
     backend_client_factory: Mock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.warns(DeprecationWarning, match="semantic flip"):
-        client = TraigentClient(execution_mode="cloud")
+    monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-    assert client.execution_policy.intent is ExecutionIntent.CLOUD_BRAIN
-    assert client.execution_policy.offline is False
-    assert client.execution_mode is ExecutionMode.EDGE_ANALYTICS
-    assert client.backend_client is None
+    with pytest.raises(ConfigurationError, match="fails closed"):
+        TraigentClient(execution_mode="cloud")
+
     backend_client_factory.assert_not_called()
 
 
-def test_traigent_client_deprecated_execution_mode_auto_maps_edge_analytics(
+def test_traigent_client_deprecated_execution_mode_auto_maps_local(
     backend_client_factory: Mock,
 ) -> None:
     client = TraigentClient(execution_mode="auto")
 
     assert client.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
     assert client.execution_policy.offline is True
-    assert client.execution_mode is ExecutionMode.EDGE_ANALYTICS
+    assert client.execution_mode is ExecutionMode.LOCAL
     assert client.backend_client is None
     backend_client_factory.assert_not_called()

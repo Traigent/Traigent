@@ -173,9 +173,9 @@ class TraigentClient:
             f"Traigent client initialized with execution mode: {self.execution_mode}"
         )
 
-        # Initialize backend client only if needed for non-edge_analytics modes
-        # Edge analytics mode runs fully locally without any cloud dependencies
-        if self.execution_mode != ExecutionMode.EDGE_ANALYTICS:
+        # Initialize backend client only if needed for non-local modes.
+        # Local mode runs fully locally without any cloud dependencies.
+        if self.execution_mode != ExecutionMode.LOCAL:
             _require_cloud()
             self.backend_client = BackendIntegratedClient(
                 api_key=self.api_key,
@@ -216,9 +216,7 @@ class TraigentClient:
 
         # Normalize configuration space and derive fallback defaults
         fallback_model = (
-            "gpt-3.5-turbo"
-            if self.execution_mode == ExecutionMode.EDGE_ANALYTICS
-            else None
+            "gpt-3.5-turbo" if self.execution_mode == ExecutionMode.LOCAL else None
         )
         configuration_space, config_defaults = self._normalise_configuration_space(
             configuration_space, fallback_model=fallback_model
@@ -592,7 +590,7 @@ class TraigentClient:
                 best_record = record
 
         return {
-            "execution_mode": ExecutionMode.EDGE_ANALYTICS.value,
+            "execution_mode": ExecutionMode.LOCAL.value,
             "best_configuration": best_record,
             "all_results": results,
             "completed_trials": len(results),
@@ -605,11 +603,11 @@ class TraigentClient:
         objectives: list[str],
         optimization_config: dict[str, Any | None],
     ) -> Any:
-        """Build the local edge-analytics optimizer from user config."""
+        """Build the local optimizer from user config."""
         optimizer_config = optimization_config or {}
         algorithm_name = str(optimizer_config.get("algorithm") or "grid")
         optimizer_kwargs = self._extract_optimizer_kwargs(optimizer_config)
-        optimizer_context = TraigentConfig.edge_analytics_mode(
+        optimizer_context = TraigentConfig.local_mode(
             minimal_logging=True,
             auto_sync=False,
         )
@@ -810,7 +808,7 @@ class TraigentClient:
         """
         if has_requested_mode:
             if self._is_legacy_auto_execution_mode(requested_mode):
-                return ExecutionMode.EDGE_ANALYTICS
+                return ExecutionMode.LOCAL
             return validate_execution_mode(requested_mode)
         return execution_policy.legacy_execution_mode
 

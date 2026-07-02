@@ -26,11 +26,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.api.types import OptimizationStatus, TrialResult, TrialStatus
+from traigent.api.types import (
+    ExampleResult,
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.config.types import TraigentConfig
+from traigent.core.backend_session_manager import BackendTrialSubmissionOutcome
+from traigent.core.cost_enforcement import Permit
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.orchestrator_helpers import allocate_parallel_ceilings
+from traigent.core.parallel_execution_manager import PermittedTrialResult
 from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
@@ -38,6 +47,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
 )
 from traigent.optimizers.base import BaseOptimizer
+from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.utils.exceptions import OptimizationError, TrialPrunedError
 from traigent.utils.file_versioning import FileVersionManager
 
@@ -94,6 +104,32 @@ class MockOptimizer(BaseOptimizer):
     def force_stop(self):
         """Force optimizer to stop."""
         self._should_stop = True
+
+
+class CloudBrainCompletingOptimizer(MockOptimizer):
+    """Async optimizer that completes normally after completed and pruned trials."""
+
+    async def suggest_next_trial_async(
+        self,
+        history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if len(history) == 0:
+            return {"param1": 0, "mode": "complete"}
+        if len(history) == 1:
+            return {"param1": 1, "mode": "prune"}
+        raise CloudBrainOptimizationComplete("max_trials_reached")
+
+
+class CloudBrainFailingOptimizer(MockOptimizer):
+    """Async optimizer that fails suggestion with a genuine transport error."""
+
+    async def suggest_next_trial_async(
+        self,
+        history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        raise OptimizationError("transport failure")
 
 
 class MockEvaluator(BaseEvaluator):
@@ -171,6 +207,97 @@ class MockEvaluator(BaseEvaluator):
     def set_metrics(self, metrics: dict[str, float]):
         """Set metrics to return."""
         self.metrics_to_return = metrics
+
+
+class PatternEvaluator(MockEvaluator):
+    """Evaluator that returns explicit per-example successes/errors."""
+
+    def __init__(self, *, patterns: list[list[str | None]], accuracy: float):
+        super().__init__()
+        self._patterns = patterns
+        self._accuracy = accuracy
+
+    async def evaluate(
+        self,
+        func: Callable,
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        sample_lease=None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        **_kwargs,
+    ) -> EvaluationResult:
+        self.evaluation_count += 1
+        pattern = self._patterns[
+            min(self.evaluation_count - 1, len(self._patterns) - 1)
+        ]
+        example_results = []
+        errors: list[str | None] = []
+        for index, example in enumerate(dataset.examples):
+            error = pattern[index] if index < len(pattern) else None
+            success = error is None
+            errors.append(error)
+            example_results.append(
+                ExampleResult(
+                    example_id=f"example_{index}",
+                    input_data=example.input_data,
+                    expected_output=example.expected_output,
+                    actual_output=f"output_{index}" if success else None,
+                    metrics={"accuracy": self._accuracy if success else 0.0},
+                    execution_time=0.01,
+                    success=success,
+                    error_message=error,
+                    metadata={},
+                )
+            )
+            if progress_callback:
+                progress_callback(
+                    index,
+                    {
+                        "success": success,
+                        "error": error,
+                        "metrics": {"accuracy": self._accuracy if success else 0.0},
+                    },
+                )
+
+        successful = sum(1 for error in errors if error is None)
+        metrics = {"accuracy": self._accuracy, "examples_attempted": len(errors)}
+        return EvaluationResult(
+            config=config,
+            example_results=example_results,
+            aggregated_metrics=metrics,
+            total_examples=len(errors),
+            successful_examples=successful,
+            duration=0.1,
+            metrics=metrics,
+            outputs=[result.actual_output for result in example_results],
+            errors=errors,
+        )
+
+
+class PruningModeEvaluator(MockEvaluator):
+    """Evaluator that prunes configs marked with mode='prune'."""
+
+    async def evaluate(
+        self,
+        func: Callable,
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        sample_lease=None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        **kwargs,
+    ) -> EvaluationResult:
+        if config.get("mode") == "prune":
+            raise TrialPrunedError("backend pruned", step=1)
+        return await super().evaluate(
+            func,
+            config,
+            dataset,
+            sample_lease=sample_lease,
+            progress_callback=progress_callback,
+            **kwargs,
+        )
 
 
 class TestOptimizationOrchestrator:
@@ -277,6 +404,108 @@ class TestOptimizationOrchestrator:
         assert orchestrator.best_result is None
         assert orchestrator.status == OptimizationStatus.PENDING
 
+    @pytest.mark.asyncio
+    async def test_systematic_provider_credit_failures_abort_run(
+        self, config_space, objectives, sample_dataset, mock_function
+    ):
+        """All provider auth/quota failures abort instead of plateauing at 0 score."""
+
+        provider_error = (
+            "litellm.APIError: OpenRouter returned HTTP 402 "
+            "Insufficient credits for this API key"
+        )
+        fatal_dataset = Dataset(
+            [
+                EvaluationExample({"query": f"case {index}"}, f"answer {index}")
+                for index in range(5)
+            ],
+            name="fatal_provider_dataset",
+        )
+        evaluator = PatternEvaluator(
+            patterns=[[provider_error for _ in fatal_dataset.examples]],
+            accuracy=0.0,
+        )
+        optimizer = MockOptimizer(config_space, objectives)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        )
+
+        with pytest.raises(OptimizationError) as exc_info:
+            await orchestrator.optimize(mock_function, fatal_dataset)
+
+        message = str(exc_info.value)
+        assert "provider calls are failing systematically" in message
+        assert "insufficient credits" in message.lower()
+        assert "billing" in message.lower() or "credits" in message.lower()
+        assert orchestrator._stop_reason == "vendor_error"
+        assert orchestrator.status == OptimizationStatus.FAILED
+        assert len(orchestrator._trials) == 1
+        assert orchestrator._trials[0].status == TrialStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_few_transient_call_failures_complete_normally(
+        self, config_space, objectives, sample_dataset, mock_function
+    ):
+        """A small number of non-fatal/transient call failures does not abort."""
+
+        evaluator = PatternEvaluator(
+            patterns=[
+                [
+                    "temporary socket reset while reading provider response",
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+                [None for _ in sample_dataset.examples],
+                [None for _ in sample_dataset.examples],
+            ],
+            accuracy=0.7,
+        )
+        optimizer = MockOptimizer(config_space, objectives)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=3,
+            config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason in {"max_trials_reached", "optimizer"}
+        assert len(result.trials) == 3
+        assert evaluator.evaluation_count == 3
+
+    @pytest.mark.asyncio
+    async def test_real_zero_accuracy_is_not_provider_failure_abort(
+        self, config_space, objectives, sample_dataset, mock_function
+    ):
+        """Successful calls that score 0.0 remain legitimate low-accuracy trials."""
+
+        evaluator = PatternEvaluator(
+            patterns=[[None for _ in sample_dataset.examples]],
+            accuracy=0.0,
+        )
+        optimizer = MockOptimizer(config_space, objectives)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=3,
+            config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason in {"max_trials_reached", "optimizer"}
+        assert len(result.trials) == 3
+        assert all(trial.status == TrialStatus.COMPLETED for trial in result.trials)
+        assert result.best_score == 0.0
+
     def test_orchestrator_creation_with_none_params(
         self, mock_optimizer, mock_evaluator
     ):
@@ -356,6 +585,264 @@ class TestOptimizationOrchestrator:
         for trial_result in result.trials:
             assert trial_result.status == TrialStatus.COMPLETED
             assert trial_result.config is not None
+
+    @pytest.mark.asyncio
+    async def test_cloud_brain_completion_finalizes_completed_and_pruned_trials(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """Normal cloud-brain completion finalizes instead of failing suggestion."""
+        optimizer = CloudBrainCompletingOptimizer(config_space, objectives)
+        evaluator = PruningModeEvaluator()
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "session-cloud-complete"
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=10,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert isinstance(result, OptimizationResult)
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason == "max_trials_reached"
+        assert [trial.status for trial in result.trials] == [
+            TrialStatus.COMPLETED,
+            TrialStatus.PRUNED,
+        ]
+        assert len(result.trials) == 2
+
+    @pytest.mark.asyncio
+    async def test_cloud_brain_suggestion_failure_still_raises(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """Transport or backend suggestion failures are not treated as completion."""
+        optimizer = CloudBrainFailingOptimizer(config_space, objectives)
+        evaluator = MockEvaluator()
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "session-cloud-failure"
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=10,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+
+            with pytest.raises(OptimizationError, match="transport failure"):
+                await orchestrator.optimize(mock_function, sample_dataset)
+
+    @pytest.mark.asyncio
+    async def test_submission_completion_finalizes_cloud_result_with_pruned_trial(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+        monkeypatch,
+    ):
+        """Submission-time completion breaks the loop without local fallback."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        optimizer = MockOptimizer(config_space, objectives)
+        evaluator = PruningModeEvaluator()
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "test_session_123"
+            mapping = MagicMock()
+            mapping.experiment_id = "exp_submission_complete"
+            mapping.experiment_run_id = "run_submission_complete"
+            mock_client.get_session_mapping.return_value = mapping
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=5,
+                timeout=5.0,
+                default_config={"param1": 1, "mode": "prune"},
+            )
+            orchestrator.backend_client = mock_client
+            orchestrator.traigent_config.execution_mode = "hybrid"
+            orchestrator.traigent_config.result_source = "cloud_brain"
+            orchestrator.traigent_config.fallback_reason = None
+            orchestrator.traigent_config.no_egress = False
+            orchestrator._submit_usage_analytics = AsyncMock()
+            orchestrator._workflow_trace_manager.submit_traces = AsyncMock()
+
+            manager = orchestrator.backend_session_manager
+            manager._backend_tracking_enabled = True
+            manager._runtime_degraded = False
+            manager._no_egress = False
+            manager._acknowledged_trials.add(("test_session_123", "previous-trial"))
+            manager.submit_trial = AsyncMock(
+                return_value=BackendTrialSubmissionOutcome.complete("converged")
+            )
+            manager.update_weighted_scores = AsyncMock(return_value=0)
+            manager.submit_session_aggregation = MagicMock()
+            manager.finalize_session = MagicMock(
+                return_value={"status": "completed", "metadata": {}}
+            )
+
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        manager.submit_trial.assert_awaited_once()
+        manager.finalize_session.assert_called_once()
+        assert result.stop_reason == "convergence"
+        assert result.source == "cloud_brain"
+        assert result.metadata["source"] == "cloud_brain"
+        assert result.experiment_id == "exp_submission_complete"
+        assert result.experiment_run_id == "run_submission_complete"
+        assert result.cloud_url is not None
+        assert "exp_submission_complete" in result.cloud_url
+        assert len(result.trials) == 1
+        assert result.trials[0].status == TrialStatus.PRUNED
+        assert orchestrator.traigent_config.result_source == "cloud_brain"
+
+    @pytest.mark.asyncio
+    async def test_parallel_submission_completion_drains_batch_before_finalizing(
+        self,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+        monkeypatch,
+    ):
+        """Terminal completion in a parallel batch drains already-computed siblings."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        optimizer = MockOptimizer(config_space, objectives)
+        optimizer.set_max_suggestions(3)
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "parallel-session-complete"
+            mapping = MagicMock()
+            mapping.experiment_id = "exp_parallel_complete"
+            mapping.experiment_run_id = "run_parallel_complete"
+            mock_client.get_session_mapping.return_value = mapping
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=5,
+                parallel_trials=3,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+            orchestrator.traigent_config.execution_mode = "hybrid"
+            orchestrator.traigent_config.result_source = "cloud_brain"
+            orchestrator.traigent_config.fallback_reason = None
+            orchestrator.traigent_config.no_egress = False
+            orchestrator._submit_usage_analytics = AsyncMock()
+            orchestrator._workflow_trace_manager.submit_traces = AsyncMock()
+
+            manager = orchestrator.backend_session_manager
+            manager._backend_tracking_enabled = True
+            manager._runtime_degraded = False
+            manager._no_egress = False
+            manager.submit_trial = AsyncMock(
+                side_effect=[
+                    True,
+                    BackendTrialSubmissionOutcome.complete("converged"),
+                ]
+            )
+            manager.update_weighted_scores = AsyncMock(return_value=0)
+            manager.submit_session_aggregation = MagicMock()
+            manager.finalize_session = MagicMock(
+                return_value={"status": "completed", "metadata": {}}
+            )
+
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.stop_reason == "convergence"
+        assert len(result.trials) == 3
+        assert [trial.config["param1"] for trial in result.trials] == [0, 1, 2]
+        assert [trial.trial_id for trial in orchestrator._trials] == [
+            trial.trial_id for trial in result.trials
+        ]
+        assert manager.submit_trial.await_count == 2
+        submitted_param_values = [
+            call.kwargs["trial_result"].config["param1"]
+            for call in manager.submit_trial.await_args_list
+        ]
+        assert submitted_param_values == [0, 1]
+        manager.finalize_session.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_parallel_result_processing_propagates_non_terminal_exception(
+        self, orchestrator
+    ):
+        """Non-terminal processing errors still stop the batch immediately."""
+        trial_results = [
+            TrialResult(
+                trial_id=f"trial-{index}",
+                config={"param1": index},
+                metrics={"accuracy": 0.5},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            )
+            for index in range(3)
+        ]
+        permitted_results = [
+            PermittedTrialResult(
+                result=trial_result,
+                permit=Permit(id=index, amount=0.0, active=False),
+            )
+            for index, trial_result in enumerate(trial_results)
+        ]
+        handled_trial_ids: list[str] = []
+
+        async def handle_result(**kwargs):
+            handled_trial_ids.append(kwargs["trial_result"].trial_id)
+            if len(handled_trial_ids) == 2:
+                raise RuntimeError("non-terminal failure")
+            return kwargs["current_trial_index"] + 1
+
+        orchestrator._handle_trial_result = AsyncMock(side_effect=handle_result)
+
+        with pytest.raises(RuntimeError, match="non-terminal failure"):
+            await orchestrator._process_parallel_results(
+                scheduled_configs=[trial.config for trial in trial_results],
+                results=permitted_results,
+                scheduled_optuna_ids=[None, None, None],
+                session_id="session-123",
+                trial_count=0,
+            )
+
+        assert handled_trial_ids == ["trial-0", "trial-1"]
 
     @pytest.mark.asyncio
     async def test_default_config_is_evaluated_first(
@@ -582,6 +1069,99 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) >= 1  # At least one trial should complete
         assert result.duration >= 0.5  # Should take at least timeout duration
 
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)
+    async def test_keyboard_interrupt_returns_completed_partial_trials(
+        self, mock_optimizer, mock_function, sample_dataset
+    ):
+        """Ctrl-C during a trial returns completed partial results."""
+
+        class InterruptAfterOneCompletedTrialEvaluator(MockEvaluator):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            async def evaluate(self, *args, **kwargs) -> EvaluationResult:
+                self.calls += 1
+                if self.calls > 1:
+                    raise KeyboardInterrupt
+                return await super().evaluate(*args, **kwargs)
+
+        evaluator = InterruptAfterOneCompletedTrialEvaluator()
+        mock_optimizer.set_max_suggestions(5)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=evaluator,
+            max_trials=5,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        try:
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+        except KeyboardInterrupt as exc:
+            raise AssertionError(
+                "KeyboardInterrupt should return a partial OptimizationResult"
+            ) from exc
+
+        assert isinstance(result, OptimizationResult)
+        assert result.stop_reason == "user_cancelled"
+        assert result.status == OptimizationStatus.CANCELLED
+        assert len(result.trials) == 1
+        assert result.trials[0].status == TrialStatus.COMPLETED
+        assert result.trials[0].config["param1"] == 0
+        assert evaluator.calls == 2
+        assert evaluator.evaluation_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)
+    async def test_cancelled_error_returns_completed_partial_trials(
+        self, mock_optimizer, mock_function, sample_dataset
+    ):
+        """asyncio task cancellation returns completed partial results."""
+
+        class CancelDuringSecondTrialEvaluator(MockEvaluator):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+                self.second_trial_started = asyncio.Event()
+
+            async def evaluate(self, *args, **kwargs) -> EvaluationResult:
+                self.calls += 1
+                if self.calls > 1:
+                    self.second_trial_started.set()
+                    await asyncio.sleep(60)
+                return await super().evaluate(*args, **kwargs)
+
+        evaluator = CancelDuringSecondTrialEvaluator()
+        mock_optimizer.set_max_suggestions(5)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=evaluator,
+            max_trials=5,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        task = asyncio.create_task(orchestrator.optimize(mock_function, sample_dataset))
+        await asyncio.wait_for(evaluator.second_trial_started.wait(), timeout=1.0)
+        task.cancel()
+
+        try:
+            result = await task
+        except asyncio.CancelledError as exc:
+            raise AssertionError(
+                "CancelledError should return a partial OptimizationResult"
+            ) from exc
+
+        assert isinstance(result, OptimizationResult)
+        assert result.stop_reason == "user_cancelled"
+        assert result.status == OptimizationStatus.CANCELLED
+        assert result.metadata["persistence_status"] == "skipped"
+        assert len(result.trials) == 1
+        assert result.trials[0].status == TrialStatus.COMPLETED
+        assert result.trials[0].config["param1"] == 0
+        assert evaluator.calls == 2
+        assert evaluator.evaluation_count == 1
+
     def test_result_source_is_local_when_backend_degraded(self, orchestrator):
         """Issue #1265: when the backend becomes unreachable mid-run, the
         result is marked source='local_fallback' (top-level field and metadata) rather
@@ -661,7 +1241,7 @@ class TestOptimizationOrchestrator:
 
         assert result.status == OptimizationStatus.COMPLETED
         assert len(result.trials) == 0
-        assert result.best_config == {}
+        assert result.best_config is None
         assert result.best_metrics == {}
         assert result.best_score is None
 
@@ -698,7 +1278,8 @@ class TestOptimizationOrchestrator:
             result.status == OptimizationStatus.COMPLETED
         )  # Optimization completes even if all fail
         assert len(result.trials) == 3  # All trials are recorded, even if failed
-        assert result.best_config == {}  # No successful config
+        assert result.best_config is None  # No successful config
+        assert result.best_score is None
 
         # Check that failed trials are recorded
         failed_trials = [t for t in result.trials if t.status == TrialStatus.FAILED]
@@ -2253,8 +2834,10 @@ class TestStopReasonInResult:
         assert len(result.trials) == 0
 
     @pytest.mark.asyncio
-    async def test_stop_reason_cost_limit(self, sample_dataset, monkeypatch):
-        """stop_reason is 'cost_limit' when the spend guard stops the run."""
+    async def test_mid_run_cost_limit_gracefully_returns_result(
+        self, sample_dataset, monkeypatch
+    ):
+        """Mid-run cost stops return a partial result with stop_reason='cost_limit'."""
         # Disable mock-LLM bypass so CostEnforcer tracks real permits.
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
         config_space = {"param1": (0, 1)}
@@ -2275,6 +2858,7 @@ class TestStopReasonInResult:
 
         result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
 
+        assert isinstance(result, OptimizationResult)
         assert result.stop_reason == "cost_limit"
         assert orchestrator._stop_reason == "cost_limit"
         assert len(result.trials) >= 1
@@ -2308,6 +2892,35 @@ class TestStopReasonInResult:
         assert orchestrator._stop_reason == "cost_limit"
         assert 1 <= len(result.trials) <= 3
         assert orchestrator.cost_enforcer.get_status().limit_reached is True
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_cost_limit_precedes_max_trials(
+        self, sample_dataset, monkeypatch
+    ):
+        """If cost and trial limits are both true, report the binding cost guard."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_metrics({"accuracy": 0.5, "cost": 0.06})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=2,
+            config=TraigentConfig.edge_analytics_mode(),
+            cost_limit=0.12,
+            cost_approved=True,
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert len(result.trials) == 2
+        assert orchestrator.cost_enforcer.get_status().limit_reached is True
+        assert result.stop_reason == "cost_limit"
+        assert result.stop_reason != "max_trials_reached"
 
 
 class TestUsageAnalyticsSubmission:

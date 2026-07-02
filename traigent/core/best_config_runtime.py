@@ -134,6 +134,10 @@ class CloudPublishUnavailable(ConfigurationError):
         self.reason = reason
 
 
+class SafetySensitiveBestConfigError(ConfigurationError):
+    """Raised when a best-config attempts an unsafe drift bypass."""
+
+
 @dataclass(frozen=True)
 class BestConfigSnapshot:
     """Immutable runtime snapshot used by invocation wrappers."""
@@ -545,6 +549,8 @@ def resolve_repo_best_config(
             strict=True,
         )
     except Exception as exc:
+        if isinstance(exc, SafetySensitiveBestConfigError):
+            raise
         if strict:
             if isinstance(exc, ConfigurationError):
                 raise
@@ -609,6 +615,8 @@ def resolve_cloud_cache_best_config(
         object.__setattr__(snapshot, "expires_at", expires_at)
         return snapshot
     except Exception as exc:
+        if isinstance(exc, SafetySensitiveBestConfigError):
+            raise
         if strict:
             if isinstance(exc, ConfigurationError):
                 raise
@@ -696,7 +704,7 @@ def _validate_and_filter_config_keys(
 
     denylisted = sorted(key for key in unknown if _is_safety_sensitive_key(key))
     if denylisted:
-        raise ConfigurationError(
+        raise SafetySensitiveBestConfigError(
             f"Unknown safety-sensitive best config keys: {denylisted}"
         )
 
@@ -813,6 +821,7 @@ __all__ = [
     "BestConfigSourceMode",
     "CloudPublishUnavailable",
     "CloudPublishUnavailableReason",
+    "SafetySensitiveBestConfigError",
     "canonical_json",
     "compute_spec_hash",
     "function_ref_for",

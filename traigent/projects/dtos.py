@@ -50,7 +50,7 @@ class PaginationInfo:
     def from_dict(cls, payload: dict[str, Any]) -> PaginationInfo:
         return cls(
             page=int(payload.get("page", 1)),
-            per_page=int(payload.get("per_page", 0)),
+            per_page=int(payload.get("per_page", 20)),
             total=int(payload.get("total", 0)),
             total_pages=int(payload.get("total_pages", 1)),
             has_next=bool(payload.get("has_next", False)),

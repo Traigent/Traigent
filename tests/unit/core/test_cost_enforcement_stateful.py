@@ -116,9 +116,9 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
         elif was_orphaned:
             # First release of orphaned permit (after reset) should succeed
             # because the Permit object's active flag was not cleared by reset
-            assert (
-                result is True
-            ), f"First release of orphaned permit {permit.id} should succeed"
+            assert result is True, (
+                f"First release of orphaned permit {permit.id} should succeed"
+            )
             self.model_orphaned_permits.discard(permit.id)
             self.model_released_permits.add(permit.id)
         else:
@@ -177,16 +177,16 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
     @invariant()
     def in_flight_count_never_negative(self) -> None:
         """I1: in_flight_count >= 0"""
-        assert (
-            self.enforcer._in_flight_count >= 0
-        ), f"in_flight_count is negative: {self.enforcer._in_flight_count}"
+        assert self.enforcer._in_flight_count >= 0, (
+            f"in_flight_count is negative: {self.enforcer._in_flight_count}"
+        )
 
     @invariant()
     def reserved_cost_never_negative(self) -> None:
         """I2: reserved_cost >= 0"""
-        assert (
-            self.enforcer._reserved_cost >= 0
-        ), f"reserved_cost is negative: {self.enforcer._reserved_cost}"
+        assert self.enforcer._reserved_cost >= 0, (
+            f"reserved_cost is negative: {self.enforcer._reserved_cost}"
+        )
 
     @invariant()
     def active_permits_equals_in_flight(self) -> None:
@@ -341,9 +341,9 @@ class TestCostEnforcerStateMachineAdditional:
 
         # All IDs should be strictly increasing
         for i in range(1, len(permit_ids)):
-            assert (
-                permit_ids[i] > permit_ids[i - 1]
-            ), f"Permit IDs not monotonic: {permit_ids}"
+            assert permit_ids[i] > permit_ids[i - 1], (
+                f"Permit IDs not monotonic: {permit_ids}"
+            )
 
     @given(st.integers(min_value=5, max_value=15))
     @settings(max_examples=20, deadline=None)

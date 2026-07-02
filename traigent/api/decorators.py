@@ -26,7 +26,7 @@ Examples:
     ...     eval_dataset="customer_support.jsonl",
     ...     objectives=["accuracy", "cost", "latency"],
     ...     configuration_space={
-    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-2"],
+    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-haiku-4-5-20251001"],
     ...         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
     ...         "max_tokens": [100, 500, 1000]
     ...     },
@@ -43,10 +43,11 @@ Examples:
 from __future__ import annotations
 
 import inspect
+import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -64,10 +65,15 @@ from traigent.api.parameter_ranges import (
 )
 from traigent.api.strategy_presets import (
     NormalizedStrategyPreset,
+    UnknownStrategyPresetError,
     is_strategy_preset_name,
     normalize_strategy_preset,
 )
 from traigent.api.types import AgentDefinition
+from traigent.cloud.smart_pruning import SmartPruningOptions
+from traigent.cloud.smart_pruning import (
+    normalize_smart_pruning_options as _normalize_smart_pruning_options,
+)
 from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
@@ -78,6 +84,7 @@ from traigent.config.types import (
     ExecutionMode,
     InjectionMode,
     ResolvedExecutionPolicy,
+    _warn_deprecated_once,
     is_traigent_disabled,
     resolve_execution_policy,
     validate_algorithm_name,
@@ -88,6 +95,7 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
@@ -102,6 +110,18 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+__all__ = [
+    "EvaluationOptions",
+    "InjectionOptions",
+    "HybridAPIOptions",
+    "ExternalServiceEvaluator",
+    "ExecutionOptions",
+    "SmartPruningOptions",
+    "MockModeOptions",
+    "optimize",
+]
+
+
 class EvaluationOptions(BaseModel):
     """Grouped evaluation settings used by the optimize decorator."""
 
@@ -113,6 +133,20 @@ class EvaluationOptions(BaseModel):
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
+    #: Optional cheap "surrogate" (pre-screen) scorer applied to the SAME outputs
+    #: the primary evaluator already produced, per example. It scores captured
+    #: outputs only and NEVER re-executes the decorated function. Same calling
+    #: convention as ``scoring_function`` — ``(output, expected_output=None,
+    #: example=None)`` — returning a float in [0, 1] (or a dict with
+    #: ``surrogate_score``/``score``). Results ride alongside primary metrics as
+    #: ``surrogate_score`` and feed the backend's per-evaluator score tensor.
+    surrogate_evaluator: Callable[..., Any] | None = None
+    #: Optional explicit id for the surrogate descriptor's ``evaluator_id`` (the
+    #: key the backend tensor uses for this scorer). When omitted, the id is
+    #: derived from the callable's ``__name__``/class name (or ``"surrogate"`` for
+    #: anonymous scorers). A runtime ``optimize(surrogate_evaluator_name=...)``
+    #: overrides this decorator value.
+    surrogate_evaluator_name: str | None = None
 
 
 class InjectionOptions(BaseModel):
@@ -201,6 +235,9 @@ class ExecutionOptions(BaseModel):
         parallel_config: Configuration for parallel execution.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
+        smart_pruning: Optional cloud-side pruning profile. When configured on a
+            managed/cloud run, the SDK reports content-free per-example progress
+            to the backend and honors prune decisions.
         reps_per_trial: Number of repetitions per configuration for statistical
             stability. Only the default ``1`` (no repetition) is available in the
             OSS SDK; passing any other value raises ``pydantic.ValidationError`` at
@@ -234,6 +271,7 @@ class ExecutionOptions(BaseModel):
     parallel_config: ParallelConfig | dict[str, Any] | None = None
     max_total_examples: int | None = None
     samples_include_pruned: bool = True
+    smart_pruning: SmartPruningOptions | dict[str, Any] | None = None
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
 
@@ -281,7 +319,7 @@ class ExecutionOptions(BaseModel):
     @field_validator("algorithm")
     @classmethod
     def _validate_algorithm(cls, v: str) -> str:
-        return validate_algorithm_name(v)
+        return cast(str, validate_algorithm_name(v))
 
     @field_validator("offline")
     @classmethod
@@ -337,6 +375,9 @@ class MockModeOptions(BaseModel):
 
 
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
+# ParamSpec / TypeVar for the @optimize decorator's generic return type.
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 def _coerce_bundle(
@@ -437,6 +478,141 @@ def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
         )
 
 
+def _validate_surrogate_evaluator_signature(surrogate: Callable[..., Any]) -> None:
+    """Validate a surrogate (pre-screen) evaluator at decoration time.
+
+    A surrogate SCORES already-captured outputs — it must accept the output as
+    its first argument (like ``scoring_function``), and must NOT look like a
+    func-executor (``func, config, example``) which would imply re-execution.
+
+    Raises:
+        ValidationError: If not callable, or the signature looks like a
+            func-executor / cannot accept the captured output.
+    """
+    if not callable(surrogate):
+        raise ValidationError("surrogate_evaluator must be callable")
+
+    if inspect.isfunction(surrogate) or inspect.ismethod(surrogate):
+        callable_to_check: Any = surrogate
+    else:
+        callable_to_check = getattr(surrogate, "__call__", surrogate)  # noqa: B004
+
+    try:
+        sig = inspect.signature(callable_to_check)
+    except (ValueError, TypeError):
+        logger.debug(
+            "Could not inspect surrogate_evaluator signature, skipping validation"
+        )
+        return
+
+    params = list(sig.parameters.values())
+    if params and params[0].name == "self":
+        params = params[1:]
+
+    param_names = {p.name for p in params}
+    if {"func", "config"} <= param_names:
+        raise ValidationError(
+            "surrogate_evaluator scores already-captured outputs and must not "
+            "re-execute the decorated function.\n\n"
+            "Expected: surrogate_evaluator(output, expected_output=None, example=None) "
+            "-> float in [0, 1]\n"
+            f"Got:      ({', '.join(p.name for p in params)})\n\n"
+            "This looks like a custom_evaluator (func, config, example). A "
+            "surrogate is a cheap scorer of outputs, like scoring_function."
+        )
+
+    accepts_output = any(
+        p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        )
+        for p in params
+    )
+    if not accepts_output:
+        raise ValidationError(
+            "surrogate_evaluator must accept the captured output as its first "
+            "argument, e.g. surrogate_evaluator(output, expected_output=None, "
+            "example=None)."
+        )
+
+
+def _warn_context_mode_param_shadowing(
+    func: Callable[..., Any],
+    configuration_space: Any,
+    injection_mode: Any,
+    config_param: str | None,
+) -> None:
+    """Warn when CONTEXT-mode tuned knobs shadow the wrapped function's params.
+
+    In the default ``injection_mode=InjectionMode.CONTEXT`` the optimizer does
+    **not** override function parameters — the per-trial config lives in
+    contextvars and must be read via ``traigent.get_config()``. If a function
+    already declares the tuned knobs as parameters (the common "wrap a pre-existing
+    agent function" shape) and never reads ``get_config()``, every trial silently
+    receives the signature defaults, so the optimizer reports a "best config" for a
+    sweep that never actually varied those parameters (see issue #1372). This emits
+    a loud warning so the no-op is not silent. It is advisory (never raises): a
+    function that intentionally reads ``get_config()`` is detected and skipped.
+    """
+    # Only CONTEXT mode shadows parameters; PARAMETER/SEAMLESS inject explicitly.
+    if injection_mode not in (InjectionMode.CONTEXT, "context"):
+        return
+    if not configuration_space:
+        return
+    try:
+        config_keys = set(configuration_space.keys())
+    except AttributeError:
+        return
+    if not config_keys:
+        return
+
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):  # pragma: no cover - unintrospectable callable
+        return
+
+    param_names = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    }
+    if config_param:
+        param_names.discard(config_param)
+
+    shadowed = sorted(config_keys & param_names)
+    if not shadowed:
+        return
+
+    # Best-effort: if the body already reads the per-trial config, the knobs are
+    # honored and the overlap is intentional — do not warn.
+    try:
+        source = inspect.getsource(func)
+        if "get_config" in source or "current_config" in source:
+            return
+    except (OSError, TypeError):  # pragma: no cover - source unavailable
+        pass
+
+    import warnings
+
+    func_name = getattr(func, "__name__", repr(func))
+    message = (
+        f"@traigent.optimize: the tuned variable(s) {shadowed} are declared as "
+        f"parameters of '{func_name}', but injection_mode is CONTEXT (the default), "
+        f"which does NOT override function parameters. Unless the body reads "
+        f"traigent.get_config(), every trial will run with the signature defaults "
+        f"and the optimization will silently sweep nothing (a false-positive 'best "
+        f"config'). To actually vary {shadowed}: read them via traigent.get_config() "
+        f'inside the function, or use injection_mode="seamless" (zero code change) / '
+        f'injection_mode="parameter".'
+    )
+    warnings.warn(message, UserWarning, stacklevel=3)
+    logger.warning("%s", message)
+
+
 _DEFAULT_SENTINEL = object()
 _AUTO_DETECT_TVARS_MODES = frozenset({"off", "suggest", "apply"})
 
@@ -446,6 +622,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "configuration_space": None,
     "experiment_name": None,
     "default_config": None,
+    "warm_start_from": None,
     "constraints": None,
     "safety_constraints": None,
     "tvl_spec": None,
@@ -464,6 +641,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "parallel_config": None,
     "max_total_examples": None,
     "samples_include_pruned": True,
+    "smart_pruning": None,
     "mock_mode_config": None,
     "custom_evaluator": None,
     "scoring_function": None,
@@ -472,7 +650,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
-    "max_trials": 50,
+    "max_trials": DEFAULT_MAX_TRIALS,
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
     "plateau_epsilon": None,  # Improvement threshold for plateau detection
@@ -564,34 +742,28 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
 
 def _warn_for_legacy_execution_options(keys: set[str]) -> None:
     """Emit coarse deprecation warnings for legacy execution option names."""
-    import warnings
-
-    if keys & {"execution_mode"}:
-        warnings.warn(
-            "execution_mode is deprecated as a public optimizer selector. Use "
-            "algorithm='auto'|'grid'|'random' and offline=True for no egress.",
-            DeprecationWarning,
-            stacklevel=4,
-        )
     if keys & {"privacy_enabled"}:
-        warnings.warn(
+        _warn_deprecated_once(
+            "optimize.privacy_enabled",
             "privacy_enabled is deprecated and has no effect. Use offline=True "
-            "for no egress.",
-            DeprecationWarning,
+            "for no egress. This compatibility option will be removed in a "
+            "future major release.",
             stacklevel=4,
         )
     if keys & {"cloud_fallback_policy"}:
-        warnings.warn(
+        _warn_deprecated_once(
+            "optimize.cloud_fallback_policy",
             "cloud_fallback_policy is deprecated and has no effect. Set "
-            "TRAIGENT_REQUIRE_CLOUD=1 to disable fallback.",
-            DeprecationWarning,
+            "TRAIGENT_REQUIRE_CLOUD=1 to disable fallback. This compatibility "
+            "option will be removed in a future major release.",
             stacklevel=4,
         )
     if keys & set(_LEGACY_HYBRID_API_OPTION_MAP):
-        warnings.warn(
+        _warn_deprecated_once(
+            "optimize.hybrid_api_flat_options",
             "Flat hybrid_api_* optimize options are deprecated. Pass an "
-            "ExternalServiceEvaluator or evaluator options dict instead.",
-            DeprecationWarning,
+            "ExternalServiceEvaluator or evaluator options dict instead. This "
+            "compatibility option will be removed in a future major release.",
             stacklevel=4,
         )
 
@@ -635,6 +807,7 @@ class LegacyOptimizeArgs:
     experiment_name: str | None = None
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
+    warm_start_from: str | None = None
     constraints: list[Callable[..., Any]] | None = None
     safety_constraints: list[Any] | None = (
         None  # SafetyConstraint | CompoundSafetyConstraint
@@ -729,6 +902,7 @@ class LegacyOptimizeArgs:
             ("experiment_name", self.experiment_name),
             ("configuration_space", self.configuration_space),
             ("default_config", self.default_config),
+            ("warm_start_from", self.warm_start_from),
             ("constraints", self.constraints),
             ("safety_constraints", self.safety_constraints),
             ("tvl_spec", self.tvl_spec),
@@ -969,11 +1143,7 @@ def _resolve_strategy_argument(
     if is_strategy_preset_name(strategy) or strategy_params is not None:
         return strategy, runtime_overrides
 
-    raise ValueError(
-        f"Unknown strategy preset: {strategy!r}. "
-        "Use 'algorithm' to select an optimizer by name, or provide a valid "
-        "strategy preset name."
-    )
+    raise UnknownStrategyPresetError(strategy)
 
 
 def _apply_strategy_preset_to_options(
@@ -1168,6 +1338,7 @@ class ResolvedExecutionOptions:
     parallel_config: Any
     max_total_examples: Any
     samples_include_pruned: Any
+    smart_pruning: Any
     legacy_options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1260,6 +1431,12 @@ def _resolve_execution_bundle_options(
             "samples_include_pruned",
             base_options.samples_include_pruned,
             execution_bundle.samples_include_pruned,
+            defaults,
+        ),
+        smart_pruning=_resolve_option(
+            "smart_pruning",
+            base_options.smart_pruning,
+            execution_bundle.smart_pruning,
             defaults,
         ),
         legacy_options=legacy_options,
@@ -1456,7 +1633,7 @@ def _runtime_algorithm_for_policy(
         policy.intent is ExecutionIntent.LOCAL_ONLY or external_evaluator is not None
     ):
         return "random"
-    return policy.algorithm
+    return cast(str, policy.algorithm)
 
 
 def _runtime_execution_mode_for_policy(
@@ -1468,7 +1645,7 @@ def _runtime_execution_mode_for_policy(
     if external_evaluator is not None:
         return ExecutionMode.HYBRID_API
     if policy.intent is ExecutionIntent.LOCAL_ONLY:
-        return ExecutionMode.EDGE_ANALYTICS
+        return ExecutionMode.LOCAL
     return ExecutionMode.HYBRID
 
 
@@ -1520,7 +1697,7 @@ def _resolve_actual_execution_mode(
 ) -> str:
     """Resolve legacy execution mode from provided or global config."""
     if (
-        execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        execution_mode == ExecutionMode.LOCAL.value
         and "execution_mode" in _GLOBAL_CONFIG
     ):
         result: str = str(_GLOBAL_CONFIG["execution_mode"])
@@ -1537,7 +1714,7 @@ def _log_execution_mode_warnings(
     minimal_logging: bool,
 ) -> None:
     """Log warnings for incompatible runtime settings."""
-    if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
+    if minimal_logging and execution_mode_enum is not ExecutionMode.LOCAL:
         logger.warning(
             "minimal_logging is only effective for offline local runs. "
             "It will be ignored for the selected managed execution path."
@@ -1922,12 +2099,86 @@ def _suggest_detected_tvars(
         return None
 
 
+def _build_default_experiment_name(
+    func_name: str,
+    resolved_schema: ObjectiveSchema | None,
+    resolved_configuration_space: dict[str, Any] | None,
+    *,
+    max_knobs: int = 4,
+    max_total_length: int = 120,
+) -> str:
+    """Build a self-describing default experiment name when none is provided.
+
+    Combines the function name, objective names, and tuned-variable (knob) names
+    into a concise, deterministic, human-meaningful string.  Format::
+
+        <func_name>[<obj1>,<obj2>,...][<knob1>,<knob2>,...]
+
+    Args:
+        func_name: The decorated function's ``__name__``.
+        resolved_schema: Resolved objective schema (from ``_resolve_objective_schema``).
+        resolved_configuration_space: Normalized configuration-space dict whose keys
+            are the tuned-variable names.
+        max_knobs: Maximum number of knob names to display before appending ``,...``.
+        max_total_length: Hard cap on the final string length (excess is truncated).
+
+    Returns:
+        A deterministic, human-readable default experiment name.
+    """
+    # Build the objective suffix — always preserved in the output.
+    obj_suffix = ""
+    if resolved_schema is not None:
+        obj_names = [obj.name for obj in resolved_schema.objectives]
+        obj_suffix = f"[{','.join(obj_names)}]"
+
+    # Build the knob suffix; cap list length to avoid excessively long names.
+    knob_suffix = ""
+    if resolved_configuration_space:
+        knob_names = list(resolved_configuration_space.keys())
+        if len(knob_names) > max_knobs:
+            displayed = knob_names[:max_knobs]
+            knob_suffix = f"[{','.join(displayed)},...]"
+        else:
+            knob_suffix = f"[{','.join(knob_names)}]"
+
+    # Invariant: the objectives + knob sections are the self-describing payload
+    # and must never be sacrificed to the length cap.  Truncate only the
+    # function-name prefix (appending "~" to signal the cut), never the suffix.
+    suffix = obj_suffix + knob_suffix
+    func_budget = max_total_length - len(suffix)
+
+    if func_budget <= 0:
+        # Suffix alone meets or exceeds the cap — omit the function-name prefix.
+        if len(suffix) <= max_total_length:
+            return suffix
+        # Extreme edge case: even the suffix is over budget.  Preserve at least
+        # the objectives and one knob name by trimming the knob list.
+        if resolved_configuration_space:
+            knob_names_list = list(resolved_configuration_space.keys())
+            min_knob_suffix = f"[{knob_names_list[0]}]"
+            combined = obj_suffix + min_knob_suffix
+            if len(combined) <= max_total_length:
+                return combined
+        return obj_suffix[:max_total_length]
+
+    # Fit the function name into the remaining budget, marking any cut with "~".
+    if len(func_name) <= func_budget:
+        func_part = func_name
+    elif func_budget >= 2:
+        func_part = func_name[: func_budget - 1] + "~"
+    else:
+        func_part = func_name[:func_budget]
+
+    return func_part + suffix
+
+
 def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     experiment_name: str | None = None,
     default_config: dict[str, Any] | None = None,
+    warm_start_from: str | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
     tvl_spec: str | Path | None = None,
@@ -1943,6 +2194,7 @@ def optimize(  # NOSONAR(S107)
     offline: bool = False,
     strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
+    smart_pruning: SmartPruningOptions | dict[str, Any] | None = None,
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None,
     agent_prefixes: list[str] | None = None,
@@ -1965,7 +2217,7 @@ def optimize(  # NOSONAR(S107)
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
-    [Callable[..., Any]], Any
+    [Callable[_P, _R]], OptimizedFunction[_P, _R]
 ]:  # NOSONAR - stable public API intentionally exposes broad options
     """Decorator to make functions optimizable with Traigent.
 
@@ -2071,6 +2323,11 @@ def optimize(  # NOSONAR(S107)
                 or dict). Preferred path for controlling concurrency.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
+            smart_pruning: Optional cloud smart-pruning profile. Accepts a dict or
+                ``SmartPruningOptions`` matching
+                ``optimization/smart_pruning_schema.json``. The SDK sends it on
+                session creation and emits content-free intermediate reports only
+                for managed/cloud runs.
 
         Mock mode options:
             mock: Grouped mock-mode preferences (MockModeOptions or dict).
@@ -2200,7 +2457,7 @@ def optimize(  # NOSONAR(S107)
         ...         "minimal_logging": True,
         ...     },
         ...     configuration_space={
-        ...         "model": ["gpt-4", "claude-2"],
+        ...         "model": ["gpt-4", "claude-haiku-4-5-20251001"],
         ...         "temperature": [0.1, 0.3, 0.5],
         ...         "safety_filter": ["strict", "moderate"]
         ...     }
@@ -2218,15 +2475,25 @@ def optimize(  # NOSONAR(S107)
     if is_traigent_disabled():
         logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
 
-        def passthrough_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        def passthrough_decorator(
+            func: Callable[_P, _R],
+        ) -> OptimizedFunction[_P, _R]:
             """No-op decorator that returns the function unchanged when Traigent is disabled."""
-            return func
+            # Cast so the disabled path satisfies the declared return type without
+            # wrapping: the caller only cares that the result is callable with the
+            # same signature and exposes .optimize().
+            return func  # type: ignore[return-value]
 
         return passthrough_decorator
 
     legacy_args = _parse_legacy_args(legacy)
+    max_trials_explicit = runtime_overrides.get("max_trials") is not None
+    if legacy_args is not None and legacy_args.max_trials is not None:
+        max_trials_explicit = True
 
     combined_settings = dict(_OPTIMIZE_DEFAULTS)
+    if "execution_mode" in _GLOBAL_CONFIG:
+        combined_settings["execution_mode"] = _GLOBAL_CONFIG["execution_mode"]
     provided_sources: dict[str, str] = {}
     record_option = _build_settings_recorder(combined_settings, provided_sources)
 
@@ -2250,6 +2517,7 @@ def optimize(  # NOSONAR(S107)
         "configuration_space": configuration_space,
         "experiment_name": experiment_name,
         "default_config": default_config,
+        "warm_start_from": warm_start_from,
         "constraints": constraints,
         "safety_constraints": safety_constraints,
         "tvl_spec": tvl_spec,
@@ -2263,6 +2531,7 @@ def optimize(  # NOSONAR(S107)
         "mock": mock,
         "algorithm": algorithm,
         "offline": offline,
+        "smart_pruning": smart_pruning,
         "agents": agents,
         "agent_prefixes": agent_prefixes,
         "agent_measures": agent_measures,
@@ -2354,6 +2623,7 @@ def optimize(  # NOSONAR(S107)
     parallel_config = combined_settings["parallel_config"]
     max_total_examples = combined_settings["max_total_examples"]
     samples_include_pruned = combined_settings["samples_include_pruned"]
+    smart_pruning_value = combined_settings["smart_pruning"]
     mock_mode_config = combined_settings["mock_mode_config"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
@@ -2385,6 +2655,8 @@ def optimize(  # NOSONAR(S107)
         raise ValueError("max_trials must be a positive integer")
     # Experiment display name (decorator > env var > func.__name__ at decoration time)
     experiment_name_value = combined_settings["experiment_name"]
+    # Warm-start: prior experiment id to seed this run (empty string -> None).
+    warm_start_from_value: str | None = combined_settings.get("warm_start_from") or None
     # Tuned variable auto-detection
     auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
     auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
@@ -2437,6 +2709,20 @@ def optimize(  # NOSONAR(S107)
     if custom_evaluator is not None:
         _validate_custom_evaluator_signature(custom_evaluator)
 
+    # Optional surrogate (pre-screen) scorer from the evaluation bundle. Resolved
+    # here (decorator source only) and validated early; stashed on the
+    # OptimizedFunction below so the evaluator factory can attach it.
+    surrogate_evaluator = (
+        evaluation_bundle.surrogate_evaluator if evaluation_bundle is not None else None
+    )
+    surrogate_evaluator_name = (
+        evaluation_bundle.surrogate_evaluator_name
+        if evaluation_bundle is not None
+        else None
+    )
+    if surrogate_evaluator is not None:
+        _validate_surrogate_evaluator_signature(surrogate_evaluator)
+
     (
         injection_mode,
         config_param,
@@ -2462,6 +2748,7 @@ def optimize(  # NOSONAR(S107)
         parallel_config=parallel_config,
         max_total_examples=max_total_examples,
         samples_include_pruned=samples_include_pruned,
+        smart_pruning=smart_pruning_value,
         legacy_options=legacy_execution_options,
     )
     resolved_execution = _resolve_execution_bundle_options(
@@ -2479,7 +2766,9 @@ def optimize(  # NOSONAR(S107)
     parallel_config = resolved_execution.parallel_config
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
+    smart_pruning_value = resolved_execution.smart_pruning
     legacy_execution_options = resolved_execution.legacy_options
+    smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
         legacy_execution_options,
@@ -2568,7 +2857,7 @@ def optimize(  # NOSONAR(S107)
         external_service_evaluator,
     )
 
-    def decorator(func: Callable[..., Any]) -> OptimizedFunction:
+    def decorator(func: Callable[_P, _R]) -> OptimizedFunction[_P, _R]:
         """Actual decorator function.
 
         Args:
@@ -2648,7 +2937,46 @@ def optimize(  # NOSONAR(S107)
                         **(resolved_default_config or {}),
                     }
 
-        optimized_func = OptimizedFunction(
+        # #1372: loudly warn if CONTEXT-mode tuned knobs shadow the wrapped
+        # function's own parameters (silent no-op sweep otherwise).
+        _warn_context_mode_param_shadowing(
+            func,
+            resolved_configuration_space,
+            actual_injection_mode,
+            config_param,
+        )
+
+        # Experiment name resolution (#1422).
+        #
+        # _experiment_name on OptimizedFunction stores ONLY the explicit decorator value
+        # so the getter can lazily check TRAIGENT_EXPERIMENT_NAME at each access —
+        # callers that set the env var AFTER decoration must see it take effect.
+        #
+        # The self-describing default (func name + objectives + knobs) is precomputed
+        # here because the inputs are fully resolved at decoration time; it is stored
+        # in _default_experiment_name and used by the getter as the last resort, after
+        # the explicit value and the env var are both absent.
+        #
+        # Priority resolved in OptimizedFunction.experiment_name getter (highest → lowest):
+        #   1. Explicit experiment_name decorator argument → _experiment_name (not None).
+        #   2. TRAIGENT_EXPERIMENT_NAME env var — checked at ACCESS time (not decoration time).
+        #   3. Self-describing default → _default_experiment_name.
+        #   4. Bare func.__name__ (if no objectives/knobs were registered).
+        default_experiment_name: str | None = None
+        if experiment_name_value is None:
+            default_experiment_name = _build_default_experiment_name(
+                func.__name__, resolved_schema, resolved_configuration_space
+            )
+
+        # Approximate resolved name for the creation log (decoration-time snapshot only).
+        effective_experiment_name = (
+            experiment_name_value
+            or os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+            or default_experiment_name
+            or func.__name__
+        )
+
+        optimized_func: OptimizedFunction[_P, _R] = OptimizedFunction(  # type: ignore[assignment]
             func=func,
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
@@ -2678,6 +3006,7 @@ def optimize(  # NOSONAR(S107)
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
+            smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
             mock_mode_config=mock_mode_config,
             custom_evaluator=custom_evaluator,
@@ -2706,8 +3035,14 @@ def optimize(  # NOSONAR(S107)
             strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
-            # Experiment display name (overrides func.__name__ in portal/storage)
+            _max_trials_explicit=max_trials_explicit,
+            # Experiment display name: only the explicit value goes into _experiment_name
+            # so that TRAIGENT_EXPERIMENT_NAME is checked lazily at access time.
+            # The precomputed self-describing default is stored separately.
             experiment_name=experiment_name_value,
+            _default_experiment_name=default_experiment_name,
+            # Warm-start: seed this run from a prior experiment's learned configs.
+            warm_start_from=warm_start_from_value,
             # Guided-generation defaults (consumed by optimize_with_guidance)
             prompt_rewrite=prompt_rewrite,
             grow_dataset=grow_dataset,
@@ -2718,12 +3053,22 @@ def optimize(  # NOSONAR(S107)
         optimized_func.external_service_evaluator = external_service_evaluator
         optimized_func.hybrid_api_options = hybrid_api_options
         optimized_func.offline = execution_policy.offline
+        # Surrogate (pre-screen) scorer: read via getattr by the evaluator
+        # factory (_create_effective_evaluator). Absent when unconfigured, so the
+        # no-surrogate path stays byte-identical.
+        if surrogate_evaluator is not None:
+            optimized_func._surrogate_evaluator = surrogate_evaluator
+            if isinstance(surrogate_evaluator_name, str) and surrogate_evaluator_name:
+                optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
 
-        effective_name = experiment_name_value or func.__name__
         logger.info(
-            f"Created optimizable function: {func.__name__} (experiment_name={effective_name!r})"
+            f"Created optimizable function: {func.__name__} (experiment_name={effective_experiment_name!r})"
         )
 
-        return optimized_func
+        # cast so mypy sees OptimizedFunction[_P, _R] rather than
+        # OptimizedFunction[Any, Any] (the constructor takes Callable[..., Any]
+        # to stay compatible with diverse callers; the generic parameters are
+        # threaded through the factory, not the __init__ signature).
+        return cast(OptimizedFunction[_P, _R], optimized_func)
 
     return decorator

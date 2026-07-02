@@ -54,7 +54,9 @@ from .spec_validator import (
 from .statistics import (
     PairedComparisonResult,
     benjamini_hochberg_adjust,
+    bonferroni_adjust,
     clopper_pearson_lower_bound,
+    holm_bonferroni_adjust,
     hypervolume_improvement,
     paired_comparison_test,
 )
@@ -89,7 +91,9 @@ __all__ = [
     # Statistics
     "PairedComparisonResult",
     "benjamini_hochberg_adjust",
+    "bonferroni_adjust",
     "clopper_pearson_lower_bound",
+    "holm_bonferroni_adjust",
     "hypervolume_improvement",
     "paired_comparison_test",
     # Promotion gate

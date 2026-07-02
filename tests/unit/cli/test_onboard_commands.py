@@ -178,9 +178,7 @@ def test_onboard_non_tty_login_flag_runs_device_flow(
             self.backend_url_override = backend_url_override
 
         async def device_login(self, **kwargs: object) -> bool:
-            calls.append(
-                {"backend_url": self.backend_url_override, "kwargs": kwargs}
-            )
+            calls.append({"backend_url": self.backend_url_override, "kwargs": kwargs})
             return True
 
     monkeypatch.setattr(onboard_commands, "TraigentAuthCLI", FakeAuthCLI)

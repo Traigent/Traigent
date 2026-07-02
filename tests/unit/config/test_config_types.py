@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.exceptions import ValidationError as ValidationException
 
 
@@ -16,22 +17,20 @@ def test_setitem_validates_temperature() -> None:
         config["temperature"] = 3.0
 
 
-def test_setitem_normalizes_execution_mode_privacy() -> None:
+def test_setitem_raises_on_legacy_execution_mode_privacy() -> None:
     config = TraigentConfig()
-    config["execution_mode"] = "privacy"
-
-    assert config.execution_mode == ExecutionMode.HYBRID.value
-    assert config.privacy_enabled is True
+    with pytest.raises(ConfigurationError):
+        config["execution_mode"] = "privacy"
 
 
 def test_setitem_rejects_unknown_execution_mode() -> None:
     config = TraigentConfig()
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfigurationError):
         config["execution_mode"] = "unsupported-mode"
 
 
 def test_local_storage_path_expands() -> None:
-    config = TraigentConfig(execution_mode=ExecutionMode.EDGE_ANALYTICS.value)
+    config = TraigentConfig(execution_mode=ExecutionMode.LOCAL.value)
     config["local_storage_path"] = "~/tmp"
 
     expected = str(Path(os.path.expanduser("~/tmp")).resolve())

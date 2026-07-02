@@ -615,29 +615,43 @@ class TestGetContextualHint:
         assert "timestamp" in last_shown
         assert "completed_sessions" in last_shown
 
-    def test_get_contextual_hint_saves_state(self, manager: IncentiveManager) -> None:
+    def test_get_contextual_hint_saves_state(
+        self, manager: IncentiveManager, edge_analytics_config: TraigentConfig
+    ) -> None:
         """Test get_contextual_hint saves state after updating."""
         manager._state["completed_sessions"] = 3
         manager._state["last_hint"] = None
 
         manager.get_contextual_hint("session_complete")
 
-        # Verify state was saved to disk
-        with open(manager._state_file) as f:
-            saved_state = json.load(f)
-        assert saved_state["last_hint"] is not None
+        # A freshly constructed manager loads state from disk in __init__.
+        # Force completed_sessions=3 on the reload so the "session_complete"
+        # trigger condition is satisfied and the only thing that can make
+        # should_show_hint False is the persisted last_hint cooldown gate.
+        # Without this, the reloaded default state lacks completed_sessions,
+        # so the trigger condition alone would make it False regardless of
+        # whether anything was actually saved.
+        reloaded = IncentiveManager(edge_analytics_config)
+        reloaded._state["completed_sessions"] = 3
+        assert reloaded.should_show_hint("session_complete") is False
 
     def test_get_contextual_hint_handles_none_total_trials(
         self, manager: IncentiveManager
     ) -> None:
         """Test get_contextual_hint handles None total_trials value."""
-        manager._state["completed_sessions"] = 3
+        # completed_sessions=10 selects the "storage_growing" hint, which is
+        # the only category whose text interpolates total_trials, so this
+        # actually exercises the None -> 0 coercion instead of a category
+        # that ignores total_trials entirely.
+        manager._state["completed_sessions"] = 10
         manager._state["total_trials"] = None
         manager._state["last_hint"] = None
 
-        hint = manager.get_contextual_hint("session_complete")
+        hint = manager.get_contextual_hint("general")
 
-        assert hint is not None  # Should not crash
+        assert hint is not None
+        assert "None" not in hint
+        assert "10 sessions, 0 trials" in hint
 
 
 class TestShowAchievementUnlock:
@@ -1090,28 +1104,57 @@ class TestShowContextSensitiveHint:
     def test_show_context_sensitive_hint_updates_last_hint(
         self, manager: IncentiveManager, capsys
     ) -> None:
-        """Test context sensitive hint updates last_hint timestamp."""
+        """Test context sensitive hint updates last_hint timestamp (cooldown)."""
         manager._state["last_hint"] = None
         manager._state["completed_sessions"] = 3
+
+        # Sanity check: "large_config_space" is a display-hint key but is
+        # NOT one of should_show_hint's trigger keys (session_complete,
+        # cli_usage, storage_info, general), so should_show_hint("large_
+        # config_space") is unconditionally False via its dict .get(...,
+        # False) default -- checking it again after the call would pass
+        # whether or not last_hint was ever bumped. "general" IS a real
+        # trigger key, and with last_hint=None and completed_sessions=3 it
+        # genuinely evaluates True here, before show_context_sensitive_hint
+        # runs.
+        assert manager.should_show_hint("general") is True
 
         with patch.object(manager, "should_show_hint", return_value=True):
             manager.show_context_sensitive_hint("large_config_space")
 
-        assert manager._state["last_hint"] is not None
+        # should_show_hint is restored to its real implementation outside
+        # the patch. Its top-of-function 24h-cooldown gate on last_hint
+        # applies regardless of context, so if last_hint was actually
+        # bumped to "now", a context proven True above ("general") now
+        # correctly reports False -- unambiguous evidence of the cooldown
+        # engaging, not of an unrecognized context.
+        assert manager.should_show_hint("general") is False
 
     def test_show_context_sensitive_hint_saves_state(
-        self, manager: IncentiveManager, capsys
+        self,
+        manager: IncentiveManager,
+        edge_analytics_config: TraigentConfig,
+        capsys,
     ) -> None:
-        """Test context sensitive hint saves state."""
+        """Test context sensitive hint saves state to disk."""
         manager._state["last_hint"] = None
         manager._state["completed_sessions"] = 3
 
         with patch.object(manager, "should_show_hint", return_value=True):
             manager.show_context_sensitive_hint("large_config_space")
 
-        with open(manager._state_file) as f:
-            saved_state = json.load(f)
-        assert saved_state["last_hint"] is not None
+        # A freshly constructed manager loads state from disk in __init__.
+        # Force completed_sessions=3 on the reload so "general" is the only
+        # remaining variable under test: if last_hint did NOT persist, the
+        # reload's should_show_hint("general") would evaluate True (its
+        # trigger condition is satisfied); if last_hint DID persist, the
+        # context-independent 24h-cooldown gate makes it False. Checking
+        # "general" (a real trigger key) rather than "large_config_space"
+        # (never a trigger key, see previous test) means the False result
+        # can only be explained by genuine persistence of the cooldown.
+        reloaded = IncentiveManager(edge_analytics_config)
+        reloaded._state["completed_sessions"] = 3
+        assert reloaded.should_show_hint("general") is False
 
     def test_show_context_sensitive_hint_respects_should_show_hint(
         self, manager: IncentiveManager, capsys

@@ -22,8 +22,7 @@ from .redaction import redact_sensitive_data, redact_sensitive_text
 logger = get_logger(__name__)
 
 _COMPLIANCE_NOT_IMPLEMENTED = (
-    "Compliance reporting is not yet implemented. "
-    "Track progress at internal tracking"
+    "Compliance reporting is not yet implemented. Track progress at internal tracking"
 )
 
 
@@ -205,10 +204,12 @@ class AuditLogger:
         This class is thread-safe. Uses an RLock (_lock) to protect:
         - events list (append/read/copy)
         - event_chain_hash (read/write for tamper detection)
+        - alert_handlers list (add/iteration)
         The event_queue uses Python's thread-safe Queue implementation.
     """
 
     MIN_SECRET_LENGTH = 32
+    ALERTING_SEVERITIES = frozenset({AuditSeverity.HIGH, AuditSeverity.CRITICAL})
 
     def __init__(self, secret_key: str) -> None:
         """Initialize audit logger with secret for tamper detection."""
@@ -223,6 +224,7 @@ class AuditLogger:
         )  # For async processing
         self.running = True  # Track if logger is active
         self._lock = threading.RLock()  # Protect events and event_chain_hash
+        self.alert_handlers: list[Callable[[AuditEvent], None]] = []
 
     @classmethod
     def _validate_secret_key(cls, secret_key: str) -> str:
@@ -325,7 +327,31 @@ class AuditLogger:
             _redact_filterable_identifier(user_id, "user_id") if user_id else "system"
         )
         logger.info("Audit event logged: %s by %s", event_type.value, actor)
+
+        if event.severity in self.ALERTING_SEVERITIES:
+            self._dispatch_alerts(event)
+
         return event
+
+    def _dispatch_alerts(self, event: AuditEvent) -> None:
+        """Invoke registered alert handlers for a high-severity event.
+
+        Dispatch is fail-safe: the event is already durably recorded above,
+        and a handler exception must not affect that record or propagate to
+        the caller. Each failure is logged, not swallowed.
+        """
+        with self._lock:
+            handlers = list(self.alert_handlers)
+
+        for handler in handlers:
+            try:
+                handler(event)
+            except Exception:
+                logger.exception(
+                    "Audit alert handler %r raised for event %s",
+                    handler,
+                    event.event_id,
+                )
 
     def _calculate_checksum(self, event: AuditEvent) -> str:
         """Calculate tamper-proof checksum for event."""
@@ -505,14 +531,10 @@ class AuditLogger:
             **kwargs,
         )
 
-    def add_alert_handler(self, handler) -> None:
-        """Add alert handler for high-severity events."""
-        if not hasattr(self, "alert_handlers"):
-            self.alert_handlers: list[Any] = []
-        self.alert_handlers.append(handler)
-
-        # Note: In a real implementation, this would trigger alerts
-        # when high-severity events are logged
+    def add_alert_handler(self, handler: Callable[[AuditEvent], None]) -> None:
+        """Add alert handler invoked for HIGH/CRITICAL severity events (thread-safe)."""
+        with self._lock:
+            self.alert_handlers.append(handler)
 
     def shutdown(self) -> None:
         """Gracefully shutdown the audit logger."""

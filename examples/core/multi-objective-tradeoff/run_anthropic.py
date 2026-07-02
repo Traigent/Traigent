@@ -413,7 +413,7 @@ def _dump_example_results(
     configuration_space={
         "model": [
             # "claude-3-5-haiku-latest",
-            "claude-3-7-sonnet-latest",
+            "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
             # "claude-opus-4-1-20250805",
             # "claude-sonnet-4-5-20250929"
@@ -429,7 +429,7 @@ def _dump_example_results(
 )
 def answer(
     question: str,
-    model: str = "claude-3-7-sonnet-latest",
+    model: str = "claude-sonnet-4-6",
     temperature: float = 0.1,
     max_tokens: int = 128,
 ) -> str:

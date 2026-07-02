@@ -199,9 +199,9 @@ class TestLangfuseTraceMetrics:
 
         pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
         for key in measures:
-            assert re.match(
-                pattern, key
-            ), f"Key '{key}' is not a valid Python identifier"
+            assert re.match(pattern, key), (
+                f"Key '{key}' is not a valid Python identifier"
+            )
 
     def test_empty_metrics(self):
         """Test metrics with no per-agent data."""
@@ -750,7 +750,8 @@ class TestLangfuseClientGetTrace:
         with patch.object(client, "_get_trace_http") as mock_http:
             mock_http.return_value = {"id": "trace-123"}
             result = client.get_trace("trace-123")
-            assert result is not None
+            # get_trace returns whatever the HTTP fallback produced verbatim
+            assert result == {"id": "trace-123"}
             mock_http.assert_called_once_with("trace-123")
 
     def test_get_trace_sdk_exception_falls_back(self, client):
@@ -762,8 +763,11 @@ class TestLangfuseClientGetTrace:
         with patch.object(client, "_get_trace_http") as mock_http:
             mock_http.return_value = {"id": "trace-123"}
             result = client.get_trace("trace-123")
-            assert result is not None
-            mock_http.assert_called_once()
+            # On SDK failure, get_trace must still return the HTTP fallback's
+            # result, called with the same trace_id passed in by the caller.
+            assert result == {"id": "trace-123"}
+            mock_http.assert_called_once_with("trace-123")
+            mock_sdk.get_trace.assert_called_once_with("trace-123")
 
 
 class TestLangfuseClientMetricsAggregation:

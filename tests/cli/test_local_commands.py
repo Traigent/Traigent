@@ -862,9 +862,13 @@ class TestLocalCommands:
             with patch.dict(os.environ, self.env_vars):
                 result = self.runner.invoke(list_sessions)
 
-            # Should handle permission errors gracefully
-            # Result depends on specific error handling in storage layer
-            assert result is not None, "Command should return a result"
+            # A permission error during storage initialization must surface
+            # as a clean CLI failure (exit code 1, via the command's own
+            # except-block -> sys.exit(1)), with an explanatory message —
+            # not a crash and not a silently empty/successful listing.
+            assert result.exit_code == 1
+            assert "Error listing sessions" in result.output
+            assert "Permission denied" in result.output
         finally:
             # Restore permissions for cleanup
             os.chmod(self.storage_path, 0o755)

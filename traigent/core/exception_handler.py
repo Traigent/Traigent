@@ -27,6 +27,7 @@ class VendorErrorCategory(Enum):
     RATE_LIMIT = "rate_limit"
     QUOTA_EXHAUSTED = "quota_exhausted"
     INSUFFICIENT_FUNDS = "insufficient_funds"
+    AUTHENTICATION = "authentication"
     SERVICE_UNAVAILABLE = "service_unavailable"
 
 
@@ -70,6 +71,27 @@ _VENDOR_ERROR_PATTERNS: list[tuple[str, VendorErrorCategory]] = [
     ("quota", VendorErrorCategory.QUOTA_EXHAUSTED),
     ("quota_exceeded", VendorErrorCategory.QUOTA_EXHAUSTED),
     ("insufficient_quota", VendorErrorCategory.QUOTA_EXHAUSTED),
+    ("status 401", VendorErrorCategory.AUTHENTICATION),
+    ("code: 401", VendorErrorCategory.AUTHENTICATION),
+    ("code 401", VendorErrorCategory.AUTHENTICATION),
+    ("http 401", VendorErrorCategory.AUTHENTICATION),
+    ("error 401", VendorErrorCategory.AUTHENTICATION),
+    ("401 unauthorized", VendorErrorCategory.AUTHENTICATION),
+    ("status 403", VendorErrorCategory.AUTHENTICATION),
+    ("code: 403", VendorErrorCategory.AUTHENTICATION),
+    ("code 403", VendorErrorCategory.AUTHENTICATION),
+    ("http 403", VendorErrorCategory.AUTHENTICATION),
+    ("error 403", VendorErrorCategory.AUTHENTICATION),
+    ("403 forbidden", VendorErrorCategory.AUTHENTICATION),
+    ("unauthorized", VendorErrorCategory.AUTHENTICATION),
+    ("unauthorised", VendorErrorCategory.AUTHENTICATION),
+    ("forbidden", VendorErrorCategory.AUTHENTICATION),
+    ("invalid api key", VendorErrorCategory.AUTHENTICATION),
+    ("invalid_api_key", VendorErrorCategory.AUTHENTICATION),
+    ("api key invalid", VendorErrorCategory.AUTHENTICATION),
+    ("authentication", VendorErrorCategory.AUTHENTICATION),
+    ("auth error", VendorErrorCategory.AUTHENTICATION),
+    ("permission denied", VendorErrorCategory.AUTHENTICATION),
     ("service unavailable", VendorErrorCategory.SERVICE_UNAVAILABLE),
     ("status 503", VendorErrorCategory.SERVICE_UNAVAILABLE),
     ("code: 503", VendorErrorCategory.SERVICE_UNAVAILABLE),
@@ -119,6 +141,34 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     return None
 
 
+def classify_systematic_provider_failure(
+    error: Exception | str,
+) -> VendorErrorCategory | None:
+    """Classify non-transient provider failures that should abort when systematic."""
+
+    exc = error if isinstance(error, Exception) else RuntimeError(str(error))
+    category = classify_vendor_error(exc)
+    if category in _SYSTEMATIC_FATAL_CATEGORIES:
+        return category
+    return None
+
+
+def provider_failure_action_hint(category: VendorErrorCategory | str | None) -> str:
+    """Return a user-actionable hint for fatal provider call failures."""
+
+    if isinstance(category, str):
+        try:
+            category = VendorErrorCategory(category)
+        except ValueError:
+            category = None
+    if category in _SYSTEMATIC_FATAL_CATEGORIES:
+        return _CATEGORY_DESCRIPTIONS[category]
+    return (
+        "Provider calls are failing before evaluation can score outputs. "
+        "Check provider credentials, quota, billing, and model access."
+    )
+
+
 _CATEGORY_DESCRIPTIONS: dict[VendorErrorCategory, str] = {
     VendorErrorCategory.RATE_LIMIT: (
         "The LLM provider is rate-limiting requests. "
@@ -132,10 +182,20 @@ _CATEGORY_DESCRIPTIONS: dict[VendorErrorCategory, str] = {
         "Your LLM provider API key has insufficient credits. "
         "Please top up your account at your provider's billing page and retry."
     ),
+    VendorErrorCategory.AUTHENTICATION: (
+        "The LLM provider rejected the API key or permissions. "
+        "Check the configured provider key, auth scope, project, and model access."
+    ),
     VendorErrorCategory.SERVICE_UNAVAILABLE: (
         "The LLM provider service is temporarily unavailable. "
         "This is usually a transient issue."
     ),
+}
+
+_SYSTEMATIC_FATAL_CATEGORIES = {
+    VendorErrorCategory.AUTHENTICATION,
+    VendorErrorCategory.INSUFFICIENT_FUNDS,
+    VendorErrorCategory.QUOTA_EXHAUSTED,
 }
 
 

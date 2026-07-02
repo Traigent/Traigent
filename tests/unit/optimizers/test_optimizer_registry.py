@@ -6,7 +6,6 @@ from unittest.mock import patch
 import pytest
 
 from traigent.api.types import TrialResult
-from traigent.config.feature_flags import flag_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.registry import (
     _OPTIMIZER_REGISTRY,
@@ -50,18 +49,6 @@ class NotAnOptimizer:
     """Class that doesn't inherit from BaseOptimizer."""
 
     pass
-
-
-@pytest.fixture(autouse=True)
-def reset_local_advanced_optimizer_flag(monkeypatch):
-    """Reset local advanced optimizer flag state for registry tests.
-
-    The flag is enabled by default, so we just ensure consistent state.
-    """
-    monkeypatch.delenv("TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED", raising=False)
-    flag_registry.reset()
-    yield
-    flag_registry.reset()
 
 
 class TestOptimizerRegistry:
@@ -365,3 +352,87 @@ class TestOptimizerRegistry:
 
         assert isinstance(optimizer, MockOptimizer)
         assert duration < 0.1
+
+
+# ---------------------------------------------------------------------------
+# Regression guard for #1402: single-source-of-truth for smart-algorithm set
+# ---------------------------------------------------------------------------
+
+
+class TestSmartAlgorithmSingleSource:
+    """Guard that registry._is_smart_algorithm delegates to config.types.
+
+    Issue #1402: registry._SMART_OPTIMIZER_NAMES duplicated
+    config/types._SMART_ALGORITHMS — two independent frozenset literals that
+    could silently drift when a new optimizer is added.  The fix removes
+    _SMART_OPTIMIZER_NAMES from registry and makes _is_smart_algorithm a thin
+    wrapper over config.types.is_smart_algorithm so there is exactly ONE
+    definition of the valid-set.
+    """
+
+    def test_registry_has_no_own_smart_optimizer_names_set(self) -> None:
+        """_SMART_OPTIMIZER_NAMES must no longer exist in registry module.
+
+        Its removal is the structural guarantee that the set cannot drift
+        independently — config.types._SMART_ALGORITHMS is the sole literal.
+        """
+        import traigent.optimizers.registry as registry_module
+
+        assert not hasattr(registry_module, "_SMART_OPTIMIZER_NAMES"), (
+            "_SMART_OPTIMIZER_NAMES must be removed from registry (issue #1402). "
+            "Add algorithms only to config/types._SMART_ALGORITHMS."
+        )
+
+    def test_registry_is_smart_algorithm_agrees_with_config_types(self) -> None:
+        """registry._is_smart_algorithm and config.types.is_smart_algorithm must agree.
+
+        For every name in the canonical set and several normalized variants,
+        the two classifiers must return the same answer — proving they share
+        one source of truth rather than maintaining independent copies.
+        """
+        from traigent.config.types import _SMART_ALGORITHMS, is_smart_algorithm
+        from traigent.optimizers.registry import _is_smart_algorithm
+
+        probe_names = list(_SMART_ALGORITHMS) + [
+            "BAYESIAN",
+            " optuna_tpe ",
+            "nsga-ii",
+            "cma-es",
+            "grid",
+            "random",
+            "auto",
+            "unknown_algo",
+        ]
+        for name in probe_names:
+            registry_result = _is_smart_algorithm(name)
+            canonical_result = is_smart_algorithm(name)
+            assert registry_result == canonical_result, (
+                f"registry._is_smart_algorithm({name!r}) = {registry_result} "
+                f"but config.types.is_smart_algorithm({name!r}) = {canonical_result}. "
+                "They must agree — single source of truth."
+            )
+
+    def test_registry_is_smart_algorithm_delegates_to_config_types(self) -> None:
+        """registry._is_smart_algorithm must delegate; not re-implement the logic.
+
+        We verify this structurally: the function itself is a thin wrapper
+        whose body calls the canonical function.  If a new smart optimizer is
+        added to config/types._SMART_ALGORITHMS, registry._is_smart_algorithm
+        must reflect it automatically without any changes to registry.py.
+        """
+        from unittest.mock import patch
+
+        from traigent.optimizers.registry import _is_smart_algorithm
+
+        # Patch the canonical classifier; the registry wrapper must honour it.
+        with patch(
+            "traigent.optimizers.registry._is_smart_algorithm_canonical",
+            return_value=True,
+        ) as mock_canonical:
+            result = _is_smart_algorithm("some_future_algo")
+
+        mock_canonical.assert_called_once_with("some_future_algo")
+        assert result is True, (
+            "registry._is_smart_algorithm must return whatever the canonical "
+            "classifier returns — it must not re-implement the decision."
+        )

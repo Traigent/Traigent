@@ -156,7 +156,9 @@ def test_format_evidence_ref_projects_public_allowlist_only() -> None:
     assert "proprietary_tuning_signal" not in note
 
 
-def test_unexpected_catalog_evidence_field_is_not_public(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unexpected_catalog_evidence_field_is_not_public(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     entry = copy.deepcopy(recommendation_module._active_catalog_entries("rag")[0])
     entry["evidence_refs"][0]["proprietary_tuning_signal"] = "internal-taxonomy-value"
 

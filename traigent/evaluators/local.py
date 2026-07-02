@@ -19,6 +19,7 @@ from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
     EvaluationResult,
+    _accuracy_values_match,
     _example_correlation_key,
 )
 from traigent.evaluators.metrics_tracker import (
@@ -89,6 +90,22 @@ class _AggregatedResponses:
                 usage.get("output_tokens", 0),
                 usage.get("total_tokens", 0),
             )
+
+        usage_obj = getattr(resp, "usage", None)
+        if usage_obj is not None:
+            input_tokens = getattr(usage_obj, "prompt_tokens", 0) or 0
+            output_tokens = getattr(usage_obj, "completion_tokens", 0) or 0
+            total_tokens = getattr(usage_obj, "total_tokens", None)
+            if isinstance(input_tokens, (int, float)) and isinstance(
+                output_tokens, (int, float)
+            ):
+                if isinstance(total_tokens, (int, float)):
+                    return (int(input_tokens), int(output_tokens), int(total_tokens))
+                return (
+                    int(input_tokens),
+                    int(output_tokens),
+                    int(input_tokens + output_tokens),
+                )
 
         resp_meta = getattr(resp, "response_metadata", None)
         if not resp_meta or not isinstance(resp_meta, dict):
@@ -202,7 +219,7 @@ class LocalEvaluator(BaseEvaluator):
             timeout: Timeout for individual evaluations (seconds)
             max_workers: Maximum number of concurrent evaluations
             detailed: Whether to preserve detailed example results
-            execution_mode: Execution mode ("edge_analytics", "hybrid", or "hybrid_api") for determining submission format
+            execution_mode: Execution mode ("local", "hybrid", or "hybrid_api") for determining submission format
             **kwargs: Additional configuration
         """
         if "privacy_enabled" in kwargs:
@@ -528,12 +545,8 @@ class LocalEvaluator(BaseEvaluator):
             return None
 
         if isinstance(actual_value, str) and isinstance(expected_output, str):
-            return (
-                1.0
-                if actual_value.strip().lower() == expected_output.strip().lower()
-                else 0.0
-            )
-        return 1.0 if actual_value == expected_output else 0.0
+            return 1.0 if _accuracy_values_match(actual_value, expected_output) else 0.0
+        return 1.0 if _accuracy_values_match(actual_value, expected_output) else 0.0
 
     def _transfer_token_metrics_to_example_result(
         self,
@@ -960,16 +973,22 @@ class LocalEvaluator(BaseEvaluator):
             logger.error(f"Failed to inject response_time_ms: {e}")
 
     def _extract_and_inject_traigent_meta(
-        self, output: Any, metrics: ExampleMetrics
+        self,
+        output: Any,
+        metrics: ExampleMetrics,
+        model_name: str | None = None,
     ) -> TraigentMetadata | None:
         """Extract __traigent_meta__ from output and inject into metrics.
 
         This method runs AFTER cost calculation to allow user-provided costs
-        to override SDK-calculated values (including mock mode zeros).
+        to override SDK-calculated values when plausible.
 
         Args:
             output: Raw function output (may be dict with __traigent_meta__).
             metrics: ExampleMetrics to update with user-provided values.
+            model_name: Optional model name for best-effort token-cost plausibility
+                checks. Without a model or known pricing, reported BYOK costs are
+                accepted as-is.
 
         Returns:
             The meta dict if found, None otherwise.
@@ -1007,6 +1026,12 @@ class LocalEvaluator(BaseEvaluator):
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
+            if model_name:
+                from traigent.evaluators.metrics_tracker import (
+                    _reconcile_reported_cost_with_tokens,
+                )
+
+                _reconcile_reported_cost_with_tokens(metrics, model_name)
         except Exception as e:
             logger.error(f"Failed to inject total_cost: {e}")
 
@@ -1079,9 +1104,19 @@ class LocalEvaluator(BaseEvaluator):
             output, index, config, dataset, all_captured_responses
         )
 
-        # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present
-        # This MUST happen AFTER extract_llm_metrics returns (so we can override cost)
-        self._extract_and_inject_traigent_meta(output, example_metric)
+        model_name = config.get("model") or config.get("model_name")
+        if not model_name:
+            model_name = self._infer_model_name_from_output(
+                output, index, all_captured_responses
+            )
+
+        # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present.
+        # This happens after extract_llm_metrics so honest reported costs can
+        # override SDK calculation while implausible token-priced under-reports
+        # are clamped back to the canonical token-derived estimate.
+        self._extract_and_inject_traigent_meta(
+            output, example_metric, model_name=model_name
+        )
 
         # Set success status
         example_metric.success = errors[index] is None
@@ -1175,10 +1210,7 @@ class LocalEvaluator(BaseEvaluator):
                 continue
 
             total += 1
-            if isinstance(value, str) and isinstance(expected, str):
-                if value.strip().lower() == expected.strip().lower():
-                    correct += 1
-            elif value == expected:
+            if _accuracy_values_match(value, expected):
                 correct += 1
 
         if total > 0:
@@ -1536,14 +1568,8 @@ class LocalEvaluator(BaseEvaluator):
             else actual_output
         )
 
-        # Exact match
-        if actual_to_compare == expected_output:
+        if _accuracy_values_match(actual_to_compare, expected_output):
             return 1.0
-
-        # Try case-insensitive comparison for string outputs
-        if isinstance(actual_to_compare, str) and isinstance(expected_output, str):
-            if actual_to_compare.lower().strip() == expected_output.lower().strip():
-                return 1.0
 
         return 0.0
 

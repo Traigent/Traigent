@@ -118,11 +118,13 @@ class BackendConfig:
 
         origin = cls._normalize_origin(backend_env)
         if origin:
+            cls._log_env_backend_override_if_different("TRAIGENT_BACKEND_URL", origin)
             logger.debug("Using TRAIGENT_BACKEND_URL: %s", origin)
             return origin
 
         api_origin, _ = cls._extract_origin_and_path(api_env)
         if api_origin:
+            cls._log_env_backend_override_if_different("TRAIGENT_API_URL", api_origin)
             logger.debug("Using TRAIGENT_API_URL origin: %s", api_origin)
             return api_origin
 
@@ -142,6 +144,28 @@ class BackendConfig:
             pass
 
         return None
+
+    @classmethod
+    def _log_env_backend_override_if_different(
+        cls, env_name: str, env_origin: str
+    ) -> None:
+        """Log when an env backend URL intentionally overrides stored CLI state."""
+
+        try:
+            from traigent.cloud.credential_manager import CredentialManager
+
+            raw_url = CredentialManager.get_stored_backend_url()
+        except (ImportError, AttributeError):
+            return
+
+        stored_url = cls._normalize_origin(raw_url) if raw_url else None
+        if stored_url and stored_url != env_origin:
+            logger.info(
+                "%s overrides stored CLI backend_url: stored=%s env=%s",
+                env_name,
+                stored_url,
+                env_origin,
+            )
 
     @classmethod
     def get_configured_backend_url(cls) -> str | None:

@@ -164,9 +164,9 @@ class TestAnthropicSDKCost:
             expected_output_price_per_token=CLAUDE_HAIKU_OUTPUT_PRICE,
         )
 
-        assert (
-            result.cost_matches
-        ), f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        assert result.cost_matches, (
+            f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        )
 
         return result
 

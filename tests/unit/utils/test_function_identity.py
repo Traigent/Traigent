@@ -344,9 +344,9 @@ class TestResolveFunctionDescriptor:
         desc = resolve_function_descriptor(simple_function)
 
         # Should use POSIX-style forward slashes
-        assert (
-            "\\" not in desc.relative_path
-        ), "Relative path should use forward slashes"
+        assert "\\" not in desc.relative_path, (
+            "Relative path should use forward slashes"
+        )
 
 
 class TestFunctionIdentityEdgeCases:
@@ -392,7 +392,10 @@ class TestFunctionIdentityEdgeCases:
 
         desc = resolve_function_descriptor(test_func)
 
-        assert desc.module is not None
+        # "__main__" is treated as non-informative, so the module component
+        # is derived from the dotted relative source path instead.
+        assert desc.module == "tests.unit.utils.test_function_identity"
+        assert desc.module != "__main__"
 
     def test_very_long_function_name(self):
         """Test function with very long name."""
@@ -419,8 +422,13 @@ class TestFunctionIdentityEdgeCases:
 
         desc = resolve_function_descriptor(test_func)
 
-        # Should sanitize special characters
-        assert desc.identifier is not None
+        # display_name preserves the raw qualname verbatim
+        assert desc.display_name == "Test<lambda>.function"
+        # identifier only replaces dots, so other special chars survive
+        assert desc.identifier.endswith("Test<lambda>_function")
+        # slug is the filesystem-safe field and must be sanitized
+        assert "<" not in desc.slug
+        assert ">" not in desc.slug
 
     def test_descriptor_uniqueness(self):
         """Test that different functions get different descriptors."""
@@ -485,8 +493,16 @@ class TestFunctionIdentityEdgeCases:
         add_five = partial(add, 5)
         desc = resolve_function_descriptor(add_five)
 
-        # Should unwrap partial
-        assert desc.identifier is not None
+        # FunctionDescriptor is documented to combine relative path, module,
+        # and qualname into a stable identifier. For a functools.partial that
+        # wraps a real function, a correct implementation should resolve to
+        # the *wrapped* function's identity (its module and qualname), not
+        # the generic "functools" module / "unknown" qualname a bare,
+        # unresolved partial object produces.
+        assert desc.module == add.__module__
+        assert desc.identifier.endswith(add.__qualname__.replace(".", "_"))
+        assert not desc.identifier.endswith("_unknown")
+        assert desc.display_name == add.__qualname__
 
     def test_class_as_callable(self):
         """Test resolving class used as callable."""
@@ -498,7 +514,14 @@ class TestFunctionIdentityEdgeCases:
         instance = CallableClass()
         desc = resolve_function_descriptor(instance)
 
-        assert desc.identifier is not None
+        # Same documented contract as above: a callable class instance's
+        # identity should resolve to its class's real qualname (e.g.
+        # "CallableClass"), not the generic "unknown" qualname a bare
+        # instance without its own __qualname__/__name__ produces.
+        assert desc.module == __name__
+        assert desc.identifier.endswith(CallableClass.__qualname__.replace(".", "_"))
+        assert not desc.identifier.endswith("_unknown")
+        assert desc.display_name == CallableClass.__qualname__
 
 
 class TestSanitizeIdentifierRobustness:
@@ -562,23 +585,30 @@ class TestResolveDescriptorPathHandling:
             base_path = Path(tmpdir)
             desc = resolve_function_descriptor(simple_function, base_dir=base_path)
 
-            assert desc.identifier is not None
+            # simple_function's source file is not under tmpdir, so
+            # resolution falls back to the cwd-relative path rather than
+            # erroring or anchoring to the unrelated tmpdir.
+            assert desc.relative_path == "tests/unit/utils/test_function_identity.py"
+            assert desc.identifier.endswith("_simple_function")
 
     def test_resolve_with_string_base_dir(self):
         """Test resolving with string as base_dir."""
         with tempfile.TemporaryDirectory() as tmpdir:
             desc = resolve_function_descriptor(simple_function, base_dir=tmpdir)
 
-            assert desc.identifier is not None
+            assert desc.relative_path == "tests/unit/utils/test_function_identity.py"
+            assert desc.identifier.endswith("_simple_function")
 
     def test_resolve_with_invalid_base_dir(self):
         """Test resolving with invalid base directory."""
-        # Should handle gracefully
+        # Nonexistent base_dir does not match the real source path, so
+        # resolution gracefully falls back to the cwd-relative path.
         desc = resolve_function_descriptor(
             simple_function, base_dir="/nonexistent/path"
         )
 
-        assert desc.identifier is not None
+        assert desc.relative_path == "tests/unit/utils/test_function_identity.py"
+        assert desc.identifier.endswith("_simple_function")
 
     def test_resolve_without_base_dir(self):
         """Test resolving without base_dir uses cwd."""

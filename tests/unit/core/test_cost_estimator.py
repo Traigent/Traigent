@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from traigent.core.cost_estimator import CostEstimator
+from traigent.utils.exceptions import CostLimitExceeded, OptimizationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -342,21 +343,23 @@ class TestCheckCostApproval:
             estimator.check_cost_approval(_FakeDataset())
         enforcer.check_and_approve.assert_called_once()
 
-    def test_raises_when_declined(self) -> None:
+    def test_raises_cost_limit_exceeded_when_declined(self) -> None:
         enforcer = MagicMock(is_mock_mode=False)
         enforcer.check_and_approve.return_value = False
         enforcer.config.limit = 1.0
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
 
-        from traigent.core.cost_enforcement import OptimizationAborted
-
         with (
             patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
-            pytest.raises(OptimizationAborted) as exc_info,
+            pytest.raises(CostLimitExceeded) as exc_info,
         ):
             estimator.check_cost_approval(_FakeDataset())
 
         message = str(exc_info.value)
+        assert exc_info.value.accumulated == 0.0
+        assert exc_info.value.spent == 0.0
+        assert exc_info.value.limit == 1.0
+        assert exc_info.value.estimated == pytest.approx(20.25)
         assert "Cost approval declined" in message
         assert "Rough conservative upper-bound estimate" in message
         assert "TRAIGENT_RUN_COST_LIMIT" in message
@@ -364,6 +367,20 @@ class TestCheckCostApproval:
         assert "cost_approved=True" in message
         assert "TRAIGENT_CUSTOM_MODEL_PRICING_FILE" in message
         assert "TRAIGENT_CUSTOM_MODEL_PRICING_JSON" in message
+
+    def test_declined_cost_limit_is_catchable_as_optimization_error(self) -> None:
+        enforcer = MagicMock(is_mock_mode=False)
+        enforcer.check_and_approve.return_value = False
+        enforcer.config.limit = 1.0
+        estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
+
+        with (
+            patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
+            pytest.raises(OptimizationError) as exc_info,
+        ):
+            estimator.check_cost_approval(_FakeDataset())
+
+        assert isinstance(exc_info.value, CostLimitExceeded)
 
 
 # ---------------------------------------------------------------------------

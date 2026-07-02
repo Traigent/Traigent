@@ -20,11 +20,13 @@ Key Features:
 
 from __future__ import annotations
 
+import ast
 import functools
+import importlib
 import inspect
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
-from typing import Any, cast
+from typing import Any, cast, get_type_hints
 
 from ..config.context import get_config
 from ..config.types import TraigentConfig
@@ -34,7 +36,7 @@ from ..utils.logging import get_logger
 from .base import BaseOverrideManager
 
 # Import static mappings from dedicated module
-from .mappings import METHOD_MAPPINGS, PARAMETER_MAPPINGS
+from .mappings import METHOD_MAPPINGS, METHOD_PARAMETER_TRANSLATIONS, PARAMETER_MAPPINGS
 
 logger = get_logger(__name__)
 
@@ -79,13 +81,14 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
         self._parameter_mappings = self._init_parameter_mappings()
         self._method_mappings = self._init_method_mappings()
+        self._method_parameter_translations = self._init_method_parameter_translations()
 
     def _init_parameter_mappings(self) -> dict[str, dict[str, str]]:
         """Initialize parameter mappings for different frameworks.
 
-        Uses static mappings from mappings.py as the baseline.
-        These serve as fallback when no plugin is registered for a framework.
-        Plugin mappings (via LLMPlugin._get_default_mappings) take precedence.
+        Uses static mappings from mappings.py as the single source of truth.
+        Every class registered in get_target_classes() of any plugin must have
+        a corresponding entry here for overrides to inject params at call sites.
         """
         # Deep copy to allow instance-level modifications without affecting global mappings
         return {k: dict(v) for k, v in PARAMETER_MAPPINGS.items()}
@@ -93,15 +96,30 @@ class FrameworkOverrideManager(BaseOverrideManager):
     def _init_method_mappings(self) -> dict[str, dict[str, list[str]]]:
         """Initialize method mappings for different frameworks.
 
-        Uses static mappings from mappings.py as the baseline.
-        Maps class names to methods that should be overridden for parameter injection.
-        These serve as fallback when no plugin is registered for a framework.
+        Uses static mappings from mappings.py as the single active source of truth.
+        Maps class names to methods and the Traigent canonical param names each method
+        accepts. The method override injects only params listed here (combined with
+        METHOD_PARAMETER_TRANSLATIONS for non-identity name translations).
         """
         # Deep copy to allow instance-level modifications without affecting global mappings
         # Inner lists also need to be copied
         return {
             k: {method: list(params) for method, params in v.items()}
             for k, v in METHOD_MAPPINGS.items()
+        }
+
+    def _init_method_parameter_translations(
+        self,
+    ) -> dict[str, dict[str, dict[str, str]]]:
+        """Initialize method-level parameter name translations.
+
+        Used when a method's framework param name differs from the Traigent canonical
+        name but the param is intentionally absent from the class-level PARAMETER_MAPPINGS
+        (because it is not a valid constructor arg). Deep-copied for instance isolation.
+        """
+        return {
+            k: {method: dict(trans) for method, trans in v.items()}
+            for k, v in METHOD_PARAMETER_TRANSLATIONS.items()
         }
 
     def register_framework_target(
@@ -201,10 +219,30 @@ class FrameworkOverrideManager(BaseOverrideManager):
         Returns:
             Overridden method with parameter injection
         """
-        parameter_mapping = self._parameter_mappings.get(class_name, {})
+        # supported_params: the Traigent canonical names this method accepts.
         supported_params = self._method_mappings.get(class_name, {}).get(
             method_name, []
         )
+
+        # Build the effective parameter name translation for this method.
+        # Priority (highest to lowest):
+        #   1. Method-specific translations from METHOD_PARAMETER_TRANSLATIONS
+        #      (e.g. HF text_generation: max_tokens → max_new_tokens).
+        #      These cover generation params intentionally excluded from the class-level
+        #      PARAMETER_MAPPINGS to avoid TypeError on __init__.
+        #   2. Class-level PARAMETER_MAPPINGS (constructor-valid params, e.g. model).
+        #   3. Identity: for any supported param not covered above, the framework param
+        #      name equals the Traigent canonical name (e.g. temperature → temperature).
+        method_translations = self._method_parameter_translations.get(
+            class_name, {}
+        ).get(method_name, {})
+        class_mapping = self._parameter_mappings.get(class_name, {})
+        effective_mapping: dict[str, str] = dict(class_mapping)
+        effective_mapping.update(method_translations)  # method translations win
+        for sp in supported_params:
+            if sp not in effective_mapping:
+                effective_mapping[sp] = sp  # identity fallback
+
         override_active = self._override_active  # Capture in closure
 
         @functools.wraps(original_method)
@@ -233,15 +271,21 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             config_space = get_config_space()
 
-            # Override parameters based on mapping and supported params
+            # Override parameters based on supported_params and effective translation.
+            # Iterating supported_params (not parameter_mapping) ensures we inject all
+            # method-accepted generation params even when they are absent from the
+            # class-level PARAMETER_MAPPINGS (e.g. temperature for HF InferenceClient).
             overridden_kwargs = kwargs.copy()
             overrides_applied = []
 
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict and traigent_param in supported_params:
+            for traigent_param in supported_params:
+                if traigent_param in config_dict:
                     # Only override if parameter is in configuration space (being optimized)
                     # or if no configuration space is set (not in optimization)
                     if config_space is None or traigent_param in config_space:
+                        framework_param = effective_mapping.get(
+                            traigent_param, traigent_param
+                        )
                         override_value = config_dict[traigent_param]
                         original_value = overridden_kwargs.get(
                             framework_param, "not_set"
@@ -283,15 +327,18 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             config_space = get_config_space()
 
-            # Override parameters based on mapping and supported params
+            # Override parameters based on supported_params and effective translation.
             overridden_kwargs = kwargs.copy()
             overrides_applied = []
 
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict and traigent_param in supported_params:
+            for traigent_param in supported_params:
+                if traigent_param in config_dict:
                     # Only override if parameter is in configuration space (being optimized)
                     # or if no configuration space is set (not in optimization)
                     if config_space is None or traigent_param in config_space:
+                        framework_param = effective_mapping.get(
+                            traigent_param, traigent_param
+                        )
                         override_value = config_dict[traigent_param]
                         original_value = overridden_kwargs.get(
                             framework_param, "not_set"
@@ -326,14 +373,8 @@ class FrameworkOverrideManager(BaseOverrideManager):
             method_path: Dot-separated path to the method (e.g., "messages.create")
         """
         try:
-            # Navigate to the method location
-            current_obj = target_class
             path_parts = method_path.split(".")
-
-            # Navigate to the parent object containing the method
-            for part in path_parts[:-1]:
-                current_obj = getattr(current_obj, part)
-
+            current_obj = self._resolve_method_parent(target_class, path_parts[:-1])
             method_name = path_parts[-1]
             original_method = getattr(current_obj, method_name)
 
@@ -350,20 +391,149 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             # Track for cleanup
             method_key = f"{class_name}.{method_path}"
-            self._original_methods[method_key] = (
-                current_obj,
-                method_name,
+            self.store_original_method(
+                method_key,
                 original_method,
+                target=current_obj,
+                attribute=method_name,
             )
 
-        except (AttributeError, TypeError):
-            # Method not found or not accessible, skip silently
-            logger.debug(
-                "Skipping override for %s because %s.%s is unavailable",
+        except (AttributeError, TypeError) as exc:
+            logger.warning(
+                "Skipping override for %s because %s.%s is unavailable: %s",
                 method_path,
                 class_name,
                 method_path,
+                exc,
             )
+
+    def _resolve_method_parent(self, target_class: type, path_parts: list[str]) -> Any:
+        """Resolve a dotted method parent, including cached-property resources."""
+
+        current_obj: Any = target_class
+        for part in path_parts:
+            descriptor = inspect.getattr_static(current_obj, part, None)
+            if isinstance(descriptor, functools.cached_property):
+                resource_class = self._cached_property_return_class(descriptor)
+                if resource_class is None:
+                    raise AttributeError(
+                        f"cached property '{part}' has no resolvable return class"
+                    )
+                current_obj = resource_class
+                continue
+            current_obj = getattr(current_obj, part)
+        return current_obj
+
+    def _cached_property_return_class(
+        self, descriptor: functools.cached_property[Any]
+    ) -> type | None:
+        """Resolve a cached_property resource accessor's annotated return class."""
+
+        func = getattr(descriptor, "func", None)
+        if func is None:
+            return None
+        try:
+            return_type = get_type_hints(func).get("return")
+        except (NameError, TypeError, AttributeError):
+            return_type = getattr(func, "__annotations__", {}).get("return")
+        return self._annotation_to_class(return_type, func)
+
+    def _annotation_to_class(
+        self, annotation: Any, func: Callable[..., Any]
+    ) -> type | None:
+        """Resolve a direct class annotation, including SDK string annotations."""
+
+        if isinstance(annotation, type):
+            return annotation
+        if not isinstance(annotation, str):
+            return None
+
+        annotation_name = self._normalize_annotation_string(annotation)
+        if not annotation_name:
+            return None
+
+        raw_globalns = getattr(func, "__globals__", {})
+        globalns = (
+            cast(dict[str, Any], raw_globalns) if isinstance(raw_globalns, dict) else {}
+        )
+        resolved = self._resolve_annotation_name(annotation_name, globalns)
+        if isinstance(resolved, type):
+            return cast(type, resolved)
+        for module_name in self._annotation_candidate_modules(func):
+            try:
+                module = importlib.import_module(module_name)
+            except (ImportError, ValueError):
+                continue
+            module_globals = vars(module)
+            if module_globals is globalns:
+                continue
+            resolved = self._resolve_annotation_name(annotation_name, module_globals)
+            if isinstance(resolved, type):
+                return cast(type, resolved)
+        return None
+
+    def _annotation_candidate_modules(self, func: Callable[..., Any]) -> list[str]:
+        """Return modules that commonly expose SDK resource annotation names."""
+
+        module_name = getattr(func, "__module__", "")
+        if not module_name:
+            return []
+
+        candidate_names = [module_name]
+        package_name = module_name.split(".", 1)[0]
+        if package_name:
+            candidate_names.append(f"{package_name}.resources")
+
+        seen: set[str] = set()
+        unique_candidate_names = []
+        for candidate_name in candidate_names:
+            if candidate_name and candidate_name not in seen:
+                seen.add(candidate_name)
+                unique_candidate_names.append(candidate_name)
+        return unique_candidate_names
+
+    def _normalize_annotation_string(self, annotation: str) -> str:
+        """Normalize quoted forward-reference annotation strings."""
+
+        annotation = annotation.strip()
+        try:
+            literal_value = ast.literal_eval(annotation)
+        except (SyntaxError, ValueError):
+            return annotation
+        if isinstance(literal_value, str):
+            return literal_value.strip()
+        return annotation
+
+    def _resolve_annotation_name(
+        self, annotation_name: str, globalns: dict[str, Any]
+    ) -> Any:
+        """Resolve an identifier or dotted annotation name without broad eval."""
+
+        parts = annotation_name.split(".")
+        if not parts or not all(part.isidentifier() for part in parts):
+            return None
+
+        if parts[0] in globalns:
+            resolved = globalns[parts[0]]
+            for part in parts[1:]:
+                resolved = getattr(resolved, part, None)
+                if resolved is None:
+                    return None
+            return resolved
+
+        for module_end in range(len(parts) - 1, 0, -1):
+            module_name = ".".join(parts[:module_end])
+            try:
+                resolved = importlib.import_module(module_name)
+            except (ImportError, ValueError):
+                continue
+            for part in parts[module_end:]:
+                resolved = getattr(resolved, part, None)
+                if resolved is None:
+                    break
+            else:
+                return resolved
+        return None
 
     def activate_overrides(self, framework_targets: list[str]) -> None:
         """Activate framework overrides for specified targets.
@@ -613,7 +783,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
                 package, version
             )
             if version_mapping:
-                return version_mapping
+                return cast(dict[str, str], version_mapping)
 
         # Discover parameters dynamically
         if self.discovery is not None:
@@ -846,9 +1016,12 @@ def override_cohere() -> None:
 
 
 def override_huggingface() -> None:
-    """Enable overrides for HuggingFace classes."""
+    """Enable overrides for HuggingFace Hub InferenceClient classes."""
     enable_framework_overrides(
-        ["transformers.pipeline", "transformers.AutoModelForCausalLM"]
+        [
+            "huggingface_hub.InferenceClient",
+            "huggingface_hub.AsyncInferenceClient",
+        ]
     )
 
 
@@ -870,9 +1043,9 @@ def override_all_platforms() -> None:
             # Cohere
             "cohere.Client",
             "cohere.AsyncClient",
-            # HuggingFace
-            "transformers.pipeline",
-            "transformers.AutoModelForCausalLM",
+            # HuggingFace Hub
+            "huggingface_hub.InferenceClient",
+            "huggingface_hub.AsyncInferenceClient",
         ]
     )
 

@@ -12,6 +12,8 @@ from typing import Any
 from urllib import error, request
 from urllib.parse import quote
 
+from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
@@ -36,7 +38,10 @@ class BenchmarkClientConfig:
     request_timeout: float = 120.0  # generation can be slow
 
     def __post_init__(self) -> None:
-        self.backend_origin = self.backend_origin.rstrip("/")
+        backend_origin = self.backend_origin.rstrip("/")
+        self.backend_origin = validate_cloud_base_url(
+            backend_origin, purpose="benchmark request"
+        )
         self.tenant_id = (
             self.tenant_id.strip() or None if self.tenant_id is not None else None
         )
@@ -62,7 +67,7 @@ class BenchmarkClientConfig:
     def build_headers(self) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "traigent-benchmark/0.1",
+            "User-Agent": get_sdk_user_agent(),
         }
         if self.api_key:
             headers["X-API-Key"] = self.api_key

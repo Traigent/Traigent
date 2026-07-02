@@ -8,6 +8,7 @@ Tests for credential resolution, loading, caching, and encryption.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -508,9 +509,14 @@ class TestExpiresAtParsing:
 
         await resolver.load_credentials(AuthMode.API_KEY)
 
-        set_token_mock.assert_called_once()
-        call_kwargs = set_token_mock.call_args
-        assert call_kwargs[1]["expires_at"] is not None
+        # The ISO string must be parsed into a real datetime and forwarded
+        # verbatim, along with the api key and metadata source, to the
+        # token-setter callback.
+        set_token_mock.assert_called_once_with(
+            valid_api_key,
+            source="test",
+            expires_at=datetime.fromisoformat(expires_iso),
+        )
 
     @pytest.mark.asyncio
     async def test_handles_invalid_expires_at_format(

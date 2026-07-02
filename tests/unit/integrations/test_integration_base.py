@@ -484,9 +484,9 @@ class TestContextManagement:
         base_manager.end_override_context(framework1)
 
         # Should be cleaned up - verify no active overrides remain
-        assert (
-            len(base_manager._active_overrides) == 0
-        ), "Active overrides should be empty after cleanup"
+        assert len(base_manager._active_overrides) == 0, (
+            "Active overrides should be empty after cleanup"
+        )
 
 
 class TestCleanupAndLifecycle:

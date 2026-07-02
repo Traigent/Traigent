@@ -37,11 +37,7 @@ CVAR_VOCABULARY = {
 
 
 def _new_entries() -> list[dict[str, object]]:
-    entries = [
-        entry
-        for entry in load_catalog()
-        if str(entry.get("name")) in NEW_NAMES
-    ]
+    entries = [entry for entry in load_catalog() if str(entry.get("name")) in NEW_NAMES]
     assert {str(entry["name"]) for entry in entries} == NEW_NAMES
     return entries
 
@@ -69,7 +65,9 @@ def test_recommendations_include_aci_rows_for_code_gen_at_low_confidence() -> No
             assert "software_engineering_agent" in row["apply_guidance"]
 
 
-def test_recommendations_include_context_budget_rows_for_rag_at_low_confidence() -> None:
+def test_recommendations_include_context_budget_rows_for_rag_at_low_confidence() -> (
+    None
+):
     payload = recommend_configuration_space("rag", min_confidence="low")
     names = {row["name"] for row in payload["recommendations"]}
 
@@ -101,7 +99,10 @@ def test_external_paper_evidence_derives_low_confidence_honestly() -> None:
     ]
     assert len(rows) == 10
     assert {row["confidence"] for row in rows} == {"low"}
-    assert all("observational support; no measured delta" in row["evidence_note"] for row in rows)
+    assert all(
+        "observational support; no measured delta" in row["evidence_note"]
+        for row in rows
+    )
 
 
 def test_rows_do_not_expand_public_agent_types() -> None:

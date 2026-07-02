@@ -105,7 +105,7 @@ class StreamingInvocationResult:
     @property
     def accumulated_content(self) -> str:
         """Get all chunk contents concatenated as a string."""
-        return "".join(str(chunk.content) for chunk in self.chunks)
+        return "".join(str(chunk.content) for chunk in self.chunks if chunk.content)
 
     @property
     def chunk_count(self) -> int:
@@ -293,16 +293,21 @@ class BaseInvoker(ABC):
             async for chunk in self.invoke_streaming(func, config, input_data):
                 chunk.index = chunk_index
                 result.add_chunk(chunk)
+                if "usage" in chunk.metadata:
+                    result.metadata["usage"] = chunk.metadata["usage"]
                 chunk_index += 1
 
             end_time = time.time()
-            result.execution_time = end_time - start_time
-            result.metadata = self.create_metadata(
+            streaming_metadata = self.create_metadata(
                 start_time,
                 end_time,
                 streaming=True,
                 chunk_count=result.chunk_count,
             )
+            if "usage" in result.metadata:
+                streaming_metadata["usage"] = result.metadata["usage"]
+            result.execution_time = end_time - start_time
+            result.metadata = streaming_metadata
             result.is_complete = True
 
         except Exception as e:
@@ -398,7 +403,12 @@ class BaseInvoker(ABC):
         config: dict[str, Any],
         input_data: dict[str, Any],
     ) -> InvocationResult:
-        """Invoke function with retry logic.
+        """Invoke function with retry logic for callers that opt into it.
+
+        This helper is part of the BaseInvoker surface, but the optimizer's
+        default evaluation path calls ``invoke()`` directly today. As a result,
+        ``max_retries`` here is not automatically wired into per-example eval
+        retries unless a caller explicitly routes execution through this helper.
 
         Args:
             func: Function to invoke

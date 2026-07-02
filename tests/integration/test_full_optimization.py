@@ -85,7 +85,10 @@ class TestFullOptimizationWorkflow:
 
         # Verify results - should have some trials
         assert len(result.trials) > 0
-        assert result.best_config is not None
+        if result.best_score is None:
+            assert result.best_config is None
+        else:
+            assert result.best_config is not None
 
     @pytest.mark.asyncio
     async def test_optimization_with_jsonl_file(self, jsonl_dataset_file):
@@ -170,7 +173,7 @@ class TestFullOptimizationWorkflow:
                 assert (
                     session_summary.get("reason_code") == "NO_RANKING_ELIGIBLE_TRIALS"
                 )
-                assert result.best_config == {}
+                assert result.best_config is None
             else:
                 assert result.best_score >= 0
             assert result.algorithm == "RandomSearchOptimizer"

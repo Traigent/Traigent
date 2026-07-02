@@ -41,7 +41,9 @@ def seamless_qa_agent(question: str) -> str:
     temp_desc = (
         "creative"
         if temperature > 0.7
-        else "balanced" if temperature > 0.3 else "focused"
+        else "balanced"
+        if temperature > 0.3
+        else "focused"
     )
 
     return f"[{model}|temp={temperature}|{temp_desc}|{quality}] Answer to: {question}"
@@ -74,7 +76,9 @@ def parameter_qa_agent(question: str, config: TraigentConfig) -> str:
     temp_desc = (
         "creative"
         if temperature > 0.7
-        else "balanced" if temperature > 0.3 else "focused"
+        else "balanced"
+        if temperature > 0.3
+        else "focused"
     )
 
     return f"[{model}|temp={temperature}|{temp_desc}|{quality}] Answer to: {question}"
@@ -229,7 +233,9 @@ def context_qa_agent(question: str) -> str:
     temp_desc = (
         "creative"
         if temperature > 0.7
-        else "balanced" if temperature > 0.3 else "focused"
+        else "balanced"
+        if temperature > 0.3
+        else "focused"
     )
 
     return f"[{model}|temp={temperature}|{temp_desc}|{quality}] Answer to: {question}"

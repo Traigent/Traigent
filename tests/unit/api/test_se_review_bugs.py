@@ -48,9 +48,9 @@ class TestSilentConstraintFailures:
         result = condition.evaluate_config(config_without_temp, var_names)
 
         # CORRECT behavior: missing param should NOT satisfy the condition
-        assert (
-            result is False
-        ), "Missing parameter 'temperature' should not satisfy 'temp <= 0.7'"
+        assert result is False, (
+            "Missing parameter 'temperature' should not satisfy 'temp <= 0.7'"
+        )
 
     def test_implication_should_fail_when_then_param_missing(self) -> None:
         """implies(model=='gpt-4', temp<=0.7) must fail when temp is missing."""
@@ -66,9 +66,9 @@ class TestSilentConstraintFailures:
 
         # CORRECT behavior: when model=gpt-4, temperature MUST be present
         # and <= 0.7. Missing temperature should fail the constraint.
-        assert (
-            result is False
-        ), "Implication should fail when 'then' parameter is missing from config"
+        assert result is False, (
+            "Implication should fail when 'then' parameter is missing from config"
+        )
 
     def test_stale_var_names_should_raise_or_fail(self) -> None:
         """A stale var_names mapping must not silently bypass constraints."""
@@ -138,16 +138,16 @@ class TestIdBasedMappingFragility:
 
         # CORRECT behavior: the mapped NAMES should be the same
         # (even if the mechanism changes from id-based to name-based)
-        assert set(var_names_before.values()) == set(
-            var_names_after.values()
-        ), "Parameter names should be preserved after pickle"
+        assert set(var_names_before.values()) == set(var_names_after.values()), (
+            "Parameter names should be preserved after pickle"
+        )
 
         # And constraints should still work after pickle
         config_bad = {"model": "gpt-4", "temperature": 1.5}
         result = restored.constraints[0].evaluate(config_bad, var_names_after)
-        assert (
-            result is False
-        ), "Constraint should still reject temp=1.5 for gpt-4 after pickle"
+        assert result is False, (
+            "Constraint should still reject temp=1.5 for gpt-4 after pickle"
+        )
 
     def test_cross_space_constraint_should_still_evaluate(self) -> None:
         """Constraints should work when evaluated with equivalent var_names."""
@@ -188,9 +188,9 @@ class TestIdBasedMappingFragility:
         result = copied_constraint.evaluate(config_bad, original_var_names)
 
         # CORRECT behavior: deepcopied constraint should still reject
-        assert (
-            result is False
-        ), "Deepcopied constraint should still reject temp=1.5 for gpt-4"
+        assert result is False, (
+            "Deepcopied constraint should still reject temp=1.5 for gpt-4"
+        )
 
 
 # ---------------------------------------------------------------------------

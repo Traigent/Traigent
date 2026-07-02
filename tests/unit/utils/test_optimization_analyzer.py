@@ -423,26 +423,36 @@ class TestOptimizationAnalyzer:
     @patch("matplotlib.pyplot.show")
     def test_plot_convergence_with_explicit_objective(
         self,
-        mock_plt: MagicMock,
+        mock_show: MagicMock,
+        mock_subplots: MagicMock,
         analyzer: OptimizationAnalyzer,
         mock_run_structure: Path,
     ) -> None:
         """Test plot_convergence with explicit objective specified."""
         mock_fig = MagicMock()
         mock_ax = MagicMock()
-        mock_plt.subplots.return_value = (mock_fig, mock_ax)
+        mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_convergence(
+        analyzer.plot_convergence(
             "test_exp", "run_001", objective="accuracy", show=False
         )
 
-        assert fig is not None
+        # mock_run_structure has two trials with accuracy 0.85 then 0.92
+        mock_ax.set_ylabel.assert_called_once_with("Accuracy")
+        plot_calls = mock_ax.plot.call_args_list
+        assert list(plot_calls[0].args[1]) == [0.85, 0.92]  # trial values
+        assert list(plot_calls[1].args[1]) == [0.85, 0.92]  # best-so-far values
+        mock_show.assert_not_called()
 
     @pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not installed")
     @patch("matplotlib.pyplot.subplots")
     @patch("matplotlib.pyplot.show")
     def test_plot_convergence_objectives_as_list(
-        self, mock_plt: MagicMock, analyzer: OptimizationAnalyzer, temp_base_path: Path
+        self,
+        mock_show: MagicMock,
+        mock_subplots: MagicMock,
+        analyzer: OptimizationAnalyzer,
+        temp_base_path: Path,
     ) -> None:
         """Test plot_convergence with objectives as list of strings."""
         exp_dir = temp_base_path / "experiments" / "test_exp" / "runs" / "run_001"
@@ -465,10 +475,16 @@ class TestOptimizationAnalyzer:
 
         mock_fig = MagicMock()
         mock_ax = MagicMock()
-        mock_plt.subplots.return_value = (mock_fig, mock_ax)
+        mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_convergence("test_exp", "run_001", show=False)
-        assert fig is not None
+        analyzer.plot_convergence("test_exp", "run_001", show=False)
+
+        # No explicit objective: the first string in the objectives list
+        # ("accuracy") must be the one selected and plotted.
+        mock_ax.set_ylabel.assert_called_once_with("Accuracy")
+        plot_calls = mock_ax.plot.call_args_list
+        assert list(plot_calls[0].args[1]) == [0.85]
+        mock_show.assert_not_called()
 
     # plot_pareto_front tests
     @pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not installed")
@@ -544,20 +560,33 @@ class TestOptimizationAnalyzer:
     @patch("matplotlib.pyplot.show")
     def test_plot_pareto_front_with_explicit_objectives(
         self,
-        mock_plt: MagicMock,
+        mock_show: MagicMock,
+        mock_subplots: MagicMock,
         analyzer: OptimizationAnalyzer,
         mock_run_structure: Path,
     ) -> None:
         """Test plot_pareto_front with explicit objectives."""
         mock_fig = MagicMock()
         mock_ax = MagicMock()
-        mock_plt.subplots.return_value = (mock_fig, mock_ax)
+        mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_pareto_front(
+        analyzer.plot_pareto_front(
             "test_exp", "run_001", objectives=["accuracy", "latency"], show=False
         )
 
-        assert fig is not None
+        # mock_run_structure trials: (accuracy=0.85, latency=100) is dominated
+        # by (accuracy=0.92, latency=200) under maximize-both semantics, so
+        # only the second point survives onto the Pareto front.
+        mock_ax.set_xlabel.assert_called_once_with("Accuracy")
+        mock_ax.set_ylabel.assert_called_once_with("Latency")
+        scatter_calls = mock_ax.scatter.call_args_list
+        assert list(scatter_calls[0].args[0]) == [0.85, 0.92]
+        assert list(scatter_calls[0].args[1]) == [100, 200]
+        assert scatter_calls[0].kwargs.get("label") == "All trials"
+        assert list(scatter_calls[1].args[0]) == [0.92]
+        assert list(scatter_calls[1].args[1]) == [200]
+        assert scatter_calls[1].kwargs.get("label") == "Pareto front"
+        mock_show.assert_not_called()
 
     def test_plot_pareto_front_no_matching_metrics(
         self, analyzer: OptimizationAnalyzer, temp_base_path: Path
@@ -588,7 +617,11 @@ class TestOptimizationAnalyzer:
     @patch("matplotlib.pyplot.subplots")
     @patch("matplotlib.pyplot.show")
     def test_plot_pareto_front_pareto_calculation(
-        self, mock_plt: MagicMock, analyzer: OptimizationAnalyzer, temp_base_path: Path
+        self,
+        mock_show: MagicMock,
+        mock_subplots: MagicMock,
+        analyzer: OptimizationAnalyzer,
+        temp_base_path: Path,
     ) -> None:
         """Test plot_pareto_front Pareto front calculation."""
         exp_dir = temp_base_path / "experiments" / "test_exp" / "runs" / "run_001"
@@ -616,10 +649,18 @@ class TestOptimizationAnalyzer:
 
         mock_fig = MagicMock()
         mock_ax = MagicMock()
-        mock_plt.subplots.return_value = (mock_fig, mock_ax)
+        mock_subplots.return_value = (mock_fig, mock_ax)
 
-        fig = analyzer.plot_pareto_front("test_exp", "run_001", show=False)
-        assert fig is not None
+        analyzer.plot_pareto_front("test_exp", "run_001", show=False)
+
+        # Under maximize-both semantics none of these 3 points dominates
+        # another, so all 3 survive onto the Pareto front, sorted by the
+        # first objective (accuracy) ascending: 0.8, 0.85, 0.9.
+        pareto_call = mock_ax.scatter.call_args_list[1]
+        assert list(pareto_call.args[0]) == pytest.approx([0.8, 0.85, 0.9])
+        assert list(pareto_call.args[1]) == pytest.approx([100, 95, 90])
+        assert pareto_call.kwargs.get("label") == "Pareto front"
+        mock_show.assert_not_called()
 
     # export_for_analysis tests
     def test_export_for_analysis_csv(
@@ -667,8 +708,12 @@ class TestOptimizationAnalyzer:
     ) -> None:
         """Test export_for_analysis with Excel format."""
         output_file = analyzer.export_for_analysis("test_exp", format="excel")
-        assert output_file is not None
-        mock_to_excel.assert_called_once()
+        assert Path(output_file).suffix == ".xlsx"
+        # to_excel must be called with the exact path that was returned,
+        # and with index=False so row indices are not leaked into the sheet.
+        called_args, called_kwargs = mock_to_excel.call_args
+        assert str(called_args[0]) == output_file
+        assert called_kwargs == {"index": False}
 
     def test_export_for_analysis_excel_no_openpyxl(
         self, analyzer: OptimizationAnalyzer, mock_run_structure: Path

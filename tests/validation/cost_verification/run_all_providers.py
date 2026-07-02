@@ -106,7 +106,7 @@ def run_provider_tests(
             print(f"Warning: No test runner for provider '{provider}'")
             continue
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Running {provider.upper()} verification tests...")
         print("=" * 60)
 
@@ -129,7 +129,7 @@ def verify_with_codex(
         results: List of verification results to verify
         reasoning_effort: Codex reasoning effort level
     """
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Verifying pricing with Codex...")
     print("=" * 60)
 
@@ -193,7 +193,7 @@ def capture_fe_evidence(
         print("Warning: experiment_id and run_id required for FE capture")
         return []
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Capturing FE evidence...")
     print("=" * 60)
 
@@ -237,7 +237,7 @@ def capture_be_evidence(
         print("Warning: experiment_id and run_id required for BE capture")
         return []
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Capturing BE evidence...")
     print("=" * 60)
 
@@ -394,7 +394,7 @@ def run_cost_verification(
     report = VerificationReport(results=results)
     report.finalize()
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("VERIFICATION SUMMARY")
     print("=" * 70)
     summary = report.summary

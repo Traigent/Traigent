@@ -168,7 +168,18 @@ class TestAgentExecution:
         )
 
         response = await mock_mcp_service.execute_agent(request)
-        assert response.output is not None
+        assert response.output == "Mock response for: What is async/await?"
+        assert response.error is None
+
+        # The execution context passed in the request must reach the service
+        # unmodified (not dropped or overwritten).
+        last_call, last_request = mock_mcp_service.call_history[-1]
+        assert last_call == "execute_agent"
+        assert last_request.execution_context == {
+            "session_id": "sess-123",
+            "user_id": "user-456",
+            "previous_queries": ["What is Python?", "How do functions work?"],
+        }
 
 
 class TestOptimizationSessions:

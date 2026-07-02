@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+import threading
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
 from traigent.api.types import (
@@ -37,6 +39,7 @@ from traigent.core.execution_policy_runtime import (
     policy_is_cloud_brain,
     policy_requires_cloud,
     session_failure_is_connectivity,
+    session_failure_is_session_create_400,
 )
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
@@ -116,7 +119,7 @@ def _format_raw_reason(result: SessionCreationResult) -> str | None:
         raw_reason = detail.raw_body
     if not raw_reason:
         return None
-    return raw_reason.replace("\n", "\\n")[:500]
+    return cast(str, raw_reason.replace("\n", "\\n")[:500])
 
 
 def _backend_disabled_label(reason: SessionCreationFailureReason | None) -> str:
@@ -129,6 +132,27 @@ def _backend_disabled_label(reason: SessionCreationFailureReason | None) -> str:
     if reason == SessionCreationFailureReason.SESSION_FAILED:
         return "session-create-failed"
     return "unknown"
+
+
+@dataclass(frozen=True)
+class BackendTrialSlotAcquisition:
+    """Core-local interpretation of a backend trial-slot request."""
+
+    trial_id: str | None = None
+    optimization_complete: bool = False
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class BackendTrialSubmissionOutcome:
+    """Terminal submission outcome consumed by the orchestrator."""
+
+    optimization_complete: bool = False
+    reason: str | None = None
+
+    @classmethod
+    def complete(cls, reason: str | None = None) -> BackendTrialSubmissionOutcome:
+        return cls(optimization_complete=True, reason=reason)
 
 
 def _format_untracked_warning_block(
@@ -225,6 +249,7 @@ class BackendSessionManager:
         optimization_id: str,
         optimization_status: OptimizationStatus,
         strategy_preset_metadata: dict[str, Any] | None = None,
+        smart_pruning: dict[str, Any] | None = None,
     ) -> None:
         """Initialize backend session manager.
 
@@ -247,6 +272,7 @@ class BackendSessionManager:
         self._strategy_preset_metadata = (
             dict(strategy_preset_metadata) if strategy_preset_metadata else None
         )
+        self._smart_pruning = dict(smart_pruning) if smart_pruning else None
 
         # Run-scoped circuit breaker — once disabled, all backend writes skip
         self._no_egress = backend_egress_disabled(traigent_config)
@@ -341,23 +367,23 @@ class BackendSessionManager:
         if configured_source == SOURCE_OFFLINE or (
             policy is not None and policy.offline
         ):
-            return SOURCE_OFFLINE
+            return cast(str, SOURCE_OFFLINE)
         if configured_source in RESULT_SOURCES:
             if configured_source == SOURCE_CLOUD_BRAIN and (
                 self._runtime_degraded
                 or (trial_count > 0 and not self._acknowledged_trials)
             ):
-                return SOURCE_LOCAL_FALLBACK
+                return cast(str, SOURCE_LOCAL_FALLBACK)
             return str(configured_source)
-        if self._traigent_config.is_edge_analytics_mode():
-            return SOURCE_EXPLICIT_LOCAL
+        if self._traigent_config.is_local_mode():
+            return cast(str, SOURCE_EXPLICIT_LOCAL)
         if self._egress_disabled():
-            return SOURCE_OFFLINE
+            return cast(str, SOURCE_OFFLINE)
         if not self._backend_tracking_enabled or self._runtime_degraded:
-            return SOURCE_LOCAL_FALLBACK
+            return cast(str, SOURCE_LOCAL_FALLBACK)
         if trial_count > 0 and not self._acknowledged_trials:
-            return SOURCE_LOCAL_FALLBACK
-        return SOURCE_CLOUD_BRAIN
+            return cast(str, SOURCE_LOCAL_FALLBACK)
+        return cast(str, SOURCE_CLOUD_BRAIN)
 
     def disable_backend_tracking(self, reason: SessionCreationFailureReason) -> None:
         """Disable backend tracking for this run. Idempotent — keeps first reason."""
@@ -366,7 +392,9 @@ class BackendSessionManager:
         self._backend_tracking_enabled = False
         self._backend_disabled_reason = reason
 
-    def handle_session_creation_result(self, result: SessionCreationResult) -> str:
+    def handle_session_creation_result(
+        self, result: SessionCreationResult, *, governed_session: bool = False
+    ) -> str:
         """Consume a SessionCreationResult: flip breaker, emit warning, return session_id.
 
         Single place that interprets the structured result — ensures warning text
@@ -383,6 +411,21 @@ class BackendSessionManager:
             self.disable_backend_tracking(reason)
 
             if not was_enabled:
+                # Even when tracking was already disabled, an AUTH-reason failure
+                # must surface at WARNING so the user sees the remedy text
+                # (missing_permissions, re-auth hint, etc.) — issue #1373 Case 2.
+                # For non-auth reasons (NO_API_KEY, SESSION_FAILED) the normal
+                # message was already emitted on the first disable; stay silent.
+                if reason == SessionCreationFailureReason.AUTH:
+                    classification = _classify_session_creation_failure(
+                        reason, result.failure_response
+                    )
+                    logger.warning(
+                        "%s",
+                        _format_untracked_warning_block(
+                            result, classification, aborting=False
+                        ),
+                    )
                 return str(result.session_id)
 
             policy = policy_from_config(self._traigent_config)
@@ -392,10 +435,17 @@ class BackendSessionManager:
                     "Cloud execution is required, but backend session creation "
                     f"failed: {fallback_reason}"
                 )
+            if governed_session:
+                raise ConfigurationError(
+                    "Governed backend session creation failed; local fallback is "
+                    f"not allowed: {fallback_reason}"
+                )
             if policy_is_cloud_brain(policy):
-                if policy_allows_cloud_fallback(
-                    policy
-                ) and session_failure_is_connectivity(result):
+                cloud_fallback_allowed = policy_allows_cloud_fallback(policy)
+                if cloud_fallback_allowed and (
+                    session_failure_is_connectivity(result)
+                    or session_failure_is_session_create_400(result)
+                ):
                     self._fallback_reason = fallback_reason
                     mark_local_fallback(self._traigent_config, fallback_reason)
                     logger.warning(
@@ -491,7 +541,7 @@ class BackendSessionManager:
                         plugin_name="traigent-cloud",
                         install_hint="Use execution_mode='hybrid' for portal-tracked optimization",
                     ) from err
-                # For edge_analytics or other modes, gracefully degrade to local-only.
+                # For local or other modes, gracefully degrade to local-only.
                 logger.info(
                     f"Backend integration module not available for {traigent_config.execution_mode} mode. "
                     "Continuing with local storage only."
@@ -503,7 +553,7 @@ class BackendSessionManager:
         backend_url = BackendConfig.get_backend_url()
         api_key = BackendConfig.get_api_key()
 
-        if traigent_config.is_edge_analytics_mode() or BackendConfig.is_local_backend():
+        if traigent_config.is_local_mode() or BackendConfig.is_local_backend():
             logger.info(
                 f"Configuring for {traigent_config.execution_mode} mode "
                 f"with backend at {backend_url} (fallback enabled)"
@@ -635,6 +685,11 @@ class BackendSessionManager:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
+        warm_start_from: str | None = None,
+        smart_pruning: dict[str, Any] | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
+        cost_limit: float | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -670,6 +725,15 @@ class BackendSessionManager:
 
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
+            effective_smart_pruning = (
+                dict(smart_pruning)
+                if smart_pruning is not None
+                else (
+                    dict(self._smart_pruning)
+                    if self._smart_pruning is not None
+                    else None
+                )
+            )
 
             max_trials_value = max_trials if max_trials is not None else 10
             max_samples_value = (
@@ -701,13 +765,47 @@ class BackendSessionManager:
                 session_metadata["strategy_preset"] = dict(
                     self._strategy_preset_metadata
                 )
+            if warm_start_from:
+                session_metadata["warm_start_from"] = warm_start_from
 
-            # Use human-readable name with disambiguating hash suffix
-            # e.g. "answer_question (f282c9de)" instead of the full slug
-            portal_name = function_display_name or function_identifier
+            # Build the portal display name.
+            # When the user supplied an explicit experiment_name, honour it.
+            # When no name was given, weave in objectives and knob names so the
+            # experiment is self-describing in the portal's Recent Experiments
+            # list (issue #1422): e.g. "opt:accuracy,cost · model,temperature".
             slug_hash = function_slug.rsplit("_", 1)[-1] if function_slug else ""
+            if experiment_display_name is None:
+                # Collect up to 3 objective names and up to 4 knob names to
+                # keep the label concise.
+                obj_names = (self._objectives or [])[:3]
+                knob_names = list(
+                    (getattr(self._optimizer, "config_space", {}) or {}).keys()
+                )[:4]
+                label_parts: list[str] = []
+                if obj_names:
+                    label_parts.append("opt:" + ",".join(obj_names))
+                if knob_names:
+                    label_parts.append(",".join(knob_names))
+                portal_name = (
+                    " · ".join(label_parts)
+                    if label_parts
+                    else (function_display_name or function_identifier)
+                )
+            else:
+                portal_name = function_display_name or function_identifier
             if slug_hash:
                 portal_name = f"{portal_name} ({slug_hash})"
+
+            # Tell create_session whether this run actually INTENDS cloud egress
+            # (managed / auto-cloud) vs. a LOCAL-routed run (grid/random/offline/
+            # runtime-resolved-to-local) that only wants OPTIONAL backend
+            # tracking. A configured-but-invalid/rejected key must fail closed
+            # for the former but must NOT hard-fail the latter (#1421). Mirrors
+            # the existing ``no_egress`` flag set on the same client.
+            _policy = policy_from_config(self._traigent_config)
+            self._backend_client.cloud_egress_intent = bool(
+                policy_requires_cloud(_policy) or policy_is_cloud_brain(_policy)
+            )
 
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
@@ -717,9 +815,17 @@ class BackendSessionManager:
                 objectives=objectives,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
+                warm_start_from=warm_start_from,
+                smart_pruning=effective_smart_pruning,
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
+                cost_limit=cost_limit,
             )
             result = self.normalize_session_creation_result(raw_result)
-            session_id = self.handle_session_creation_result(result)
+            session_id = self.handle_session_creation_result(
+                result,
+                governed_session=bool(promotion_policy or tvl_governance),
+            )
             if result.backend_connected:
                 owning_context = {
                     key: normalized
@@ -772,13 +878,93 @@ class BackendSessionManager:
 
         self._backend_client = backend_client
 
+    def should_report_intermediate_progress(self, session_id: str | None) -> bool:
+        """Return whether smart-pruning intermediate reports are allowed."""
+        if (
+            not self._smart_pruning
+            or self._egress_disabled()
+            or not self._backend_client
+            or not session_id
+            or not self._backend_tracking_enabled
+        ):
+            return False
+
+        policy = policy_from_config(self._traigent_config)
+        return bool(policy_requires_cloud(policy) or policy_is_cloud_brain(policy))
+
+    @staticmethod
+    def _resolve_maybe_awaitable(value: Any) -> Any:
+        """Resolve an awaitable from a synchronous progress callback."""
+        if not inspect.isawaitable(value):
+            return value
+
+        coroutine = cast(Coroutine[Any, Any, Any], value)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+
+        result_box: dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                result_box["result"] = asyncio.run(coroutine)
+            except BaseException as exc:  # pragma: no cover - defensive bridge
+                result_box["error"] = exc
+
+        thread = threading.Thread(
+            target=_runner,
+            name="traigent-smart-pruning-report",
+            daemon=True,
+        )
+        thread.start()
+        thread.join()
+        error = result_box.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return result_box.get("result")
+
+    def report_intermediate_progress(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send a smart-pruning intermediate report and return the prune decision."""
+        session_id = payload.get("session_id")
+        if not self.should_report_intermediate_progress(
+            session_id if isinstance(session_id, str) else None
+        ):
+            return {"prune": False, "prune_reason": None}
+
+        reporter = getattr(self._backend_client, "_report_intermediate_progress", None)
+        if not callable(reporter):
+            return {"prune": False, "prune_reason": None}
+
+        try:
+            decision = self._resolve_maybe_awaitable(reporter(payload))
+        except Exception as exc:
+            logger.debug(
+                "Skipping smart-pruning decision for session %s trial %s: %s",
+                payload.get("session_id"),
+                payload.get("trial_id"),
+                exc,
+            )
+            return {"prune": False, "prune_reason": None}
+
+        if not isinstance(decision, dict):
+            return {"prune": False, "prune_reason": None}
+
+        prune_reason = decision.get("prune_reason")
+        return {
+            "prune": bool(decision.get("prune", False)),
+            "prune_reason": (
+                prune_reason if prune_reason is None else str(prune_reason)
+            ),
+        }
+
     async def submit_trial(
         self,
         trial_result: TrialResult,
         session_id: str | None,
         dataset_name: str = "dataset",
         content_scores: dict[str, dict[int, float]] | None = None,
-    ) -> bool:
+    ) -> bool | BackendTrialSubmissionOutcome:
         """Submit trial to backend.
 
         Args:
@@ -789,7 +975,9 @@ class BackendSessionManager:
                 per-run features once at session creation.
 
         Returns:
-            True if submission succeeded
+            True if submission succeeded, False if skipped, or a terminal
+            optimization-complete outcome when the backend gracefully closed the
+            cloud run.
         """
         if self._egress_disabled() or not self._backend_client or not session_id:
             return False
@@ -828,12 +1016,14 @@ class BackendSessionManager:
             )
             return False
 
-        await self._log_trial_to_backend(
+        submission_outcome = await self._log_trial_to_backend(
             session_id=session_id,
             trial_result=trial_result,
             score=score,
             metadata=trial_metadata,
         )
+        if submission_outcome is not None and submission_outcome.optimization_complete:
+            return submission_outcome
 
         return True
 
@@ -883,36 +1073,53 @@ class BackendSessionManager:
         """
         return (session_id, trial_id) in self._acknowledged_trials
 
+    @staticmethod
+    def _coerce_backend_trial_slot(slot: Any) -> BackendTrialSlotAcquisition:
+        """Normalize legacy string/None and structured slot results."""
+
+        if isinstance(slot, str) and slot:
+            return BackendTrialSlotAcquisition(trial_id=slot)
+        if getattr(slot, "optimization_complete", False) is True:
+            reason = getattr(slot, "reason", None)
+            return BackendTrialSlotAcquisition(
+                optimization_complete=True,
+                reason=str(reason) if reason else None,
+            )
+        trial_id = getattr(slot, "trial_id", None)
+        if isinstance(trial_id, str) and trial_id:
+            return BackendTrialSlotAcquisition(trial_id=trial_id)
+        return BackendTrialSlotAcquisition()
+
     async def _acquire_backend_trial_id(
         self, session_id: str, trial_result: TrialResult
-    ) -> str | None:
+    ) -> BackendTrialSlotAcquisition:
         """Acquire (once per started trial) a backend-minted trial id.
 
         Reuses a previously acquired backend id for the same client trial so
-        retries of submit_trial don't burn extra slots. Returns ``None`` when
-        the backend declined to mint a slot (offline / transport / non-2xx),
-        in which case the caller fails closed.
+        retries of submit_trial don't burn extra slots. Returns a structured
+        outcome so graceful backend completion is not collapsed into the genuine
+        no-slot/error path.
         """
         client = self._backend_client
         if self._egress_disabled() or client is None:
-            return None
+            return BackendTrialSlotAcquisition()
 
         client_trial_id = str(trial_result.trial_id)
         if (trial_result.metadata or {}).get("backend_trial_id_acquired"):
             self._started_trials.add((session_id, client_trial_id))
-            return client_trial_id
+            return BackendTrialSlotAcquisition(trial_id=client_trial_id)
         # If this trial already mapped to an acknowledged backend id, reuse it.
         for sid, bid in self._started_trials:
             if sid == session_id and bid == client_trial_id:
                 # client_trial_id already IS a backend id from a prior pass.
-                return client_trial_id
+                return BackendTrialSlotAcquisition(trial_id=client_trial_id)
 
         requester = getattr(client, "request_trial_slot", None)
         if not callable(requester):
-            return None
+            return BackendTrialSlotAcquisition()
         try:
             slot = requester(session_id)
-            backend_trial_id = await slot if inspect.isawaitable(slot) else slot
+            slot_result = await slot if inspect.isawaitable(slot) else slot
         except Exception as exc:
             logger.debug(
                 "Backend trial-slot request failed for session %s trial %s: %s",
@@ -920,12 +1127,12 @@ class BackendSessionManager:
                 client_trial_id,
                 exc,
             )
-            return None
+            return BackendTrialSlotAcquisition()
 
-        if isinstance(backend_trial_id, str) and backend_trial_id:
-            self._started_trials.add((session_id, backend_trial_id))
-            return backend_trial_id
-        return None
+        acquisition = self._coerce_backend_trial_slot(slot_result)
+        if acquisition.trial_id:
+            self._started_trials.add((session_id, acquisition.trial_id))
+        return acquisition
 
     async def _log_trial_to_backend(
         self,
@@ -933,14 +1140,14 @@ class BackendSessionManager:
         trial_result: TrialResult,
         score: float | None,
         metadata: dict[str, Any],
-    ) -> None:
+    ) -> BackendTrialSubmissionOutcome | None:
         """Submit trial metrics to backend when possible."""
 
         if self._egress_disabled() or not self._backend_client or not session_id:
-            return
+            return None
 
         if not self._backend_tracking_enabled:
-            return
+            return None
 
         sanitized_score = float(score) if score is not None else None
         metadata_payload = dict(metadata)
@@ -960,7 +1167,7 @@ class BackendSessionManager:
                 session_id,
                 trial_result.trial_id,
             )
-            return
+            return None
 
         logger.debug(
             "Submitting trial %s for session %s",
@@ -989,7 +1196,7 @@ class BackendSessionManager:
                 session_id,
                 trial_result.trial_id,
             )
-            return
+            return None
 
         # Build payload for backend session endpoint.
         metrics_payload: dict[str, Any] = dict(trial_result.metrics or {})
@@ -1032,9 +1239,17 @@ class BackendSessionManager:
             # "Trial ... not found in session". So acquire a backend slot and
             # rebind this trial to it BEFORE submitting. The optimizer still
             # owns the config; the slot is purely the backend's trial handle.
-            backend_trial_id = await self._acquire_backend_trial_id(
-                session_id, trial_result
-            )
+            acquisition = await self._acquire_backend_trial_id(session_id, trial_result)
+            if acquisition.optimization_complete:
+                logger.info(
+                    "Backend reported optimization complete for session %s while "
+                    "submitting client trial %s (reason=%s)",
+                    session_id,
+                    trial_result.trial_id,
+                    acquisition.reason,
+                )
+                return BackendTrialSubmissionOutcome.complete(acquisition.reason)
+            backend_trial_id = acquisition.trial_id
             if backend_trial_id is None:
                 # Fail closed: no acknowledged backend slot ⇒ NO submission and
                 # NO acknowledgment. The certified-selection report will then
@@ -1048,7 +1263,7 @@ class BackendSessionManager:
                     session_id,
                     trial_result.trial_id,
                 )
-                return
+                return None
             # Rebind in place: _best_trial_cached holds this same object, so the
             # incumbent's trial_id becomes the backend id the report needs.
             trial_result.trial_id = backend_trial_id
@@ -1072,7 +1287,7 @@ class BackendSessionManager:
                 metrics=metrics_payload,
                 status=status,
                 error_message=trial_result.error_message,
-                execution_mode=self._traigent_config.execution_mode,
+                execution_mode=cast(str | None, self._traigent_config.execution_mode),
                 metadata=metadata_payload,
             )
             submitted = (
@@ -1346,7 +1561,7 @@ class BackendSessionManager:
             self._egress_disabled()
             or not self._backend_client
             or session_id is None
-            or self._traigent_config.is_edge_analytics_mode()
+            or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
         ):
             return
@@ -1354,7 +1569,7 @@ class BackendSessionManager:
         if (
             not self._backend_client
             or session_id is None
-            or self._traigent_config.is_edge_analytics_mode()
+            or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
         ):
             return
@@ -1390,9 +1605,8 @@ class BackendSessionManager:
             result.metadata.get("statistical_significance") if result.metadata else None
         )
         if stat_sig:
-            summary_stats_with_aggregation["metadata"]["statistical_significance"] = (
-                stat_sig
-            )
+            agg_meta = summary_stats_with_aggregation["metadata"]
+            agg_meta["statistical_significance"] = stat_sig
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])
@@ -1421,7 +1635,7 @@ class BackendSessionManager:
 
         self._backend_client.submit_result(
             session_id=session_id,
-            config=result.best_config,
+            config=cast(dict[str, Any], result.best_config),
             score=result.best_score,
             metadata=submission_metadata,
         )
@@ -1510,6 +1724,19 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+            # session_summary may be a plain dict OR an OptimizationFinalizationResponse
+            # dataclass (the real cloud finalize path), which exposes ``.metadata`` as an
+            # attribute and has no ``.get()``. Calling ``.get()`` on the dataclass raised
+            # AttributeError, which the persistence try/except swallowed as
+            # "persistence failed" on every cloud run. Guard the type before extracting.
+            if isinstance(session_summary, dict):
+                summary_metadata = session_summary.get("metadata")
+            else:
+                summary_metadata = getattr(session_summary, "metadata", None)
+            if isinstance(summary_metadata, dict):
+                warm_start_transfer = summary_metadata.get("warm_start_transfer")
+                if isinstance(warm_start_transfer, dict):
+                    update_payload["warm_start_transfer"] = dict(warm_start_transfer)
         if owning_context := self._session_owning_context.get(session_id):
             update_payload.update(owning_context)
 

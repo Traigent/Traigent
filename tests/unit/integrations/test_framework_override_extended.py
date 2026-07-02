@@ -14,6 +14,8 @@ This test module focuses on the uncovered areas:
 from __future__ import annotations
 
 import asyncio
+import logging
+from functools import cached_property
 from unittest.mock import patch
 
 import pytest
@@ -69,6 +71,44 @@ class MockChatCompletions:
 
     def create(self, **kwargs):
         return {"choices": [{"message": {"content": "Chat result"}}]}
+
+
+class CachedPropertyMessagesForOverride:
+    """Resource class used to exercise cached_property method resolution."""
+
+    def create(self, **kwargs):
+        return kwargs
+
+
+class CachedPropertyClientForOverride:
+    """Client class with SDK-like cached resource accessors."""
+
+    @cached_property
+    def messages(self) -> CachedPropertyMessagesForOverride:
+        return CachedPropertyMessagesForOverride()
+
+
+class CachedPropertyChatCompletionsForOverride:
+    """SDK-shaped chat completions resource."""
+
+    def create(self, **kwargs: object) -> dict[str, object]:
+        return kwargs
+
+
+class CachedPropertyChatForOverride:
+    """SDK-shaped chat resource."""
+
+    @cached_property
+    def completions(self) -> CachedPropertyChatCompletionsForOverride:
+        return CachedPropertyChatCompletionsForOverride()
+
+
+class CachedPropertyOpenAIClientForOverride:
+    """Client class with OpenAI-style cached chat resource accessor."""
+
+    @cached_property
+    def chat(self) -> CachedPropertyChatForOverride:
+        return CachedPropertyChatForOverride()
 
 
 class MockAsyncOpenAI:
@@ -730,9 +770,15 @@ class TestActivateOverrides:
         # Try to override a non-existent framework
         override_manager.activate_overrides(["nonexistent.Framework"])
 
-        # Should log debug message but not raise - verify no exception occurred
-        # and manager is still functional
-        assert override_manager._override_active is not None
+        # Import failure means the target must never be registered as overridden
+        assert not override_manager.is_override_registered("nonexistent.Framework")
+        # The overall override system stays enabled despite the per-target failure
+        assert override_manager.is_override_active() is True
+        # A debug message documenting the unavailable framework must be logged
+        mock_logger.debug.assert_called_once()
+        debug_msg = mock_logger.debug.call_args.args[0]
+        assert "nonexistent.Framework" in debug_msg
+        assert "not available" in debug_msg
 
     @patch("traigent.integrations.framework_override.logger")
     def test_activate_overrides_pydantic_error(self, mock_logger, override_manager):
@@ -744,8 +790,15 @@ class TestActivateOverrides:
             # Try to activate
             override_manager.activate_overrides(["test.Framework"])
 
-            # Should log warning but not raise - verify manager is still functional
-            assert override_manager._override_active is not None
+        # Pydantic-related failures must not register the target as overridden
+        assert not override_manager.is_override_registered("test.Framework")
+        # A warning documenting the Pydantic compatibility issue must be logged
+        warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
+        assert any(
+            "Pydantic compatibility issue with test.Framework" in msg
+            for msg in warning_messages
+        )
+        assert any("PydanticUserError: test" in msg for msg in warning_messages)
 
     def test_activate_overrides_sets_flag(self, override_manager):
         """Test that activate_overrides sets the active flag."""
@@ -855,9 +908,11 @@ class TestOverrideContextManager:
 
         try:
             with override_manager.override_context():
-                # Should not activate any specific targets
-                # Verify context manager works
-                assert override_manager is not None
+                # With no targets, activate_overrides() is never invoked, so
+                # the manager must remain inactive inside the context.
+                assert override_manager.is_override_active() is False
+            # And it must still be inactive after the context exits.
+            assert override_manager.is_override_active() is False
         finally:
             config_context.reset(token)
 
@@ -1081,6 +1136,100 @@ class TestEdgeCases:
         # Should complete without error - verify class still works
         client = MockClient()
         assert isinstance(client, MockClient)
+
+    def test_apply_method_override_resolves_cached_property_resource(
+        self, override_manager, sample_config
+    ):
+        """Dotted SDK resource paths patch the lazily-created resource class."""
+
+        override_manager._parameter_mappings["test.Client"] = {"model": "model"}
+        override_manager._method_mappings["test.Client"] = {
+            "messages.create": ["model"]
+        }
+        original_create = CachedPropertyMessagesForOverride.create
+
+        override_manager._apply_method_override(
+            CachedPropertyClientForOverride, "test.Client", "messages.create"
+        )
+
+        assert CachedPropertyMessagesForOverride.create is not original_create
+        assert hasattr(CachedPropertyMessagesForOverride.create, "__wrapped__")
+        assert "test.Client.messages.create" in override_manager._original_methods
+
+        token = set_config(sample_config)
+        override_manager._override_active.enabled = True
+        try:
+            assert (
+                CachedPropertyClientForOverride().messages.create(model="original")[
+                    "model"
+                ]
+                == "gpt-4o-mini"
+            )
+        finally:
+            config_context.reset(token)
+
+    def test_apply_method_override_resolves_cached_property_string_resource(
+        self,
+        override_manager,
+        sample_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """OpenAI-style string annotations patch chat.completions.create."""
+
+        def fail_type_hints(_func: object) -> dict[str, object]:
+            raise NameError("Chat")
+
+        monkeypatch.setattr(
+            "traigent.integrations.framework_override.get_type_hints",
+            fail_type_hints,
+        )
+        override_manager._parameter_mappings["openai.OpenAI"] = {"model": "model"}
+        override_manager._method_mappings["openai.OpenAI"] = {
+            "chat.completions.create": ["model"]
+        }
+        original_create = CachedPropertyChatCompletionsForOverride.create
+
+        override_manager._apply_method_override(
+            CachedPropertyOpenAIClientForOverride,
+            "openai.OpenAI",
+            "chat.completions.create",
+        )
+
+        assert CachedPropertyChatCompletionsForOverride.create is not original_create
+        assert hasattr(CachedPropertyChatCompletionsForOverride.create, "__wrapped__")
+
+        token = set_config(sample_config)
+        override_manager._override_active.enabled = True
+        try:
+            assert (
+                CachedPropertyOpenAIClientForOverride().chat.completions.create(
+                    model="original"
+                )["model"]
+                == "gpt-4o-mini"
+            )
+        finally:
+            config_context.reset(token)
+
+    def test_apply_method_override_warns_when_cached_property_unresolved(
+        self, override_manager, caplog
+    ):
+        """Registered method targets that cannot be patched are warning-visible."""
+
+        class Client:
+            @cached_property
+            def messages(self):
+                return object()
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="traigent.integrations.framework_override",
+        ):
+            override_manager._apply_method_override(
+                Client, "test.Client", "messages.create"
+            )
+
+        assert "Skipping override" in caplog.text
+        assert "messages.create" in caplog.text
 
     def test_create_override_constructor_with_dict_config(
         self, override_manager, dict_config

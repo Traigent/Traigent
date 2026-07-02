@@ -565,19 +565,24 @@ class TestEnterpriseDeploymentManager:
             if os.path.exists(config_file):
                 os.unlink(config_file)
 
-    def test_default_alert_handler(self):
-        """Test default alert handler"""
+    def test_default_alert_handler(self, caplog):
+        """Test default alert handler logs the alert message and returns None"""
         manager = EnterpriseDeploymentManager(DeploymentMode.CLOUD_PUBLIC)
 
-        # Test alert handler doesn't crash
         alert_data = {
             "message": "Test alert",
             "details": {"metric": "response_time", "value": 1500},
         }
 
-        # Should not raise exception - verify completion
-        result = manager._default_alert_handler("response_time_alert", alert_data)
+        # Documented behavior: "Default alert handler (logs alerts)"
+        with caplog.at_level("WARNING", logger="traigent.security.enterprise"):
+            result = manager._default_alert_handler("response_time_alert", alert_data)
+
         assert result is None  # Handler returns None
+        assert any(
+            "response_time_alert" in record.message and "Test alert" in record.message
+            for record in caplog.records
+        )
 
     @patch("traigent.security.enterprise.psutil")
     def test_monitoring_with_different_intervals(self, mock_psutil):

@@ -324,7 +324,7 @@ class TestOptimizationLoggerInit:
 
     def test_execution_mode_resolved(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path)
-        assert log.execution_mode == "edge_analytics"
+        assert log.execution_mode == "local"
 
     def test_buffer_size(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path, buffer_size=5)
@@ -464,14 +464,9 @@ class TestLogTrialResult:
         # Buffer flushed → empty
         assert len(log._trial_buffer) == 0
 
-    def test_deprecated_cloud_mode_still_buffers(self, tmp_path: Path) -> None:
-        """Deprecated cloud mode resolves to edge_analytics and buffers trials normally."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            log = _make_logger(tmp_path, execution_mode="cloud")
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_hybrid_mode_still_buffers(self, tmp_path: Path) -> None:
+        """Hybrid mode resolves to a supported runtime and buffers trials normally."""
+        log = _make_logger(tmp_path, execution_mode="hybrid")
         log.log_trial_result(_make_trial())
         assert len(log._trial_buffer) == 1
 
@@ -746,6 +741,37 @@ class TestLogSessionEnd:
 
         pareto_files = list((log.run_path / "artifacts").glob("pareto_front_v*.json"))
         assert len(pareto_files) == 1
+
+    def test_session_end_pareto_front_respects_minimize_objectives(
+        self, tmp_path: Path
+    ) -> None:
+        log = _make_logger(tmp_path)
+        cheap = TrialResult(
+            trial_id="cheap",
+            config={"model": "cheap"},
+            metrics={"accuracy": 0.9, "cost": 0.1},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+        )
+        expensive = TrialResult(
+            trial_id="expensive",
+            config={"model": "expensive"},
+            metrics={"accuracy": 0.8, "cost": 0.9},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+        )
+        result = _make_opt_result(
+            trials=[cheap, expensive],
+            objectives=["accuracy", "cost"],
+        )
+
+        log.log_session_end(result)
+
+        pareto_file = next((log.run_path / "artifacts").glob("pareto_front_v*.json"))
+        pareto_data = json.loads(pareto_file.read_text())
+        assert pareto_data["configurations"] == [{"model": "cheap"}]
 
     def test_session_end_creates_manifest(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path)

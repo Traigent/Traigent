@@ -458,9 +458,8 @@ class TestAuditLogger:
         # Process events (wait briefly for background processing)
         time.sleep(0.1)
 
-        # Verify alert handler was registered
-        assert audit_logger is not None
-        # Note: Full alert testing would require synchronous processing
+        # A CRITICAL-severity event must trigger the registered alert handler.
+        alert_handler.assert_called_once()
 
     def test_get_events(self):
         """Test retrieving events from audit logger"""

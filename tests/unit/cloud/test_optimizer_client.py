@@ -6,10 +6,24 @@ import pytest
 from traigent.cloud.optimizer_client import OptimizerDirectClient
 
 
+@pytest.fixture(autouse=True)
+def _mock_public_optimizer_dns(monkeypatch):
+    """Keep optimizer endpoint validation deterministic for mocked tests."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    def _resolve_public_backend(_host, _port, *_args, **_kwargs):
+        return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_public_backend,
+    )
+
+
 @pytest.mark.asyncio
 async def test_submit_metrics_flushes_with_lock(monkeypatch):
     client = OptimizerDirectClient("https://api.example.com", "secret-token")
-    client._batch_size = 5
+    client._batch_size = 1  # flush immediately so every submission is a batch of 1
     flushed_batches: list[list[tuple[str, dict]]] = []
 
     async def fake_flush_buffer():
@@ -24,7 +38,6 @@ async def test_submit_metrics_flushes_with_lock(monkeypatch):
     assert result["status"] == "flushed"
     assert flushed_batches and len(flushed_batches[0]) == 1
 
-    client._batch_size = 100  # keep batching off for the next calls
     flushed_batches.clear()
 
     async def submit(metric_value: float):
@@ -45,6 +58,25 @@ def test_optimizer_client_requires_endpoint_and_token():
         OptimizerDirectClient("", "token")
     with pytest.raises(ValueError):
         OptimizerDirectClient("https://api.example.com", " ")
+
+
+def test_optimizer_client_rejects_dns_private_endpoint(monkeypatch):
+    """Bearer token sessions must not be created for DNS-rebound endpoints."""
+
+    def _resolve_to_private(host, _port, *_args, **_kwargs):
+        assert host == "optimizer-rebind.example.test"
+        return [(0, 0, 0, "", ("10.0.0.9", 0))]
+
+    monkeypatch.setattr(
+        "traigent.cloud.url_security.socket.getaddrinfo",
+        _resolve_to_private,
+    )
+
+    with pytest.raises(ValueError, match="must not resolve to private"):
+        OptimizerDirectClient(
+            "https://optimizer-rebind.example.test",
+            "secret-token",
+        )
 
 
 @pytest.mark.asyncio

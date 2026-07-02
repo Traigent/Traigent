@@ -21,7 +21,9 @@ async def _stub_validate(self, api_key):  # noqa: ARG001
 
 def _patch_backend_validate():
     """Convenience patcher to keep auth offline in header tests."""
-    return patch.object(AuthManager, "_validate_api_key_with_backend", new=_stub_validate)
+    return patch.object(
+        AuthManager, "_validate_api_key_with_backend", new=_stub_validate
+    )
 
 
 @pytest.fixture
@@ -112,9 +114,10 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test _ensure_session creates session with authentication headers."""
-        with _patch_backend_validate(), patch(
-            "traigent.cloud.client.aiohttp.ClientSession"
-        ) as mock_cs:
+        with (
+            _patch_backend_validate(),
+            patch("traigent.cloud.client.aiohttp.ClientSession") as mock_cs,
+        ):
             mock_session = Mock()
             mock_cs.return_value = mock_session
 
@@ -194,9 +197,10 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test context manager creates session with authentication headers."""
-        with _patch_backend_validate(), patch(
-            "traigent.cloud.client.aiohttp.ClientSession"
-        ) as mock_cs:
+        with (
+            _patch_backend_validate(),
+            patch("traigent.cloud.client.aiohttp.ClientSession") as mock_cs,
+        ):
             mock_session = Mock()
             mock_session.close = AsyncMock()  # Mock close method as async
             mock_cs.return_value = mock_session
@@ -382,9 +386,7 @@ class TestTraigentCloudClientCore:
                 except _PARSING_EXC_TYPES as exc:
                     method_exc = exc
 
-                assert (
-                    len(ensure_session_calls) > 0
-                ), (
+                assert len(ensure_session_calls) > 0, (
                     f"{method_name} did not call _ensure_session "
                     f"(method_exc={method_exc!r})"
                 )
@@ -601,7 +603,13 @@ class TestHTTPMethodCoverage:
         # because the mocked HTTP response intentionally has empty/invalid
         # JSON, which the client wraps into CloudServiceError AFTER the HTTP
         # call (and its headers) have already been issued.
-        _PARSING_EXC_TYPES = (KeyError, TypeError, AttributeError, ValueError, CloudServiceError)
+        _PARSING_EXC_TYPES = (
+            KeyError,
+            TypeError,
+            AttributeError,
+            ValueError,
+            CloudServiceError,
+        )
 
         for method_name, http_verb, args in http_methods:
             mock_aiohttp_session.post.reset_mock()
@@ -629,9 +637,7 @@ class TestHTTPMethodCoverage:
                 f"{method_name} missing headers (method_exc={method_exc!r})"
             )
             headers = call_kwargs["headers"]
-            assert (
-                "X-API-Key" in headers or "Authorization" in headers
-            ), (
+            assert "X-API-Key" in headers or "Authorization" in headers, (
                 f"{method_name} missing authentication header "
                 f"(method_exc={method_exc!r})"
             )
@@ -827,8 +833,9 @@ class TestEdgeCasesAndErrorHandling:
     @pytest.mark.asyncio
     async def test_no_aiohttp_raises_error(self, valid_api_key):
         """Test that missing aiohttp raises appropriate error."""
-        with _patch_backend_validate(), patch(
-            "traigent.cloud.client.AIOHTTP_AVAILABLE", False
+        with (
+            _patch_backend_validate(),
+            patch("traigent.cloud.client.AIOHTTP_AVAILABLE", False),
         ):
             client = TraigentCloudClient(api_key=valid_api_key)
 

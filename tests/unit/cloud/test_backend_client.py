@@ -135,6 +135,327 @@ class TestBackendIntegratedClient:
         assert client._session is None
         assert len(client._active_sessions) == 0
 
+    @pytest.mark.asyncio
+    async def test_analytics_facade_passes_jwt_token_from_auth_manager(
+        self, backend_client, monkeypatch
+    ):
+        """JWT-configured clients must send analytics Authorization: Bearer."""
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+        backend_client.auth_manager.auth.get_headers = AsyncMock(
+            return_value={"Authorization": "Bearer aaa.bbb.ccc"}
+        )
+
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            return_value={},
+        ):
+            reader = await backend_client.analytics._new_read_client()
+
+        assert reader._auth_headers() == {"Authorization": "Bearer aaa.bbb.ccc"}
+        backend_client.auth_manager.auth.get_headers.assert_awaited_once_with(
+            target="backend"
+        )
+
+    @pytest.mark.asyncio
+    async def test_analytics_facade_passes_api_key_from_auth_manager(
+        self, backend_client, monkeypatch
+    ):
+        """API-key-configured clients must send analytics X-API-Key."""
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+        backend_client.auth_manager.auth.get_headers = AsyncMock(
+            return_value={"X-API-Key": "uk_facade_key"}
+        )
+
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            return_value={},
+        ):
+            reader = await backend_client.analytics._new_read_client()
+
+        assert reader._auth_headers() == {"X-API-Key": "uk_facade_key"}
+        backend_client.auth_manager.auth.get_headers.assert_awaited_once_with(
+            target="backend"
+        )
+
+    @pytest.mark.asyncio
+    async def test_analytics_facade_uses_jwt_mode_for_stored_jwt_only(
+        self, backend_client, monkeypatch
+    ):
+        """Stored JWT-only credentials must not be resolved as API keys."""
+        from traigent.cloud.auth import AuthMode
+
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+        backend_client._api_key_fallback = None
+        backend_client.auth_manager.auth.authenticate = AsyncMock(
+            return_value=MagicMock(success=True)
+        )
+        backend_client.auth_manager.auth.get_headers = AsyncMock(
+            return_value={"Authorization": "Bearer stored.header.sig"}
+        )
+
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+            return_value={"jwt_token": "stored.header.sig", "source": "cli"},
+        ):
+            reader = await backend_client.analytics._new_read_client()
+
+        backend_client.auth_manager.auth.authenticate.assert_awaited_once_with(
+            mode=AuthMode.JWT_TOKEN
+        )
+        assert reader._auth_headers() == {"Authorization": "Bearer stored.header.sig"}
+
+    @pytest.mark.asyncio
+    async def test_experiment_groups_facade_uses_read_client(self, backend_client):
+        """Experiment-group namespace is read-only and delegates to the read client."""
+        sentinel = object()
+
+        class FakeReadClient:
+            def __init__(self):
+                self.calls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            async def list_experiment_groups(self, *args, **kwargs):
+                self.calls.append(("list", args, kwargs))
+                return sentinel
+
+            async def get_experiment_group(self, *args, **kwargs):
+                self.calls.append(("get", args, kwargs))
+                return sentinel
+
+            async def list_experiment_group_configuration_runs(self, *args, **kwargs):
+                self.calls.append(("configuration_runs", args, kwargs))
+                return sentinel
+
+        fake_reader = FakeReadClient()
+
+        with (
+            patch(
+                "traigent.cloud.analytics_auth.resolve_analytics_read_client_credentials",
+                new=AsyncMock(return_value={"api_key": "uk_read"}),
+            ),
+            patch(
+                "traigent.cloud.analytics_client.BackendAnalyticsClient",
+                return_value=fake_reader,
+            ),
+        ):
+            list_result = await backend_client.experiment_groups.list(
+                "proj_abc",
+                agent_id="agent_1",
+                dataset_id="dataset_1",
+                page=2,
+                page_size=25,
+            )
+            get_result = await backend_client.experiment_groups.get("grp_1", "proj_abc")
+            configuration_runs_result = (
+                await backend_client.experiment_groups.configuration_runs(
+                    "grp_1", "proj_abc", page=3, page_size=10
+                )
+            )
+            with pytest.raises(ValueError, match="project_id"):
+                await backend_client.experiment_groups.list("  ")
+            with pytest.raises(TypeError):
+                await backend_client.experiment_groups.list()
+            with pytest.raises(TypeError):
+                await backend_client.experiment_groups.get("grp_1")
+            with pytest.raises(TypeError):
+                await backend_client.experiment_groups.configuration_runs("grp_1")
+
+        assert list_result is sentinel
+        assert get_result is sentinel
+        assert configuration_runs_result is sentinel
+        assert fake_reader.calls == [
+            (
+                "list",
+                ("proj_abc",),
+                {
+                    "agent_id": "agent_1",
+                    "dataset_id": "dataset_1",
+                    "page": 2,
+                    "page_size": 25,
+                },
+            ),
+            ("get", ("grp_1", "proj_abc"), {}),
+            (
+                "configuration_runs",
+                ("grp_1", "proj_abc"),
+                {"page": 3, "page_size": 10},
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_analytics_experiment_groups_alias_forwards_filters(
+        self, backend_client
+    ):
+        """Analytics compatibility alias forwards documented group filters."""
+        sentinel = object()
+
+        class FakeReadClient:
+            def __init__(self):
+                self.calls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            async def list_experiment_groups(self, *args, **kwargs):
+                self.calls.append(("list", args, kwargs))
+                return sentinel
+
+            async def get_experiment_group(self, *args, **kwargs):
+                self.calls.append(("get", args, kwargs))
+                return sentinel
+
+            async def list_experiment_group_configuration_runs(self, *args, **kwargs):
+                self.calls.append(("configuration_runs", args, kwargs))
+                return sentinel
+
+        fake_reader = FakeReadClient()
+
+        with (
+            patch(
+                "traigent.cloud.analytics_auth.resolve_analytics_read_client_credentials",
+                new=AsyncMock(return_value={"api_key": "uk_read"}),
+            ),
+            patch(
+                "traigent.cloud.analytics_client.BackendAnalyticsClient",
+                return_value=fake_reader,
+            ),
+        ):
+            list_result = await backend_client.analytics.list_experiment_groups(
+                "proj_abc",
+                agent_id="agent_1",
+                dataset_id="dataset_1",
+                page=2,
+                page_size=25,
+            )
+            get_result = await backend_client.analytics.get_experiment_group(
+                "grp_1", "proj_abc"
+            )
+            configuration_runs_result = (
+                await backend_client.analytics.list_experiment_group_configuration_runs(
+                    "grp_1", "proj_abc", page=3, page_size=10
+                )
+            )
+            with pytest.raises(ValueError, match="project_id"):
+                await backend_client.analytics.list_experiment_groups("  ")
+            with pytest.raises(TypeError):
+                await backend_client.analytics.list_experiment_groups()
+            with pytest.raises(TypeError):
+                await backend_client.analytics.get_experiment_group("grp_1")
+            with pytest.raises(TypeError):
+                await backend_client.analytics.list_experiment_group_configuration_runs(
+                    "grp_1"
+                )
+
+        assert list_result is sentinel
+        assert get_result is sentinel
+        assert configuration_runs_result is sentinel
+        assert fake_reader.calls == [
+            (
+                "list",
+                ("proj_abc",),
+                {
+                    "agent_id": "agent_1",
+                    "dataset_id": "dataset_1",
+                    "page": 2,
+                    "page_size": 25,
+                },
+            ),
+            ("get", ("grp_1", "proj_abc"), {}),
+            (
+                "configuration_runs",
+                ("grp_1", "proj_abc"),
+                {"page": 3, "page_size": 10},
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("facade_method", "reader_method", "kwargs"),
+        [
+            (
+                "get_single_run_pareto",
+                "get_single_run_pareto",
+                {
+                    "x_measure": "latency",
+                    "y_measure": "quality",
+                    "request_count": 2,
+                },
+            ),
+            (
+                "get_correlation_matrix",
+                "get_correlation_matrix",
+                {"method": "spearman", "min_sample": 4},
+            ),
+            (
+                "get_run_leaderboard",
+                "get_run_leaderboard",
+                {
+                    "objective": "weighted",
+                    "weights": {"quality": 0.8},
+                    "constraints": {"cost": 1.0},
+                    "request_count": 3,
+                    "limit": 7,
+                },
+            ),
+            (
+                "get_parameter_insights",
+                "get_parameter_insights",
+                {"target_measure": "accuracy", "min_trials": 12, "top_k": 5},
+            ),
+        ],
+    )
+    async def test_wave2_analytics_facade_methods_enter_async_context(
+        self,
+        backend_client,
+        monkeypatch,
+        facade_method,
+        reader_method,
+        kwargs,
+    ):
+        """Regression: async _new_read_client() must be awaited before async with."""
+        reader = MagicMock()
+        setattr(reader, reader_method, AsyncMock(return_value={"ok": True}))
+
+        class _FakeReadClient:
+            async def __aenter__(self):
+                return reader
+
+            async def __aexit__(self, *exc):
+                return False
+
+        async def _new_read_client():
+            return _FakeReadClient()
+
+        monkeypatch.setattr(
+            backend_client.analytics,
+            "_new_read_client",
+            _new_read_client,
+        )
+
+        result = await getattr(backend_client.analytics, facade_method)(
+            "proj_abc",
+            "run_123",
+            **kwargs,
+        )
+
+        assert result == {"ok": True}
+        getattr(reader, reader_method).assert_awaited_once_with(
+            "proj_abc",
+            "run_123",
+            **kwargs,
+        )
+
     def test_client_default_initialization(self, monkeypatch):
         """Test client with default configuration."""
         # Ensure consistent environment for test
@@ -574,7 +895,10 @@ class TestPrivacyFirstOptimization:
 
                 suggestion = await backend_client.get_next_privacy_trial(session_id)
 
-                assert suggestion is not None
+                # get_next_privacy_trial returns the backend response's
+                # suggestion object as-is.
+                assert suggestion.trial_id == "trial_123"
+                mock_bridge.get_session_mapping.assert_called_once_with(session_id)
                 # Should not create backend config run without mapping
                 mock_bridge.add_trial_mapping.assert_not_called()
 
@@ -1063,7 +1387,12 @@ class TestEdgeCases:
                 suggestion = await backend_client.get_next_privacy_trial(
                     "nonexistent_session"
                 )
-                assert suggestion is not None
+                # get_next_privacy_trial returns the backend response's
+                # suggestion object as-is.
+                assert suggestion.trial_id == "trial_123"
+                # No active session was registered for this id, so nothing
+                # should have been added to in-memory session tracking.
+                assert "nonexistent_session" not in backend_client.get_active_sessions()
 
         import asyncio
 

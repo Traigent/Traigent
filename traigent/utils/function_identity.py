@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import inspect
 import os
@@ -93,20 +94,22 @@ def resolve_function_descriptor(
         ``FunctionDescriptor`` capturing identifier, display name, and slug.
     """
     original = inspect.unwrap(func)
+    original = _unwrap_partial(original)
+    identity_source = _resolve_identity_source(original)
 
-    module_name = getattr(original, "__module__", "unknown_module")
+    module_name = getattr(identity_source, "__module__", "unknown_module")
     qualname = getattr(
-        original, "__qualname__", getattr(original, "__name__", "unknown")
+        identity_source, "__qualname__", getattr(identity_source, "__name__", "unknown")
     )
 
-    display_name_obj = getattr(original, "__qualname__", None) or getattr(
-        original, "__name__", None
+    display_name_obj = getattr(identity_source, "__qualname__", None) or getattr(
+        identity_source, "__name__", None
     )
     display_name = (
-        display_name_obj if isinstance(display_name_obj, str) else str(original)
+        display_name_obj if isinstance(display_name_obj, str) else str(identity_source)
     )
 
-    source_path = _get_source_path(original) or _get_source_path(func)
+    source_path = _get_source_path(identity_source) or _get_source_path(func)
     relative_path = (
         _to_relative_path(source_path, base_dir)
         if source_path is not None
@@ -126,6 +129,28 @@ def resolve_function_descriptor(
         relative_path=relative_path,
         slug=slug,
     )
+
+
+def _unwrap_partial(func: Any) -> Any:
+    """Unwrap (possibly nested) ``functools.partial`` objects to the real callable."""
+    while isinstance(func, functools.partial):
+        func = func.func
+    return func
+
+
+def _resolve_identity_source(obj: Any) -> Any:
+    """Return the object whose module/qualname/source should back the identity.
+
+    Plain functions, methods, and builtins already carry their own real
+    identity. A callable *instance* of a class (no ``__name__``/``__qualname__``
+    of its own) instead resolves to its class, whose module/qualname/source
+    file are stable and documented.
+    """
+    if inspect.isroutine(obj) or inspect.isclass(obj):
+        return obj
+    if callable(obj):
+        return type(obj)
+    return obj
 
 
 def _get_source_path(func: Callable[..., Any]) -> Path | None:

@@ -140,7 +140,8 @@ class TestTerminalPausePromptVendor:
         with patch("sys.stdin") as mock_stdin:
             mock_stdin.isatty.return_value = True
             result = prompt.prompt_vendor_pause(
-                RuntimeError("insufficient funds"), VendorErrorCategory.INSUFFICIENT_FUNDS
+                RuntimeError("insufficient funds"),
+                VendorErrorCategory.INSUFFICIENT_FUNDS,
             )
         assert result == "stop"
 

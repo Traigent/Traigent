@@ -9,9 +9,11 @@ dataset subset suggestions from a remote service.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 from traigent.api.types import TrialResult
 from traigent.api.types import TrialStatus as SDKTrialStatus
@@ -72,6 +74,10 @@ except (
 
 logger = get_logger(__name__)
 
+_DEFAULT_OPTIMIZER_READY_TIMEOUT_SECONDS = 60.0
+_OPTIMIZER_READY_TIMEOUT_ENV = "TRAIGENT_OPTIMIZER_READY_TIMEOUT_SECONDS"
+_LEGACY_OPTIMIZER_READY_TIMEOUT_ENV = "TRAIGENT_CLOUD_OPTIMIZER_READY_TIMEOUT"
+
 
 def _require_cloud_models() -> None:
     """Raise FeatureNotAvailableError if cloud models are not available."""
@@ -94,7 +100,7 @@ def _coerce_trial_status(status: TrialStatusLike) -> Any:
 
 def _is_completed_status(status: TrialStatusLike) -> bool:
     """Check completion across SDK and cloud status enums."""
-    return getattr(status, "value", status) == "completed"
+    return bool(getattr(status, "value", status) == "completed")
 
 
 def _string_sequence(value: Any) -> tuple[str, ...]:
@@ -102,6 +108,46 @@ def _string_sequence(value: Any) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple, set)):
         return ()
     return tuple(str(item) for item in value if item)
+
+
+def _resolve_optimizer_ready_timeout(value: Any = None) -> float:
+    """Resolve the cloud optimizer readiness timeout in seconds."""
+
+    raw = value
+    if raw is None:
+        raw = os.getenv(_OPTIMIZER_READY_TIMEOUT_ENV)
+    if raw is None:
+        raw = os.getenv(_LEGACY_OPTIMIZER_READY_TIMEOUT_ENV)
+    if raw is None:
+        return _DEFAULT_OPTIMIZER_READY_TIMEOUT_SECONDS
+
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "optimizer_ready_timeout must be a positive number of seconds"
+        ) from exc
+
+    if timeout <= 0:
+        raise ValueError("optimizer_ready_timeout must be a positive number of seconds")
+    return timeout
+
+
+class CloudBrainOptimizationComplete(RuntimeError):
+    """Normal cloud-brain terminal signal from the next-trial API."""
+
+    def __init__(self, reason: str | None = None) -> None:
+        self.reason = reason or "cloud brain completed optimization"
+        super().__init__(self.reason)
+
+    @property
+    def stop_reason(self) -> str:
+        normalized = self.reason.lower().replace("-", "_").replace(" ", "_")
+        if "max" in normalized and "trial" in normalized:
+            return "max_trials_reached"
+        if "conver" in normalized:
+            return "convergence"
+        return "optimizer"
 
 
 class RemoteGuidanceService(Protocol):
@@ -150,6 +196,8 @@ class InteractiveOptimizer(BaseOptimizer):
         dataset_metadata: dict[str, Any] | None = None,
         optimization_strategy: dict[str, Any] | None = None,
         context: TraigentConfig | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -167,11 +215,19 @@ class InteractiveOptimizer(BaseOptimizer):
             FeatureNotAvailableError: If cloud models are not installed
         """
         _require_cloud_models()
+        optimizer_ready_timeout = kwargs.pop("optimizer_ready_timeout", None)
+        if optimizer_ready_timeout is None:
+            optimizer_ready_timeout = kwargs.pop("cloud_optimizer_ready_timeout", None)
         super().__init__(config_space, objectives, context, **kwargs)
 
         self.remote_service = remote_service
         self.dataset_metadata = dataset_metadata or {}
         self.optimization_strategy = optimization_strategy
+        self.artifact_fingerprints = artifact_fingerprints
+        self.fingerprint_meta = fingerprint_meta
+        self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
+            optimizer_ready_timeout
+        )
 
         # Session management
         self.session: OptimizationSession | None = None
@@ -181,6 +237,7 @@ class InteractiveOptimizer(BaseOptimizer):
         self._pending_trials: dict[str, TrialSuggestion] = {}
         self._completed_trials: list[TrialResultSubmission] = []
         self._start_time: float | None = None
+        self._completion_reason: str | None = None
 
     async def initialize_session(
         self,
@@ -213,9 +270,14 @@ class InteractiveOptimizer(BaseOptimizer):
                 optimization_strategy=self.optimization_strategy,
                 user_id=user_id,
                 billing_tier=billing_tier,
+                artifact_fingerprints=self.artifact_fingerprints,
+                fingerprint_meta=self.fingerprint_meta,
             )
 
-            response = await self.remote_service.create_session(request)
+            response = await self._await_optimizer_service(
+                "session-create",
+                self.remote_service.create_session(request),
+            )
 
             # Create local session object
             self.session = OptimizationSession(
@@ -265,42 +327,55 @@ class InteractiveOptimizer(BaseOptimizer):
         if not self.session_id:
             raise OptimizationError("No active session. Call initialize_session first.")
 
+        request = NextTrialRequest(
+            session_id=self.session_id,
+            previous_results=previous_results or self._completed_trials[-5:],
+            request_metadata={
+                "dataset_size": dataset_size,
+                "completed_trials": len(self._completed_trials),
+            },
+        )
+
         try:
-            request = NextTrialRequest(
-                session_id=self.session_id,
-                previous_results=previous_results or self._completed_trials[-5:],
-                request_metadata={
-                    "dataset_size": dataset_size,
-                    "completed_trials": len(self._completed_trials),
-                },
+            response = await self._await_optimizer_service(
+                "next-trial readiness",
+                self.remote_service.get_next_trial(request),
             )
-
-            response = await self.remote_service.get_next_trial(request)
-
-            # Update local session status
-            if self.session:
-                self.session.status = response.session_status
-
-            if not response.should_continue or not response.suggestion:
-                logger.info(f"Optimization complete: {response.reason}")
-                return None
-
-            suggestion = response.suggestion
-
-            # Store pending trial
-            self._pending_trials[suggestion.trial_id] = suggestion
-
-            logger.info(
-                f"Got suggestion {suggestion.trial_id}: "
-                f"{suggestion.exploration_type} with "
-                f"{len(suggestion.dataset_subset.indices)} examples"
-            )
-
-            return suggestion
-
         except Exception as e:
             logger.error(f"Failed to get next suggestion: {e}")
             raise OptimizationError(f"Failed to get suggestion: {e}") from e
+
+        # Update local session status
+        if self.session:
+            self.session.status = response.session_status
+
+        if not response.should_continue:
+            self._completion_reason = (
+                response.stop_reason
+                or response.reason
+                or "cloud brain completed optimization"
+            )
+            logger.info(f"Optimization complete: {self._completion_reason}")
+            return None
+
+        if not response.suggestion:
+            raise OptimizationError(
+                "Cloud brain returned no suggestion while should_continue=True"
+            )
+
+        self._completion_reason = None
+        suggestion = response.suggestion
+
+        # Store pending trial
+        self._pending_trials[suggestion.trial_id] = suggestion
+
+        logger.info(
+            f"Got suggestion {suggestion.trial_id}: "
+            f"{suggestion.exploration_type} with "
+            f"{len(suggestion.dataset_subset.indices)} examples"
+        )
+
+        return suggestion
 
     async def suggest_next_trial_async(
         self,
@@ -317,7 +392,7 @@ class InteractiveOptimizer(BaseOptimizer):
             dataset_size=max(dataset_size, 1),
         )
         if suggestion is None:
-            raise OptimizationError("Cloud brain returned no further suggestions")
+            raise CloudBrainOptimizationComplete(self._completion_reason)
 
         config = dict(suggestion.config or {})
         config["_traigent_backend_trial_id"] = suggestion.trial_id
@@ -327,6 +402,24 @@ class InteractiveOptimizer(BaseOptimizer):
         if subset_indices:
             config["__subset_indices__"] = list(subset_indices)
         return config
+
+    async def _await_optimizer_service(self, stage: str, awaitable: Any) -> Any:
+        """Await a cloud optimizer operation with a bounded readiness deadline."""
+
+        try:
+            return await asyncio.wait_for(
+                awaitable,
+                timeout=self.optimizer_ready_timeout,
+            )
+        except TimeoutError as exc:
+            raise OptimizationError(
+                f"Cloud optimizer service did not become available during {stage} "
+                f"within {self.optimizer_ready_timeout:g}s. "
+                "Bayesian and other managed/cloud optimization algorithms require "
+                "the backend optimizer service and cannot fall back to the local SDK. "
+                "Check that the optimizer service is deployed and healthy "
+                "(BE#1831/#1146), then retry."
+            ) from exc
 
     async def report_results(
         self,
@@ -503,8 +596,8 @@ class InteractiveOptimizer(BaseOptimizer):
         # Simple comparison on primary objective
         if self.objectives and self.objectives[0] in metrics:
             primary = self.objectives[0]
-            current = metrics.get(primary, 0)
-            best = self.session.best_metrics.get(primary, 0)
+            current = float(metrics.get(primary, 0.0))
+            best = float(self.session.best_metrics.get(primary, 0.0))
 
             # Assume higher is better for now
             return current > best
@@ -562,7 +655,10 @@ class InteractiveOptimizer(BaseOptimizer):
                 ),
                 effectuation_events=result_metadata.get("effectuation_events"),
             )
-            return merge_tvar_observation_metadata(result_metadata, observation)
+            return cast(
+                dict[str, Any],
+                merge_tvar_observation_metadata(result_metadata, observation),
+            )
         except Exception as exc:
             logger.debug(
                 "Skipping TVAR observation metadata for trial %s: %s",

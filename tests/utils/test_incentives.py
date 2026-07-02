@@ -149,9 +149,9 @@ class TestIncentiveManager:
             self.incentive_manager._state["completed_sessions"] = completed_count
             self.incentive_manager._state["last_hint"] = None  # Reset frequency limit
             result = self.incentive_manager.should_show_hint(context)
-            assert (
-                result == expected
-            ), f"Failed for {completed_count} sessions, {context} context"
+            assert result == expected, (
+                f"Failed for {completed_count} sessions, {context} context"
+            )
 
     def test_get_contextual_hint_no_trigger(self):
         """Test getting hint when conditions are not met."""

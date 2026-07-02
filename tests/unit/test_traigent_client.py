@@ -14,7 +14,7 @@ import pytest
 
 from traigent.config.types import ExecutionMode
 from traigent.traigent_client import TraigentClient
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import ConfigurationError, OptimizationError
 
 
 class TestTraigentClientInitialization:
@@ -108,15 +108,10 @@ class TestDetermineExecutionMode:
         assert client.execution_mode == ExecutionMode.HYBRID
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_explicit_cloud_mode_deprecated_resolves_to_edge_analytics(self) -> None:
-        """Deprecated cloud mode warns and resolves to edge_analytics."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            client = TraigentClient(execution_mode="cloud")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_explicit_cloud_mode_deprecated_fails_closed(self) -> None:
+        """Deprecated cloud mode raises before backend initialization."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentClient(execution_mode="cloud")
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -449,11 +444,14 @@ class TestOptimizeValidation:
         config_space = {}  # No model specified — edge_analytics auto-fills it
         objectives = ["accuracy"]
 
-        # Should not raise; edge_analytics fills model with default
         result = await client.optimize(
             test_func, dataset, config_space, objectives, max_trials=1
         )
-        assert result is not None
+
+        assert result["execution_mode"] == "local"
+        assert result["status"] == "completed"
+        assert result["completed_trials"] == 1
+        assert result["best_configuration"]["configuration"]["model"] == "gpt-3.5-turbo"
 
     @pytest.mark.asyncio
     async def test_optimize_edge_analytics_missing_agent_builder(self) -> None:
@@ -675,7 +673,7 @@ class TestOptimizeSaaS:
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
-                return TraigentClient(execution_mode="cloud")
+                return TraigentClient(execution_mode="hybrid")
 
     @pytest.mark.asyncio
     async def test_optimize_saas_success(self, mock_client: TraigentClient) -> None:
@@ -789,7 +787,7 @@ class TestOptimizeSaaS:
     async def test_optimize_saas_invalid_poll_interval(
         self, mock_client: TraigentClient
     ) -> None:
-        """Test SaaS optimization handles invalid poll interval."""
+        """A non-positive poll_interval is clamped to the 0.1s minimum."""
 
         def test_func() -> str:
             return "test"
@@ -809,22 +807,33 @@ class TestOptimizeSaaS:
             return_value={"session_id": "session_456"}
         )
         mock_client.backend_client.get_session_status = AsyncMock(
-            return_value={"status": "COMPLETED", "completed_trials": 5}
+            side_effect=[
+                {"status": "RUNNING", "completed_trials": 1},
+                {"status": "COMPLETED", "completed_trials": 5},
+            ]
         )
         mock_client.backend_client.get_optimization_results = AsyncMock(
             return_value={"best_configuration": {"model": "gpt-4"}}
         )
 
-        # Should use 0.1 as minimum poll interval
-        result = await mock_client.optimize(
-            test_func,
-            dataset,
-            config_space,
-            objectives,
-            max_trials=5,
-            optimization_config={"poll_interval": -1.0},
-        )
-        assert result is not None  # Method returns results
+        with patch(
+            "traigent.traigent_client.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep:
+            result = await mock_client.optimize(
+                test_func,
+                dataset,
+                config_space,
+                objectives,
+                max_trials=5,
+                optimization_config={"poll_interval": -1.0},
+            )
+
+        # Non-positive poll_interval must be clamped to the 0.1s minimum
+        mock_sleep.assert_awaited_once_with(0.1)
+        assert result == {
+            "best_configuration": {"model": "gpt-4"},
+            "execution_mode": "cloud",
+        }
 
 
 class TestOptimizeLocal:
@@ -881,7 +890,7 @@ class TestOptimizeLocal:
                     test_func, dataset, config_space, objectives, max_trials=10
                 )
 
-                assert result["execution_mode"] == "edge_analytics"
+                assert result["execution_mode"] == "local"
                 assert result["completed_trials"] == 1
                 assert result["status"] == "completed"
                 assert result["best_configuration"] is not None

@@ -10,7 +10,11 @@ from typing import Any
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.utils.logging import get_logger
-from traigent.utils.objectives import is_minimization_objective
+from traigent.utils.objectives import (
+    coerce_finite_objective_score,
+    is_minimization_objective,
+)
+from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
 from traigent.utils.validation import validate_objectives
 
 logger = get_logger(__name__)
@@ -85,6 +89,16 @@ class BaseOptimizer(ABC):
                 for obj, weight in self.objective_weights.items()
                 if obj in self.objectives
             }
+
+        # Resolve objective orientation once so composite/scalarized scoring
+        # respects ``minimize`` objectives (cost/latency/error) instead of
+        # treating every objective as ``maximize`` (#1466). Name-pattern
+        # heuristics are used here because optimizers receive string objective
+        # names; callers with an ``ObjectiveSchema`` should pass it through to
+        # ``scalarize_objectives`` directly for exact orientation.
+        self._minimize_objectives: list[str] = [
+            obj for obj in self.objectives if is_minimization_objective(obj)
+        ]
 
         # Initialize internal state
         self._trial_count = 0
@@ -223,19 +237,18 @@ class BaseOptimizer(ABC):
 
         # Get primary objective score
         primary_objective = self.objectives[0]
-        score = trial.get_metric(primary_objective)
+        score = coerce_finite_objective_score(trial.get_metric(primary_objective))
         if score is None:
             return
 
-        if self._best_score is None:
+        best_score = coerce_finite_objective_score(self._best_score)
+        if best_score is None:
             self._best_score = score
             self._best_config = trial.config.copy()
             return
 
         minimization = is_minimization_objective(primary_objective)
-        is_better = (
-            score < self._best_score if minimization else score > self._best_score
-        )
+        is_better = score < best_score if minimization else score > best_score
         if is_better:
             self._best_score = score
             self._best_config = trial.config.copy()
@@ -268,34 +281,7 @@ class BaseOptimizer(ABC):
         Returns:
             Cardinality count, 0 for empty, or None for continuous types.
         """
-        # Detect range dicts from hybrid discovery ({"low": x, "high": y})
-        # before falling back to "categorical" default
-        has_range = "low" in definition and "high" in definition
-        param_type = (definition.get("type") or "").lower()
-
-        if not param_type and has_range:
-            # No explicit type but has low/high → continuous float range
-            return None
-
-        if not param_type:
-            param_type = "categorical"
-
-        if param_type in {"fixed", "constant"}:
-            return 1
-
-        if param_type in {"categorical", "choice"}:
-            choices = definition.get("choices") or definition.get("values") or []
-            return len(choices) if choices else 0
-
-        if param_type in {"int", "integer"}:
-            low, high = definition.get("low"), definition.get("high")
-            if low is not None and high is not None:
-                step = definition.get("step", 1)
-                return max(((int(high) - int(low)) // int(step)) + 1, 1)
-            return None
-
-        # Float or other continuous types
-        return None
+        return discrete_cardinality_for_config_param(definition)
 
     def _get_param_cardinality(self, definition: Any) -> int | None:
         """Get cardinality for a single parameter definition.

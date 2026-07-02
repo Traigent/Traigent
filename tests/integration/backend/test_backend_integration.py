@@ -9,6 +9,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
+from traigent.cloud.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
 from traigent.config.types import TraigentConfig
 
 
@@ -130,14 +134,26 @@ class TestBackendIntegration:
         )
 
         # Should not raise exception due to fallback mode
-        session_id = client.create_session(
+        result = client.create_session(
             function_name="test_function",
             search_space={"temperature": [0.1, 0.5, 0.9]},
             optimization_goal="maximize",
         )
 
-        # In fallback mode, should still return a session ID
-        assert session_id is not None
+        # Whether the NO_API_KEY preflight short-circuits first (no key
+        # configured) or the connection to the unreachable port fails
+        # (SESSION_FAILED), the result must be a local-fallback
+        # SessionCreationResult: not connected to the backend, with a usable
+        # local session id and the documented fallback/execution-path flags.
+        assert isinstance(result, SessionCreationResult)
+        assert result.backend_connected is False
+        assert result.backend_fallback is True
+        assert result.execution_path == "local_fallback"
+        assert result.failure_reason in (
+            SessionCreationFailureReason.NO_API_KEY,
+            SessionCreationFailureReason.SESSION_FAILED,
+        )
+        assert isinstance(result.session_id, str) and result.session_id != ""
 
 
 @pytest.mark.integration
@@ -234,14 +250,17 @@ class TestBackendIntegrationWithMocks:
         )
 
         # Should not raise exception
-        client.submit_result(
+        result = client.submit_result(
             session_id="test-session-123",
             config={"temperature": 0.7},
             score=0.85,
             metadata={"cost": 0.002},
         )
 
-        # Verify client was created and submit_result completed without exception
-        # Note: In fallback=False mode, the client may not make actual HTTP calls
-        # if internal validation fails or session sync is disabled
-        assert client is not None, "Client should be created successfully"
+        # submit_result is documented as a "compatibility shim for legacy
+        # synchronous result submission": it returns None, and with
+        # enable_fallback=False (no local_storage configured) and no prior
+        # create_session call for this session_id, it has nothing to persist
+        # and must not perform any backend HTTP call.
+        assert result is None
+        mock_session.post.assert_not_called()

@@ -47,7 +47,7 @@ jobs:
       contents: read
 
     steps:
-    - uses: actions/checkout@v6.0.2
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0  # Full history for version detection
 
@@ -65,7 +65,7 @@ jobs:
         echo "Tag $GIT_REF_NAME is on main — proceeding."
 
     - name: Set up Python
-      uses: actions/setup-python@v6.2.0
+      uses: actions/setup-python@v6
       with:
         python-version: "3.11"
 
@@ -206,7 +206,7 @@ jobs:
       run: sleep 300
 
     - name: Set up Python
-      uses: actions/setup-python@v6.2.0
+      uses: actions/setup-python@v6
       with:
         python-version: "3.11"
 

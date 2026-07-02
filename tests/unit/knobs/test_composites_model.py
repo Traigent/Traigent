@@ -76,7 +76,9 @@ def _program(node: CompositeNode, **ns) -> CompositeProgram:
 class TestNodeLocalRejections:
     def test_unknown_composite_kind(self):
         with pytest.raises(ValueError) as e:
-            CompositeNode(name="x", kind="quantum", body=CascadeBody(arms=(StageArm("a"),)))  # type: ignore[arg-type]
+            CompositeNode(
+                name="x", kind="quantum", body=CascadeBody(arms=(StageArm("a"),))
+            )  # type: ignore[arg-type]
         assert _code(e) == "unknown_composite_kind"
 
     def test_unknown_composite_field_kind_body_mismatch(self):

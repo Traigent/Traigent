@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from traigent.analytics.cost_optimization import BudgetAllocator, ResourceType
 
 
@@ -97,12 +99,29 @@ def test_rebalance_handles_zero_budget_allocations() -> None:
     allocator = BudgetAllocator()
     _seed_allocations(allocator)
 
+    before_compute = allocator.allocations[ResourceType.COMPUTE].allocated_budget
+
     # Force one allocation to zero budget/spend
     zero_alloc = allocator.allocations[ResourceType.STORAGE]
     zero_alloc.allocated_budget = 0.0
     zero_alloc.spent_amount = 0.0
     zero_alloc.remaining_budget = 0.0
 
-    # Should not raise ZeroDivisionError
+    # Should not raise ZeroDivisionError, and the zero-budget allocation
+    # must come out untouched rather than corrupted to nan/inf.
     result = allocator.rebalance_budgets()
-    assert result is not None  # Method returns allocations dict
+    assert isinstance(result, dict)
+    assert set(result) == {
+        ResourceType.COMPUTE,
+        ResourceType.STORAGE,
+        ResourceType.NETWORK,
+    }
+
+    storage_alloc = result[ResourceType.STORAGE]
+    assert storage_alloc.allocated_budget == 0.0
+    assert storage_alloc.remaining_budget == 0.0
+
+    # STORAGE's zero remaining_budget contributes zero excess, so the
+    # over-utilized COMPUTE allocation receives no redistribution this round.
+    compute_alloc = result[ResourceType.COMPUTE]
+    assert compute_alloc.allocated_budget == pytest.approx(before_compute)

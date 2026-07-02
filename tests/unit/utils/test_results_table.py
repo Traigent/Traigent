@@ -9,14 +9,21 @@ should emit a clear "all trials failed" banner.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from traigent.api.types import TrialResult, TrialStatus
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.utils.results_table import (
     _find_best_per_objective,
+    _format_metric_value,
     _trials_all_failed,
     print_results_table,
 )
@@ -375,3 +382,172 @@ class TestOverallBestIdentity:
         assert "examples" in out
         assert "0/20" in out
         assert "20/20" in out
+
+
+class TestPrintResultsTableDirectFieldAccess:
+    """print_results_table accesses results.trials and t.metrics directly.
+
+    Regression (#1494): the former getattr defaults (results.trials → []) and
+    (t.metrics → {}) masked contract violations. Direct access raises on a
+    contract break rather than silently rendering an empty table.
+    """
+
+    def test_real_optimization_result_renders_correct_metrics(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A real OptimizationResult is rendered via direct attribute access.
+
+        Verifies that results.trials (not getattr default []) and
+        trials[0].metrics (not getattr default {}) are used — if the getattr
+        defaults were in effect for a valid result, the table would render
+        identically; but this test proves the direct path executes without error
+        and propagates the real metric values.
+        """
+        trials = [
+            _trial({"model": "m1"}, {"accuracy": 0.7}),
+            _trial({"model": "m2"}, {"accuracy": 0.9}),
+        ]
+        results = OptimizationResult(
+            trials=trials,
+            best_config={"model": "m2"},
+            best_score=0.9,
+            optimization_id="oid-direct",
+            duration=2.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        print_results_table(
+            results,
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        # Table was rendered (not "No trials to display" — direct trials access)
+        assert "No trials to display" not in out
+        # sample_metrics = trials[0].metrics → {"accuracy": 0.7}
+        # If the former getattr({}) were in effect on a bad trial, "accuracy"
+        # would be absent from metric_info and not rendered.
+        assert "accuracy" in out.lower()
+
+    def test_sample_metrics_direct_access_populates_metric_column(self) -> None:
+        """trials[0].metrics is the real dict, not a getattr {} default.
+
+        _find_best_per_objective is called with metric_info populated from
+        sample_metrics = trials[0].metrics. This verifies the value is the
+        actual metrics dict (non-empty), so the correct best-trial index is found.
+        """
+        trials_with_metrics = [
+            _trial({"model": "a"}, {"score": 0.3}),
+            _trial({"model": "b"}, {"score": 0.8}),
+        ]
+        # Directly call _find_best_per_objective using the real TrialResult.metrics
+        # (simulating what print_results_table does after sample_metrics = trials[0].metrics)
+        sample_metrics = trials_with_metrics[0].metrics  # direct access, not getattr
+        assert "score" in sample_metrics  # proves real dict, not {} default
+
+        best = _find_best_per_objective(
+            trials_with_metrics,
+            metric_info=[("score", None)],
+            metric_overrides=None,
+        )
+        # Trial index 1 (score=0.8) is best — only works if metric_info was
+        # populated from the real metrics dict
+        assert 1 in best.get("score", set())
+
+
+class TestPrintResultsTableFailLoud:
+    """Missing contract fields surface as errors, not silent empty rendering.
+
+    These tests FAIL on the pre-fix code (where the getattr defaults masked
+    the missing attribute and rendered an empty/degraded table) and PASS on
+    the fixed code (direct access raises).
+    """
+
+    def test_results_missing_trials_raises_not_no_trials_banner(self) -> None:
+        """A results object without ``.trials`` must raise AttributeError.
+
+        Pre-fix: ``getattr(results, "trials", [])`` returned ``[]`` and the
+        function printed "No trials to display" and returned cleanly — masking
+        a contract break as a benign empty run.
+        Post-fix: ``results.trials`` raises, surfacing the breach.
+        """
+        # An OptimizationResult-shaped object MISSING the required `trials`.
+        bad_results = SimpleNamespace(
+            best_config={"model": "m1"},
+            best_score=0.5,
+            metadata={},
+        )
+
+        with pytest.raises(AttributeError):
+            print_results_table(
+                bad_results,  # type: ignore[arg-type]
+                config_space={"model": ["m1"]},
+                objectives=["accuracy"],
+            )
+
+    def test_trial_missing_metrics_raises_not_empty_metric_set(self) -> None:
+        """A first trial without ``.metrics`` must raise AttributeError.
+
+        Pre-fix: ``getattr(trials[0], "metrics", {})`` returned ``{}`` so the
+        metric columns silently vanished from the table.
+        Post-fix: ``trials[0].metrics`` raises, surfacing the breach.
+        """
+        # Non-empty trials so the `if not trials` guard is passed, but the
+        # first trial is MISSING the required `metrics` attribute.
+        trial_without_metrics = SimpleNamespace(
+            trial_id="t1",
+            config={"model": "m1"},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+        )
+        bad_results = SimpleNamespace(
+            trials=[trial_without_metrics],
+            best_config={"model": "m1"},
+            best_score=0.5,
+            metadata={},
+        )
+
+        with pytest.raises(AttributeError):
+            print_results_table(
+                bad_results,  # type: ignore[arg-type]
+                config_space={"model": ["m1"]},
+                objectives=["accuracy"],
+            )
+
+
+class TestMetricPercentFormatting:
+    """The trial-results table must not double-scale a 0-100 metric.
+
+    Regression: ``_format_metric_value`` used ``f"{val:.1%}"`` for every quality
+    metric, so a 0-100 accuracy of 79.16 rendered as "7916.2%". Mirror the FE
+    rule: value > 1 is already a percent (render as-is); value <= 1 is a fraction
+    (scale by 100). Never produce ">100%" for a real 0-100 accuracy.
+    """
+
+    def test_zero_to_hundred_scale_accuracy_not_double_scaled(self) -> None:
+        rendered = _format_metric_value("accuracy", 79.162)
+        assert rendered == "79.2%"
+        assert "7916" not in rendered
+        numeric = float(rendered.rstrip("%"))
+        assert numeric <= 100.0  # a real accuracy can never exceed 100%
+
+    def test_fraction_scale_value_still_renders_correctly(self) -> None:
+        # 0-1 fraction inputs keep the prior behaviour (scaled to a percent).
+        assert _format_metric_value("accuracy", 0.79) == "79.0%"
+        assert _format_metric_value("accuracy", 0.0) == "0.0%"
+
+    def test_boundaries_and_other_quality_metric(self) -> None:
+        # 1.0 is treated as a fraction (100%); 100.0 as an already-percent value.
+        assert _format_metric_value("accuracy", 1.0) == "100.0%"
+        assert _format_metric_value("accuracy", 100.0) == "100.0%"
+        # The scale rule applies to any non cost/latency metric name.
+        assert _format_metric_value("score", 87.4) == "87.4%"
+
+    def test_cost_and_latency_formatting_unchanged(self) -> None:
+        assert _format_metric_value("cost", 0.00123).startswith("$")
+        assert _format_metric_value("latency", 1.234) == "1.234s"

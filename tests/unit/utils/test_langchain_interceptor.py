@@ -779,13 +779,20 @@ class TestPatchLangChainForMetadataCapture:
             # Should not crash, should return False
             assert result is False
 
-    def test_patch_logs_debug_on_import_error(self) -> None:
+    @patch("traigent.utils.langchain_interceptor.logger")
+    def test_patch_logs_debug_on_import_error(self, mock_logger: MagicMock) -> None:
         """Test that patch logs debug message when module not available."""
-        # This tests the actual behavior without mocking internals
-        # Since LangChain may or may not be installed, we just verify it doesn't crash
-        result = patch_langchain_for_metadata_capture()
-        # Result depends on whether LangChain is installed
-        assert isinstance(result, bool)
+        with patch.dict(
+            "sys.modules", {"langchain_anthropic": None, "langchain_openai": None}
+        ):
+            result = patch_langchain_for_metadata_capture()
+
+        # With ChatAnthropic/ChatOpenAI unavailable, the ImportError
+        # fallback path must log a debug message naming each missing
+        # module, and nothing gets patched.
+        assert result is False
+        mock_logger.debug.assert_any_call("ChatAnthropic not available, skipping")
+        mock_logger.debug.assert_any_call("ChatOpenAI not available, skipping")
 
     def test_clear_removes_storage_correctly(self) -> None:
         """Test that clear operation removes all stored responses."""

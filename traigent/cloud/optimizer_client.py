@@ -11,6 +11,7 @@ import backoff
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
+from traigent.cloud.url_security import validate_cloud_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,10 @@ class OptimizerDirectClient:
         if not isinstance(token, str) or not token.strip():
             raise ValueError("Optimizer token must be a non-empty string")
 
-        self.endpoint = endpoint.strip().rstrip("/")
+        self.endpoint = validate_cloud_base_url(
+            endpoint.strip(),
+            purpose="optimizer direct client",
+        )
         self.token = token.strip()
         self.no_egress = bool(no_egress)
         self.session: aiohttp.ClientSession | None = None
@@ -130,8 +134,10 @@ class OptimizerDirectClient:
             self._metric_buffer.append((session_id, submission))
             buffer_size = len(self._metric_buffer)
 
-            # Flush if buffer is full or this is the first item
-            if buffer_size >= self._batch_size or buffer_size == 1:
+            # Flush once the buffer reaches the configured batch size. For
+            # batch_size == 1 this still flushes on every submission
+            # (immediate single POST), since buffer_size is always >= 1.
+            if buffer_size >= self._batch_size:
                 return await self._flush_buffer()
 
         return {

@@ -1963,9 +1963,7 @@ class TestNormalizeEvaluationKwargDefinition:
     def test_enum_without_values_raises(self) -> None:
         svc = self._make_svc()
         with pytest.raises(ValueError, match="must declare domain.values"):
-            svc._normalize_evaluation_kwarg_definition(
-                {"name": "x", "type": "enum"}
-            )
+            svc._normalize_evaluation_kwarg_definition({"name": "x", "type": "enum"})
 
     def test_valid_range_and_resolution(self) -> None:
         svc = self._make_svc()

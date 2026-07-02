@@ -77,6 +77,18 @@ async def cleanup_lingering_asyncio_tasks():
 
 
 @pytest.fixture(autouse=True)
+def _reset_execution_mode_deprecation_warnings():
+    """The execution-mode deprecation warn-once guard (traigent.config.types) is
+    process-global; reset it around every test so a warning emitted in one test can't
+    suppress a warns-assertion in another (otherwise test order/xdist worker would matter)."""
+    from traigent.config.types import _reset_deprecation_warning_state_for_tests
+
+    _reset_deprecation_warning_state_for_tests()
+    yield
+    _reset_deprecation_warning_state_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def add_doctest_namespace(doctest_namespace):
     """Expose common Traigent symbols to package doctests."""
     import traigent
@@ -799,8 +811,10 @@ def comprehensive_evaluator():
 
 @pytest.fixture
 def privacy_evaluator():
-    """LocalEvaluator configured for privacy mode."""
-    return LocalEvaluator(metrics=["accuracy"], detailed=True, execution_mode="privacy")
+    """LocalEvaluator configured for local no-egress mode."""
+    return LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+    )
 
 
 @pytest.fixture
@@ -871,8 +885,8 @@ def traigent_config():
 
 @pytest.fixture
 def privacy_config():
-    """Traigent configuration for privacy mode testing."""
-    return TraigentConfig(execution_mode="privacy", detailed_metrics=False)
+    """Traigent configuration for local no-egress testing."""
+    return TraigentConfig(execution_mode="edge_analytics", detailed_metrics=False)
 
 
 # Original fixtures for backward compatibility

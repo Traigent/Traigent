@@ -179,9 +179,9 @@ class TestOpenRouterCost:
         if not matches:
             result.notes += f" - Cost difference: {cost_diff:.8f}"
 
-        assert (
-            matches
-        ), f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        assert matches, (
+            f"Cost mismatch: SDK={sdk_cost:.8f}, expected={expected_cost:.8f}"
+        )
 
         return result
 

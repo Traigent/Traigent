@@ -1,8 +1,8 @@
 """Tests for execution mode configurations.
 
 Tests execution modes. edge_analytics and hybrid are supported today.
-cloud and standard are deprecated compatibility values that warn and resolve.
-privacy is a legacy alias for hybrid.
+standard is a deprecated compatibility value that warns and resolves.
+privacy and cloud fail closed instead of normalizing.
 """
 
 from __future__ import annotations
@@ -58,12 +58,12 @@ class TestExecutionModeMatrix:
         assert validation.passed, validation.summary()
 
     @pytest.mark.unit
-    def test_cloud_mode_warns_and_resolves_to_edge_analytics(self) -> None:
-        """Deprecated cloud mode preserves the legacy edge_analytics mapping."""
-        from traigent.config.types import ExecutionMode, validate_execution_mode
+    def test_cloud_mode_fails_closed(self) -> None:
+        """Deprecated cloud mode no longer normalizes to a runtime mode."""
+        from traigent.config.types import validate_execution_mode
 
-        with pytest.warns(DeprecationWarning):
-            assert validate_execution_mode("cloud") is ExecutionMode.EDGE_ANALYTICS
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            validate_execution_mode("cloud")
 
     @pytest.mark.unit
     def test_standard_mode_warns_and_resolves_to_hybrid(self) -> None:
@@ -187,11 +187,12 @@ class TestPrivacyMode:
     """Tests for PRIVACY execution mode legacy alias."""
 
     @pytest.mark.unit
-    def test_privacy_mode_aliases_to_hybrid(self) -> None:
-        """Privacy is accepted as hybrid with the privacy flag set elsewhere."""
-        from traigent.config.types import ExecutionMode, validate_execution_mode
+    def test_privacy_mode_fails_closed(self) -> None:
+        """Privacy no longer normalizes to hybrid."""
+        from traigent.config.types import validate_execution_mode
 
-        assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            validate_execution_mode("privacy")
 
 
 class TestHybridMode:
@@ -221,12 +222,12 @@ class TestCloudMode:
     """Tests for deprecated CLOUD execution mode."""
 
     @pytest.mark.unit
-    def test_cloud_mode_warns_and_resolves_to_edge_analytics(self) -> None:
-        """Test cloud mode emits DeprecationWarning and resolves to edge_analytics."""
-        from traigent.config.types import ExecutionMode, validate_execution_mode
+    def test_cloud_mode_fails_closed(self) -> None:
+        """Test cloud mode fails closed instead of resolving."""
+        from traigent.config.types import validate_execution_mode
 
-        with pytest.warns(DeprecationWarning):
-            assert validate_execution_mode("cloud") is ExecutionMode.EDGE_ANALYTICS
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            validate_execution_mode("cloud")
 
 
 class TestExecutionModeEdgeCases:

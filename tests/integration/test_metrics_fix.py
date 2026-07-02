@@ -114,7 +114,7 @@ async def main():
         if submitted_results:
             print("\n📤 Data sent to backend:")
             for i, submission in enumerate(submitted_results):
-                print(f"\n  Submission {i+1}:")
+                print(f"\n  Submission {i + 1}:")
                 print(f"    Config: {submission['config']}")
                 print(f"    Score: {submission['score']}")
 
@@ -123,7 +123,7 @@ async def main():
                     measures = submission["metadata"]["measures"]
                     print(f"    Measures ({len(measures)} examples):")
                     for j, measure in enumerate(measures):
-                        print(f"      Example {j+1}:")
+                        print(f"      Example {j + 1}:")
                         for key, value in measure.items():
                             print(f"        {key}: {value}")
 

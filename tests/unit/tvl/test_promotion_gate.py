@@ -1,10 +1,14 @@
 """Unit tests for TVL promotion gate."""
 
+import pytest
+
+from traigent.tvl import promotion_gate
 from traigent.tvl.models import BandTarget, ChanceConstraint, PromotionPolicy
 from traigent.tvl.promotion_gate import (
     ObjectiveSpec,
     PromotionDecision,
     PromotionGate,
+    clopper_pearson_upper_bound,
 )
 
 
@@ -25,6 +29,16 @@ class TestObjectiveSpec:
         assert spec.name == "consistency"
         assert spec.direction == "band"
         assert spec.band == band
+
+    def test_invalid_direction_raises(self) -> None:
+        """Axis D: a direct ObjectiveSpec caller with an invalid direction raises.
+
+        Mirrors the spec-load guard (spec_loader.py:1980-1983). The compile-time
+        ``Literal`` does not enforce at runtime, so an unsupported direction must
+        fail loudly instead of silently falling into the minimize branch.
+        """
+        with pytest.raises(ValueError, match="direction must be one of"):
+            ObjectiveSpec(name="accuracy", direction="upward")  # type: ignore[arg-type]
 
 
 class TestPromotionGate:
@@ -175,6 +189,110 @@ class TestPromotionGate:
         # Should have adjusted p-values
         assert len(decision.adjusted_p_values) > 0
 
+    def test_holm_adjustment_blocks_raw_p_value_promotion(self) -> None:
+        """Holm adjustment prevents promotion that raw p-values would allow.
+
+        Axis B (canonical promotion.py:233-244): the superiority (union)
+        component is multiplicity-adjusted while non-inferiority stays
+        unadjusted. Two identical, moderately-improved objectives are each
+        superior at the raw p-value (p_super=0.0366 < 0.05) but Holm doubles
+        the smallest p-value (2 x 0.0366 = 0.0731 >= 0.05), so neither is
+        superior under Holm even though both remain non-inferior.
+        """
+        # Both objectives share the same candidate samples (incumbent = 0).
+        # p_noninf == p_super here (epsilon = 0), so both stay non-inferior.
+        cand_samples = [-0.45, -0.2, 0.05, 0.3, 0.55, 0.8, 1.05, -0.075, 0.425, 0.55]
+        incumbent_metrics = {
+            "a": [0.0] * 10,
+            "b": [0.0] * 10,
+        }
+        candidate_metrics = {
+            "a": list(cand_samples),
+            "b": list(cand_samples),
+        }
+        objectives = [
+            ObjectiveSpec("a", "maximize"),
+            ObjectiveSpec("b", "maximize"),
+        ]
+
+        raw_gate = PromotionGate(
+            PromotionPolicy(alpha=0.05, min_effect={"a": 0.0, "b": 0.0}, adjust="none"),
+            objectives,
+        )
+        raw_decision = raw_gate.evaluate(incumbent_metrics, candidate_metrics)
+        assert raw_decision.decision == "promote"
+        assert raw_decision.adjusted_p_values["a"] < raw_gate.policy.alpha
+
+        holm_gate = PromotionGate(
+            PromotionPolicy(
+                alpha=0.05,
+                min_effect={"a": 0.0, "b": 0.0},
+                adjust="holm",
+            ),
+            objectives,
+        )
+        holm_decision = holm_gate.evaluate(incumbent_metrics, candidate_metrics)
+        # Non-inferiority is unadjusted, so the candidate is not rejected...
+        assert all(
+            r.p_value_noninf < holm_gate.policy.alpha
+            for r in holm_decision.objective_results
+        )
+        # ...but the adjusted superiority p-value clears alpha -> no superiority.
+        assert holm_decision.adjusted_p_values["a"] > holm_gate.policy.alpha
+        assert holm_decision.decision == "no_decision"
+        assert holm_decision.dominance_satisfied is False
+
+    def test_iut_rejects_when_objective_not_noninferior(self) -> None:
+        """Axis A: canonical IUT rejects when any objective is not non-inferior.
+
+        Mirrors the canonical decision rule (promotion.py:768-773, :249-251):
+        a candidate that is clearly superior on Y but cannot prove
+        non-inferiority on a neutral objective X is REJECTED. The old SDK gate
+        (any_better and not any_worse) PROMOTED this case, because the neutral
+        objective X is not "worse beyond epsilon" and Y is better.
+        """
+        incumbent_metrics = {
+            "x": [0.80, 0.82, 0.81, 0.79, 0.80, 0.81, 0.82, 0.80, 0.79, 0.81],
+            "y": [0.50, 0.52, 0.48, 0.51, 0.49, 0.50, 0.53, 0.47, 0.51, 0.50],
+        }
+        candidate_metrics = {
+            # X: identical to incumbent -> non-inferiority unproven (p >= alpha),
+            # yet NOT worse beyond epsilon (so the old gate ignored it).
+            "x": list(incumbent_metrics["x"]),
+            # Y: clearly better.
+            "y": [0.80, 0.82, 0.78, 0.81, 0.79, 0.80, 0.83, 0.77, 0.81, 0.80],
+        }
+        objectives = [
+            ObjectiveSpec("x", "maximize"),
+            ObjectiveSpec("y", "maximize"),
+        ]
+        gate = PromotionGate(
+            PromotionPolicy(alpha=0.05, min_effect={"x": 0.0, "y": 0.0}, adjust="none"),
+            objectives,
+        )
+
+        decision = gate.evaluate(incumbent_metrics, candidate_metrics)
+
+        assert decision.decision == "reject"
+        assert decision.dominance_satisfied is False
+        verdicts = {r.name: r.verdict for r in decision.objective_results}
+        assert verdicts["x"] == "inferior"
+        assert verdicts["y"] == "superior"
+        x_result = next(r for r in decision.objective_results if r.name == "x")
+        assert x_result.p_value_noninf >= gate.policy.alpha
+
+    def test_unsupported_adjust_value_reaching_gate_raises(self) -> None:
+        """The gate fails closed if an unsupported adjust value reaches it."""
+        policy = PromotionPolicy(alpha=0.05, adjust="none")
+        policy.adjust = "sidak"  # type: ignore[assignment]
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+
+        with pytest.raises(ValueError, match="Unsupported promotion_policy.adjust"):
+            gate.evaluate(
+                incumbent_metrics={"accuracy": [0.0] * 5},
+                candidate_metrics={"accuracy": [1.0] * 5},
+            )
+
     def test_missing_objectives_no_decision(self) -> None:
         """No decision when objective data is missing."""
         policy = PromotionPolicy()
@@ -194,45 +312,86 @@ class TestChanceConstraints:
     """Tests for chance constraint evaluation."""
 
     def test_constraint_satisfied(self) -> None:
-        """Chance constraint is satisfied when lower bound >= threshold."""
+        """Chance constraint passes when the violation-rate upper bound <= threshold.
+
+        Axis C (canonical promotion.py:677-678): constraint_data is
+        ``(violations, trials)`` and the constraint is satisfied iff the
+        upper confidence bound on the violation rate is at or below the
+        threshold. 2/100 violations -> upper bound ~0.06 <= 0.10.
+        """
         policy = PromotionPolicy(
             chance_constraints=[
-                ChanceConstraint(name="accuracy", threshold=0.80, confidence=0.95)
+                ChanceConstraint(name="error_rate", threshold=0.10, confidence=0.95)
             ]
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
 
-        # 95/100 successes should satisfy accuracy >= 0.80 with 95% confidence
         decision = gate.evaluate(
             incumbent_metrics={"accuracy": [0.8] * 5},
             candidate_metrics={"accuracy": [0.9] * 5},
-            constraint_data={"accuracy": (95, 100)},
+            constraint_data={"error_rate": (2, 100)},  # (violations, trials)
         )
 
-        # Constraint should be satisfied
         assert len(decision.chance_results) == 1
         assert decision.chance_results[0].satisfied is True
+        assert decision.chance_results[0].upper_bound <= 0.10
 
     def test_constraint_not_satisfied(self) -> None:
-        """Candidate is rejected when constraint not satisfied."""
+        """Candidate is rejected when the violation-rate upper bound > threshold.
+
+        Axis C: 30/100 violations -> upper bound ~0.38 > 0.10 threshold.
+        """
         policy = PromotionPolicy(
             chance_constraints=[
-                ChanceConstraint(name="safety", threshold=0.95, confidence=0.95)
+                ChanceConstraint(name="error_rate", threshold=0.10, confidence=0.95)
             ]
         )
         objectives = [ObjectiveSpec("accuracy", "maximize")]
         gate = PromotionGate(policy, objectives)
 
-        # Only 70/100 successes, won't satisfy 0.95 threshold
         decision = gate.evaluate(
             incumbent_metrics={"accuracy": [0.8] * 5},
             candidate_metrics={"accuracy": [0.9] * 5},
-            constraint_data={"safety": (70, 100)},
+            constraint_data={"error_rate": (30, 100)},  # (violations, trials)
         )
 
         assert decision.decision == "reject"
         assert "Chance constraints not satisfied" in decision.reason
+
+    def test_constraint_direction_matches_canonical_violation_bound(self) -> None:
+        """Axis C flip: the SAME spec yields the canonical (violation-bound) verdict.
+
+        Under the old SDK semantics (lower bound on a SUCCESS rate >= threshold)
+        a high count would PASS; canonical treats the count as VIOLATIONS and
+        bounds them from above, so a high count must FAIL and a low count must
+        PASS. This asserts the verdict has flipped to the canonical one.
+        """
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.95)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+
+        # 90/100: old success-rate logic (0.90 lower bound >= 0.20) PASSED;
+        # canonical violation-rate upper bound (~0.95) > 0.20 -> FAIL.
+        high = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (90, 100)},
+        )
+        assert high.chance_results[0].satisfied is False
+        assert high.chance_results[0].upper_bound > 0.20
+
+        # 5/100: canonical upper bound (~0.11) <= 0.20 -> PASS.
+        low = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (5, 100)},
+        )
+        assert low.chance_results[0].satisfied is True
+        assert low.chance_results[0].upper_bound <= 0.20
 
     def test_missing_constraint_data(self) -> None:
         """Missing constraint data is treated as not satisfied."""
@@ -256,8 +415,14 @@ class TestChanceConstraints:
 class TestBandedObjectives:
     """Tests for banded objective handling."""
 
-    def test_banded_objective_promotion(self) -> None:
-        """Candidate passing TOST is promoted."""
+    def test_banded_objective_in_band_no_superiority(self) -> None:
+        """A banded objective gates but never grants superiority.
+
+        Matching the canonical gate (promotion.py:217-222, :790-795), a banded
+        objective only contributes a pass/fail band constraint and is never
+        "superior". With no standard superior objective, an in-band candidate
+        yields NoDecision (the old SDK gate promoted on the band alone).
+        """
         band = BandTarget(low=0.85, high=0.95)
         policy = PromotionPolicy()
         objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
@@ -295,7 +460,8 @@ class TestBandedObjectives:
             },
         )
 
-        assert decision.decision == "promote"
+        assert decision.decision == "no_decision"
+        assert decision.objective_results[0].verdict == "in_band"
 
 
 class TestPromotionDecision:
@@ -624,3 +790,213 @@ class TestFromSpecArtifactRealArtifact:
 
         gate = PromotionGate.from_spec_artifact(artifact)
         assert gate is None
+
+
+class TestExactBetaClopperPearsonUpperBound:
+    """Regression tests for the chance-constraint upper bound (#1416 review fix).
+
+    The canonical gate uses the EXACT beta Clopper-Pearson upper quantile for
+    ALL sample sizes (tvl/python/tvl/promotion.py:677-678)::
+
+        ci_upper = beta.ppf(confidence, violations + 1, trials - violations)
+
+    A prior SDK revision switched n>=30 to a Wilson-score upper bound, which is
+    systematically smaller than the exact bound and could flip a verdict. These
+    tests pin the exact-beta behavior for both small and large n and lock in the
+    specific case the reviewer flagged.
+    """
+
+    # Canonical reference values (scipy.stats.beta.ppf(conf, k+1, n-k)). The
+    # n>=30 entries are the ones a Wilson approximation would get wrong (Wilson
+    # differs by ~3e-3 at these points, far beyond the 1e-4 tolerance below).
+    _CANONICAL_UPPER = [
+        # (violations, trials, confidence, exact_upper)  -- small n (<30)
+        (0, 29, 0.95, 0.0981448),
+        (3, 29, 0.95, 0.2461389),
+        (2, 20, 0.95, 0.2826039),
+        # large n (>=30) -- the former Wilson branch
+        (0, 30, 0.95, 0.0950338),
+        (2, 30, 0.95, 0.1953260),
+        (0, 100, 0.95, 0.0295130),
+        (2, 100, 0.95, 0.0616192),
+        (5, 200, 0.95, 0.0518433),
+        (10, 40, 0.95, 0.3870602),
+    ]
+
+    def test_codex_review_case_is_not_satisfied_and_does_not_promote(self) -> None:
+        """The exact reviewer case must fail (exact 0.0295 > threshold 0.028).
+
+        violations=0, trials=100, confidence=0.95, threshold=0.028. Under the
+        removed Wilson branch the upper bound was ~0.02635 <= 0.028 (would PASS);
+        the exact beta upper is ~0.02951 > 0.028 and must NOT satisfy / promote.
+        """
+        upper = clopper_pearson_upper_bound(0, 100, 0.95)
+        assert upper > 0.028
+        assert abs(upper - 0.0295130) < 1e-4
+
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.028, confidence=0.95)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (0, 100)},  # (violations, trials)
+        )
+
+        assert decision.chance_results[0].satisfied is False
+        assert decision.chance_results[0].upper_bound > 0.028
+        assert decision.decision != "promote"
+        assert decision.decision == "reject"
+
+    @pytest.mark.parametrize(
+        ("violations", "trials", "confidence", "exact_upper"), _CANONICAL_UPPER
+    )
+    def test_exact_beta_upper_for_all_n_no_wilson(
+        self, violations: int, trials: int, confidence: float, exact_upper: float
+    ) -> None:
+        """Both small-n AND large-n match the exact beta CP value (no Wilson).
+
+        Runs with scipy present (the test venv ships the ``[bayesian]`` extra),
+        so this exercises the exact :func:`scipy.stats.beta.ppf` path. The 1e-4
+        tolerance passes the exact beta quantile but fails the old Wilson
+        approximation (~3e-3 error at these large-n points). The no-scipy path is
+        covered separately by
+        :class:`TestChanceConstraintFailsClosedWithoutScipy` (it fails closed
+        rather than approximating).
+        """
+        got = clopper_pearson_upper_bound(violations, trials, confidence)
+        assert abs(got - exact_upper) < 1e-4
+
+    def test_large_n_matches_scipy_exactly_when_available(self) -> None:
+        """When scipy is installed, large-n bounds match canonical bit-for-bit."""
+        scipy_stats = pytest.importorskip("scipy.stats")
+        for violations, trials in [(0, 100), (2, 100), (5, 200), (10, 40)]:
+            got = clopper_pearson_upper_bound(violations, trials, 0.95)
+            canonical = float(
+                scipy_stats.beta.ppf(0.95, violations + 1, trials - violations)
+            )
+            assert got == canonical
+
+    def test_upper_bound_is_a_violation_rate_cap(self) -> None:
+        """More violations -> larger upper bound (cap on the violation rate)."""
+        low = clopper_pearson_upper_bound(2, 100, 0.95)
+        high = clopper_pearson_upper_bound(40, 100, 0.95)
+        assert 0.0 < low < high < 1.0
+
+    def test_all_trials_violated_returns_one(self) -> None:
+        """violations == trials -> upper bound is trivially 1.0 (canonical edge)."""
+        assert clopper_pearson_upper_bound(50, 50, 0.95) == 1.0
+
+
+class TestChanceConstraintFailsClosedWithoutScipy:
+    """Without scipy the chance-constraint path must FAIL CLOSED (#1416 round-3).
+
+    The canonical gate hard-requires scipy for chance-constraint evaluation
+    (tvl/python/tvl/promotion.py:285-302, ``require_scipy()``). The SDK port
+    keeps the objective (non-inferiority/superiority) path working on a core,
+    no-scipy install via the pure-python paired test, but the exact beta
+    Clopper-Pearson quantile has no reliable pure-python implementation:
+    ``statistics._beta_quantile_approx`` clamps to ``0.001`` on
+    high-violation / high-confidence inputs and would silently UNDER-estimate
+    the violation-rate upper bound, flipping a chance-constraint verdict to
+    "promote" when it must reject. So when scipy is unavailable AND a chance
+    constraint must be evaluated, the gate raises instead of trusting the
+    approximation (fail-closed).
+
+    These tests FORCE the no-scipy path by monkeypatching the module-level
+    ``_scipy_stats`` reference to ``None`` (the test venv ships scipy, so the
+    flip would otherwise never be exercised -- which is exactly why the prior
+    suite missed it).
+    """
+
+    def test_direct_api_high_violation_case_raises_without_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exact reviewer case must RAISE, not silently return 0.001.
+
+        Forced no-scipy, ``clopper_pearson_upper_bound(95, 100, 0.99)``
+        previously returned ``0.001`` (the canonical/scipy value is
+        ``0.987031``); with threshold 0.20 that flipped satisfied=True/promote.
+        It must now raise ImportError (fail-closed).
+        """
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        with pytest.raises(ImportError, match="scipy"):
+            promotion_gate.clopper_pearson_upper_bound(95, 100, 0.99)
+
+    def test_gate_with_chance_constraint_fails_closed_without_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Evaluating a chance constraint without scipy raises -- never promotes.
+
+        This is the end-to-end form of the reviewer flip: violations=95,
+        trials=100, confidence=0.99, threshold=0.20. With the unreliable
+        approximation the gate produced satisfied=True/decision=promote; it must
+        now raise rather than emit any verdict.
+        """
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.99)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        with pytest.raises(ImportError, match=r"traigent\[bayesian\]"):
+            gate.evaluate(
+                incumbent_metrics={"accuracy": [0.8] * 5},
+                candidate_metrics={"accuracy": [0.9] * 5},
+                constraint_data={"error_rate": (95, 100)},  # (violations, trials)
+            )
+
+    def test_gate_without_chance_constraints_still_works_without_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A gate with NO chance constraints evaluates fine on a no-scipy core install.
+
+        The fail-closed guard must be scoped to chance-constraint evaluation
+        only: objective-only gates use the pure-python paired test and must keep
+        working without scipy.
+        """
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        policy = PromotionPolicy()  # no chance constraints
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.80] * 8},
+            candidate_metrics={"accuracy": [0.95] * 8},
+        )
+        assert decision.decision == "promote"
+        assert decision.chance_results == []
+
+    def test_trivial_all_violated_edge_needs_no_scipy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """violations == trials -> 1.0 without scipy (exact edge, no quantile needed)."""
+        monkeypatch.setattr(promotion_gate, "_scipy_stats", None)
+        assert promotion_gate.clopper_pearson_upper_bound(50, 50, 0.95) == 1.0
+
+    def test_scipy_present_high_violation_case_rejects(self) -> None:
+        """With scipy the SAME case rejects: exact upper 0.987031 > threshold 0.20.
+
+        Pins the correct (non-flipped) verdict that the no-scipy path must never
+        contradict by approximation.
+        """
+        pytest.importorskip("scipy.stats")
+        upper = clopper_pearson_upper_bound(95, 100, 0.99)
+        assert abs(upper - 0.9870311) < 1e-4
+
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="error_rate", threshold=0.20, confidence=0.99)
+            ]
+        )
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"error_rate": (95, 100)},  # (violations, trials)
+        )
+        assert decision.chance_results[0].satisfied is False
+        assert decision.chance_results[0].upper_bound > 0.20
+        assert decision.decision == "reject"

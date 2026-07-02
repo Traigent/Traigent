@@ -140,9 +140,9 @@ class TestSetToken:
         ):
             manager.set_token("bad", source="test_url_check")
 
-        assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
+        assert any(SIGNUP_URL in msg for msg in caplog.messages), (
+            f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
+        )
 
 
 class TestClearToken:

@@ -139,7 +139,9 @@ async def test_backend_auth_manager_wraps_unexpected_errors():
     manager = BackendAuthManager(api_key=_VALID_LOOKING_KEY)
     manager.auth.get_headers = AsyncMock(side_effect=RuntimeError("boom"))
 
-    with pytest.raises(CloudServiceError, match="Failed to augment backend auth headers"):
+    with pytest.raises(
+        CloudServiceError, match="Failed to augment backend auth headers"
+    ):
         await manager.augment_headers({"X-Request-ID": "req"})
 
 

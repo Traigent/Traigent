@@ -35,14 +35,14 @@ class LoggerFacade:
             self._logger = logger_instance
             return
 
-        # Allow session_id=None for local-only modes (edge_analytics)
+        # Allow session_id=None for local-only modes.
         if experiment_name is None or execution_mode is None:
             return
         self._logging_expected = True
 
         try:
             # `OptimizationLogger` is accessed from module scope so tests can patch it.
-            # Session ID defaults to a placeholder for edge_analytics mode
+            # Session ID defaults to a placeholder for local mode.
             effective_session_id = session_id or "local-session"
             self._logger = OptimizationLogger(
                 experiment_name=experiment_name,

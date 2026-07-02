@@ -379,6 +379,56 @@ class TestStreamingInvokerExecution:
         assert result.chunk_count >= 3
 
     @pytest.mark.asyncio
+    async def test_streaming_result_preserves_real_usage_for_cost(self):
+        """Final streamed usage drives token-derived cost, not text heuristics."""
+        from traigent.evaluators.metrics_tracker import extract_llm_metrics
+        from traigent.utils.cost_calculator import cost_from_tokens
+
+        class Usage:
+            prompt_tokens = 42
+            completion_tokens = 9
+            total_tokens = 51
+
+        class Delta:
+            def __init__(self, content):
+                self.content = content
+
+        class Choice:
+            def __init__(self, content):
+                self.delta = Delta(content)
+
+        class Chunk:
+            def __init__(self, content="", usage=None):
+                self.choices = [Choice(content)]
+                self.usage = usage
+
+        async def streaming_func(**kwargs):
+            yield Chunk("Hello")
+            yield Chunk(" World")
+            yield Chunk("", Usage())
+
+        invoker = StreamingInvoker()
+        result = await invoker.invoke_streaming_to_result(streaming_func, {}, {})
+        invocation_result = result.to_invocation_result()
+        metrics = extract_llm_metrics(
+            invocation_result,
+            model_name="gpt-4o-mini",
+            prompt_length=4,
+            response_length=4000,
+        )
+        expected = sum(cost_from_tokens(42, 9, "gpt-4o-mini", strict=False))
+
+        assert invocation_result.result == "Hello World"
+        assert invocation_result.metadata["usage"] == {
+            "input_tokens": 42,
+            "output_tokens": 9,
+            "total_tokens": 51,
+        }
+        assert metrics.tokens.input_tokens == 42
+        assert metrics.tokens.output_tokens == 9
+        assert metrics.cost.total_cost == pytest.approx(expected)
+
+    @pytest.mark.asyncio
     async def test_invoke_streaming_metadata(self):
         """Test that streaming chunks contain metadata."""
         invoker = StreamingInvoker()

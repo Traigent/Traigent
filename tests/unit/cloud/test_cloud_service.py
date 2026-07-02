@@ -187,7 +187,6 @@ class TestTraigentCloudService:
                     cloud_service.usage_tracker, "record_optimization"
                 ) as mock_record,
             ):
-
                 # Mock billing limits check (allowed)
                 mock_limits.return_value = {
                     "allowed": True,
@@ -272,7 +271,6 @@ class TestTraigentCloudService:
                     cloud_service.usage_tracker, "record_optimization"
                 ) as mock_record,
             ):
-
                 mock_limits.return_value = {
                     "allowed": True,
                     "estimated_cost": 0.0,
@@ -623,7 +621,6 @@ class TestServiceStatistics:
                 ) as mock_optimize,
                 patch.object(cloud_service.usage_tracker, "record_optimization"),
             ):
-
                 # Setup mocks
                 mock_limits.return_value = {
                     "allowed": True,
@@ -677,7 +674,6 @@ class TestServiceStatistics:
                 ) as mock_optimize,
                 patch.object(cloud_service.usage_tracker, "record_optimization"),
             ):
-
                 # Setup mocks
                 mock_limits.return_value = {
                     "allowed": True,

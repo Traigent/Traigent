@@ -18,15 +18,12 @@ from traigent.tuned_variables.dataflow_strategy import (
     CONSTRUCTOR_CLASS_HINTS,
     DEFAULT_SINK_PATTERNS,
     DataFlowDetectionStrategy,
-    SinkPattern,
     _build_def_use_map,
-    _DefUseBuilder,
-    _DefUseMap,
     _hop_to_confidence,
     _names_in_expr,
     _SinkFinder,
 )
-from traigent.tuned_variables.detection_types import CandidateType, DetectionConfidence
+from traigent.tuned_variables.detection_types import DetectionConfidence
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -320,9 +317,9 @@ class TestConstructorTracing:
         ctor_reasoned = [
             c for c in candidates if c.reasoning and "__init__" in c.reasoning
         ]
-        assert (
-            ctor_reasoned == []
-        ), "Unknown class should not trigger constructor tracing"
+        assert ctor_reasoned == [], (
+            "Unknown class should not trigger constructor tracing"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +410,8 @@ class TestBackwardSlicing:
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "x")
         assert c is not None, f"x not traced through call; got {_names(candidates)}"
+        assert c.confidence == DetectionConfidence.HIGH
+        assert c.current_value == pytest.approx(0.7)
 
     def test_fstring_detects_variables(self, strategy) -> None:
         src = _dedent("""
@@ -424,9 +423,11 @@ class TestBackwardSlicing:
         """)
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "topic")
-        assert (
-            c is not None
-        ), f"topic not detected in f-string; got {_names(candidates)}"
+        assert c is not None, (
+            f"topic not detected in f-string; got {_names(candidates)}"
+        )
+        assert c.confidence == DetectionConfidence.HIGH
+        assert c.current_value == "science"
 
     def test_string_concat_detects_both(self, strategy) -> None:
         src = _dedent("""
@@ -608,9 +609,9 @@ class TestDataFlowDetectionStrategy:
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "t")
         assert c is not None
-        assert (
-            "invoke" in c.reasoning
-        ), f"Reasoning should mention sink; got {c.reasoning!r}"
+        assert "invoke" in c.reasoning, (
+            f"Reasoning should mention sink; got {c.reasoning!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -656,9 +657,9 @@ class TestCodexReviewFixes:
                 return result
         """)
         candidates = strategy.detect(src, "fn")
-        assert (
-            candidates == []
-        ), f"Bare run() should not be a sink; got {_names(candidates)}"
+        assert candidates == [], (
+            f"Bare run() should not be a sink; got {_names(candidates)}"
+        )
 
     def test_generic_attribute_still_matched(self, strategy) -> None:
         """P1: `obj.run(cmd)` should still be a sink (attribute context)."""
@@ -681,9 +682,9 @@ class TestCodexReviewFixes:
                 return result
         """)
         candidates = strategy.detect(src, "fn")
-        assert (
-            candidates == []
-        ), f"Bare query() should not be a sink; got {_names(candidates)}"
+        assert candidates == [], (
+            f"Bare query() should not be a sink; got {_names(candidates)}"
+        )
 
     def test_bfs_shortest_hop_wins(self, strategy) -> None:
         """P2: BFS ensures shortest hop is processed first.
@@ -701,9 +702,9 @@ class TestCodexReviewFixes:
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "x")
         assert c is not None, f"x not detected; got {_names(candidates)}"
-        assert (
-            c.confidence == DetectionConfidence.HIGH
-        ), f"x should be HIGH (hop 0 via model=x), got {c.confidence}"
+        assert c.confidence == DetectionConfidence.HIGH, (
+            f"x should be HIGH (hop 0 via model=x), got {c.confidence}"
+        )
 
     def test_existing_tvars_filters_literal_kwargs(self, strategy) -> None:
         """P3: existing_tvars should filter literal kwargs too."""
@@ -716,7 +717,7 @@ class TestCodexReviewFixes:
             src, "fn", context={"existing_tvars": {"temperature"}}
         )
         names = _names(candidates)
-        assert (
-            "temperature" not in names
-        ), f"Literal kwarg 'temperature' should be filtered; got {names}"
+        assert "temperature" not in names, (
+            f"Literal kwarg 'temperature' should be filtered; got {names}"
+        )
         assert "model" in names, f"model should still be detected; got {names}"

@@ -627,10 +627,20 @@ class TestPluginVersionEnforcement:
 
         # Should register without error
         registry.register_plugin(plugin)
-        assert registry.get_plugin("test-compatible-plugin") is not None
+
+        # get_plugin documents "Returns: Plugin instance" - the returned
+        # plugin's public identity and feature should match what was
+        # registered, and its feature should be queryable via has_feature.
+        retrieved = registry.get_plugin("test-compatible-plugin")
+        assert retrieved.name == plugin.name
+        assert retrieved.version == plugin.version
+        assert retrieved.provides_features() == plugin.provides_features()
+        assert registry.has_feature("test_compat_feature") is True
 
         # Cleanup
         registry.unregister_plugin("test-compatible-plugin")
+        assert registry.get_plugin("test-compatible-plugin") is None
+        assert registry.has_feature("test_compat_feature") is False
 
     def test_incompatible_plugin_raises_version_error(self):
         """Plugin requiring future version should fail to register."""
@@ -850,19 +860,10 @@ class TestTraigentClientEdgeAnalyticsMode:
                 if module_obj is not None:
                     sys.modules[mod] = module_obj
 
-    def test_traigent_client_cloud_mode_deprecated_resolves_to_edge_analytics(self):
-        """TraigentClient accepts deprecated cloud mode with DeprecationWarning.
-
-        Cloud mode is no longer reserved — it emits DeprecationWarning and
-        resolves to edge_analytics.
-        """
-        import warnings
-
-        from traigent.config.types import ExecutionMode
+    def test_traigent_client_cloud_mode_deprecated_fails_closed(self):
+        """TraigentClient rejects deprecated cloud mode before normalization."""
         from traigent.traigent_client import TraigentClient
+        from traigent.utils.exceptions import ConfigurationError
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            client = TraigentClient(execution_mode="cloud", agent_builder=None)
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentClient(execution_mode="cloud", agent_builder=None)

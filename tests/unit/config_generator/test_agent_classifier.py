@@ -140,7 +140,7 @@ def pipeline(query):
         assert result.confidence >= 0.8
 
     def test_llm_non_numeric_confidence_handled(self) -> None:
-        """LLM returning non-numeric confidence should not crash."""
+        """LLM returning non-numeric confidence falls back to confidence=0.5."""
         import json
         from unittest.mock import MagicMock
 
@@ -148,7 +148,10 @@ def pipeline(query):
         llm.complete.return_value = json.dumps(
             {"agent_type": "rag", "confidence": "high", "reasoning": "test"}
         )
-        # Use a generic source that triggers low heuristic confidence
+        # Use a generic source that triggers low heuristic confidence (0.3),
+        # so the LLM result (fallback confidence 0.5) wins and is returned.
         result = classify_agent("def f(): pass", llm=llm)
-        # Should still return a result (fallback confidence = 0.5)
-        assert result is not None
+        assert result.agent_type == "rag"
+        assert result.confidence == 0.5
+        assert result.source == "llm"
+        assert result.reasoning == "test"

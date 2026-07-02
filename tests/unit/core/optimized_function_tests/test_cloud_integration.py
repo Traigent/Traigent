@@ -2,31 +2,35 @@
 
 import warnings
 
+import pytest
 
 from traigent.config.types import ExecutionMode
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.utils.exceptions import ConfigurationError
 
 
 class TestCloudIntegration:
-    """Cloud mode is deprecated; it resolves to edge_analytics with a DeprecationWarning."""
+    """Cloud mode is deprecated and now fails closed."""
 
-    def test_cloud_mode_deprecated_resolves_to_edge_analytics(
-        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    def test_cloud_mode_deprecated_fails_closed(
+        self,
+        simple_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+        monkeypatch,
     ):
-        """Deprecated cloud mode resolves to edge_analytics with DeprecationWarning."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            opt_func = OptimizedFunction(
+        """Deprecated cloud mode raises even with the old env override."""
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            OptimizedFunction(
                 func=simple_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
                 execution_mode="cloud",
             )
-        assert opt_func.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
-        assert opt_func._effective_execution_mode is ExecutionMode.EDGE_ANALYTICS
-        assert opt_func.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_cloud_mode_with_fallback_policy_emits_deprecation(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset

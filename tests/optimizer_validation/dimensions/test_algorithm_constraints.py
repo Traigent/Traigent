@@ -60,20 +60,20 @@ class TestBayesianWithDegenerateSpace:
         _, result = await scenario_runner(scenario)
 
         # Should complete successfully - Optuna handles degenerate spaces
-        assert not isinstance(
-            result, Exception
-        ), f"Bayesian with single value should succeed: {result}"
+        assert not isinstance(result, Exception), (
+            f"Bayesian with single value should succeed: {result}"
+        )
 
         # Verify at least one trial ran with the only available config
         assert hasattr(result, "trials"), "Result should have trials"
-        assert (
-            len(result.trials) >= 1
-        ), f"Expected at least 1 trial, got {len(result.trials)}"
+        assert len(result.trials) >= 1, (
+            f"Expected at least 1 trial, got {len(result.trials)}"
+        )
 
         for i, trial in enumerate(result.trials):
-            assert (
-                trial.config.get("model") == "gpt-4"
-            ), f"Trial {i} should use the only available config, got {trial.config.get('model')}"
+            assert trial.config.get("model") == "gpt-4", (
+                f"Trial {i} should use the only available config, got {trial.config.get('model')}"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -114,15 +114,15 @@ class TestBayesianWithDegenerateSpace:
         _, result = await scenario_runner(scenario)
 
         # Should complete successfully - Optuna handles fully fixed spaces
-        assert not isinstance(
-            result, Exception
-        ), f"Bayesian with all fixed params should succeed: {result}"
+        assert not isinstance(result, Exception), (
+            f"Bayesian with all fixed params should succeed: {result}"
+        )
 
         # Verify at least one trial ran with the fixed config
         assert hasattr(result, "trials"), "Result should have trials"
-        assert (
-            len(result.trials) >= 1
-        ), f"Expected at least 1 trial, got {len(result.trials)}"
+        assert len(result.trials) >= 1, (
+            f"Expected at least 1 trial, got {len(result.trials)}"
+        )
 
         expected_config = {
             "model": "gpt-4",
@@ -134,9 +134,9 @@ class TestBayesianWithDegenerateSpace:
             # Verify each expected param value
             for key, expected_value in expected_config.items():
                 actual_value = trial.config.get(key)
-                assert (
-                    actual_value == expected_value
-                ), f"Trial {i} param '{key}' should be {expected_value}, got {actual_value}"
+                assert actual_value == expected_value, (
+                    f"Trial {i} param '{key}' should be {expected_value}, got {actual_value}"
+                )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -180,15 +180,15 @@ class TestBayesianWithDegenerateSpace:
         _, result = await scenario_runner(scenario)
 
         # Should fail validation - point ranges are correctly rejected
-        assert isinstance(
-            result, Exception
-        ), "Point range (min == max) should be rejected with ValidationError"
+        assert isinstance(result, Exception), (
+            "Point range (min == max) should be rejected with ValidationError"
+        )
 
         # Verify it's a validation error with clear message
         error_msg = str(result).lower()
-        assert (
-            "range" in error_msg or "min" in error_msg
-        ), f"Error should mention range validation issue: {result}"
+        assert "range" in error_msg or "min" in error_msg, (
+            f"Error should mention range validation issue: {result}"
+        )
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
@@ -242,16 +242,16 @@ class TestCMAESConstraints:
 
         # CMA-ES with categorical-only params falls back to RandomSampler
         # for those params (Optuna behavior), so it should succeed
-        assert not isinstance(
-            result, Exception
-        ), f"CMA-ES with categorical should fallback to random: {result}"
+        assert not isinstance(result, Exception), (
+            f"CMA-ES with categorical should fallback to random: {result}"
+        )
 
         # Verify trials completed with valid configs
         if hasattr(result, "trials"):
             for i, trial in enumerate(result.trials):
-                assert (
-                    trial.config.get("model") in config_space["model"]
-                ), f"Trial {i} has invalid model: {trial.config.get('model')}"
+                assert trial.config.get("model") in config_space["model"], (
+                    f"Trial {i} has invalid model: {trial.config.get('model')}"
+                )
                 assert (
                     trial.config.get("response_format")
                     in config_space["response_format"]
@@ -327,9 +327,9 @@ class TestCMAESConstraints:
 
         _, result = await scenario_runner(scenario)
 
-        assert not isinstance(
-            result, Exception
-        ), f"CMA-ES with continuous should work: {result}"
+        assert not isinstance(result, Exception), (
+            f"CMA-ES with continuous should work: {result}"
+        )
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):

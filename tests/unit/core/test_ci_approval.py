@@ -7,6 +7,8 @@ import hashlib
 import hmac
 import json
 import os
+import time
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,6 +25,27 @@ from traigent.core.ci_approval import (
     check_ci_approval,
 )
 from traigent.utils.exceptions import ConfigurationError, OptimizationError
+
+
+@contextmanager
+def _simulated_local_tz(tz_name: str):
+    """Temporarily force the process's local (POSIX) timezone via tzset.
+
+    Used to prove that expiry comparisons are UTC-consistent regardless of
+    the host's local wall-clock offset.
+    """
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = tz_name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
 
 # ---------------------------------------------------------------------------
 # _is_ci_environment
@@ -120,13 +143,15 @@ class TestSanitizeForLog:
 
 class TestValidateLegacyToken:
     def test_valid_token_with_future_expiry(self) -> None:
-        # Use naive datetime — code uses datetime.now() (naive) for comparison
-        future = (datetime.now() + timedelta(hours=1)).isoformat()
+        # Naive datetimes are interpreted as UTC (not host local time).
+        future = (
+            (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        )
         token = {"approved_by": "tester", "expires_at": future}
         assert _validate_legacy_token(token) is True
 
     def test_expired_token(self) -> None:
-        past = (datetime.now() - timedelta(hours=1)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=1)).replace(tzinfo=None).isoformat()
         token = {"approved_by": "tester", "expires_at": past}
         assert _validate_legacy_token(token) is False
 
@@ -151,6 +176,46 @@ class TestValidateLegacyToken:
     def test_far_future_unsigned_token_rejected(self) -> None:
         token = {"approved_by": "tester", "expires_at": "9999-12-31T23:59:59"}
         assert _validate_legacy_token(token) is False
+
+
+class TestValidateLegacyTokenUtcConsistency:
+    """Naive expires_at must be interpreted as UTC, not host local time.
+
+    Regression coverage for the bug where an already-UTC-expired token could
+    still pass (host local clock behind UTC), or the 24h TTL cap could be
+    bypassed (host local clock ahead of UTC).
+    """
+
+    def test_naive_past_expiry_rejected_when_host_tz_behind_utc(self) -> None:
+        # Etc/GMT+12 is UTC-12: local wall-clock trails UTC by 12h, which
+        # made an already-UTC-expired naive timestamp look "still valid"
+        # under the old datetime.now() (local) comparison.
+        expired_naive = (
+            (datetime.now(UTC) - timedelta(minutes=1)).replace(tzinfo=None).isoformat()
+        )
+        token = {"approved_by": "tester", "expires_at": expired_naive}
+        with _simulated_local_tz("Etc/GMT+12"):
+            assert _validate_legacy_token(token) is False
+
+    def test_naive_ttl_cap_enforced_when_host_tz_ahead_of_utc(self) -> None:
+        # Etc/GMT-14 is UTC+14: local wall-clock leads UTC by 14h, which
+        # shrank the apparent (expires_at - now) gap under the old local-time
+        # comparison and let a >24h TTL slip through the cap.
+        far_future_naive = (
+            (datetime.now(UTC) + timedelta(hours=30)).replace(tzinfo=None).isoformat()
+        )
+        token = {"approved_by": "tester", "expires_at": far_future_naive}
+        with _simulated_local_tz("Etc/GMT-14"):
+            assert _validate_legacy_token(token) is False
+
+    def test_naive_valid_future_expiry_accepted_regardless_of_host_tz(self) -> None:
+        valid_naive = (
+            (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        )
+        token = {"approved_by": "tester", "expires_at": valid_naive}
+        for tz in ("Etc/GMT+12", "Etc/GMT-14", "UTC"):
+            with _simulated_local_tz(tz):
+                assert _validate_legacy_token(token) is True
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +306,73 @@ class TestValidateHmacToken:
             assert _validate_hmac_token(token) is False
 
 
+class TestValidateHmacTokenUtcConsistency:
+    """Naive expires_iso must be interpreted as UTC, not host local time."""
+
+    @staticmethod
+    def _make_signed_token_naive(
+        approver: str,
+        expires_iso_naive: str,
+        secret: str = "test-secret",  # pragma: allowlist secret
+        nonce: str = "test-nonce-123",
+    ) -> dict:
+        payload = f"{approver}|{expires_iso_naive}|{nonce}".encode()
+        sig = base64.b64encode(
+            hmac.new(secret.encode(), payload, hashlib.sha256).digest()
+        ).decode()
+        return {
+            "approver": approver,
+            "expires_iso": expires_iso_naive,
+            "nonce": nonce,
+            "signature": sig,
+        }
+
+    def test_naive_past_expiry_rejected_when_host_tz_behind_utc(self) -> None:
+        expired_naive = (
+            (datetime.now(UTC) - timedelta(minutes=1)).replace(tzinfo=None).isoformat()
+        )
+        token = self._make_signed_token_naive("ci-bot", expired_naive)
+        with (
+            _simulated_local_tz("Etc/GMT+12"),
+            patch.dict(
+                os.environ,
+                {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+            ),
+        ):
+            assert _validate_hmac_token(token) is False
+
+    def test_naive_ttl_cap_enforced_when_host_tz_ahead_of_utc(self) -> None:
+        far_future_naive = (
+            (datetime.now(UTC) + timedelta(hours=30)).replace(tzinfo=None).isoformat()
+        )
+        token = self._make_signed_token_naive("ci-bot", far_future_naive)
+        with (
+            _simulated_local_tz("Etc/GMT-14"),
+            patch.dict(
+                os.environ,
+                {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+            ),
+        ):
+            assert _validate_hmac_token(token) is False
+
+    def test_naive_valid_future_expiry_accepted_regardless_of_host_tz(self) -> None:
+        valid_naive = (
+            (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        )
+        token = self._make_signed_token_naive("ci-bot", valid_naive)
+        for tz in ("Etc/GMT+12", "Etc/GMT-14", "UTC"):
+            with (
+                _simulated_local_tz(tz),
+                patch.dict(
+                    os.environ,
+                    {
+                        "TRAIGENT_APPROVAL_SECRET": "test-secret"
+                    },  # pragma: allowlist secret
+                ),
+            ):
+                assert _validate_hmac_token(token) is True
+
+
 # ---------------------------------------------------------------------------
 # _check_token_file_approval
 # ---------------------------------------------------------------------------
@@ -252,7 +384,9 @@ class TestCheckTokenFileApproval:
         assert _check_token_file_approval(missing, tmp_path) is False
 
     def test_valid_legacy_token_file(self, tmp_path: Path) -> None:
-        future = (datetime.now() + timedelta(hours=1)).isoformat()
+        future = (
+            (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        )
         token = {"approved_by": "tester", "expires_at": future}
         token_file = tmp_path / "approval.token"
         token_file.write_text(json.dumps(token))

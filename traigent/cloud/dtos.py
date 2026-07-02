@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from traigent.utils.logging import get_logger
 
@@ -761,6 +761,675 @@ class ConfigurationRunDTO:
         }
 
 
+def _copy_dict(value: Any) -> dict[str, Any]:
+    return deepcopy(value) if isinstance(value, dict) else {}
+
+
+def _copy_list(value: Any) -> list[Any]:
+    return deepcopy(value) if isinstance(value, list) else []
+
+
+def _extra_fields(source: Mapping[str, Any], known: set[str]) -> dict[str, Any]:
+    return {key: deepcopy(value) for key, value in source.items() if key not in known}
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _bool_or_default(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _required_str(payload: Mapping[str, Any], key: str, *, dto_name: str) -> str:
+    value = payload.get(key)
+    if value is None or str(value) == "":
+        raise ValueError(f"{dto_name} requires non-empty {key}.")
+    return str(value)
+
+
+@dataclass(frozen=True)
+class ExperimentGroupSourceExperimentDTO:
+    """Source experiment/run member of an experiment group."""
+
+    experiment_id: str
+    experiment_run_id: str | None = None
+    name: str | None = None
+    status: str | None = None
+    dataset_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> "ExperimentGroupSourceExperimentDTO":
+        known = {
+            "experiment_id",
+            "id",
+            "experiment_run_id",
+            "run_id",
+            "name",
+            "status",
+            "dataset_id",
+            "created_at",
+            "updated_at",
+            "metadata",
+        }
+        experiment_id = str(payload.get("experiment_id") or payload.get("id") or "")
+        return cls(
+            experiment_id=experiment_id,
+            experiment_run_id=(
+                str(payload["experiment_run_id"])
+                if payload.get("experiment_run_id") is not None
+                else (
+                    str(payload["run_id"])
+                    if payload.get("run_id") is not None
+                    else None
+                )
+            ),
+            name=str(payload["name"]) if payload.get("name") is not None else None,
+            status=(
+                str(payload["status"]) if payload.get("status") is not None else None
+            ),
+            dataset_id=(
+                str(payload["dataset_id"])
+                if payload.get("dataset_id") is not None
+                else None
+            ),
+            created_at=(
+                str(payload["created_at"])
+                if payload.get("created_at") is not None
+                else None
+            ),
+            updated_at=(
+                str(payload["updated_at"])
+                if payload.get("updated_at") is not None
+                else None
+            ),
+            metadata=_copy_dict(payload.get("metadata")),
+            extra_fields=_extra_fields(payload, known),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = deepcopy(self.extra_fields)
+        result.update(
+            {
+                "experiment_id": self.experiment_id,
+                "experiment_run_id": self.experiment_run_id,
+                "name": self.name,
+                "status": self.status,
+                "dataset_id": self.dataset_id,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "metadata": deepcopy(self.metadata),
+            }
+        )
+        return result
+
+
+@dataclass(frozen=True)
+class GroupedConfigurationRunRowDTO:
+    """Configuration-run row returned from a grouped/cohort read.
+
+    The three source IDs are intentionally first-class fields. Consumers must
+    join on these IDs, not on tuned variables, objectives, or configuration hash.
+    """
+
+    configuration_run_id: str
+    experiment_run_id: str
+    experiment_id: str
+    configuration: dict[str, Any] = field(default_factory=dict)
+    measures: dict[str, Any] = field(default_factory=dict)
+    status: str | None = None
+    trial_number: int | None = None
+    dataset_id: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "GroupedConfigurationRunRowDTO":
+        known = {
+            "configuration_run_id",
+            "id",
+            "experiment_run_id",
+            "experiment_id",
+            "configuration",
+            "measures",
+            "metrics",
+            "status",
+            "trial_number",
+            "dataset_id",
+            "started_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
+            "metadata",
+        }
+        config_run_id = payload.get("configuration_run_id", payload.get("id"))
+        measures = payload.get("measures", payload.get("metrics"))
+        trial_number = payload.get("trial_number")
+        return cls(
+            configuration_run_id=_required_str(
+                {"configuration_run_id": config_run_id},
+                "configuration_run_id",
+                dto_name="GroupedConfigurationRunRowDTO",
+            ),
+            experiment_run_id=_required_str(
+                payload,
+                "experiment_run_id",
+                dto_name="GroupedConfigurationRunRowDTO",
+            ),
+            experiment_id=_required_str(
+                payload,
+                "experiment_id",
+                dto_name="GroupedConfigurationRunRowDTO",
+            ),
+            configuration=_copy_dict(payload.get("configuration")),
+            measures=_copy_dict(measures),
+            status=(
+                str(payload["status"]) if payload.get("status") is not None else None
+            ),
+            trial_number=(
+                _int_or_default(trial_number, 0) if trial_number is not None else None
+            ),
+            dataset_id=(
+                str(payload["dataset_id"])
+                if payload.get("dataset_id") is not None
+                else None
+            ),
+            started_at=(
+                str(payload["started_at"])
+                if payload.get("started_at") is not None
+                else None
+            ),
+            completed_at=(
+                str(payload["completed_at"])
+                if payload.get("completed_at") is not None
+                else None
+            ),
+            created_at=(
+                str(payload["created_at"])
+                if payload.get("created_at") is not None
+                else None
+            ),
+            updated_at=(
+                str(payload["updated_at"])
+                if payload.get("updated_at") is not None
+                else None
+            ),
+            metadata=_copy_dict(payload.get("metadata")),
+            extra_fields=_extra_fields(payload, known),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = deepcopy(self.extra_fields)
+        result.update(
+            {
+                "configuration_run_id": self.configuration_run_id,
+                "experiment_run_id": self.experiment_run_id,
+                "experiment_id": self.experiment_id,
+                "configuration": deepcopy(self.configuration),
+                "measures": deepcopy(self.measures),
+                "status": self.status,
+                "trial_number": self.trial_number,
+                "dataset_id": self.dataset_id,
+                "started_at": self.started_at,
+                "completed_at": self.completed_at,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "metadata": deepcopy(self.metadata),
+            }
+        )
+        return result
+
+
+@dataclass(frozen=True)
+class ExperimentGroupStatusSummaryDTO:
+    """Canonical experiment-group status summary."""
+
+    experiment_run_status_counts: dict[str, int] = field(default_factory=dict)
+    configuration_run_status_counts: dict[str, int] = field(default_factory=dict)
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any] | None
+    ) -> "ExperimentGroupStatusSummaryDTO":
+        if payload is None:
+            payload = {}
+        known = {
+            "experiment_run_status_counts",
+            "configuration_run_status_counts",
+        }
+        return cls(
+            experiment_run_status_counts={
+                str(key): _int_or_default(value, 0)
+                for key, value in _copy_dict(
+                    payload.get("experiment_run_status_counts")
+                ).items()
+            },
+            configuration_run_status_counts={
+                str(key): _int_or_default(value, 0)
+                for key, value in _copy_dict(
+                    payload.get("configuration_run_status_counts")
+                ).items()
+            },
+            extra_fields=_extra_fields(payload, known),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = deepcopy(self.extra_fields)
+        result.update(
+            {
+                "experiment_run_status_counts": dict(self.experiment_run_status_counts),
+                "configuration_run_status_counts": dict(
+                    self.configuration_run_status_counts
+                ),
+            }
+        )
+        return result
+
+
+@dataclass(frozen=True)
+class ExperimentGroupOverviewDTO:
+    """Experiment-group overview row."""
+
+    group_id: str = ""
+    name: str = ""
+    agent_id: str | None = None
+    description: str | None = None
+    project_id: str | None = None
+    dataset_id: str | None = None
+    source_experiments: list[ExperimentGroupSourceExperimentDTO] = field(
+        default_factory=list
+    )
+    experiment_count: int = 0
+    experiment_run_count: int = 0
+    configuration_run_count: int = 0
+    first_experiment_created_at: str | None = None
+    last_experiment_updated_at: str | None = None
+    first_experiment_run_created_at: str | None = None
+    last_experiment_run_updated_at: str | None = None
+    status_summary: ExperimentGroupStatusSummaryDTO = field(
+        default_factory=ExperimentGroupStatusSummaryDTO
+    )
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def configuration_runs_count(self) -> int:
+        """Backward-compatible alias for the canonical singular field."""
+        return self.configuration_run_count
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ExperimentGroupOverviewDTO":
+        known = {
+            "group_id",
+            "id",
+            "name",
+            "agent_id",
+            "description",
+            "project_id",
+            "dataset_id",
+            "source_experiments",
+            "experiments",
+            "experiment_count",
+            "experiments_count",
+            "experiment_run_count",
+            "experiment_runs_count",
+            "configuration_run_count",
+            "configuration_runs_count",
+            "first_experiment_created_at",
+            "last_experiment_updated_at",
+            "first_experiment_run_created_at",
+            "last_experiment_run_updated_at",
+            "status_summary",
+            "created_at",
+            "updated_at",
+            "metadata",
+        }
+        source_rows = payload.get("source_experiments", payload.get("experiments", []))
+        return cls(
+            group_id=str(payload.get("group_id") or payload.get("id") or ""),
+            name=str(payload.get("name") or ""),
+            agent_id=(
+                str(payload["agent_id"])
+                if payload.get("agent_id") is not None
+                else None
+            ),
+            description=(
+                str(payload["description"])
+                if payload.get("description") is not None
+                else None
+            ),
+            project_id=(
+                str(payload["project_id"])
+                if payload.get("project_id") is not None
+                else None
+            ),
+            dataset_id=(
+                str(payload["dataset_id"])
+                if payload.get("dataset_id") is not None
+                else None
+            ),
+            source_experiments=[
+                ExperimentGroupSourceExperimentDTO.from_dict(item)
+                for item in _copy_list(source_rows)
+                if isinstance(item, Mapping)
+            ],
+            experiment_count=_int_or_default(
+                payload.get("experiment_count", payload.get("experiments_count")),
+                len(_copy_list(source_rows)),
+            ),
+            experiment_run_count=_int_or_default(
+                payload.get(
+                    "experiment_run_count", payload.get("experiment_runs_count")
+                ),
+                0,
+            ),
+            configuration_run_count=_int_or_default(
+                payload.get(
+                    "configuration_run_count",
+                    payload.get("configuration_runs_count"),
+                ),
+                0,
+            ),
+            first_experiment_created_at=(
+                str(payload["first_experiment_created_at"])
+                if payload.get("first_experiment_created_at") is not None
+                else None
+            ),
+            last_experiment_updated_at=(
+                str(payload["last_experiment_updated_at"])
+                if payload.get("last_experiment_updated_at") is not None
+                else None
+            ),
+            first_experiment_run_created_at=(
+                str(payload["first_experiment_run_created_at"])
+                if payload.get("first_experiment_run_created_at") is not None
+                else None
+            ),
+            last_experiment_run_updated_at=(
+                str(payload["last_experiment_run_updated_at"])
+                if payload.get("last_experiment_run_updated_at") is not None
+                else None
+            ),
+            status_summary=ExperimentGroupStatusSummaryDTO.from_dict(
+                payload.get("status_summary")
+                if isinstance(payload.get("status_summary"), Mapping)
+                else None
+            ),
+            created_at=(
+                str(payload["created_at"])
+                if payload.get("created_at") is not None
+                else None
+            ),
+            updated_at=(
+                str(payload["updated_at"])
+                if payload.get("updated_at") is not None
+                else None
+            ),
+            metadata=_copy_dict(payload.get("metadata")),
+            extra_fields=_extra_fields(payload, known),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = deepcopy(self.extra_fields)
+        result.update(
+            {
+                "group_id": self.group_id,
+                "name": self.name,
+                "agent_id": self.agent_id,
+                "description": self.description,
+                "project_id": self.project_id,
+                "dataset_id": self.dataset_id,
+                "source_experiments": [
+                    experiment.to_dict() for experiment in self.source_experiments
+                ],
+                "experiment_count": self.experiment_count,
+                "experiment_run_count": self.experiment_run_count,
+                "configuration_run_count": self.configuration_run_count,
+                "first_experiment_created_at": self.first_experiment_created_at,
+                "last_experiment_updated_at": self.last_experiment_updated_at,
+                "first_experiment_run_created_at": self.first_experiment_run_created_at,
+                "last_experiment_run_updated_at": self.last_experiment_run_updated_at,
+                "status_summary": self.status_summary.to_dict(),
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "metadata": deepcopy(self.metadata),
+            }
+        )
+        return result
+
+
+@dataclass(frozen=True)
+class ExperimentGroupDetailDTO(ExperimentGroupOverviewDTO):
+    """Detailed experiment group, including grouped configuration rows."""
+
+    grouped_configurations: list[GroupedConfigurationRunRowDTO] = field(
+        default_factory=list
+    )
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ExperimentGroupDetailDTO":
+        if isinstance(payload.get("group"), Mapping):
+            overview_payload = dict(cast(Mapping[str, Any], payload["group"]))
+            if "source_experiments" not in overview_payload:
+                overview_payload["source_experiments"] = payload.get(
+                    "source_experiments",
+                    [],
+                )
+        else:
+            overview_payload = dict(payload)
+
+        overview = ExperimentGroupOverviewDTO.from_dict(overview_payload)
+        rows = payload.get(
+            "grouped_configurations",
+            payload.get("configuration_runs", payload.get("configurations", [])),
+        )
+        extra = dict(overview.extra_fields)
+        for key in (
+            "group",
+            "source_experiments",
+            "grouped_configurations",
+            "configuration_runs",
+            "configurations",
+        ):
+            extra.pop(key, None)
+        return cls(
+            group_id=overview.group_id,
+            name=overview.name,
+            agent_id=overview.agent_id,
+            description=overview.description,
+            project_id=overview.project_id,
+            dataset_id=overview.dataset_id,
+            source_experiments=overview.source_experiments,
+            experiment_count=overview.experiment_count,
+            experiment_run_count=overview.experiment_run_count,
+            configuration_run_count=overview.configuration_run_count,
+            first_experiment_created_at=overview.first_experiment_created_at,
+            last_experiment_updated_at=overview.last_experiment_updated_at,
+            first_experiment_run_created_at=overview.first_experiment_run_created_at,
+            last_experiment_run_updated_at=overview.last_experiment_run_updated_at,
+            status_summary=overview.status_summary,
+            created_at=overview.created_at,
+            updated_at=overview.updated_at,
+            metadata=overview.metadata,
+            extra_fields=extra,
+            grouped_configurations=[
+                GroupedConfigurationRunRowDTO.from_dict(item)
+                for item in _copy_list(rows)
+                if isinstance(item, Mapping)
+            ],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        result["grouped_configurations"] = [
+            row.to_dict() for row in self.grouped_configurations
+        ]
+        return result
+
+
+@dataclass(frozen=True)
+class ExperimentGroupsPageDTO:
+    """Paginated experiment-group overview response."""
+
+    items: list[ExperimentGroupOverviewDTO]
+    page: int = 1
+    page_size: int = 50
+    total: int = 0
+    total_pages: int = 0
+    has_next: bool = False
+    has_previous: bool = False
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ExperimentGroupsPageDTO":
+        known = {
+            "items",
+            "experiment_groups",
+            "groups",
+            "page",
+            "page_size",
+            "per_page",
+            "total",
+            "total_items",
+            "total_pages",
+            "has_next",
+            "has_previous",
+            "has_prev",
+        }
+        rows = payload.get(
+            "items", payload.get("experiment_groups", payload.get("groups", []))
+        )
+        page_size = _int_or_default(
+            payload.get("page_size", payload.get("per_page")), 50
+        )
+        return cls(
+            items=[
+                ExperimentGroupOverviewDTO.from_dict(item)
+                for item in _copy_list(rows)
+                if isinstance(item, Mapping)
+            ],
+            page=_int_or_default(payload.get("page"), 1),
+            page_size=page_size,
+            total=_int_or_default(payload.get("total", payload.get("total_items")), 0),
+            total_pages=_int_or_default(payload.get("total_pages"), 0),
+            has_next=_bool_or_default(payload.get("has_next"), False),
+            has_previous=_bool_or_default(
+                payload.get("has_previous", payload.get("has_prev")),
+                False,
+            ),
+            extra_fields=_extra_fields(payload, known),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = deepcopy(self.extra_fields)
+        result.update(
+            {
+                "items": [item.to_dict() for item in self.items],
+                "page": self.page,
+                "page_size": self.page_size,
+                "total": self.total,
+                "total_pages": self.total_pages,
+                "has_next": self.has_next,
+                "has_previous": self.has_previous,
+            }
+        )
+        return result
+
+
+@dataclass(frozen=True)
+class GroupedConfigurationRunsPageDTO:
+    """Paginated grouped configuration-run response."""
+
+    items: list[GroupedConfigurationRunRowDTO]
+    page: int = 1
+    page_size: int = 50
+    total: int = 0
+    total_pages: int = 0
+    has_next: bool = False
+    has_previous: bool = False
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "GroupedConfigurationRunsPageDTO":
+        known = {
+            "items",
+            "configuration_runs",
+            "grouped_configurations",
+            "rows",
+            "page",
+            "page_size",
+            "per_page",
+            "total",
+            "total_items",
+            "total_pages",
+            "has_next",
+            "has_previous",
+            "has_prev",
+        }
+        rows = payload.get(
+            "items",
+            payload.get(
+                "configuration_runs",
+                payload.get("grouped_configurations", payload.get("rows", [])),
+            ),
+        )
+        page_size = _int_or_default(
+            payload.get("page_size", payload.get("per_page")), 50
+        )
+        return cls(
+            items=[
+                GroupedConfigurationRunRowDTO.from_dict(item)
+                for item in _copy_list(rows)
+                if isinstance(item, Mapping)
+            ],
+            page=_int_or_default(payload.get("page"), 1),
+            page_size=page_size,
+            total=_int_or_default(payload.get("total", payload.get("total_items")), 0),
+            total_pages=_int_or_default(payload.get("total_pages"), 0),
+            has_next=_bool_or_default(payload.get("has_next"), False),
+            has_previous=_bool_or_default(
+                payload.get("has_previous", payload.get("has_prev")),
+                False,
+            ),
+            extra_fields=_extra_fields(payload, known),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = deepcopy(self.extra_fields)
+        result.update(
+            {
+                "items": [item.to_dict() for item in self.items],
+                "page": self.page,
+                "page_size": self.page_size,
+                "total": self.total,
+                "total_pages": self.total_pages,
+                "has_next": self.has_next,
+                "has_previous": self.has_previous,
+            }
+        )
+        return result
+
+
 @dataclass
 class EvaluatorDTO:
     """Evaluator definition DTO based on observability/evaluator_definition_schema.json."""
@@ -918,7 +1587,7 @@ def create_local_experiment(
     max_trials: int = 10,
     dataset_size: int = 100,
 ) -> ExperimentDTO:
-    """Create an experiment DTO for Edge Analytics mode with privacy-preserving defaults."""
+    """Create an experiment DTO for local mode with privacy-preserving defaults."""
     return ExperimentDTO(
         id=experiment_id,
         name=name,
@@ -931,7 +1600,7 @@ def create_local_experiment(
             "configuration_space": configuration_space,
         },
         metadata={
-            "execution_mode": "edge_analytics",
+            "execution_mode": "local",
             "privacy_mode": True,
             "dataset_size": dataset_size,
             "created_with": "traigent-local",
@@ -948,7 +1617,7 @@ def create_local_experiment_run(
     max_trials: int = 10,
     dataset_size: int = 100,
 ) -> ExperimentRunDTO:
-    """Create an experiment run DTO for Edge Analytics mode."""
+    """Create an experiment run DTO for local mode."""
     return ExperimentRunDTO(
         id=run_id,
         experiment_id=experiment_id,
@@ -968,7 +1637,7 @@ def create_local_experiment_run(
             },
             "metadata": {"dataset_size": dataset_size, "privacy_mode": True},
         },
-        metadata={"execution_mode": "edge_analytics", "privacy_mode": True},
+        metadata={"execution_mode": "local", "privacy_mode": True},
         status="not_started",  # Set correct status for backend compatibility
     )
 

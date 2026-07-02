@@ -134,11 +134,14 @@ class TestEnhancedCredentialStore:
 
     def test_store_initialization(self, temp_dir):
         """Test credential store initialization."""
+        expected_path = Path(temp_dir) / "creds"
         store = EnhancedCredentialStore(
             master_password="test-passphrase-12345",  # noqa: S106 - test credential
-            storage_path=str(Path(temp_dir) / "creds"),
+            storage_path=str(expected_path),
         )
-        assert store is not None
+        assert store.storage_path == expected_path
+        assert store.security_level == SecurityLevel.HIGH
+        assert store.check_credential_health()["total_credentials"] == 0
 
     def test_ignored_legacy_master_without_store_logs_info_not_warning(
         self, tmp_path, caplog
@@ -245,8 +248,10 @@ class TestEnhancedCredentialStore:
             metadata=metadata,
         )
 
-        # Verify credential exists
-        assert store.get("meta-test") is not None
+        # The metadata kwarg must not interfere with the stored value, and
+        # the credential must be recorded in the store's health accounting.
+        assert store.get("meta-test", check_env=False) == "value1234"
+        assert store.check_credential_health()["total_credentials"] == 1
 
     def test_structured_credential_weak_check_ignores_user_metadata(self, store):
         """User metadata in a structured credential payload is not secret material."""
@@ -295,7 +300,11 @@ class TestEnhancedCredentialStore:
         )
 
         # Should be retrievable before expiration
-        assert store.get("expiring-key") is not None
+        assert store.get("expiring-key", check_env=False) == "temporary"
+        # The 1-hour expiry is within the health check's 7-day warning window.
+        health = store.check_credential_health()
+        assert health["expiring_soon"] == 1
+        assert health["expired"] == 0
 
     def test_security_metrics(self, store):
         """Test getting security metrics."""
@@ -387,15 +396,24 @@ class TestEnhancedCredentialStore:
         assert all(v == "shared-value" for v in results if v is not None)
 
     def test_credential_type_enforcement(self, store):
-        """Test credential type is stored."""
+        """Test credential type is recorded and surfaced via the audit trail."""
+        audit_events: list[dict] = []
+        store.audit_callback = audit_events.append
+
         store.set(
             name="typed-key",
             value="value1234",
             credential_type=CredentialType.DATABASE_URL,
         )
 
-        # Verify credential exists (type is internal)
-        assert store.get("typed-key") is not None
+        assert store.get("typed-key", check_env=False) == "value1234"
+        created_events = [
+            event
+            for event in audit_events
+            if event.get("operation") == "credential_created"
+        ]
+        assert len(created_events) == 1
+        assert created_events[0]["details"]["type"] == CredentialType.DATABASE_URL.value
 
 
 class TestCredentialStoreEdgeCases:
@@ -417,17 +435,19 @@ class TestCredentialStoreEdgeCases:
         )
 
     def test_weak_master_password(self, temp_dir):
-        """Test initialization with weak master password."""
-        # Should either accept with warning or reject
-        try:
-            store = EnhancedCredentialStore(
-                master_password="weak",
-                storage_path=str(Path(temp_dir) / "test"),
-            )
-            assert store is not None
-        except (ValueError, AuthenticationError):
-            # Weak password rejection is acceptable
-            pass
+        """A short master password is currently accepted and yields a working store.
+
+        EnhancedCredentialStore performs no strength validation on
+        master_password (see _init_secure_encryption); any non-empty value is
+        used directly as PBKDF2 input. This test documents that behavior by
+        exercising the store end-to-end rather than asserting on ambiguity.
+        """
+        store = EnhancedCredentialStore(
+            master_password="weak",
+            storage_path=str(Path(temp_dir) / "test"),
+        )
+        store.set("probe-key", "value1234", CredentialType.API_KEY)
+        assert store.get("probe-key", check_env=False) == "value1234"
 
     def test_retrieve_deleted_credential(self, store):
         """Test retrieving credential after deletion."""

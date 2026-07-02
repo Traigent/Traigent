@@ -1,5 +1,6 @@
 """Comprehensive tests for base optimizer class."""
 
+import math
 from datetime import datetime
 from typing import Any
 from unittest.mock import Mock
@@ -393,6 +394,64 @@ class TestBaseOptimizer:
         # Best should remain None
         assert optimizer.best_score is None
         assert optimizer.best_config is None
+
+    @pytest.mark.parametrize("bad_score", [math.nan, math.inf, -math.inf])
+    def test_update_best_skips_non_finite_first_trial(self, bad_score):
+        """A non-finite first score must not poison the incumbent."""
+        optimizer = ConcreteOptimizer({"x": [0, 1]}, ["accuracy"])
+
+        optimizer.update_best(
+            TrialResult(
+                trial_id="trial-non-finite",
+                config={"x": 0},
+                metrics={"accuracy": bad_score},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+        )
+        optimizer.update_best(
+            TrialResult(
+                trial_id="trial-finite",
+                config={"x": 1},
+                metrics={"accuracy": 0.9},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+        )
+
+        assert optimizer.best_score == pytest.approx(0.9)
+        assert optimizer.best_config == {"x": 1}
+
+    @pytest.mark.parametrize("bad_score", [math.nan, math.inf, -math.inf])
+    def test_update_best_non_finite_trial_does_not_displace_incumbent(self, bad_score):
+        """A finite incumbent must survive later non-finite scores."""
+        optimizer = ConcreteOptimizer({"x": [0, 1]}, ["accuracy"])
+        optimizer.update_best(
+            TrialResult(
+                trial_id="trial-finite",
+                config={"x": 1},
+                metrics={"accuracy": 0.8},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+        )
+
+        optimizer.update_best(
+            TrialResult(
+                trial_id="trial-non-finite",
+                config={"x": 0},
+                metrics={"accuracy": bad_score},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+        )
+
+        assert optimizer.best_score == pytest.approx(0.8)
+        assert optimizer.best_config == {"x": 1}
 
     def test_properties(self):
         """Test optimizer properties."""

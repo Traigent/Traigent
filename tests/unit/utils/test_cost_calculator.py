@@ -219,6 +219,34 @@ class TestCustomPricingAndValidation:
         assert result["not_found"] is True
         assert "invalid JSON" in result["error"]
 
+    @pytest.mark.parametrize("rate", [float("nan"), float("inf"), -float("inf")])
+    def test_custom_pricing_rejects_non_finite_rates(self, rate) -> None:
+        with pytest.raises(ValueError, match="non-finite pricing"):
+            cc._parse_custom_pricing_entry(
+                "bad-model",
+                {
+                    "input_cost_per_token": rate,
+                    "output_cost_per_token": 1e-6,
+                },
+                "test",
+            )
+
+    @pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+    def test_custom_pricing_json_rejects_non_finite_literals(
+        self, monkeypatch, literal
+    ) -> None:
+        monkeypatch.setenv(
+            "TRAIGENT_CUSTOM_MODEL_PRICING_JSON",
+            (
+                '{"bad-model":{"input_cost_per_token":'
+                f'{literal},"output_cost_per_token":1e-6}}'
+            ),
+        )
+        monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", raising=False)
+
+        with pytest.raises(ValueError, match="invalid JSON"):
+            cc._get_custom_pricing_index()
+
     def test_clear_cache_resets_custom_pricing_cache(self, monkeypatch) -> None:
         monkeypatch.setenv(
             "TRAIGENT_CUSTOM_MODEL_PRICING_JSON",

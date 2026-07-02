@@ -17,10 +17,32 @@ _ENV_KEYS = (
     "APP_ENV",
     "FLASK_ENV",
 )
+_METADATA_HOSTNAMES = {
+    "metadata",
+    "metadata.google.internal",
+}
+
+
+class CloudUrlUnreachableError(ValueError):
+    """A cloud base URL was structurally valid but its host could not be resolved.
+
+    Distinct from the other ``ValueError``s raised by :func:`validate_cloud_base_url`,
+    which signal an *unsafe* URL (private/loopback/metadata IP, bad scheme, embedded
+    credentials, path traversal) and MUST always fail loud. This subclass marks the
+    narrow "backend is simply unreachable" case, so best-effort callers (e.g. the
+    interaction-policy read) may fall back to a static default instead of crashing,
+    WITHOUT relaxing any SSRF/unsafe-origin protection. Subclasses ``ValueError`` so
+    existing ``except ValueError`` callers keep catching it.
+    """
 
 
 def _is_development_environment() -> bool:
-    """Return True for explicit/local SDK development environments."""
+    """Return True only for explicit/local SDK development environments.
+
+    Fail closed: an unset / unrecognized environment is treated as production
+    (strict) so that a deployment which never set an env marker does not
+    silently allow credential egress to localhost / private / metadata hosts.
+    """
     for key in _ENV_KEYS:
         value = os.getenv(key)
         if value and value.strip().lower() in _PRODUCTION_ENV_NAMES:
@@ -33,10 +55,51 @@ def _is_development_environment() -> bool:
     return False
 
 
-def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
-    normalized = hostname.strip("[]").rstrip(".").lower()
+def _normalize_hostname(hostname: str) -> str:
+    return hostname.strip("[]").rstrip(".").lower()
+
+
+def _is_numeric_hostname_label(label: str) -> bool:
+    lowered = label.lower()
+    if lowered.startswith("0x"):
+        return len(lowered) > 2 and all(ch in "0123456789abcdef" for ch in lowered[2:])
+    return lowered.isdigit()
+
+
+def _is_nonstandard_ip_notation(hostname: str) -> bool:
+    labels = hostname.split(".")
+    return bool(labels) and all(_is_numeric_hostname_label(label) for label in labels)
+
+
+def _parse_ip_literal(
+    hostname: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(hostname.strip("[]"))
+    except ValueError:
+        return None
+
+
+def _reject_always_blocked_hostname(hostname: str, *, purpose: str) -> str:
+    normalized = _normalize_hostname(hostname)
     if not normalized:
         raise ValueError("Cloud base URL must include a hostname") from None
+
+    if normalized in _METADATA_HOSTNAMES:
+        raise ValueError(f"{purpose} base URL points at a metadata service") from None
+
+    if _parse_ip_literal(normalized) is None and _is_nonstandard_ip_notation(
+        normalized
+    ):
+        raise ValueError(
+            f"{purpose} base URL uses non-standard IP address notation"
+        ) from None
+
+    return normalized
+
+
+def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
+    normalized = _reject_always_blocked_hostname(hostname, purpose="Cloud")
 
     if normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(
         (".localhost", ".local")
@@ -45,10 +108,7 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
             return
         raise ValueError("Cloud base URL host is not allowed in production") from None
 
-    try:
-        host_ip = ipaddress.ip_address(normalized)
-    except ValueError:
-        host_ip = None
+    host_ip = _parse_ip_literal(normalized)
 
     if host_ip is not None:
         if not allow_local and not host_ip.is_global:
@@ -63,7 +123,9 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
     try:
         addr_infos = socket.getaddrinfo(normalized, None)
     except socket.gaierror:
-        raise ValueError("Cloud base URL host could not be resolved") from None
+        raise CloudUrlUnreachableError(
+            "Cloud base URL host could not be resolved"
+        ) from None
 
     for _family, _socktype, _proto, _canonname, sockaddr in addr_infos:
         try:
@@ -99,16 +161,29 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
             f"{purpose} base URL must not include params, query, or fragment"
         ) from None
 
+    hostname = parsed.hostname
+    if hostname is None:
+        raise ValueError(f"{purpose} base URL must include a hostname") from None
+    _reject_always_blocked_hostname(hostname, purpose=purpose)
+
     allow_local = _is_development_environment()
     if not allow_local and parsed.scheme != "https":
         raise ValueError(f"{purpose} base URL must use https in production") from None
 
+    # Decode to a fixed point (bounded) so multiply-encoded traversal
+    # (e.g. %25252e) cannot survive a fixed two-pass decode. Mirrors the
+    # explicit-api_base_url guard in backend_client.py.
     decoded_path = parsed.path
-    for _ in range(2):
+    for _ in range(8):
         next_path = unquote(decoded_path)
         if next_path == decoded_path:
             break
         decoded_path = next_path
+    else:
+        # Still changing after 8 decodes — pathologically encoded; reject.
+        raise ValueError(
+            f"{purpose} base URL must not contain path traversal"
+        ) from None
 
     path_segments = [part for part in decoded_path.split("/") if part]
     if any(part in {".", ".."} for part in path_segments):
@@ -116,9 +191,6 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
             f"{purpose} base URL must not contain path traversal"
         ) from None
 
-    hostname = parsed.hostname
-    if hostname is None:
-        raise ValueError(f"{purpose} base URL must include a hostname") from None
     _reject_unsafe_hostname(hostname, allow_local=allow_local)
 
     clean_path = parsed.path.rstrip("/")
@@ -135,17 +207,17 @@ def _validation_needs_dns_resolution(base_url: str) -> bool:
     if hostname is None:
         return False
 
-    normalized = hostname.strip("[]").rstrip(".").lower()
+    normalized = _normalize_hostname(hostname)
     if normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(
         (".localhost", ".local")
     ):
         return False
 
-    try:
-        ipaddress.ip_address(normalized)
-    except ValueError:
-        return True
-    return False
+    if normalized in _METADATA_HOSTNAMES:
+        return False
+    if _parse_ip_literal(normalized) is not None:
+        return False
+    return not _is_nonstandard_ip_notation(normalized)
 
 
 async def validate_cloud_base_url_async(

@@ -11,8 +11,9 @@ import json
 import os
 import sys
 from pathlib import Path
-from traigent.utils.console import _safe_print
 from typing import Any
+
+from traigent.utils.console import _safe_print
 
 
 class DiagnosticReport:
@@ -249,7 +250,7 @@ class TraigentDiagnostics:
             import traigent
 
             # Check if Traigent can be initialized
-            traigent.initialize(execution_mode="edge_analytics")
+            traigent.initialize(execution_mode="local")
             report.add_success("Traigent", "SDK initialized successfully")
 
             # Check for mock LLM mode

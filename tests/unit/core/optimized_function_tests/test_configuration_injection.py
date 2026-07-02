@@ -194,14 +194,19 @@ class TestConfigurationInjection:
         )
 
         # Set some config
-        set_config({"temperature": 0.7, "extra": "value"})
+        initial_config = {"temperature": 0.7, "extra": "value"}
+        set_config(initial_config)
 
-        # Call function
+        # Call function - context injection merges the ambient config (2
+        # params) into the call, visible to test_func via get_config().
         result = opt_func("test")
-        assert result is not None  # Function returns a string
+        assert result == "test (2 params)"
 
-        # Context should be restored after call
-        # (Exact behavior depends on implementation)
+        # Context should be restored to the exact pre-call configuration
+        # afterwards: ContextBasedProvider wraps the call in
+        # ConfigurationContext, whose __exit__ resets the contextvar token
+        # rather than leaking the merged trial config into the caller.
+        assert get_config() == initial_config
 
     def test_seamless_with_extra_parameters(
         self, sample_config_space, sample_objectives

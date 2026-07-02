@@ -123,7 +123,9 @@ def test_default_hashed_hashes_free_text_and_keeps_enum_scalars() -> None:
     )
 
     assert observation is not None
-    values = {variable["name"]: variable["value"] for variable in observation["variables"]}
+    values = {
+        variable["name"]: variable["value"] for variable in observation["variables"]
+    }
     assert re.fullmatch(r"sha256:[a-f0-9]{64}", values["free_knob"])
     assert values["free_knob"] != free_text
     assert values["retrieval_profile"] == "linked_top6"

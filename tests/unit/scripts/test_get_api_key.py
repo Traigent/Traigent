@@ -133,9 +133,11 @@ def test_main_reads_password_from_stdin(
     monkeypatch.setattr(
         module,
         "get_api_key",
-        lambda email, password, backend_url, verbose=True: "tg_generated_key"
-        if password == "stdin-password"  # pragma: allowlist secret
-        else "wrong",
+        lambda email, password, backend_url, verbose=True: (
+            "tg_generated_key"
+            if password == "stdin-password"  # pragma: allowlist secret
+            else "wrong"
+        ),
     )
     monkeypatch.setattr(
         sys.stdin,

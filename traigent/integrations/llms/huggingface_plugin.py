@@ -26,10 +26,13 @@ class HuggingFacePlugin(LLMPlugin):
     FRAMEWORK = Framework.HUGGINGFACE
 
     def _get_supported_canonical_params(self) -> set[str]:
-        """HuggingFace InferenceClient supports a limited set of params.
+        """Canonical params Traigent tunes for the HuggingFace client.
 
-        Params like frequency_penalty, presence_penalty, seed are not
-        supported by HuggingFace's text_generation/chat_completion.
+        This is Traigent's tuned set, not the client's full capability.
+        Some params the HuggingFace client *does* accept (e.g.
+        frequency_penalty, presence_penalty, seed) are intentionally left
+        outside Traigent's tuned set here rather than being unsupported by
+        the client.
         """
         return {
             "model",

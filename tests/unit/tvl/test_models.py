@@ -184,7 +184,9 @@ class TestPromotionPolicy:
         policy = PromotionPolicy()
         assert policy.dominance == "epsilon_pareto"
         assert policy.alpha == 0.05
-        assert policy.adjust == "none"
+        # Default adjust is "holm", matching the canonical epsilon-Pareto gate
+        # (tvl/python/tvl/promotion.py:200).
+        assert policy.adjust == "holm"
         assert policy.min_effect == {}
 
     def test_invalid_alpha(self) -> None:
@@ -225,6 +227,17 @@ class TestPromotionPolicy:
         assert policy.min_effect == {"accuracy": 0.02}
         assert policy.adjust == "BH"
         assert len(policy.chance_constraints) == 1
+
+    def test_supported_adjust_methods(self) -> None:
+        """Supported multiple-comparison adjustment methods are accepted."""
+        for adjust in ("none", "BH", "holm", "bonferroni"):
+            policy = PromotionPolicy.from_dict({"adjust": adjust})
+            assert policy.adjust == adjust
+
+    def test_unsupported_adjust_method_rejected(self) -> None:
+        """Unsupported adjustment methods fail at policy construction."""
+        with pytest.raises(ValueError, match="Unsupported promotion_policy.adjust"):
+            PromotionPolicy(adjust="sidak")  # type: ignore[arg-type]
 
 
 class TestStructuralConstraint:

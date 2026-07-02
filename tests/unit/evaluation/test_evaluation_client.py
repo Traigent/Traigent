@@ -5,6 +5,9 @@ from urllib import error
 import pytest
 
 from traigent.evaluation import (
+    AnnotationQueueItemCompleteResultDTO,
+    AnnotationQueueItemCreateResultDTO,
+    AnnotationQueueItemDTO,
     AnnotationQueueItemStatus,
     AnnotationQueueStatus,
     EvaluationClient,
@@ -13,6 +16,8 @@ from traigent.evaluation import (
     EvaluatorRunStatus,
     JudgeConfigDTO,
     MeasureValueType,
+    ScoreRecordDTO,
+    TypedMeasureDTO,
 )
 from traigent.utils.exceptions import AuthenticationError, TraigentConnectionError
 
@@ -386,8 +391,8 @@ def test_evaluation_client_updates_typed_measures_and_maps_errors(monkeypatch):
 
     assert measure_calls[0][1] == "/api/v1beta/measures"
     assert measure_calls[1][1] == "/api/v1beta/measures/measure_quality"
-    assert created_measure["value_type"] == "categorical"
-    assert updated_measure["value_type"] == "boolean"
+    assert created_measure.value_type == "categorical"
+    assert updated_measure.value_type == "boolean"
 
     auth_client = EvaluationClient()
     monkeypatch.setattr(
@@ -560,6 +565,8 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
         if path == "/api/v1beta/annotation-queues/queue_1/items":
             return {
                 "data": {
+                    "queue_id": "queue_1",
+                    "created_count": 1,
                     "items": [
                         {
                             "id": "queueitem_1",
@@ -573,7 +580,7 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
                             "created_at": "2026-03-10T12:02:00+00:00",
                             "updated_at": "2026-03-10T12:02:00+00:00",
                         }
-                    ]
+                    ],
                 }
             }
         if path == "/api/v1beta/annotation-queues/queue_1/next":
@@ -609,6 +616,7 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
         if path == "/api/v1beta/annotation-queues/items/queueitem_1/complete":
             return {
                 "data": {
+                    "queue_id": "queue_1",
                     "item": {
                         "id": "queueitem_1",
                         "queue_id": "queue_1",
@@ -681,12 +689,15 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
     assert retried.source == "retry"
     assert queues.items[0].status == AnnotationQueueStatus.ACTIVE
     assert queue.measure_ids == ["quality_score"]
-    assert added_items["items"][0]["target_id"] == "trace_1"
+    assert added_items.queue_id == "queue_1"
+    assert added_items.created_count == 1
+    assert added_items.items[0].target_id == "trace_1"
     assert queue_items.items[0].assigned_user_id == "annotator_1"
     assert next_item is not None
     assert next_item.id == "queueitem_1"
     assert updated_item.status == AnnotationQueueItemStatus.IN_PROGRESS
-    assert completed["item"]["status"] == "completed"
+    assert completed.queue_id == "queue_1"
+    assert completed.item.status == AnnotationQueueItemStatus.COMPLETED
 
     assert calls[0] == (
         "POST",
@@ -809,3 +820,336 @@ def test_get_next_annotation_queue_item_returns_none_for_empty_queue():
     )
 
     assert client.get_next_annotation_queue_item("queue_1") is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #1444 — typed DTO surface for previously-raw-dict methods
+# ---------------------------------------------------------------------------
+
+
+def test_add_annotation_queue_items_returns_typed_dto():
+    """add_annotation_queue_items must return AnnotationQueueItemCreateResultDTO."""
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        return {
+            "data": {
+                "queue_id": "q_abc",
+                "created_count": 2,
+                "items": [
+                    {
+                        "id": "item_1",
+                        # tenant_id/project_id are part of the backend
+                        # AnnotationQueueItem.to_dict() runtime shape — must
+                        # survive into the DTO (no data loss vs raw dict, #1444).
+                        "tenant_id": "tenant_42",
+                        "project_id": "project_7",
+                        "queue_id": "q_abc",
+                        "target_type": "observability_trace",
+                        "target_id": "trace_x",
+                        "target_snapshot": {},
+                        "status": "pending",
+                        "assigned_user_id": None,
+                        "score_record_ids": [],
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                    },
+                    {
+                        "id": "item_2",
+                        "tenant_id": "tenant_42",
+                        "project_id": "project_7",
+                        "queue_id": "q_abc",
+                        "target_type": "observability_trace",
+                        "target_id": "trace_y",
+                        "target_snapshot": {},
+                        "status": "pending",
+                        "assigned_user_id": None,
+                        "score_record_ids": [],
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                    },
+                ],
+            }
+        }
+
+    client = EvaluationClient(request_sender=request_sender)
+    result = client.add_annotation_queue_items(
+        "q_abc",
+        targets=[
+            {"target_type": "observability_trace", "target_id": "trace_x"},
+            {"target_type": "observability_trace", "target_id": "trace_y"},
+        ],
+    )
+
+    # Must be the typed DTO, not a raw dict
+    assert isinstance(result, AnnotationQueueItemCreateResultDTO)
+    assert result.queue_id == "q_abc"
+    assert result.created_count == 2
+    assert len(result.items) == 2
+    assert result.items[0].target_id == "trace_x"
+    assert result.items[1].target_id == "trace_y"
+    assert result.items[0].status == AnnotationQueueItemStatus.PENDING
+    # Regression guard: tenant_id/project_id must NOT be dropped by the DTO.
+    assert result.items[0].tenant_id == "tenant_42"
+    assert result.items[0].project_id == "project_7"
+    assert result.items[1].tenant_id == "tenant_42"
+    assert result.items[1].project_id == "project_7"
+
+
+def test_complete_annotation_queue_item_returns_typed_dto():
+    """complete_annotation_queue_item must return AnnotationQueueItemCompleteResultDTO."""
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        return {
+            "data": {
+                "queue_id": "q_abc",
+                "item": {
+                    "id": "item_1",
+                    "tenant_id": "tenant_42",
+                    "project_id": "project_7",
+                    "queue_id": "q_abc",
+                    "target_type": "observability_trace",
+                    "target_id": "trace_x",
+                    "target_snapshot": {},
+                    "status": "completed",
+                    "assigned_user_id": "user_1",
+                    "score_record_ids": ["score_1"],
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:01:00+00:00",
+                },
+                "scores": [
+                    {
+                        "id": "score_1",
+                        # tenant_id/project_id are part of the backend
+                        # ScoreRecord.to_dict() runtime shape (create_manual_score)
+                        # — must survive into the DTO (no data loss, #1444).
+                        "tenant_id": "tenant_42",
+                        "project_id": "project_7",
+                        "measure_id": "quality_score",
+                        "target_type": "observability_trace",
+                        "target_id": "trace_x",
+                        "source": "manual",
+                        "numeric_value": 0.9,
+                        "value": 0.9,
+                    }
+                ],
+            }
+        }
+
+    client = EvaluationClient(request_sender=request_sender)
+    result = client.complete_annotation_queue_item(
+        "item_1",
+        scores=[{"measure_id": "quality_score", "numeric_value": 0.9}],
+    )
+
+    # Must be the typed DTO, not a raw dict
+    assert isinstance(result, AnnotationQueueItemCompleteResultDTO)
+    assert result.queue_id == "q_abc"
+    assert result.item.id == "item_1"
+    assert result.item.status == AnnotationQueueItemStatus.COMPLETED
+    assert result.item.score_record_ids == ["score_1"]
+    assert len(result.scores) == 1
+    assert result.scores[0].id == "score_1"
+    assert result.scores[0].numeric_value == 0.9
+    # Regression guard: tenant_id/project_id must NOT be dropped by the DTOs
+    # (nested item AND nested scores).
+    assert result.item.tenant_id == "tenant_42"
+    assert result.item.project_id == "project_7"
+    assert result.scores[0].tenant_id == "tenant_42"
+    assert result.scores[0].project_id == "project_7"
+
+
+def test_create_typed_measure_returns_typed_dto():
+    """create_typed_measure must return TypedMeasureDTO with correct field access."""
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        # Simulates the direct JSON response from the measures API (no data wrapper)
+        return {
+            "id": "measure_abc",
+            "measure_id": "measure_abc",
+            "label": "Accuracy",
+            "measure_type": "accuracy",
+            "version": "1.0.0",
+            "value_type": "numeric",
+            "is_custom": True,
+            "categories": [],
+            "target_types": ["observability_trace"],
+            "allowed_score_sources": ["manual"],
+            "domain": [0.0, 1.0],
+            "agent_types": [],
+            "python_packages": [],
+            "measure_parameters": {},
+            "linked_evaluator_count": 0,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    client = EvaluationClient(request_sender=request_sender)
+    result = client.create_typed_measure(
+        {"label": "Accuracy", "measure_type": "accuracy"}
+    )
+
+    # Must be the typed DTO, not a raw dict
+    assert isinstance(result, TypedMeasureDTO)
+    assert result.id == "measure_abc"
+    assert result.label == "Accuracy"
+    assert result.measure_type == "accuracy"
+    assert result.value_type == "numeric"
+    assert result.is_custom is True
+    assert result.domain == [0.0, 1.0]
+
+
+def test_update_typed_measure_returns_typed_dto():
+    """update_typed_measure must return TypedMeasureDTO with correct field access."""
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        return {
+            "id": "measure_abc",
+            "measure_id": "measure_abc",
+            "label": "Accuracy v2",
+            "measure_type": "accuracy",
+            "version": "1.1.0",
+            "value_type": "numeric",
+            "is_custom": True,
+            "categories": [],
+            "target_types": ["observability_trace"],
+            "allowed_score_sources": ["manual", "evaluator"],
+            "domain": [0.0, 1.0],
+            "agent_types": [],
+            "python_packages": [],
+            "measure_parameters": {},
+            "linked_evaluator_count": 1,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-02T00:00:00+00:00",
+        }
+
+    client = EvaluationClient(request_sender=request_sender)
+    result = client.update_typed_measure(
+        "measure_abc",
+        {"label": "Accuracy v2", "measure_type": "accuracy"},
+    )
+
+    assert isinstance(result, TypedMeasureDTO)
+    assert result.id == "measure_abc"
+    assert result.label == "Accuracy v2"
+    assert result.version == "1.1.0"
+    assert result.linked_evaluator_count == 1
+    assert result.allowed_score_sources == ["manual", "evaluator"]
+
+
+# ---------------------------------------------------------------------------
+# Issue #1444 — no-data-loss: error field + forward-compat `extra` retention
+# ---------------------------------------------------------------------------
+
+
+def test_typed_measure_dto_carries_error_fallback_field():
+    """TypedMeasureDTO must surface the backend Measure.to_dict() EXCEPTION-path
+    `error` key (src/models/measure.py), not drop it."""
+    payload = {
+        "id": "measure_x",
+        "measure_id": "measure_x",
+        "tenant_id": "tenant_1",
+        "owner_user_id": "owner_1",
+        "project_id": "project_1",
+        "label": "Broken Measure",
+        "description": "partial",
+        "error": "Failed to convert all fields",
+    }
+
+    dto = TypedMeasureDTO.from_dict(payload)
+
+    assert dto.error == "Failed to convert all fields"
+    # Happy-path payloads (no error key) leave it None.
+    happy = TypedMeasureDTO.from_dict(
+        {"id": "m", "label": "ok", "measure_type": "accuracy"}
+    )
+    assert happy.error is None
+
+
+def test_annotation_queue_item_dto_retains_unknown_keys_in_extra():
+    """A backend key the DTO does not model must survive into `.extra`, never
+    be silently dropped (forward-compat guard, #1444)."""
+    payload = {
+        "id": "item_1",
+        "tenant_id": "tenant_1",
+        "project_id": "project_1",
+        "queue_id": "q_1",
+        "target_type": "observability_trace",
+        "target_id": "trace_1",
+        "status": "pending",
+        # A future/unmodeled backend field:
+        "future_backend_field": {"nested": 42},
+    }
+
+    dto = AnnotationQueueItemDTO.from_dict(payload)
+
+    assert dto.extra == {"future_backend_field": {"nested": 42}}
+    # Known keys must NOT leak into extra.
+    assert "id" not in dto.extra
+    assert "tenant_id" not in dto.extra
+
+
+def test_score_record_dto_retains_unknown_keys_in_extra():
+    """ScoreRecordDTO retains unmodeled backend keys in `.extra` (#1444)."""
+    payload = {
+        "id": "score_1",
+        "tenant_id": "tenant_1",
+        "project_id": "project_1",
+        "measure_id": "quality_score",
+        "target_type": "observability_trace",
+        "target_id": "trace_1",
+        "source": "manual",
+        "numeric_value": 0.9,
+        # Unmodeled future field:
+        "data_type": "NUMERIC",
+    }
+
+    dto = ScoreRecordDTO.from_dict(payload)
+
+    assert dto.extra == {"data_type": "NUMERIC"}
+    assert "measure_id" not in dto.extra
+
+
+def test_typed_measure_dto_retains_unknown_keys_in_extra():
+    """TypedMeasureDTO retains unmodeled backend keys in `.extra` (#1444)."""
+    payload = {
+        "id": "measure_x",
+        "label": "Accuracy",
+        "measure_type": "accuracy",
+        # Unmodeled future field:
+        "experimental_weight": 0.5,
+    }
+
+    dto = TypedMeasureDTO.from_dict(payload)
+
+    assert dto.extra == {"experimental_weight": 0.5}
+    # The `error` field is a modeled key, so it never lands in extra.
+    assert "error" not in dto.extra
+
+
+def test_result_dtos_retain_unknown_top_level_keys_in_extra():
+    """Both result DTOs retain unmodeled top-level result keys in `.extra` (#1444)."""
+    create = AnnotationQueueItemCreateResultDTO.from_dict(
+        {
+            "queue_id": "q_1",
+            "created_count": 0,
+            "items": [],
+            "request_id": "req_123",
+        }
+    )
+    assert create.extra == {"request_id": "req_123"}
+
+    complete = AnnotationQueueItemCompleteResultDTO.from_dict(
+        {
+            "queue_id": "q_1",
+            "item": {
+                "id": "item_1",
+                "queue_id": "q_1",
+                "target_type": "observability_trace",
+                "target_id": "trace_1",
+                "status": "completed",
+            },
+            "scores": [],
+            "audit_token": "tok_456",
+        }
+    )
+    assert complete.extra == {"audit_token": "tok_456"}

@@ -114,6 +114,17 @@ class SessionCreationResult:
     failure_response: SessionCreationFailureDetail | None = None
     project_id: str | None = None
     tenant_id: str | None = None
+    typed_legacy_session_create_400: bool = False
+    # Execution-path transparency (so a caller never mistakes a local run for a
+    # managed/cloud one). ``execution_path`` is "connected" for a real backend
+    # session and "local_fallback" for any local result. ``backend_fallback`` is
+    # True whenever the run is local. ``degraded`` is True ONLY when the user
+    # intended a managed/cloud run but the backend was unreachable and we fell
+    # back to local — it stays False for intentional local execution (offline
+    # mode / no API key), which is a deliberate configuration, not a downgrade.
+    execution_path: str | None = None
+    backend_fallback: bool = False
+    degraded: bool = False
 
     def __str__(self) -> str:
         """Return the session ID string for backwards compatibility.
@@ -144,6 +155,9 @@ class SessionCreationResult:
             backend_connected=True,
             project_id=project_id,
             tenant_id=tenant_id,
+            execution_path="connected",
+            backend_fallback=False,
+            degraded=False,
         )
 
     @classmethod
@@ -153,12 +167,24 @@ class SessionCreationResult:
         reason: SessionCreationFailureReason,
         detail: str | None = None,
         failure_response: SessionCreationFailureDetail | None = None,
+        typed_legacy_session_create_400: bool = False,
+        degraded: bool = False,
     ) -> SessionCreationResult:
-        """Factory for a local-fallback session after backend failure."""
+        """Factory for a local-fallback session after backend failure.
+
+        ``degraded`` must be set True by callers where the user intended a
+        managed/cloud run but the backend was unreachable (an unintended
+        downgrade); it stays False for intentional local execution (offline
+        mode / no API key configured).
+        """
         return cls(
             session_id=session_id,
             backend_connected=False,
             failure_reason=reason,
             failure_detail=detail,
             failure_response=failure_response,
+            typed_legacy_session_create_400=typed_legacy_session_create_400,
+            execution_path="local_fallback",
+            backend_fallback=True,
+            degraded=degraded,
         )

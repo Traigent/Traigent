@@ -50,12 +50,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -108,7 +108,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7
 
       - name: Validate configuration files
         run: |
@@ -179,12 +179,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -197,7 +197,7 @@ jobs:
           pip install "dvc[s3]>=3,<4" "dvclive>=3,<4"
 
       - name: Setup CML
-        uses: iterative/setup-cml@f12ea7685438c1fc438d50f77519b3860cf5fa98  # v2.0.1
+        uses: iterative/setup-cml@e5f9f4673e0a8f275c45cc66dbbfd29c8469fb4e  # v2.1.0
 
       - name: Prepare pipeline workspace
         run: |
@@ -212,7 +212,7 @@ jobs:
 
       - name: Configure AWS credentials via OIDC
         if: inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
           role-session-name: github-actions-auto-tune-secure

@@ -87,10 +87,11 @@ async def test_backend_api():
                 url, json=experiment_data, timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
                 if response.status == 201:
-                    result = await response.json()
-                    experiment_id = result.get(
-                        "experiment_id", experiment_data["experiment_id"]
+                    experiment_result = await response.json()
+                    assert "experiment_id" in experiment_result, (
+                        "Backend response must include experiment_id"
                     )
+                    experiment_id = experiment_result["experiment_id"]
                     print(f"   ✅ Created experiment: {experiment_id}")
                 else:
                     error_text = await response.text()
@@ -231,8 +232,13 @@ async def test_backend_api():
     print("\nCheck the UI at http://localhost:3000/experiments/")
     print(f"Look for experiment: {experiment_id}")
 
-    # Verify test completed successfully
-    assert experiment_id is not None, "Experiment should be created"
+    # Verify test completed successfully - the backend should echo back the
+    # submitted id (serialized by ExperimentDTO.to_dict() as "id") under its
+    # own "experiment_id" key rather than discarding or replacing it.
+    assert (
+        "experiment_id" in experiment_result
+        and experiment_result["experiment_id"] == experiment_data["id"]
+    ), "Experiment should be created with the submitted id, echoed as experiment_id"
 
 
 if __name__ == "__main__":

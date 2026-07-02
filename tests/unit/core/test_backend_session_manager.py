@@ -20,8 +20,12 @@ from traigent.cloud.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
 )
+from traigent.cloud.trial_operations import TrialSlotResult
 from traigent.config.types import TraigentConfig
-from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.core.backend_session_manager import (
+    BackendSessionManager,
+    BackendTrialSubmissionOutcome,
+)
 from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.storage.local_storage import LocalStorageManager
@@ -173,9 +177,11 @@ class TestBackendSessionManagerCreation:
         # Verify backend client called
         mock_backend_client.create_session.assert_called_once()
         call_kwargs = mock_backend_client.create_session.call_args[1]
-        # Assert concrete format: "display_name (hash_suffix)"
+        # When experiment_display_name is None, the portal name is self-describing
+        # (issue #1422): it encodes objectives + knobs, NOT the function display_name.
         portal_name = call_kwargs["function_name"]
-        assert portal_name.startswith(descriptor.display_name)
+        assert "opt:accuracy,cost" in portal_name  # objectives present
+        assert "param1" in portal_name  # knob name present
         assert portal_name.endswith(f"({descriptor.slug[-8:]})")
         assert call_kwargs["optimization_goal"] == "maximize"
         assert (
@@ -428,7 +434,11 @@ class TestBackendSessionManagerTrialSubmission:
 
     @pytest.mark.asyncio
     async def test_submit_trial_fails_closed_when_no_backend_slot(
-        self, backend_session_manager, mock_trial_result, mock_backend_client
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
     ):
         """When the backend declines to mint a trial slot (next-trial returns
         no id), the manager MUST NOT submit a result under a client-hashed id
@@ -450,6 +460,59 @@ class TestBackendSessionManagerTrialSubmission:
         assert not backend_session_manager.is_trial_backend_acknowledged(
             "test-session-id", original_id
         )
+        assert backend_session_manager.backend_degraded is True
+        assert traigent_config.result_source == "local_fallback"
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_completion_slot_does_not_degrade(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
+    ):
+        """Graceful should_continue=False is terminal completion, not outage."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value=TrialSlotResult.complete("converged")
+        )
+        degrade = Mock(wraps=backend_session_manager._flag_backend_degraded)
+        backend_session_manager._flag_backend_degraded = degrade
+
+        outcome = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert isinstance(outcome, BackendTrialSubmissionOutcome)
+        assert outcome.optimization_complete is True
+        assert outcome.reason == "converged"
+        degrade.assert_not_called()
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert backend_session_manager.backend_degraded is False
+        assert traigent_config.result_source != "local_fallback"
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_connectivity_slot_failure_still_degrades(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
+    ):
+        """Transport failure remains the existing local-fallback path."""
+        mock_backend_client.request_trial_slot = AsyncMock(
+            side_effect=ConnectionError("network down")
+        )
+
+        result = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert result is True
+        mock_backend_client._submit_trial_result_via_session.assert_not_called()
+        assert backend_session_manager.backend_degraded is True
+        assert traigent_config.result_source == "local_fallback"
 
     @pytest.mark.asyncio
     async def test_submission_carries_only_the_tuned_projection(
@@ -598,6 +661,38 @@ class TestBackendSessionManagerTrialSubmission:
         mock_backend_client._submit_trial_result_via_session.assert_called_once()
         call_kwargs = mock_backend_client._submit_trial_result_via_session.call_args
         assert call_kwargs.kwargs["status"] == "PRUNED"
+
+    @pytest.mark.asyncio
+    async def test_pruned_trial_with_acquired_backend_id_reuses_slot(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """A pruned result from a backend-id config must not burn another slot."""
+        pruned_trial = Mock(spec=TrialResult)
+        pruned_trial.trial_id = "be-pruned-456"
+        pruned_trial.config = {"param1": 1}
+        pruned_trial.metrics = {"accuracy": 0.7, "cost": 0.3}
+        pruned_trial.is_successful = False
+        pruned_trial.status = TrialStatus.PRUNED
+        pruned_trial.duration = 0.5
+        pruned_trial.error_message = "Early stopping triggered"
+        pruned_trial.metadata = {
+            "pruned": True,
+            "backend_trial_id_acquired": True,
+            "backend_trial_id_source": "cloud_brain",
+        }
+        pruned_trial.get_metric = Mock(
+            side_effect=lambda key, default=None: pruned_trial.metrics.get(key, default)
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=pruned_trial,
+            session_id="test-session-id",
+        )
+
+        mock_backend_client.request_trial_slot.assert_not_called()
+        kwargs = mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        assert kwargs["trial_id"] == "be-pruned-456"
+        assert kwargs["status"] == "PRUNED"
 
     @pytest.mark.asyncio
     async def test_submit_trial_metrics_keys_are_measuresdict_compatible(
@@ -1551,6 +1646,147 @@ class TestHandleSessionCreationResult:
             "Bad request from session endpoint" in msg for msg in caplog.messages
         )
 
+    def test_cloud_brain_session_create_400_warns_and_marks_local_fallback(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Non-governed auto runs degrade locally when typed+legacy session create 400."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Typed and legacy session-create returned HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+            typed_legacy_session_create_400=True,
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert manager.result_source(trial_count=0) == "local_fallback"
+        assert traigent_config.result_source == "local_fallback"
+        assert traigent_config.no_egress is True
+        assert any("traigent.cloud_brain_fallback" in msg for msg in caplog.messages)
+        assert any("HTTP 400" in msg for msg in caplog.messages)
+
+    @pytest.mark.parametrize(
+        "policy_kwargs,require_cloud_env,governed_session",
+        [
+            ({"algorithm": "bayesian"}, None, False),
+            ({"algorithm": "auto", "require_cloud": True}, None, False),
+            ({"algorithm": "auto"}, "1", False),
+            ({"algorithm": "auto"}, None, True),
+        ],
+    )
+    def test_cloud_brain_session_create_400_still_raises_when_cloud_required(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        monkeypatch,
+        policy_kwargs,
+        require_cloud_env,
+        governed_session,
+    ):
+        """Strict/governed-style cloud-required runs do not absorb session-create 400."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+        from traigent.utils.exceptions import ConfigurationError
+
+        if require_cloud_env:
+            monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", require_cloud_env)
+        else:
+            monkeypatch.delenv("TRAIGENT_REQUIRE_CLOUD", raising=False)
+
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(**policy_kwargs)
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Typed and legacy session-create returned HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+            typed_legacy_session_create_400=True,
+        )
+
+        with pytest.raises(ConfigurationError):
+            manager.handle_session_creation_result(
+                result, governed_session=governed_session
+            )
+
+    def test_cloud_brain_typed_only_session_create_400_still_raises(
+        self, traigent_config, objective_schema, mock_optimizer, monkeypatch
+    ):
+        """The 400 downgrade is limited to typed+legacy auto-contract failure."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+        from traigent.utils.exceptions import ConfigurationError
+
+        monkeypatch.delenv("TRAIGENT_REQUIRE_CLOUD", raising=False)
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="Typed session-create returned HTTP 400",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                400, "Bad request from session endpoint"
+            ),
+        )
+
+        with pytest.raises(ConfigurationError):
+            manager.handle_session_creation_result(result)
+
     def test_idempotent_warns_only_once(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
@@ -1684,3 +1920,263 @@ class TestRuntimeDegradationSourceMarker:
             record for record in caplog.records if "LOCAL-ONLY" in record.getMessage()
         ]
         assert len(local_only_warnings) == 1, "should warn once, not per trial"
+
+
+class TestIssue1373SilentAuthPathSurfacing:
+    """Regression tests for issue #1373 – auth failures must surface at WARNING.
+
+    Two sub-cases:
+    (A) OUTER path in session_operations.py: AuthenticationError is now logged
+        at WARNING (was DEBUG) before returning a fallback SessionCreationResult.
+        This is tested by directly invoking handle_session_creation_result with an
+        AUTH-reason result and confirming a WARNING-level record is emitted.
+    (B) GUARD: when backend tracking was already disabled (was_enabled=False),
+        an AUTH-reason failure must still emit a WARNING with the remedy text.
+        Previously the code early-returned without emitting anything.
+    """
+
+    def _make_auth_result(self, missing_permissions=None):
+        """Return a fallback SessionCreationResult with reason=AUTH."""
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        detail = None
+        if missing_permissions is not None:
+            detail = SessionCreationFailureDetail(
+                status_code=403,
+                error_code="PERMISSION_DENIED",
+                message="Access denied",
+                missing_permissions=missing_permissions,
+                raw_body=None,
+            )
+        return SessionCreationResult.fallback(
+            session_id="local-fallback-session",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="auth failed",
+            failure_response=detail,
+        )
+
+    def test_auth_failure_emits_warning_on_first_disable(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        monkeypatch,
+        caplog,
+    ):
+        """(A) First-time auth failure must surface at WARNING level.
+
+        When TRAIGENT_ALLOW_UNTRACKED=1 the code takes the logger.warning
+        branch (not ConfigurationError). This test pins that the full
+        TRAIGENT BACKEND TRACKING UNAVAILABLE block is logged at WARNING.
+        """
+        monkeypatch.setenv("TRAIGENT_ALLOW_UNTRACKED", "1")
+
+        manager = BackendSessionManager(
+            backend_client=None,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-first",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        # Tracking is enabled; this is the first auth failure.
+        assert manager.backend_tracking_enabled is True
+
+        result = self._make_auth_result(missing_permissions=["read_experiments"])
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            manager.handle_session_creation_result(result)
+
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warning_records, "Expected at least one WARNING record for AUTH failure"
+        combined = "\n".join(r.getMessage() for r in warning_records)
+        # The remedy text distinguishes AUTH warnings from generic ones
+        assert "TRAIGENT BACKEND TRACKING UNAVAILABLE" in combined
+        assert "Missing permissions" in combined or "Remedy" in combined
+
+    def test_auth_failure_emits_warning_when_was_enabled_false(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        monkeypatch,
+        caplog,
+    ):
+        """(B) Auth failure warning must fire even when was_enabled=False.
+
+        Pre-fix: handle_session_creation_result early-returned when
+        _backend_tracking_enabled was already False, skipping the AUTH-specific
+        warning block entirely.  A user whose second create_session also returned
+        AUTH would see no visible signal at default log level.
+
+        After the fix the full TRAIGENT BACKEND TRACKING UNAVAILABLE block is
+        emitted at WARNING regardless.
+
+        Pre-fix proof: stash/revert the guard fix in backend_session_manager.py
+        (restore `if not was_enabled: return str(result.session_id)`) and this
+        test FAILs because no WARNING records are captured.
+        """
+        monkeypatch.setenv("TRAIGENT_ALLOW_UNTRACKED", "1")
+
+        manager = BackendSessionManager(
+            backend_client=None,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-guard",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        # Pre-disable tracking so was_enabled=False on next call
+        manager.disable_backend_tracking(SessionCreationFailureReason.AUTH)
+        assert manager.backend_tracking_enabled is False
+
+        result = self._make_auth_result(missing_permissions=["read_experiments"])
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            manager.handle_session_creation_result(result)
+
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warning_records, (
+            "Expected a WARNING for AUTH failure even when was_enabled=False"
+        )
+        combined = "\n".join(r.getMessage() for r in warning_records)
+        assert "TRAIGENT BACKEND TRACKING UNAVAILABLE" in combined
+
+
+class TestIssue1422SelfDescribingPortalName:
+    """Regression tests for issue #1422 – SDK default experiment name must be
+    self-describing.
+
+    When no explicit experiment_name is supplied to @traigent.optimize(), the
+    portal name passed to create_session must encode the optimization objectives
+    and tuned-variable (knob) names rather than just `<funcname> (hash)`.
+
+    Pre-fix format: ``answer_question (f282c9de)``
+    Post-fix format: ``opt:accuracy,cost · model,temperature (f282c9de)``
+    """
+
+    def test_default_portal_name_contains_objectives_and_knobs(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_dataset,
+    ):
+        """With experiment_display_name=None the portal name encodes objectives
+        and knob names — not just the function name."""
+        from unittest.mock import Mock
+
+        mock_client = Mock()
+        mock_client.create_session = Mock(
+            return_value=SessionCreationResult.connected(session_id="sess-123")
+        )
+        mock_client.get_session_mapping = Mock(return_value=None)
+
+        optimizer = Mock()
+        optimizer.config_space = {
+            "model": ["gpt-4o", "gpt-4o-mini"],
+            "temperature": [0.0, 0.7],
+        }
+
+        manager = BackendSessionManager(
+            backend_client=mock_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=optimizer,
+            optimization_id="opt-name-test",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        def my_agent_func(x):
+            return x
+
+        from traigent.utils.function_identity import resolve_function_descriptor
+
+        descriptor = resolve_function_descriptor(my_agent_func)
+
+        # No experiment_display_name → self-describing default
+        manager.create_session(
+            func=my_agent_func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=5,
+            start_time=0.0,
+            experiment_display_name=None,
+        )
+
+        call_kwargs = mock_client.create_session.call_args[1]
+        portal_name = call_kwargs["function_name"]
+
+        # Must include objective names
+        assert "accuracy" in portal_name, (
+            f"Expected objectives in portal name, got: {portal_name!r}"
+        )
+        assert "cost" in portal_name, (
+            f"Expected objectives in portal name, got: {portal_name!r}"
+        )
+        # Must include at least one knob name
+        assert "model" in portal_name or "temperature" in portal_name, (
+            f"Expected knob names in portal name, got: {portal_name!r}"
+        )
+        # Must NOT be just the function name (pre-fix regression check)
+        assert portal_name != f"{my_agent_func.__name__} ({descriptor.slug[-8:]})", (
+            "Portal name should be self-describing, not just the function name"
+        )
+
+    def test_explicit_experiment_name_is_honoured_unchanged(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_dataset,
+    ):
+        """When an explicit experiment_name IS supplied, the portal name must
+        use it (objectives/knobs must NOT override the user's choice)."""
+        from unittest.mock import Mock
+
+        mock_client = Mock()
+        mock_client.create_session = Mock(
+            return_value=SessionCreationResult.connected(session_id="sess-456")
+        )
+        mock_client.get_session_mapping = Mock(return_value=None)
+
+        optimizer = Mock()
+        optimizer.config_space = {"model": ["gpt-4o"]}
+
+        manager = BackendSessionManager(
+            backend_client=mock_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=optimizer,
+            optimization_id="opt-explicit-name",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        def my_func(x):
+            return x
+
+        from traigent.utils.function_identity import resolve_function_descriptor
+
+        descriptor = resolve_function_descriptor(my_func)
+
+        manager.create_session(
+            func=my_func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=5,
+            start_time=0.0,
+            experiment_display_name="My Custom Experiment",
+        )
+
+        call_kwargs = mock_client.create_session.call_args[1]
+        portal_name = call_kwargs["function_name"]
+
+        assert portal_name.startswith("My Custom Experiment"), (
+            f"Explicit name not honoured in portal_name: {portal_name!r}"
+        )

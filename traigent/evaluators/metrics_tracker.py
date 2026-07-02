@@ -56,6 +56,8 @@ except Exception:
 
 TOKENCOST_AVAILABLE = _TOKENCOST_AVAILABLE
 
+REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
+
 #: Evaluator/tracker-computed metric keys that user-supplied per-example metrics
 #: (e.g. the ``(output, metrics_dict)`` tuple channel) MUST NEVER overwrite,
 #: at ANY merge or aggregation site, regardless of merge ordering or
@@ -106,6 +108,12 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         "examples_attempted",
         "examples_consumed",
         "execution_time_ms",
+        # Surrogate (pre-screen) evaluator: a cheap SECOND scorer injected by the
+        # trial lifecycle into per-example + aggregate metrics. Reserving it means
+        # (a) a user tuple key named ``surrogate_score`` cannot overwrite it, and
+        # (b) it is never sacrificed to the TOTAL_MEASURES_CEILING user-key cap —
+        # so a run with 50 user metrics still submits the surrogate score.
+        "surrogate_score",
         # TRANSPORT-reserved: the submission lane passes the measures array and
         # summary_stats object THROUGH the metrics dict and extracts them BY NAME
         # in ``trial_operations._extract_measures_from_metrics``; the submission
@@ -1278,6 +1286,22 @@ class GenericResponseHandler(ResponseHandler):
         return True  # Always can handle as fallback
 
     def extract_tokens(self, response: Any) -> TokenMetrics:
+        metadata = getattr(response, "metadata", None)
+        if isinstance(metadata, dict):
+            usage = metadata.get("usage") or metadata.get("token_usage")
+            if isinstance(usage, dict):
+                input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+                output_tokens = usage.get(
+                    "output_tokens", usage.get("completion_tokens", 0)
+                )
+                total_tokens = usage.get(
+                    "total_tokens", (input_tokens or 0) + (output_tokens or 0)
+                )
+                return TokenMetrics(
+                    input_tokens=int(input_tokens or 0),
+                    output_tokens=int(output_tokens or 0),
+                    total_tokens=int(total_tokens or 0),
+                )
         return TokenMetrics()  # Return empty metrics
 
     def extract_response_time(self, response: Any) -> float:
@@ -1302,6 +1326,57 @@ class ResponseHandlerFactory:
         anthropic = AnthropicResponseHandler(langchain)
         openai = OpenAIResponseHandler(anthropic)
         return openai
+
+
+def _infer_model_name_from_response(response: Any) -> str | None:
+    """Infer a model name from an LLM response when the config supplies none.
+
+    Multi-model/multi-step agents often have no single ``model`` key in the
+    optimization config, so the central cost-calculation chokepoint must be
+    able to recover the model from the response itself (the SDK-side
+    equivalent of ``LocalEvaluator._infer_model_name_from_output`` /
+    ``CustomEvaluatorWrapper``'s response fallback, but shared by every path
+    that funnels through ``extract_llm_metrics``, e.g. #1599).
+
+    Must never raise: a response whose ``model``/``response_metadata``/
+    ``llm_output`` accessor is a property that raises on access would
+    otherwise propagate out of ``extract_llm_metrics`` and abort cost
+    calculation entirely, instead of the intended "skip cost, log a
+    warning" degradation.
+    """
+    try:
+        # 1. Direct attributes (e.g. OpenAI ChatCompletion, Anthropic Message)
+        for attr in ("model", "model_name"):
+            val = getattr(response, attr, None)
+            if isinstance(val, str) and val:
+                return val
+
+        # 2. Dict-shaped response
+        if isinstance(response, dict):
+            for key in ("model", "model_name"):
+                val = response.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        # 3. LangChain response_metadata
+        response_metadata = getattr(response, "response_metadata", None)
+        if isinstance(response_metadata, dict):
+            for key in ("model", "model_name"):
+                val = response_metadata.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        # 4. LangChain llm_output
+        llm_output = getattr(response, "llm_output", None)
+        if isinstance(llm_output, dict):
+            for key in ("model", "model_name"):
+                val = llm_output.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        return None
+    except Exception:
+        return None
 
 
 def _calculate_cost_for_metrics(
@@ -1333,13 +1408,7 @@ def _calculate_cost_for_metrics(
         return
 
     if metrics.cost.total_cost > 0.0:
-        # total_cost is authoritative (e.g. provider-reported via OpenRouter
-        # ``_hidden_params['response_cost']`` or user-injected via
-        # ``__traigent_meta__``), but the per-trial input_cost/output_cost
-        # breakdown is dropped on those paths and persists as 0.0 even though
-        # spend is real (#1423). Re-derive the breakdown from the canonical
-        # calculator without ever changing the authoritative total_cost.
-        _backfill_cost_breakdown(metrics, model_name)
+        _reconcile_reported_cost_with_tokens(metrics, model_name)
         return
 
     if not model_name:
@@ -1390,23 +1459,15 @@ def _calculate_cost_for_metrics(
             raise
 
 
-def _backfill_cost_breakdown(metrics: ExampleMetrics, model_name: str | None) -> None:
-    """Populate input_cost/output_cost when only total_cost is known (#1423).
-
-    Provider-reported and user-injected cost paths set ``total_cost`` directly
-    and leave the per-trial breakdown at 0.0. When tokens are available, derive
-    the breakdown from the canonical calculator so it is not dropped. The
-    authoritative ``total_cost`` is NEVER modified here; only the split is
-    reconstructed (and only when it is currently zero and tokens are present).
-    """
+def _token_derived_cost(
+    metrics: ExampleMetrics, model_name: str | None
+) -> tuple[float, float, float] | None:
     if not model_name:
-        return
-    if metrics.cost.input_cost > 0.0 or metrics.cost.output_cost > 0.0:
-        return
+        return None
     in_tokens = metrics.tokens.input_tokens
     out_tokens = metrics.tokens.output_tokens
     if in_tokens <= 0 and out_tokens <= 0:
-        return
+        return None
 
     from traigent.utils.cost_calculator import cost_from_tokens
 
@@ -1418,12 +1479,59 @@ def _backfill_cost_breakdown(metrics: ExampleMetrics, model_name: str | None) ->
         logger.debug(
             "Cost breakdown backfill failed for model %r", model_name, exc_info=True
         )
-        return
+        return None
 
     derived_total = input_cost + output_cost
     if derived_total <= 0.0:
-        # Calculator could not price this id (would be 0/0); leave the
-        # authoritative total_cost untouched and the breakdown at zero.
+        return None
+    return input_cost, output_cost, derived_total
+
+
+def _reconcile_reported_cost_with_tokens(
+    metrics: ExampleMetrics, model_name: str | None
+) -> None:
+    """Backfill plausible reported costs and clamp implausible under-reports.
+
+    Provider-reported and user-injected cost paths set ``total_cost`` directly
+    and often leave the per-trial breakdown at 0.0. When real token counts and
+    known model pricing are available, derive a canonical token-cost estimate.
+    Reported costs remain authoritative unless they are implausibly below that
+    estimate. If token data or pricing is unavailable, this is the residual BYOK
+    trust boundary: accept the caller/provider-reported value as-is.
+    """
+    derived = _token_derived_cost(metrics, model_name)
+    if derived is None:
+        return
+
+    input_cost, output_cost, derived_total = derived
+    authoritative_total = metrics.cost.total_cost
+    if authoritative_total < (derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO):
+        logger.warning(
+            "Reported LLM cost $%.8f for model %r is implausibly below token-derived "
+            "estimate $%.8f (tokens: in=%d, out=%d); using token-derived cost "
+            "for runtime enforcement.",
+            authoritative_total,
+            model_name,
+            derived_total,
+            metrics.tokens.input_tokens,
+            metrics.tokens.output_tokens,
+        )
+        metrics.cost.input_cost = input_cost
+        metrics.cost.output_cost = output_cost
+        metrics.cost.total_cost = derived_total
+        return
+
+    _backfill_cost_breakdown(metrics, input_cost, output_cost, derived_total)
+
+
+def _backfill_cost_breakdown(
+    metrics: ExampleMetrics,
+    input_cost: float,
+    output_cost: float,
+    derived_total: float,
+) -> None:
+    """Populate input_cost/output_cost when only total_cost is known (#1423)."""
+    if metrics.cost.input_cost > 0.0 or metrics.cost.output_cost > 0.0:
         return
 
     authoritative_total = metrics.cost.total_cost
@@ -1434,8 +1542,7 @@ def _backfill_cost_breakdown(metrics: ExampleMetrics, model_name: str | None) ->
     metrics.cost.output_cost = output_cost * scale
     metrics.cost.total_cost = authoritative_total
     logger.debug(
-        "Backfilled cost breakdown for %s: in=$%.6f out=$%.6f (total=$%.6f)",
-        model_name,
+        "Backfilled cost breakdown: in=$%.6f out=$%.6f (total=$%.6f)",
         metrics.cost.input_cost,
         metrics.cost.output_cost,
         metrics.cost.total_cost,
@@ -1651,10 +1758,13 @@ def extract_llm_metrics(
         metrics = ExampleMetrics()
         logger.warning("No handler could process the response, using empty metrics")
 
-    # Calculate cost using canonical cost_from_tokens path
+    # Calculate cost using canonical cost_from_tokens path. Fall back to the
+    # model name carried on the response itself when the config supplies none
+    # (multi-model/multi-step agents have no single config 'model' key; #1599).
+    effective_model_name = model_name or _infer_model_name_from_response(response)
     _calculate_cost_for_metrics(
         metrics,
-        model_name,
+        effective_model_name,
         original_prompt,
         response_text,
         prompt_length=prompt_length,

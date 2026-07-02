@@ -202,11 +202,14 @@ class TestGenerateRecommendations:
         )
 
         rag_names = {
-            r.name for r in generate_recommendations([], classification=rag_classification)
+            r.name
+            for r in generate_recommendations([], classification=rag_classification)
         }
         code_gen_names = {
             r.name
-            for r in generate_recommendations([], classification=code_gen_classification)
+            for r in generate_recommendations(
+                [], classification=code_gen_classification
+            )
         }
 
         assert "retrieval_k" in rag_names
@@ -401,8 +404,7 @@ class TestTVarCatalog:
 
         by_id = {entry["entry_id"]: entry for entry in entries}
         assert (
-            by_id["code_gen.candidate_count.v1"]["effectuation_status"]
-            == "executable"
+            by_id["code_gen.candidate_count.v1"]["effectuation_status"] == "executable"
         )
         assert (
             by_id["code_gen.candidate_count.v1"]["effectuation_strategy"]
@@ -455,7 +457,9 @@ class TestTVarCatalog:
 
     def test_count_evidence_values_keep_public_types(self) -> None:
         entry = next(
-            entry for entry in load_catalog() if entry["entry_id"] == "rag.retrieval_k.v1"
+            entry
+            for entry in load_catalog()
+            if entry["entry_id"] == "rag.retrieval_k.v1"
         )
 
         rec = entry_to_recommendation(entry)

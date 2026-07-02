@@ -6,23 +6,74 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import EnumType, StrEnum
 from inspect import Parameter, Signature
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from traigent.utils.validation import Validators, validate_or_raise
 
+_EMITTED_DEPRECATION_WARNINGS: set[str] = set()
 
-class ExecutionMode(StrEnum):
-    """Deprecated internal compatibility enum for runtime routing.
 
-    Public SDK code should use ``algorithm`` plus ``offline``.
+def _reset_deprecation_warning_state_for_tests() -> None:
+    """Reset once-per-process deprecation guards for isolated tests."""
+
+    _EMITTED_DEPRECATION_WARNINGS.clear()
+
+
+def _warn_deprecated_once(key: str, message: str, *, stacklevel: int = 3) -> None:
+    """Emit one DeprecationWarning per process for a deprecated SDK surface."""
+
+    if key in _EMITTED_DEPRECATION_WARNINGS:
+        return
+    _EMITTED_DEPRECATION_WARNINGS.add(key)
+
+    import warnings
+
+    warnings.warn(message, DeprecationWarning, stacklevel=stacklevel)
+
+
+def _warn_deprecated_execution_mode_member_alias(*, stacklevel: int = 3) -> None:
+    _warn_deprecated_once(
+        "ExecutionMode.EDGE_ANALYTICS",
+        "ExecutionMode.EDGE_ANALYTICS is deprecated. Use ExecutionMode.LOCAL.",
+        stacklevel=stacklevel,
+    )
+
+
+class _ExecutionModeMeta(EnumType):
+    def __getattribute__(cls, name: str) -> Any:
+        if name == "EDGE_ANALYTICS":
+            _warn_deprecated_execution_mode_member_alias(stacklevel=3)
+            return super().__getattribute__("LOCAL")
+        return super().__getattribute__(name)
+
+    def __getitem__(cls, name: str) -> Any:
+        if name == "EDGE_ANALYTICS":
+            _warn_deprecated_execution_mode_member_alias(stacklevel=3)
+            return super().__getitem__("LOCAL")
+        return super().__getitem__(name)
+
+
+class ExecutionMode(StrEnum, metaclass=_ExecutionModeMeta):
+    """Deprecated compatibility enum for runtime routing.
+
+    Public SDK code should use ``algorithm`` plus ``offline``. ``LOCAL`` is the
+    canonical local-only member; ``EDGE_ANALYTICS`` remains a deprecated public
+    alias for backwards compatibility.
     """
 
-    EDGE_ANALYTICS = "edge_analytics"
+    LOCAL = "local"
     HYBRID = "hybrid"
     HYBRID_API = "hybrid_api"
+
+    @classmethod
+    def _missing_(cls, value: object) -> ExecutionMode | None:
+        if isinstance(value, str) and value.strip().lower() == "edge_analytics":
+            _warn_deprecated_execution_mode_member_alias(stacklevel=4)
+            return cls.LOCAL
+        return None
 
 
 class ExecutionIntent(StrEnum):
@@ -47,7 +98,7 @@ class ResolvedExecutionPolicy:
     require_cloud: bool
     algorithm: str
     source_hint: str
-    legacy_execution_mode: ExecutionMode = ExecutionMode.EDGE_ANALYTICS
+    legacy_execution_mode: ExecutionMode = ExecutionMode.LOCAL
 
     @property
     def allows_cloud_fallback(self) -> bool:
@@ -64,16 +115,17 @@ class ResolvedExecutionPolicy:
 
 # Canonical runtime-supported modes and accepted public aliases.
 _SUPPORTED_MODES = (
-    ExecutionMode.EDGE_ANALYTICS,
+    ExecutionMode.LOCAL,
     ExecutionMode.HYBRID,
     ExecutionMode.HYBRID_API,
 )
-_LEGACY_CONFIG_EXECUTION_MODE_VALUES = frozenset(
-    mode.value for mode in _SUPPORTED_MODES
-)
 _EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
-    "local": ExecutionMode.EDGE_ANALYTICS,
+    "edge_analytics": ExecutionMode.LOCAL,
 }
+_DEPRECATED_CONFIG_EXECUTION_MODE_VALUES = frozenset(
+    {"edge_analytics", ExecutionMode.HYBRID.value, ExecutionMode.HYBRID_API.value}
+)
+_FAIL_CLOSED_LEGACY_EXECUTION_MODES = frozenset({"privacy", "cloud"})
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 _CONFIG_VALUE_UNSET = object()
@@ -165,10 +217,8 @@ def validate_algorithm_name(algorithm: str | None) -> str:
         or normalized in _SMART_ALGORITHMS
     ):
         return normalized
-    raise ValueError(
-        "algorithm must be 'auto', 'grid', 'random', or a known smart optimizer "
-        f"name, got {algorithm!r}"
-    )
+    valid = ", ".join(accepted_algorithm_values())
+    raise ValueError(f"algorithm must be one of: {valid}; got {algorithm!r}")
 
 
 def accepted_execution_mode_values() -> tuple[str, ...]:
@@ -186,12 +236,41 @@ def _accepted_execution_mode_message() -> str:
     )
 
 
-def _warn_deprecated_execution_mode_alias(mode: str, message: str) -> None:
-    import warnings
+def _raw_execution_mode_token(mode: ExecutionMode | str) -> str:
+    return mode.value if isinstance(mode, ExecutionMode) else str(mode)
 
-    warnings.warn(
-        f"execution_mode={mode!r} is deprecated. {message}",
-        DeprecationWarning,
+
+def _normalized_execution_mode_token(mode: ExecutionMode | str) -> str:
+    return _raw_execution_mode_token(mode).strip().lower()
+
+
+def is_fail_closed_legacy_execution_mode(mode: ExecutionMode | str | None) -> bool:
+    """Return whether a raw legacy selector must fail closed."""
+
+    return isinstance(mode, str) and (
+        _normalized_execution_mode_token(mode) in _FAIL_CLOSED_LEGACY_EXECUTION_MODES
+    )
+
+
+def fail_closed_legacy_execution_mode_message(mode: ExecutionMode | str) -> str:
+    """Actionable error for legacy selectors that can otherwise hide egress."""
+
+    raw_mode = _raw_execution_mode_token(mode)
+    return (
+        f"execution_mode={raw_mode!r} is a legacy selector and now fails closed "
+        "at the public API boundary because compatibility normalization can route "
+        "it to cloud egress. Remove execution_mode and use the supported execution "
+        "surface instead: algorithm='auto' for managed/cloud-first optimization; "
+        "offline=True, algorithm='grid', or algorithm='random' for local no-egress "
+        "optimization."
+    )
+
+
+def _warn_deprecated_execution_mode_alias(mode: str, message: str) -> None:
+    _warn_deprecated_once(
+        f"execution_mode_alias:{mode.strip().lower() or '<empty>'}",
+        f"execution_mode={mode!r} is deprecated. {message} This compatibility "
+        "selector will be removed in a future major release.",
         stacklevel=4,
     )
 
@@ -203,15 +282,14 @@ def _warn_deprecated_config_execution_mode(
 ) -> None:
     raw_mode = mode.value if isinstance(mode, ExecutionMode) else str(mode)
     normalized = raw_mode.strip().lower()
-    if normalized not in _LEGACY_CONFIG_EXECUTION_MODE_VALUES:
+    if normalized not in _DEPRECATED_CONFIG_EXECUTION_MODE_VALUES:
         return
 
-    import warnings
-
-    if normalized == ExecutionMode.EDGE_ANALYTICS.value:
+    if normalized == "edge_analytics":
         guidance = (
-            "Use offline=True for local-only, zero-egress optimization; use "
-            "algorithm='grid' or 'random' to force local search."
+            "Use offline=True with algorithm='grid' or algorithm='random' for "
+            "local-only, zero-egress optimization. Prefer local over "
+            "edge_analytics where a compatibility wire value is still required."
         )
     elif normalized == ExecutionMode.HYBRID.value:
         guidance = (
@@ -225,21 +303,22 @@ def _warn_deprecated_config_execution_mode(
             "external-service evaluator bundle separately."
         )
 
-    warnings.warn(
-        f"execution_mode={raw_mode!r} is deprecated for TraigentConfig. {guidance}",
-        DeprecationWarning,
+    _warn_deprecated_once(
+        f"TraigentConfig.execution_mode:{normalized}",
+        f"execution_mode={raw_mode!r} is deprecated for TraigentConfig. "
+        f"{guidance} This compatibility selector will be removed in a future "
+        "major release.",
         stacklevel=stacklevel,
     )
 
 
 def _warn_deprecated_config_privacy_enabled(*, stacklevel: int = 4) -> None:
-    import warnings
-
-    warnings.warn(
+    _warn_deprecated_once(
+        "TraigentConfig.privacy_enabled",
         "privacy_enabled is deprecated for TraigentConfig and has no effect in "
         "execution policy resolution. Use offline=True for no-egress local "
-        "optimization.",
-        DeprecationWarning,
+        "optimization. This compatibility flag will be removed in a future "
+        "major release.",
         stacklevel=stacklevel,
     )
 
@@ -247,7 +326,7 @@ def _warn_deprecated_config_privacy_enabled(*, stacklevel: int = 4) -> None:
 def resolve_execution_mode(
     mode: ExecutionMode | str | None,
     *,
-    default: ExecutionMode = ExecutionMode.EDGE_ANALYTICS,
+    default: ExecutionMode = ExecutionMode.LOCAL,
 ) -> ExecutionMode:
     """Normalize legacy execution-mode values into an internal enum.
 
@@ -269,26 +348,9 @@ def resolve_execution_mode(
                 "automatic optimization.",
             )
             return ExecutionMode.HYBRID
-        if normalized == "privacy":
-            _warn_deprecated_execution_mode_alias(
-                mode,
-                "It now maps to cloud-first automatic optimization. Use "
-                "offline=True for a no-egress local run.",
-            )
-            return ExecutionMode.HYBRID
-        if normalized == "cloud":
-            _warn_deprecated_execution_mode_alias(
-                mode,
-                "Use resolve_execution_policy() for the new cloud-first policy. "
-                "This deprecated compatibility helper still maps it to "
-                "edge_analytics.",
-            )
-            return ExecutionMode.EDGE_ANALYTICS
-        if normalized == "local":
-            _warn_deprecated_execution_mode_alias(
-                mode,
-                "Use offline=True for local-only, zero-egress optimization.",
-            )
+        if normalized in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
+            raise ValueError(fail_closed_legacy_execution_mode_message(mode))
+        if normalized in _EXECUTION_MODE_ALIASES:
             return _EXECUTION_MODE_ALIASES[normalized]
         try:
             return ExecutionMode(normalized)
@@ -309,7 +371,9 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
 
     try:
         resolved = resolve_execution_mode(mode)
-    except ValueError:
+    except ValueError as exc:
+        if is_fail_closed_legacy_execution_mode(mode):
+            raise ConfigurationError(str(exc)) from None
         raise ConfigurationError(
             f"Unsupported execution selector {mode!r}; "
             f"{_accepted_execution_mode_message()}."
@@ -344,8 +408,6 @@ def resolve_execution_policy(
       rejects smart algorithms.
     - ``TRAIGENT_REQUIRE_CLOUD=1`` disables managed-to-local fallback.
     """
-    import warnings
-
     from traigent.utils.exceptions import ConfigurationError
 
     if not isinstance(offline, bool):
@@ -369,45 +431,39 @@ def resolve_execution_policy(
         normalized_mode = raw_mode.strip().lower()
         hint_parts.append(f"legacy_execution_mode={normalized_mode}")
 
-        if normalized_mode in {"", "edge_analytics", "local"}:
-            warnings.warn(
+        if normalized_mode in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
+            raise ConfigurationError(
+                fail_closed_legacy_execution_mode_message(raw_mode)
+            )
+        if normalized_mode == "local":
+            offline_requested = True
+        elif normalized_mode in {"", "edge_analytics"}:
+            _warn_deprecated_once(
+                f"resolve_execution_policy.execution_mode:{normalized_mode or '<empty>'}",
                 f"execution_mode={raw_mode!r} is deprecated. Mapping to "
                 "offline=True / LOCAL_ONLY to preserve the legacy no-egress "
-                "guarantee. Use offline=True directly.",
-                DeprecationWarning,
+                "guarantee. Use offline=True with algorithm='grid' or "
+                "algorithm='random' directly; prefer local over edge_analytics "
+                "where a compatibility wire value is still required. This "
+                "compatibility selector will be removed in a future major release.",
                 stacklevel=3,
             )
             offline_requested = True
         elif normalized_mode in {"hybrid", "standard"}:
-            warnings.warn(
+            _warn_deprecated_once(
+                f"resolve_execution_policy.execution_mode:{normalized_mode}",
                 f"execution_mode={raw_mode!r} is deprecated. Omit "
                 "execution_mode and use algorithm='auto' for cloud-first "
-                "automatic optimization.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        elif normalized_mode == "privacy":
-            warnings.warn(
-                "execution_mode='privacy' is deprecated and no longer means "
-                "no egress. Mapping to cloud-first automatic optimization; use "
-                "offline=True for no egress.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        elif normalized_mode == "cloud":
-            warnings.warn(
-                "execution_mode='cloud' is deprecated and now maps to "
-                "cloud-first automatic optimization. This is a semantic flip "
-                "from the historical local edge_analytics mapping; audit callers "
-                "and use offline=True for no egress.",
-                DeprecationWarning,
+                "automatic optimization. This compatibility selector will be "
+                "removed in a future major release.",
                 stacklevel=3,
             )
         elif normalized_mode == "hybrid_api":
-            warnings.warn(
+            _warn_deprecated_once(
+                "resolve_execution_policy.execution_mode:hybrid_api",
                 "execution_mode='hybrid_api' is deprecated as a public execution "
-                "selector. Configure an external-service evaluator bundle.",
-                DeprecationWarning,
+                "selector. Configure an external-service evaluator bundle. This "
+                "compatibility selector will be removed in a future major release.",
                 stacklevel=3,
             )
         else:
@@ -418,19 +474,21 @@ def resolve_execution_policy(
             )
 
     if privacy_enabled is not None:
-        warnings.warn(
+        _warn_deprecated_once(
+            "resolve_execution_policy.privacy_enabled",
             "privacy_enabled is deprecated and has no effect in execution policy "
-            "resolution. Use offline=True for no egress.",
-            DeprecationWarning,
+            "resolution. Use offline=True for no egress. This compatibility flag "
+            "will be removed in a future major release.",
             stacklevel=3,
         )
         hint_parts.append("legacy_privacy_enabled")
 
     if cloud_fallback_policy is not None:
-        warnings.warn(
+        _warn_deprecated_once(
+            "resolve_execution_policy.cloud_fallback_policy",
             "cloud_fallback_policy is deprecated and has no effect. Set "
-            "TRAIGENT_REQUIRE_CLOUD=1 to disable local fallback.",
-            DeprecationWarning,
+            "TRAIGENT_REQUIRE_CLOUD=1 to disable local fallback. This "
+            "compatibility flag will be removed in a future major release.",
             stacklevel=3,
         )
         hint_parts.append("legacy_cloud_fallback_policy")
@@ -451,7 +509,7 @@ def resolve_execution_policy(
         intent = ExecutionIntent.CLOUD_REQUIRED
 
     legacy_mode = (
-        ExecutionMode.EDGE_ANALYTICS
+        ExecutionMode.LOCAL
         if intent is ExecutionIntent.LOCAL_ONLY
         else ExecutionMode.HYBRID
     )
@@ -627,11 +685,14 @@ class TraigentConfig:
             self, "_supplied_execution_mode_value", _CONFIG_VALUE_UNSET
         )
         if self.execution_mode is _CONFIG_VALUE_UNSET:
-            object.__setattr__(
-                self, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
+            object.__setattr__(self, "execution_mode", ExecutionMode.LOCAL.value)
+        elif (
+            supplied_execution_mode is not None
+            and supplied_execution_mode is not _CONFIG_VALUE_UNSET
+        ):
+            _warn_deprecated_config_execution_mode(
+                cast(ExecutionMode | str, supplied_execution_mode)
             )
-        elif supplied_execution_mode is not None:
-            _warn_deprecated_config_execution_mode(supplied_execution_mode)
 
         if self.privacy_enabled is _CONFIG_VALUE_UNSET:
             object.__setattr__(self, "privacy_enabled", False)
@@ -639,15 +700,14 @@ class TraigentConfig:
             _warn_deprecated_config_privacy_enabled()
 
         # Validate deprecated compatibility selector against supported runtime modes.
-        requested_mode = resolve_execution_mode(self.execution_mode)
-        mode_enum = validate_execution_mode(requested_mode)
-        if isinstance(self.execution_mode, str) and self.execution_mode == "privacy":
-            object.__setattr__(self, "privacy_enabled", True)
+        mode_enum = validate_execution_mode(
+            cast(ExecutionMode | str | None, self.execution_mode)
+        )
         object.__setattr__(self, "execution_mode", cast(str, mode_enum.value))
         object.__setattr__(self, "_warn_legacy_config_assignments", True)
 
         # Handle local storage path
-        if self.is_edge_analytics_mode() and self.local_storage_path:
+        if self.is_local_mode() and self.local_storage_path:
             # Validate and expand path
             self.local_storage_path = str(
                 Path(self.local_storage_path).expanduser().resolve()
@@ -676,7 +736,7 @@ class TraigentConfig:
         if include_legacy:
             defaults.update(
                 {
-                    "execution_mode": "edge_analytics",
+                    "execution_mode": "local",
                     "privacy_enabled": False,
                 }
             )
@@ -769,7 +829,7 @@ class TraigentConfig:
 
         # Override with non-default values from the other config. For dict
         # inputs, preserve explicitly supplied defaults such as
-        # {"execution_mode": "edge_analytics"} so callers can intentionally
+        # {"execution_mode": "local"} so callers can intentionally
         # reset a value without default leakage from TraigentConfig().
         override_dict = other._to_dict(include_legacy=True)
         dataclass_fields = getattr(self, "__dataclass_fields__", {})
@@ -853,11 +913,23 @@ class TraigentConfig:
     @property
     def execution_mode_enum(self) -> ExecutionMode:
         """Return internal compatibility selector as an enum."""
-        return resolve_execution_mode(self.execution_mode)
+        return resolve_execution_mode(
+            cast(ExecutionMode | str | None, self.execution_mode)
+        )
+
+    def is_local_mode(self) -> bool:
+        """Return whether the compatibility selector maps to local-only runtime."""
+        return self.execution_mode_enum is ExecutionMode.LOCAL
 
     def is_edge_analytics_mode(self) -> bool:
-        """Return whether the compatibility selector maps to local-only runtime."""
-        return self.execution_mode_enum is ExecutionMode.EDGE_ANALYTICS
+        """Deprecated alias for :meth:`is_local_mode`."""
+        _warn_deprecated_once(
+            "TraigentConfig.is_edge_analytics_mode",
+            "TraigentConfig.is_edge_analytics_mode() is deprecated. Use "
+            "TraigentConfig.is_local_mode().",
+            stacklevel=2,
+        )
+        return self.is_local_mode()
 
     def is_cloud_mode(self) -> bool:
         return False
@@ -891,7 +963,7 @@ class TraigentConfig:
             return str(Path(env_path).expanduser().resolve())
 
         # Default to ~/.traigent/ for local-only storage.
-        if self.is_edge_analytics_mode():
+        if self.is_local_mode():
             return str(Path.home() / ".traigent")
 
         return None
@@ -934,11 +1006,7 @@ class TraigentConfig:
             and value is not None
             and value is not _CONFIG_VALUE_UNSET
         ):
-            requested_mode = resolve_execution_mode(value)
-            resolved_mode = validate_execution_mode(requested_mode)
-            if isinstance(value, str) and value.strip().lower() == "privacy":
-                object.__setattr__(self, "privacy_enabled", True)
-                object.__setattr__(self, "_privacy_enforced_by_execution_mode", True)
+            resolved_mode = validate_execution_mode(value)
             value = resolved_mode.value
         elif key == "local_storage_path" and value:
             value = str(Path(value).expanduser().resolve())
@@ -973,6 +1041,24 @@ class TraigentConfig:
         return value
 
     @classmethod
+    def local_mode(
+        cls,
+        storage_path: str | None = None,
+        minimal_logging: bool = True,
+        auto_sync: bool = False,
+        **kwargs,
+    ) -> TraigentConfig:
+        """Compatibility constructor for local-only execution."""
+        return cls(
+            offline=True,
+            execution_mode=ExecutionMode.LOCAL.value,
+            local_storage_path=storage_path,
+            minimal_logging=minimal_logging,
+            auto_sync=auto_sync,
+            **kwargs,
+        )
+
+    @classmethod
     def edge_analytics_mode(
         cls,
         storage_path: str | None = None,
@@ -991,10 +1077,18 @@ class TraigentConfig:
         Returns:
             TraigentConfig configured for local-only execution
         """
-        return cls(
-            offline=True,
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
-            local_storage_path=storage_path,
+        _warn_deprecated_once(
+            "TraigentConfig.edge_analytics_mode",
+            "TraigentConfig.edge_analytics_mode() is deprecated. Use "
+            "TraigentConfig(offline=True, algorithm='grid') or "
+            "TraigentConfig(offline=True, algorithm='random') for local-only "
+            "optimization; prefer local over edge_analytics where a "
+            "compatibility wire value is still required. This compatibility "
+            "constructor will be removed in a future major release.",
+            stacklevel=2,
+        )
+        return cls.local_mode(
+            storage_path=storage_path,
             minimal_logging=minimal_logging,
             auto_sync=auto_sync,
             **kwargs,
@@ -1021,9 +1115,7 @@ class TraigentConfig:
 
         if is_traigent_offline_requested():
             config.offline = True
-            object.__setattr__(
-                config, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
-            )
+            object.__setattr__(config, "execution_mode", ExecutionMode.LOCAL.value)
 
         # Deprecated local-only compatibility env var.
         if os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").lower() in (
@@ -1031,18 +1123,18 @@ class TraigentConfig:
             "1",
             "yes",
         ):
-            import warnings
-
-            warnings.warn(
+            _warn_deprecated_once(
+                "TRAIGENT_EDGE_ANALYTICS_MODE",
                 "TRAIGENT_EDGE_ANALYTICS_MODE is deprecated. Use "
-                "TRAIGENT_OFFLINE=1 for local-only, zero-egress optimization.",
-                DeprecationWarning,
+                "TRAIGENT_OFFLINE=1 with algorithm='grid' or algorithm='random' "
+                "for local-only, zero-egress optimization; prefer local over "
+                "edge_analytics where a compatibility wire value is still "
+                "required. This compatibility environment variable will be "
+                "removed in a future major release.",
                 stacklevel=2,
             )
             config.offline = True
-            object.__setattr__(
-                config, "execution_mode", ExecutionMode.EDGE_ANALYTICS.value
-            )
+            object.__setattr__(config, "execution_mode", ExecutionMode.LOCAL.value)
 
         # Set storage path from environment
         env_path = os.getenv("TRAIGENT_RESULTS_FOLDER")
@@ -1059,12 +1151,12 @@ class TraigentConfig:
 
         # Deprecated content-redaction compatibility toggle.
         if os.getenv("TRAIGENT_PRIVACY_MODE", "").lower() in ("true", "1", "yes"):
-            import warnings
-
-            warnings.warn(
+            _warn_deprecated_once(
+                "TRAIGENT_PRIVACY_MODE",
                 "TRAIGENT_PRIVACY_MODE is deprecated. Use offline=True or "
-                "TRAIGENT_OFFLINE=1 for no-egress local optimization.",
-                DeprecationWarning,
+                "TRAIGENT_OFFLINE=1 for no-egress local optimization. This "
+                "compatibility environment variable will be removed in a future "
+                "major release.",
                 stacklevel=2,
             )
             object.__setattr__(config, "privacy_enabled", True)
@@ -1093,7 +1185,7 @@ def _public_config_param(name: str, default: Any, annotation: Any) -> Parameter:
     )
 
 
-TraigentConfig.__signature__ = Signature(
+TraigentConfig.__signature__ = Signature(  # type: ignore[attr-defined]
     parameters=[
         _public_config_param("model", None, str | None),
         _public_config_param("temperature", None, float | None),

@@ -9,7 +9,7 @@ import os
 import secrets
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 from dotenv import load_dotenv
 
@@ -299,20 +299,36 @@ def get_env_var(
 
 # Convenience functions for common environment variables
 def get_api_key(provider: str) -> str | None:
-    """Get API key for a specific provider from environment."""
-    env_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "cohere": "COHERE_API_KEY",
-        "huggingface": "HF_API_KEY",
-        "traigent": "TRAIGENT_API_KEY",
-    }
+    """Get API key for a specific provider from environment.
 
-    env_var = env_map.get(provider.lower())
-    if not env_var:
-        return None
+    LLM-provider key resolution is shared with
+    :meth:`traigent.config.api_keys.APIKeyManager.get_api_key` via the canonical
+    provider-support table (``traigent/config/provider_support.py``) so the two
+    key maps can no longer drift. This routes ``google`` and ``mistral`` through
+    their canonical env-var chains (previously they returned ``None`` here even
+    though the validator already read those vars) and preserves the HuggingFace
+    alias chain HF_TOKEN -> HUGGING_FACE_HUB_TOKEN -> HF_API_KEY.
 
-    return get_env_var(env_var, mask_in_logs=True)
+    ``traigent`` is the Traigent *backend* API key (``TRAIGENT_API_KEY``), not an
+    LLM provider, so it keeps a dedicated branch and is intentionally absent
+    from the LLM provider-support matrix.
+    """
+    # Imported lazily so this foundational module stays import-cycle-free.
+    from traigent.config.provider_support import resolve_api_key_from_env
+
+    normalized = provider.lower()
+
+    if normalized == "traigent":
+        return get_env_var("TRAIGENT_API_KEY", mask_in_logs=True)
+
+    # Resolve LLM-provider keys via the canonical chain, preserving the
+    # masked-logging behavior of this accessor.
+    return cast(
+        str | None,
+        resolve_api_key_from_env(
+            normalized, getter=lambda name: get_env_var(name, mask_in_logs=True)
+        ),
+    )
 
 
 def get_database_url() -> str:
@@ -439,7 +455,7 @@ def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
     """Return True when the cloud API key notice should be shown."""
     if is_mock_llm() or is_backend_offline():
         return False
-    if traigent_config.is_edge_analytics_mode():
+    if traigent_config.is_local_mode():
         return False
 
     from traigent.config.backend_config import BackendConfig

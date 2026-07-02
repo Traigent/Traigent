@@ -296,7 +296,7 @@ ChatOpenAI = MockChatOpenAI
 Chroma = MockChroma
 
 # Remove eval_dataset for testing
-{sanitized_example if sanitized_example else 'No example found'}
+{sanitized_example if sanitized_example else "No example found"}
 
 # Test the function
 if 'customer_support_agent' in locals():

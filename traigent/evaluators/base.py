@@ -84,6 +84,81 @@ record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
 
+_ACCURACY_REL_TOL = 1e-9
+_ACCURACY_ABS_TOL = 1e-12
+
+
+def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bool]:
+    """Coerce string outputs for scalar typed expected values."""
+    stripped = actual.strip()
+    if isinstance(expected, bool):
+        lowered = stripped.lower()
+        if lowered in {"true", "false"}:
+            return lowered == "true", True
+        return actual, False
+
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        try:
+            return float(stripped), True
+        except ValueError:
+            return actual, False
+
+    if isinstance(expected, float):
+        try:
+            return float(stripped), True
+        except ValueError:
+            return actual, False
+
+    return actual, False
+
+
+def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
+    """Return direct equality, treating bool as distinct from plain numerics.
+
+    Python's ``bool`` is an ``int`` subclass, so ``True == 1`` and ``False == 0``.
+    For typed exact-match accuracy that conflation silently scores a numeric
+    output as a boolean match (and vice versa). When exactly one side is a bool
+    and the other is a non-bool number, the values do not match.
+    """
+    if isinstance(actual, bool) != isinstance(expected, bool):
+        if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+            return False
+    return cast(bool, actual == expected)
+
+
+def _accuracy_values_match(actual: Any, expected: Any) -> bool:
+    """Return whether two accuracy values match under SDK exact-match semantics."""
+    original_actual = actual
+    if isinstance(actual, str) and not isinstance(expected, str):
+        actual, coerced = _coerce_string_to_expected_type(actual, expected)
+        if coerced:
+            logger.warning(
+                "Coercing string output %r to %s for exact-match accuracy comparison",
+                original_actual,
+                type(expected).__name__,
+            )
+
+    if isinstance(actual, str) and isinstance(expected, str):
+        return actual.strip().lower() == expected.strip().lower()
+
+    if (
+        (isinstance(actual, float) or isinstance(expected, float))
+        and not isinstance(actual, bool)
+        and not isinstance(expected, bool)
+    ):
+        try:
+            return math.isclose(
+                float(actual),
+                float(expected),
+                rel_tol=_ACCURACY_REL_TOL,
+                abs_tol=_ACCURACY_ABS_TOL,
+            )
+        except (TypeError, ValueError):
+            return _typed_accuracy_equality(actual, expected)
+
+    return _typed_accuracy_equality(actual, expected)
+
+
 try:  # pragma: no cover - import guard for optional dependency
     from traigent.metrics.ragas_metrics import (
         POPULAR_RAGAS_METRICS,
@@ -199,6 +274,40 @@ def _is_empty_expected_output(value: Any) -> bool:
     return False
 
 
+def _is_empty_input(value: Any) -> bool:
+    """Check if an input value is effectively empty."""
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if isinstance(value, CollectionsMapping) and not value:
+        return True
+    return False
+
+
+def _warn_if_inputs_missing(examples: list[EvaluationExample], source: str) -> None:
+    """Warn when examples have empty inputs."""
+    missing_count = sum(1 for ex in examples if _is_empty_input(ex.input_data))
+    if missing_count <= 0:
+        return
+
+    if missing_count == len(examples):
+        logger.warning(
+            "Dataset '%s' has no input values (input field missing or empty in all "
+            "%d examples). Evaluation prompts may not be meaningful.",
+            source,
+            len(examples),
+        )
+        return
+
+    logger.warning(
+        "Dataset '%s' has %d/%d examples with missing or empty input values.",
+        source,
+        missing_count,
+        len(examples),
+    )
+
+
 def _warn_if_expected_outputs_missing(
     examples: list[EvaluationExample], source: str
 ) -> None:
@@ -263,6 +372,7 @@ def _build_dataset(
     if not examples:
         raise ValidationError(f"No valid examples found in {source}")
 
+    _warn_if_inputs_missing(examples, source)
     _warn_if_expected_outputs_missing(examples, source)
     metadata_out = _build_dataset_metadata(
         resolved_path,
@@ -944,7 +1054,7 @@ class BaseEvaluator(ABC):
         for output, exp, error in zip(outputs, expected, errors, strict=False):
             # Skip if error occurred or expected output is missing/empty
             if error is None and not _is_empty_expected_output(exp):
-                if output == exp:
+                if _accuracy_values_match(output, exp):
                     correct += 1
                 total += 1
 
@@ -1500,7 +1610,10 @@ class BaseEvaluator(ABC):
 
         if progress_callback:
             progress_callback(
-                index, {"success": error is None, "output": output, "error": error}
+                index,
+                self._build_non_detailed_progress_payload(
+                    example, index, output, error
+                ),
             )
 
         return output, error
@@ -1533,6 +1646,7 @@ class BaseEvaluator(ABC):
                         config,
                         example,
                         i,
+                        dataset,
                         executor=None,
                         progress_callback=progress_callback,
                     )
@@ -1549,8 +1663,10 @@ class BaseEvaluator(ABC):
                 consumed += 1
         except TrialPrunedError as e:
             # Attach partial results that were collected before pruning
-            if detailed and example_results:
-                e.example_results = [r for r in example_results if r is not None]
+            if detailed:
+                collected_results = [r for r in example_results if r is not None]
+                if collected_results or e.example_results:
+                    e.example_results = collected_results + list(e.example_results)
             raise
 
         return outputs, errors, example_results, consumed, exhausted
@@ -1615,6 +1731,7 @@ class BaseEvaluator(ABC):
         detailed: bool,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
         index: int,
+        example: EvaluationExample,
         outputs: list[Any],
         errors: list[str | None],
         example_results: list[ExampleResult | None],
@@ -1630,7 +1747,10 @@ class BaseEvaluator(ABC):
             errors.append(error)
             if progress_callback:
                 progress_callback(
-                    index, {"success": error is None, "output": output, "error": error}
+                    index,
+                    self._build_non_detailed_progress_payload(
+                        example, index, output, error
+                    ),
                 )
 
     async def _handle_task_result(
@@ -1652,10 +1772,12 @@ class BaseEvaluator(ABC):
         except TrialPrunedError as e:
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
             # Attach partial example results to the exception before re-raising
-            if detailed and example_results_by_index:
-                e.example_results = self._collect_partial_results(
+            if detailed:
+                collected_results = self._collect_partial_results(
                     example_results_by_index
                 )
+                if collected_results or e.example_results:
+                    e.example_results = collected_results + list(e.example_results)
             raise
         except asyncio.CancelledError:
             # S7497: CancelledError must be re-raised after cleanup
@@ -1699,6 +1821,7 @@ class BaseEvaluator(ABC):
             result,
             detailed,
             progress_callback,
+            examples[index],
             outputs_by_index,
             errors_by_index,
             example_results_by_index,
@@ -1731,6 +1854,7 @@ class BaseEvaluator(ABC):
         result: Any,
         detailed: bool,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        example: EvaluationExample,
         outputs_by_index: dict[int, Any],
         errors_by_index: dict[int, str | None],
         example_results_by_index: dict[int, ExampleResult | None],
@@ -1750,7 +1874,9 @@ class BaseEvaluator(ABC):
                 # Note: This is sync in the original, we handle exceptions elsewhere
                 progress_callback(
                     index,
-                    {"success": error is None, "output": output, "error": error},
+                    self._build_non_detailed_progress_payload(
+                        example, index, output, error
+                    ),
                 )
 
     async def _safe_progress_callback(
@@ -1884,6 +2010,7 @@ class BaseEvaluator(ABC):
             consumed, exhausted = await self._run_concurrent_tasks(
                 func,
                 config,
+                dataset,
                 examples,
                 sample_lease,
                 detailed,
@@ -1895,10 +2022,12 @@ class BaseEvaluator(ABC):
             )
         except TrialPrunedError as e:
             # Attach partial results that were collected before pruning
-            if detailed and example_results_by_index:
-                e.example_results = self._collect_partial_results(
+            if detailed:
+                collected_results = self._collect_partial_results(
                     example_results_by_index
                 )
+                if collected_results or e.example_results:
+                    e.example_results = collected_results + list(e.example_results)
             raise
 
         outputs, errors, example_results = self._collect_ordered_results(
@@ -1916,6 +2045,7 @@ class BaseEvaluator(ABC):
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
+        dataset: Dataset,
         examples: list[EvaluationExample],
         sample_lease: SampleBudgetLease | None,
         detailed: bool,
@@ -1939,6 +2069,7 @@ class BaseEvaluator(ABC):
                         config,
                         example,
                         idx,
+                        dataset,
                         executor=None,
                         progress_callback=progress_callback,
                     )
@@ -2111,33 +2242,239 @@ class BaseEvaluator(ABC):
         result: ExampleResult,
         config: dict[str, Any],
         error: str | None,
+        dataset: Dataset,
+        example_index: int,
     ) -> dict[str, Any]:
         """Build progress callback payload with metrics."""
-        metrics_payload: dict[str, float] = {}
-
-        if error is None and example.expected_output is not None:
-            try:
-                metrics_payload["accuracy"] = (
-                    1.0 if result.actual_output == example.expected_output else 0.0
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to compute accuracy metric for example %s: %s",
-                    example_id,
-                    exc,
-                )
-
         metrics_update, _ = self._extract_response_metrics(
             example_id, example, result, config
         )
+        llm_metrics = dict(result.metrics or metrics_update)
+
+        metrics_payload = self._build_progress_objective_metrics(
+            example=example,
+            result=result,
+            config=config,
+            error=error,
+            dataset=dataset,
+            example_index=example_index,
+            llm_metrics=llm_metrics or None,
+        )
+        if not metrics_payload and not self._has_configured_progress_objective():
+            metrics_payload = self._build_progress_accuracy_metrics(
+                output=result.actual_output,
+                expected_output=example.expected_output,
+                error=error,
+                example_id=example_id,
+            )
         metrics_payload.update(metrics_update)
 
-        return {
+        payload: dict[str, Any] = {
             "success": result.success,
             "error": result.error_message,
-            "metrics": metrics_payload,
             "output": result.actual_output,
         }
+        if metrics_payload:
+            payload["metrics"] = metrics_payload
+        return payload
+
+    def _has_configured_progress_objective(self) -> bool:
+        """Return True when callers configured a custom per-example objective."""
+        return bool(
+            getattr(self, "metric_functions", None)
+            or getattr(self, "scoring_function", None)
+        )
+
+    def _build_progress_objective_metrics(
+        self,
+        *,
+        example: EvaluationExample,
+        result: ExampleResult,
+        config: dict[str, Any],
+        error: str | None,
+        dataset: Dataset,
+        example_index: int,
+        llm_metrics: dict[str, Any] | None,
+    ) -> dict[str, float]:
+        """Return configured per-example objective metrics for detailed progress."""
+        if error is not None:
+            return {}
+
+        metric_functions = getattr(self, "metric_functions", None) or {}
+        if metric_functions:
+            metrics = self._call_progress_metric_functions(
+                metric_functions=metric_functions,
+                output=result.actual_output,
+                example=example,
+                config=config,
+                dataset=dataset,
+                example_index=example_index,
+                llm_metrics=llm_metrics,
+            )
+            if metrics:
+                return metrics
+
+        scoring_function = getattr(self, "scoring_function", None)
+        if scoring_function is not None:
+            metrics = self._call_progress_scoring_function(
+                output=result.actual_output,
+                example=example,
+                config=config,
+                dataset=dataset,
+                example_index=example_index,
+                llm_metrics=llm_metrics,
+            )
+            if metrics:
+                return metrics
+
+        return {}
+
+    def _call_progress_metric_functions(
+        self,
+        *,
+        metric_functions: Mapping[str, Callable[..., Any]],
+        output: Any,
+        example: EvaluationExample,
+        config: dict[str, Any],
+        dataset: Dataset,
+        example_index: int,
+        llm_metrics: dict[str, Any] | None,
+    ) -> dict[str, float]:
+        """Call configured metric functions using the evaluator's scoring helper."""
+        call_metric_functions = getattr(self, "_call_metric_functions", None)
+        if callable(call_metric_functions):
+            return self._coerce_progress_metrics(
+                call_metric_functions(
+                    output, example, config, dataset, example_index, llm_metrics
+                )
+            )
+
+        invoke_metric = getattr(self, "_invoke_metric_function", None)
+        if callable(invoke_metric):
+            metrics: dict[str, float] = {}
+            for metric_name, metric_func in metric_functions.items():
+                value = invoke_metric(
+                    metric_func,
+                    metric_name,
+                    output,
+                    example,
+                    config,
+                    llm_metrics or {},
+                    example_index,
+                )
+                if isinstance(value, Mapping):
+                    metrics.update(self._coerce_progress_metrics(value))
+                elif value is not None:
+                    try:
+                        metrics[metric_name] = float(value)
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Metric function %s returned non-numeric progress value "
+                            "for example %s",
+                            metric_name,
+                            getattr(example, "example_id", None) or example_index,
+                        )
+            return metrics
+
+        return {}
+
+    def _call_progress_scoring_function(
+        self,
+        *,
+        output: Any,
+        example: EvaluationExample,
+        config: dict[str, Any],
+        dataset: Dataset,
+        example_index: int,
+        llm_metrics: dict[str, Any] | None,
+    ) -> dict[str, float]:
+        """Call configured scoring function using the evaluator's scoring helper."""
+        compute_example_metrics = getattr(self, "_compute_example_metrics", None)
+        if callable(compute_example_metrics):
+            try:
+                return self._coerce_progress_metrics(
+                    compute_example_metrics(
+                        output, example, config, dataset, example_index, llm_metrics
+                    )
+                )
+            except TypeError:
+                logger.debug(
+                    "Evaluator _compute_example_metrics signature does not support "
+                    "detailed progress scoring; trying scoring helper",
+                    exc_info=True,
+                )
+
+        call_scoring_function = getattr(self, "_call_scoring_function", None)
+        if callable(call_scoring_function):
+            return self._coerce_progress_metrics(
+                call_scoring_function(output, example, llm_metrics)
+            )
+
+        return {}
+
+    @staticmethod
+    def _coerce_progress_metrics(values: Mapping[str, Any] | None) -> dict[str, float]:
+        """Keep only finite numeric metrics for the progress payload."""
+        metrics: dict[str, float] = {}
+        if not values:
+            return metrics
+        for name, value in values.items():
+            if isinstance(value, bool) or value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number):
+                metrics[str(name)] = number
+        return metrics
+
+    def _build_progress_accuracy_metrics(
+        self,
+        *,
+        output: Any,
+        expected_output: Any,
+        error: str | None,
+        example_id: str,
+    ) -> dict[str, float]:
+        """Return per-example accuracy using the same comparator as aggregate accuracy."""
+        if error is not None or _is_empty_expected_output(expected_output):
+            return {}
+        try:
+            return {
+                "accuracy": (
+                    1.0 if _accuracy_values_match(output, expected_output) else 0.0
+                )
+            }
+        except Exception as exc:
+            logger.warning(
+                "Failed to compute accuracy metric for example %s: %s",
+                example_id,
+                exc,
+            )
+            return {}
+
+    def _build_non_detailed_progress_payload(
+        self,
+        example: EvaluationExample,
+        index: int,
+        output: Any,
+        error: str | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "success": error is None,
+            "output": output,
+            "error": error,
+        }
+        metrics_payload = self._build_progress_accuracy_metrics(
+            output=output,
+            expected_output=example.expected_output,
+            error=error,
+            example_id=_example_correlation_key(example, index),
+        )
+        if metrics_payload:
+            payload["metrics"] = metrics_payload
+        return payload
 
     def _record_example_trace(
         self,
@@ -2266,6 +2603,7 @@ class BaseEvaluator(ABC):
         config: dict[str, Any],
         example: EvaluationExample,
         example_index: int,
+        dataset: Dataset,
         executor: Any | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
     ) -> ExampleResult:
@@ -2332,9 +2670,13 @@ class BaseEvaluator(ABC):
 
             if progress_callback:
                 progress_payload = self._build_progress_payload(
-                    example_id, example, result, config, error
+                    example_id, example, result, config, error, dataset, example_index
                 )
-                progress_callback(example_index, progress_payload)
+                try:
+                    progress_callback(example_index, progress_payload)
+                except TrialPrunedError as exc:
+                    exc.example_results = list(exc.example_results) + [result]
+                    raise
 
             if error is None:
                 logger.debug(
@@ -2984,6 +3326,10 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 errors.append(None)
 
             except asyncio.CancelledError:
+                raise
+            except TrialPrunedError as e:
+                if example_results or e.example_results:
+                    e.example_results = list(example_results) + list(e.example_results)
                 raise
             except Exception as e:
                 logger.warning(f"Evaluation failed for example {i}: {e}")

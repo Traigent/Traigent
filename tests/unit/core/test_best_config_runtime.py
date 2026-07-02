@@ -396,6 +396,13 @@ def test_cloud_cache_stale_ok_ttl_allows_offline_reuse(tmp_path):
     )
 
     assert snapshot is not None
+    assert snapshot.source == BestConfigSource.CLOUD_CACHE.value
+    assert snapshot.config_id == "answerer"
+    assert thaw_config(snapshot.config) == {"temperature": 0.2}
+    # The regular ttl (not stale_ok_ttl_seconds) still governs expires_at;
+    # stale_ok_ttl_seconds only widens the window for accepting a read past it.
+    assert snapshot.expires_at == datetime(2026, 5, 22, 0, 1, 0, tzinfo=UTC)
+    assert snapshot.expires_at < datetime(2026, 5, 22, 0, 30, 0, tzinfo=UTC)
 
 
 def test_cloud_publish_unavailable_exposes_reason():

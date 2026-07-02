@@ -502,6 +502,71 @@ class TestLoadDatasetFromFile:
         assert dataset[1].input_data["text"] == "Goodbye"
         assert dataset[2].input_data["text"] == "Test"
 
+    def test_load_jsonl_warns_when_all_inputs_empty(self, tmp_path, caplog):
+        """Empty input values should warn without rejecting the dataset."""
+        jsonl_content = [
+            '{"input": "", "output": "empty"}',
+            '{"input": null, "output": "none"}',
+        ]
+        temp_path = tmp_path / "empty_inputs.jsonl"
+        temp_path.write_text("\n".join(jsonl_content), encoding="utf-8")
+
+        caplog.set_level("WARNING", logger="traigent.evaluators.base")
+        dataset = load_dataset_from_file(str(temp_path))
+
+        assert len(dataset) == 2
+        assert "has no input values" in caplog.text
+
+    def test_load_jsonl_warns_when_some_inputs_empty(self, tmp_path, caplog):
+        """Partially empty input values should report the count."""
+        jsonl_content = [
+            '{"input": "", "output": "empty"}',
+            '{"input": {"text": "Hello"}, "output": "Hi"}',
+        ]
+        temp_path = tmp_path / "partial_empty_inputs.jsonl"
+        temp_path.write_text("\n".join(jsonl_content), encoding="utf-8")
+
+        caplog.set_level("WARNING", logger="traigent.evaluators.base")
+        dataset = load_dataset_from_file(str(temp_path))
+
+        assert len(dataset) == 2
+        assert "has 1/2 examples with missing or empty input values" in caplog.text
+
+    def test_load_jsonl_does_not_warn_for_valid_inputs(self, tmp_path, caplog):
+        """Non-empty inputs should not emit the empty-input warning."""
+        jsonl_content = [
+            '{"input": {"text": "Hello"}, "output": "Hi"}',
+            '{"input": "Question", "output": "Answer"}',
+        ]
+        temp_path = tmp_path / "valid_inputs.jsonl"
+        temp_path.write_text("\n".join(jsonl_content), encoding="utf-8")
+
+        caplog.set_level("WARNING", logger="traigent.evaluators.base")
+        dataset = load_dataset_from_file(str(temp_path))
+
+        assert len(dataset) == 2
+        assert "missing or empty input values" not in caplog.text
+
+    def test_load_jsonl_warns_when_input_is_empty_dict(self, tmp_path, caplog):
+        """An empty-dict input value should trigger the empty-input warning.
+
+        _is_empty_input treats an empty Mapping ({}) as effectively empty, the
+        same as None or "" — a dict-shaped input with no keys produces a
+        meaningless prompt.  This test would FAIL on pre-fix code that had no
+        input-value check at all.
+        """
+        jsonl_content = [
+            '{"input": {}, "output": "Paris"}',
+        ]
+        temp_path = tmp_path / "empty_dict_input.jsonl"
+        temp_path.write_text("\n".join(jsonl_content), encoding="utf-8")
+
+        caplog.set_level("WARNING", logger="traigent.evaluators.base")
+        dataset = load_dataset_from_file(str(temp_path))
+
+        assert len(dataset) == 1
+        assert "has no input values" in caplog.text
+
 
 class MockEvaluator(BaseEvaluator):
     """Mock evaluator for testing BaseEvaluator interface."""

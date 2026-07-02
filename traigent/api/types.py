@@ -32,6 +32,38 @@ if TYPE_CHECKING:
     from traigent.core.objectives import ObjectiveSchema
 
 
+__all__ = [
+    "SelectionGrade",
+    "OptimizationStatus",
+    "TrialStatus",
+    "MetricCoverage",
+    "ComparabilityInfo",
+    "StopReason",
+    "TrialDatetimeFormat",
+    "Trial",
+    "TrialError",
+    "TrialResult",
+    "PresetSelection",
+    "serialize_trials",
+    "ExampleResult",
+    "ExperimentStats",
+    "OptimizationResult",
+    "SensitivityAnalysis",
+    "ConfigurationComparison",
+    "ParetoFront",
+    "StrategyConfig",
+    "OptimizationJob",
+    "AgentType",
+    "AgentMeta",
+    "AgentDefinition",
+    "GlobalConfiguration",
+    "AgentConfiguration",
+    "ConfigSpace",
+    "Metrics",
+    "Objectives",
+]
+
+
 class OptimizationStatus(StrEnum):
     """Status of an optimization run."""
 
@@ -635,7 +667,8 @@ class OptimizationResult:
 
     Attributes:
         trials: List of all trial results from the optimization.
-        best_config: The configuration that achieved the best score.
+        best_config: The configuration that achieved the best score, or None
+            when no eligible trial produced a winner.
         best_score: The best objective score achieved (None when no eligible trial).
         optimization_id: Unique identifier for this optimization run.
         duration: Total wall-clock time in seconds.
@@ -653,7 +686,8 @@ class OptimizationResult:
             - "max_trials_reached": Hit the configured max_trials limit
             - "max_samples_reached": Hit the max samples/examples limit
             - "timeout": Exceeded the timeout duration
-            - "cost_limit": Hit the cost budget limit
+            - "cost_limit": Hit the cost budget limit mid-run; pre-run cost
+              approval declines raise CostLimitExceeded instead.
             - "metric_limit": Hit a soft cumulative metric limit
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)
@@ -663,12 +697,14 @@ class OptimizationResult:
             - "error": Optimization failed due to an exception
             - None: Unknown or not set
         experiment_id: Backend experiment identifier (None if offline/not synced).
+        experiment_run_id: Backend experiment-run identifier for analytics reads
+            (None if offline/not synced).
         cloud_url: Direct link to the experiment on the cloud portal (None if offline).
         run_label: Human-readable run identifier (e.g. answer_question_20260315_143022_a3f1b2).
     """
 
     trials: list[TrialResult]
-    best_config: dict[str, Any]
+    best_config: dict[str, Any] | None
     best_score: float | None
     optimization_id: str
     duration: float
@@ -692,6 +728,7 @@ class OptimizationResult:
     experiment_id: str | None = None
     cloud_url: str | None = None
     run_label: str | None = None
+    experiment_run_id: str | None = None
 
     # User-facing, non-fatal warnings about this run (issue #1407). Populated
     # when the run hit a money-correctness gap that the user should see — e.g.
@@ -741,10 +778,10 @@ class OptimizationResult:
     def best_metrics(self) -> dict[str, float]:
         """Get best metrics from the best trial.
 
-        A result with NO WINNER — empty ``best_config`` AND ``best_score``
-        of ``None``, the NO_CERTIFIED_SELECTION shape from strict evidence
-        runs — makes no winner-metric claims. A valid winner whose config
-        happens to be empty still carries a score and keeps its metrics.
+        A result with NO WINNER — ``best_config`` missing/empty AND
+        ``best_score`` of ``None`` — makes no winner-metric claims. A valid
+        winner whose config happens to be empty still carries a score and
+        keeps its metrics.
         """
         if not self.best_config and self.best_score is None:
             return {}
@@ -1336,7 +1373,7 @@ class OptimizationResult:
 
     def _select_best_weighted_result(
         self, weighted_scores: list[tuple[TrialResult, float]]
-    ) -> tuple[dict[str, Any], float]:
+    ) -> tuple[dict[str, Any] | None, float]:
         """Select the best configuration from computed weighted scores."""
 
         if not weighted_scores:
@@ -1423,7 +1460,7 @@ class OptimizationResult:
         Winner-claim note (FR-SDK-FAIL-CLOSED-PROMOTION-V1): the per-trial
         weighted scores are DESCRIPTIVE statistics and always computed; the
         ``best_weighted_config`` key is a winner claim and is omitted when the
-        result carries no certified winner (empty ``best_config``).
+        result carries no certified winner (missing/empty ``best_config``).
 
         Args:
             objective_weights: Dictionary of objective weights (defaults to equal weights)

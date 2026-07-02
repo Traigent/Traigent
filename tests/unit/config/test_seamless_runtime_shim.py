@@ -90,6 +90,46 @@ def test_seamless_runtime_shim_keeps_assignment_path() -> None:
     assert wrapped("What is 2+2?") == "claude-3-sonnet"
 
 
+def test_seamless_warns_when_config_has_no_injectable_target(caplog) -> None:
+    provider = _reset_provider()
+
+    def fn(question: str) -> str:
+        model_name = "claude-3-haiku"
+        return model_name
+
+    wrapped = provider.inject_config(fn, {"model": "claude-3-sonnet"})
+
+    with caplog.at_level("WARNING", logger="traigent.config.providers"):
+        assert wrapped("What is 2+2?") == "claude-3-haiku"
+
+    assert "found no injectable targets" in caplog.text
+    assert provider.get_stats()["fallback_triggers"]["no_injection"] == [["model"]]
+
+
+def test_seamless_does_not_warn_for_assignment_or_parameter_injection(caplog) -> None:
+    provider = _reset_provider()
+
+    def assignment_fn(question: str) -> str:
+        model = "claude-3-haiku"
+        return model
+
+    def parameter_fn(question: str, model: str = "claude-3-haiku") -> str:
+        return model
+
+    assignment_wrapped = provider.inject_config(
+        assignment_fn, {"model": "claude-3-sonnet"}
+    )
+    parameter_wrapped = provider.inject_config(
+        parameter_fn, {"model": "claude-3-sonnet"}
+    )
+
+    with caplog.at_level("WARNING", logger="traigent.config.providers"):
+        assert assignment_wrapped("What is 2+2?") == "claude-3-sonnet"
+        assert parameter_wrapped("What is 2+2?") == "claude-3-sonnet"
+
+    assert "found no injectable targets" not in caplog.text
+
+
 def test_seamless_runtime_shim_caches_per_config() -> None:
     provider = _reset_provider()
 
@@ -160,7 +200,7 @@ def test_seamless_runtime_shim_multiple_parameters(
     assert observed_temperature == config_temperature
 
 
-@pytest.mark.parametrize("execution_mode", ["edge_analytics", "privacy", "hybrid"])
+@pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
 def test_seamless_runtime_shim_respects_configuration_context(
     execution_mode: str,
 ) -> None:

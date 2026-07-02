@@ -20,8 +20,8 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
-from traigent.utils.url_security import UnsafeUrlError, validate_outbound_url
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import AuthResult
@@ -261,12 +261,11 @@ class PasswordAuthHandler:
         from traigent.config.backend_config import BackendConfig
 
         try:
-            backend_api_url = validate_outbound_url(
+            backend_api_url = await validate_cloud_base_url_async(
                 BackendConfig.get_cloud_api_url(),
                 purpose="password authentication backend_url",
-                allow_private_hosts=self._is_dev_mode_enabled(),
             )
-        except UnsafeUrlError as exc:
+        except ValueError as exc:
             logger.warning(
                 "Rejected unsafe password authentication backend_url: %s", exc
             )

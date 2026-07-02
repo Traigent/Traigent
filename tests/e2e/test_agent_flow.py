@@ -174,9 +174,9 @@ def mock_cloud_client_with_agent_support():
         if optimization_id not in client._optimizations:
             raise CloudServiceError(f"Optimization {optimization_id} not found")
 
-        client._optimizations[optimization_id][
-            "status"
-        ] = OptimizationSessionStatus.CANCELLED
+        client._optimizations[optimization_id]["status"] = (
+            OptimizationSessionStatus.CANCELLED
+        )
 
         return {
             "optimization_id": optimization_id,
@@ -331,9 +331,9 @@ class TestAgentOptimizationE2E:
         unknown_param_warning_found = any(
             "unknown_param" in warning for warning in validation_result["warnings"]
         )
-        assert (
-            unknown_param_warning_found
-        ), f"Expected unknown_param warning not found in: {validation_result['warnings']}"
+        assert unknown_param_warning_found, (
+            f"Expected unknown_param warning not found in: {validation_result['warnings']}"
+        )
 
         # Run optimization anyway
         async with mock_cloud_client_with_agent_support as client:

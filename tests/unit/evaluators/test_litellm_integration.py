@@ -1,5 +1,6 @@
 """Unit tests for litellm integration in evaluators."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -86,6 +87,27 @@ class MockAnthropicResponseAlias:
         self.content = [ContentBlock()]
 
 
+def test_aggregated_responses_reads_litellm_usage_shape() -> None:
+    """Multi-call aggregation should count litellm/OpenAI-SDK usage objects."""
+    from traigent.evaluators.local import _AggregatedResponses
+
+    response = SimpleNamespace(
+        usage=SimpleNamespace(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+    )
+
+    aggregated = _AggregatedResponses([response, response])
+
+    assert aggregated.usage_metadata == {
+        "input_tokens": 20,
+        "output_tokens": 10,
+        "total_tokens": 30,
+    }
+
+
 class TestTokencostIntegration:
     """Test litellm integration in metrics extraction."""
 
@@ -115,9 +137,11 @@ class TestTokencostIntegration:
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
             patch("os.environ.get") as mock_env,
-            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
+            patch(
+                "traigent.evaluators.metrics_tracker._calculate_cost_for_metrics",
+                mock_calculate_cost,
+            ),
         ):
-
             # Make os.environ.get return False for mock mode checks
             mock_env.side_effect = lambda key, default="": (
                 ""
@@ -168,7 +192,10 @@ class TestTokencostIntegration:
 
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False),
-            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
+            patch(
+                "traigent.evaluators.metrics_tracker._calculate_cost_for_metrics",
+                mock_calculate_cost,
+            ),
         ):
             metrics = extract_llm_metrics(response=response, model_name=model_name)
 
@@ -201,7 +228,10 @@ class TestTokencostIntegration:
 
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False),
-            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
+            patch(
+                "traigent.evaluators.metrics_tracker._calculate_cost_for_metrics",
+                mock_calculate_cost,
+            ),
         ):
             metrics = extract_llm_metrics(response=response)
 
@@ -233,9 +263,11 @@ class TestTokencostIntegration:
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
             patch("os.environ.get") as mock_env,
-            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
+            patch(
+                "traigent.evaluators.metrics_tracker._calculate_cost_for_metrics",
+                mock_calculate_cost,
+            ),
         ):
-
             # Make os.environ.get return False for mock mode checks
             mock_env.side_effect = lambda key, default="": (
                 ""
@@ -266,23 +298,28 @@ class TestTokencostIntegration:
         response = MockOpenAIResponse("positive", 15, 8)
         model_name = "gpt-4o-mini"
 
-        with (
-            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
-            patch(
-                "traigent.evaluators.metrics_tracker.calculate_prompt_cost"
-            ) as mock_prompt_cost,
-        ):
-
-            # Make litellm raise an exception
-            mock_prompt_cost.side_effect = Exception("litellm API error")
+        # Token usage is present, so _compute_cost takes the preferred
+        # cost_from_tokens() path (not the deprecated calculate_prompt_cost
+        # text path) - patch the function actually on the call path so the
+        # injected exception is really exercised.
+        with patch(
+            "traigent.utils.cost_calculator.cost_from_tokens"
+        ) as mock_cost_from_tokens:
+            mock_cost_from_tokens.side_effect = Exception("litellm API error")
 
             # Should not raise exception, should fallback gracefully
             metrics = extract_llm_metrics(response=response, model_name=model_name)
 
-            # Verify tokens still extracted - cost may or may not be calculated
-            # depending on whether the mock worked
+            mock_cost_from_tokens.assert_called_once_with(
+                15, 8, "gpt-4o-mini", strict=False
+            )
+            # Tokens are extracted independently of cost calculation
             assert metrics.tokens.total_tokens == 23
-            # Just verify it doesn't crash - cost calculation is handled elsewhere
+            # On a cost-calculation failure, cost falls back to zero rather
+            # than a stale or partially-computed value
+            assert metrics.cost.total_cost == 0.0
+            assert metrics.cost.input_cost == 0.0
+            assert metrics.cost.output_cost == 0.0
 
 
 class TestLocalEvaluatorWithTokencost:
@@ -343,9 +380,11 @@ class TestLocalEvaluatorWithTokencost:
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
             patch("os.environ.get") as mock_env,
-            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
+            patch(
+                "traigent.evaluators.metrics_tracker._calculate_cost_for_metrics",
+                mock_calculate_cost,
+            ),
         ):
-
             # Make os.environ.get return False for mock mode checks
             mock_env.side_effect = lambda key, default="": (
                 ""
@@ -358,9 +397,9 @@ class TestLocalEvaluatorWithTokencost:
 
             # Verify cost information is present in aggregated metrics
             assert "cost" in result.aggregated_metrics
-            assert (
-                result.aggregated_metrics["cost"] > 0
-            ), "Total cost should be greater than 0"
+            assert result.aggregated_metrics["cost"] > 0, (
+                "Total cost should be greater than 0"
+            )
 
     @pytest.mark.asyncio
     async def test_local_evaluator_fallback_without_litellm(
@@ -449,7 +488,6 @@ class TestCostTrackingEdgeCases:
                 "traigent.evaluators.metrics_tracker.calculate_completion_cost"
             ) as mock_completion_cost,
         ):
-
             mock_completion_cost.return_value = 0.000002
 
             metrics = extract_llm_metrics(

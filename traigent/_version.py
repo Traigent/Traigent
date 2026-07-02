@@ -68,11 +68,6 @@ def get_version() -> str:
             "installed package metadata"
         ) from None
 
-    raise RuntimeError(
-        "Unable to resolve Traigent SDK version from pyproject.toml or "
-        "installed package metadata"
-    )
-
 
 def get_version_info() -> dict[str, str]:
     """Get detailed version information.

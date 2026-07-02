@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
+    CloudEgressBlockedError,
     CloudRemoteExecutionUnavailableError,
     CloudServiceError,
     SessionContractError,
@@ -29,10 +30,19 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
 )
+from traigent.cloud.smart_pruning import (
+    normalize_intermediate_report_payload,
+    normalize_smart_pruning_options,
+)
 from traigent.config.backend_config import BackendConfig
+from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
+)
+from traigent.utils.artifact_fingerprints import (
+    artifact_fingerprints_to_wire,
+    fingerprint_meta_to_wire,
 )
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
@@ -79,6 +89,15 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 logger = get_logger(__name__)
+
+_LEGACY_SESSION_CONTRACT_DEPRECATION = (
+    "Legacy session contract payloads are deprecated. Use the typed session "
+    "contract by leaving TRAIGENT_SESSION_CONTRACT unset or setting "
+    "TRAIGENT_SESSION_CONTRACT=typed; use offline=True with algorithm='grid' "
+    "or algorithm='random' for local-only optimization, and prefer local over "
+    "edge_analytics where a compatibility wire value is still required. The "
+    "legacy session contract will be removed in a future major release."
+)
 
 
 class TraigentSessionApiResult(tuple):
@@ -217,6 +236,52 @@ def map_status_to_wire(status: str, *, endpoint: str = "experiment_run") -> str:
     return mapped
 
 
+def _choice_sequence_contains_bool(values: Any) -> bool:
+    """Return True when a categorical choice container contains a bool."""
+
+    if not isinstance(values, (list, tuple)):
+        return False
+    return any(isinstance(value, bool) for value in values)
+
+
+def _configuration_space_entry_uses_bool(entry: Any) -> bool:
+    """Detect bool-valued knobs without changing their wire representation."""
+
+    # bool is a subclass of int, so detect it before any numeric handling.
+    if isinstance(entry, bool):
+        return True
+    if isinstance(entry, (list, tuple)):
+        return _choice_sequence_contains_bool(entry)
+    if isinstance(entry, dict):
+        return _choice_sequence_contains_bool(
+            entry.get("choices")
+        ) or _choice_sequence_contains_bool(entry.get("values"))
+    return False
+
+
+def _warn_boolean_config_values(space: Any) -> None:
+    """Warn when configuration_space contains bools the cloud API rejects."""
+
+    if not isinstance(space, dict):
+        return
+
+    offending_parameters = [
+        str(name)
+        for name, entry in space.items()
+        if _configuration_space_entry_uses_bool(entry)
+    ]
+    if not offending_parameters:
+        return
+
+    logger.warning(
+        "configuration_space parameter(s) %s use boolean values, which the "
+        "cloud session API does not accept and will reject with a generic "
+        "HTTP 400. Encode boolean knobs as strings (e.g. ['with','without']) "
+        "or integers (0/1) and map back at the call site. See issue #1488.",
+        offending_parameters,
+    )
+
+
 def _typed_configuration_space(space: Any) -> Any:
     """Normalize shorthand configuration space to the typed wire contract.
 
@@ -229,6 +294,7 @@ def _typed_configuration_space(space: Any) -> Any:
     """
     if not isinstance(space, dict):
         return space
+    _warn_boolean_config_values(space)
     normalized: dict[str, Any] = {}
     for name, entry in space.items():
         if isinstance(entry, (list, tuple)):
@@ -270,6 +336,8 @@ class ApiOperations:
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
+        if getattr(self.client, "_url_invalid", False) is True:
+            raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(
             operation,
             no_egress=getattr(self.client, "no_egress", False),
@@ -445,7 +513,7 @@ class ApiOperations:
                 return await self._post_session_creation(
                     session_payload, headers, connector
                 )
-            except CloudServiceError:
+            except CloudServiceError as typed_exc:
                 # auto-contract fallback: a failed TYPED create may retry the
                 # legacy shape ONCE — and only for NON-governed sessions
                 # (governed sessions must fail loudly; the legacy contract
@@ -460,12 +528,31 @@ class ApiOperations:
                     "legacy contract (non-governed session, "
                     "TRAIGENT_SESSION_CONTRACT=auto)"
                 )
+                _warn_deprecated_once(
+                    "session_contract:auto_legacy_retry",
+                    "Auto retry from typed session contract to legacy session "
+                    f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
+                    stacklevel=3,
+                )
                 legacy_payload = self._build_legacy_session_payload(
-                    session_request, max_trials_value
+                    session_request,
+                    max_trials_value,
+                    warn_boolean_config_values=False,
                 )
-                return await self._post_session_creation(
-                    legacy_payload, headers, connector
-                )
+                try:
+                    return await self._post_session_creation(
+                        legacy_payload, headers, connector
+                    )
+                except CloudServiceError as legacy_exc:
+                    typed_detail = getattr(typed_exc, "session_creation_failure", None)
+                    legacy_detail = getattr(
+                        legacy_exc, "session_creation_failure", None
+                    )
+                    typed_status = getattr(typed_detail, "status_code", None)
+                    legacy_status = getattr(legacy_detail, "status_code", None)
+                    if typed_status == 400 and legacy_status == 400:
+                        cast(Any, legacy_exc).typed_legacy_session_create_400 = True
+                    raise
         except SessionContractError:
             # Review round 3: contract failures must reach the caller AS
             # THEMSELVES — the generic wrap below would demote them to a
@@ -481,6 +568,10 @@ class ApiOperations:
             # BACKEND_UNREACHABLE ("check your network/URL") instead of an
             # auth/permission error (MISSING_PERMISSION / INVALID_OR_REVOKED_KEY).
             raise
+        except CloudServiceError as e:
+            if getattr(e, "typed_legacy_session_create_400", False):
+                raise
+            self._handle_generic_session_exception(e)
         except aiohttp.ClientConnectorError as e:
             self._handle_connector_error(e)
         except aiohttp.ClientError as e:
@@ -496,7 +587,7 @@ class ApiOperations:
         if value is None:
             logger.debug("max_trials is None in session_request, using default 10")
             return 10
-        return value
+        return cast(int, value)
 
     @staticmethod
     def _session_contract() -> str:
@@ -546,6 +637,12 @@ class ApiOperations:
                     "promotion_policy/tvl_governance (refusing to launder "
                     "strict mode)"
                 )
+            _warn_deprecated_once(
+                "session_contract:TRAIGENT_SESSION_CONTRACT=legacy",
+                "TRAIGENT_SESSION_CONTRACT=legacy is deprecated. "
+                f"{_LEGACY_SESSION_CONTRACT_DEPRECATION}",
+                stacklevel=3,
+            )
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
 
@@ -588,17 +685,32 @@ class ApiOperations:
         wire_governance = tvl_governance_to_wire(session_request.tvl_governance)
         if wire_governance:
             payload["tvl_governance"] = wire_governance
+        if getattr(session_request, "budget", None):
+            payload["budget"] = session_request.budget
+        if getattr(session_request, "warm_start_from", None):
+            payload["warm_start_from"] = session_request.warm_start_from
+        smart_pruning = getattr(session_request, "smart_pruning", None)
+        wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
+        if wire_smart_pruning:
+            payload["smart_pruning"] = wire_smart_pruning
+        self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
     def _build_legacy_session_payload(
-        self, session_request: SessionCreationRequest, max_trials: int
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        *,
+        warn_boolean_config_values: bool = True,
     ) -> dict[str, Any]:
         """The pre-Phase-8 legacy shape (problem_statement/search_space) —
         non-governed compatibility only."""
         metadata = session_request.metadata or {}
         evaluation_set = metadata.get("evaluation_set", "default")
+        if warn_boolean_config_values:
+            _warn_boolean_config_values(session_request.configuration_space)
 
-        return {
+        payload: dict[str, Any] = {
             "problem_statement": session_request.function_name,
             "dataset": {
                 "examples": [],  # Privacy mode - no actual data sent
@@ -620,6 +732,34 @@ class ApiOperations:
                 **metadata,
             },
         }
+        # Warm-start: never silently drop a user-set prior experiment id, even
+        # on the legacy contract (empty string treated as absent). The legacy
+        # BE may not consume it yet; the SDK must still forward it.
+        if getattr(session_request, "warm_start_from", None):
+            payload["warm_start_from"] = session_request.warm_start_from
+        smart_pruning = getattr(session_request, "smart_pruning", None)
+        wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
+        if wire_smart_pruning:
+            payload["smart_pruning"] = wire_smart_pruning
+        self._attach_artifact_fingerprint_payload(payload, session_request)
+        return payload
+
+    @staticmethod
+    def _attach_artifact_fingerprint_payload(
+        payload: dict[str, Any],
+        session_request: SessionCreationRequest,
+    ) -> None:
+        artifact_fingerprints = artifact_fingerprints_to_wire(
+            getattr(session_request, "artifact_fingerprints", None)
+        )
+        if artifact_fingerprints is not None:
+            payload["artifact_fingerprints"] = artifact_fingerprints
+
+        fingerprint_meta = fingerprint_meta_to_wire(
+            getattr(session_request, "fingerprint_meta", None)
+        )
+        if fingerprint_meta is not None:
+            payload["fingerprint_meta"] = fingerprint_meta
 
     def _build_connector(self) -> Any | None:
         """Create an aiohttp connector when custom transport settings are required."""
@@ -692,6 +832,75 @@ class ApiOperations:
             return None
         normalized = str(value).strip()
         return normalized or None
+
+    async def report_intermediate_progress(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Report per-trial intermediate progress for cloud smart pruning."""
+        wire_payload = normalize_intermediate_report_payload(payload)
+        session_id = str(wire_payload.get("session_id", "")).strip()
+        trial_id = str(wire_payload.get("trial_id", "")).strip()
+        if not session_id or not trial_id:
+            return {"prune": False, "prune_reason": None}
+        if is_backend_offline():
+            logger.debug(
+                "Offline mode: skipping intermediate report for session %s trial %s",
+                session_id,
+                trial_id,
+            )
+            return {"prune": False, "prune_reason": None}
+
+        self._raise_if_backend_egress_disabled("intermediate report")
+        if not AIOHTTP_AVAILABLE:
+            logger.debug("aiohttp not available, skipping intermediate report")
+            return {"prune": False, "prune_reason": None}
+
+        try:
+            headers = await self.client.auth_manager.augment_headers(
+                {"Content-Type": _JSON_CONTENT_TYPE}
+            )
+            async with cast(Any, aiohttp).ClientSession(
+                connector=self._build_connector()
+            ) as session:
+                api_base = (
+                    self.client.backend_config.api_base_url
+                    or BackendConfig.get_backend_api_url()
+                )
+                url = f"{api_base}/sessions/{session_id}/intermediate-report"
+                timeout = cast(Any, aiohttp).ClientTimeout(total=10)
+                async with session.post(
+                    url,
+                    json=wire_payload,
+                    headers=headers,
+                    timeout=timeout,
+                ) as response:
+                    if response.status == 200:
+                        decision = await response.json()
+                        if isinstance(decision, dict):
+                            return {
+                                "prune": bool(decision.get("prune", False)),
+                                "prune_reason": decision.get("prune_reason"),
+                            }
+                        return {"prune": False, "prune_reason": None}
+
+                    error_msg = await response.text()
+                    logger.debug(
+                        "Intermediate report rejected for session %s trial %s: "
+                        "HTTP %s %s",
+                        session_id,
+                        trial_id,
+                        response.status,
+                        error_msg[:300],
+                    )
+                    return {"prune": False, "prune_reason": None}
+        except aiohttp.ClientError as exc:
+            logger.debug(
+                "Network error sending intermediate report for session %s trial %s: %s",
+                session_id,
+                trial_id,
+                exc,
+            )
+            return {"prune": False, "prune_reason": None}
 
     def _handle_session_error(self, status_code: int, error_msg: str) -> None:
         """Raise structured exceptions for non-success HTTP responses.

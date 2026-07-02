@@ -220,7 +220,7 @@ def show_session(session_id: str, output_format: str) -> None:
                 click.echo(f"Best Config: {session.best_config}")
 
             # Show context-specific upgrade hints for completed local sessions.
-            if config.is_edge_analytics_mode() and session.status == "completed":
+            if config.is_local_mode() and session.status == "completed":
                 try:
                     show_upgrade_hint(
                         "cli_usage",
@@ -681,7 +681,10 @@ def edge_analytics_commands(ctx: click.Context) -> None:
     """Deprecated hidden alias for `traigent local`."""
     if ctx.invoked_subcommand:
         click.echo(
-            "Warning: `traigent edge-analytics` is deprecated; use `traigent local`.",
+            "Warning: `traigent edge-analytics` is deprecated; use "
+            "`traigent local`, or use offline=True with algorithm='grid' or "
+            "algorithm='random' in Python. Prefer local over edge_analytics; "
+            "this alias will be removed in a future major release.",
             err=True,
         )
 

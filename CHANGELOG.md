@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.17.0] - 2026-06-23
+## [0.18.0] - 2026-06-27
 
 ### Added
 - Added a no-content-egress cloud-brain canary test that captures serialized

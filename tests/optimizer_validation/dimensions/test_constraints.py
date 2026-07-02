@@ -442,9 +442,9 @@ class TestConstraintEdgeCases:
         # None is falsy, so should act like False - all configs rejected
         assert hasattr(result, "trials"), "Result should have trials attribute"
         assert result.stop_reason is not None, "Should have a stop reason"
-        assert (
-            len(result.trials) == 0
-        ), "Should have 0 trials (None returns = falsy = rejected)"
+        assert len(result.trials) == 0, (
+            "Should have 0 trials (None returns = falsy = rejected)"
+        )
 
         # Skip validator - it expects trials, but none exist when all rejected
 

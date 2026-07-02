@@ -1,13 +1,14 @@
-"""Client for triggering example scoring and retrieving non-signal scoring metadata.
+"""Client for triggering example scoring and retrieving redacted example insights.
 
 This module provides async-first methods to:
 - Trigger scoring computation (async job) and poll job status
-- Retrieve per-example and dataset-level scoring *metadata* (whether scoring ran,
-  sample count, algorithm version)
+- Retrieve privacy-bounded scoring metadata and coarse "examples to review"
+  projections, including opaque example refs plus enum-only review metadata
 
-Proprietary tuning signals (the per-example signal vector and dataset quality
-signals) are NOT returned to clients — the backend redacts them. Signal-driven
-guidance is delivered via the GuidancePlan API.
+Proprietary tuning signals and raw signal values are NOT returned to clients.
+The backend redacts them and only exposes bounded metadata such as review
+priority, difficulty bucket, suspicious flags, and recommended action. Signal-
+driven guidance is delivered via the GuidancePlan API.
 
 Usage:
     >>> from traigent.analytics import ExampleInsightsClient
@@ -31,6 +32,7 @@ import time
 from typing import Any, cast
 
 from traigent.cloud.auth import _build_api_key_auth_headers
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.utils.logging import get_logger
 
@@ -46,7 +48,7 @@ except ImportError:
 
 
 class ExampleInsightsClient:
-    """Client for retrieving example-level insights from backend.
+    """Client for retrieving privacy-bounded example-level insights.
 
     Thread Safety: Safe for concurrent use (httpx.AsyncClient is thread-safe).
     """
@@ -73,7 +75,10 @@ class ExampleInsightsClient:
                 "Install with: pip install traigent[analytics]"
             )
 
-        self.backend_url = backend_url.rstrip("/")
+        backend_url = backend_url.rstrip("/")
+        self.backend_url = validate_cloud_base_url(
+            backend_url, purpose="analytics request"
+        )
         self.timeout = timeout
 
         # Import here to avoid circular dependency

@@ -153,13 +153,13 @@ class TestAlgorithmConfigSpacePairwise:
 
         if grid_incompatible:
             # Grid search with continuous/mixed should fail with clear error
-            assert isinstance(
-                result, Exception
-            ), f"Expected grid search to fail with {space_type} space"
+            assert isinstance(result, Exception), (
+                f"Expected grid search to fail with {space_type} space"
+            )
             error_msg = str(result).lower()
-            assert (
-                "grid" in error_msg or "continuous" in error_msg
-            ), f"Error should mention grid/continuous incompatibility: {result}"
+            assert "grid" in error_msg or "continuous" in error_msg, (
+                f"Error should mention grid/continuous incompatibility: {result}"
+            )
             # Emit evidence for expected failure
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
@@ -278,9 +278,9 @@ class TestGridSearchExhaustiveness:
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
         if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 5
-            ), f"Expected 5 trials, got {len(result.trials)}"
+            assert len(result.trials) == 5, (
+                f"Expected 5 trials, got {len(result.trials)}"
+            )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -487,9 +487,9 @@ class TestAlgorithmWithSingleValueSpace:
                 # All configs should be the same
                 first_config = configs[0]
                 for config in configs[1:]:
-                    assert (
-                        config == first_config
-                    ), "Configs differ in single-value space"
+                    assert config == first_config, (
+                        "Configs differ in single-value space"
+                    )
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -547,9 +547,9 @@ class TestOptunaTPEAlgorithm:
 
         # TPE should handle all space types (empty may fail gracefully)
         if space_type != "empty":
-            assert not isinstance(
-                result, Exception
-            ), f"TPE failed with {space_type}: {result}"
+            assert not isinstance(result, Exception), (
+                f"TPE failed with {space_type}: {result}"
+            )
 
         # Always emit evidence regardless of outcome
 
@@ -614,9 +614,9 @@ class TestOptunaCMAESAlgorithm:
 
         func, result = await scenario_runner(scenario)
 
-        assert not isinstance(
-            result, Exception
-        ), f"CMA-ES failed with {space_type}: {result}"
+        assert not isinstance(result, Exception), (
+            f"CMA-ES failed with {space_type}: {result}"
+        )
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
@@ -731,9 +731,9 @@ class TestOptunaRandomAlgorithm:
 
         # Random sampling should work with any space (empty may be edge case)
         if space_type != "empty":
-            assert not isinstance(
-                result, Exception
-            ), f"Random failed with {space_type}: {result}"
+            assert not isinstance(result, Exception), (
+                f"Random failed with {space_type}: {result}"
+            )
 
         # Always emit evidence
 

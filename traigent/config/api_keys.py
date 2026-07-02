@@ -7,9 +7,10 @@ This module provides secure API key storage with best practice warnings.
 
 from __future__ import annotations
 
-import os
 import threading
 import warnings
+
+from traigent.config.provider_support import resolve_api_key_from_env
 
 
 class APIKeyManager:
@@ -57,19 +58,17 @@ class APIKeyManager:
         Returns:
             The API key if found, None otherwise
         """
-        # Priority: Environment > Explicitly set > Config file
-        env_names = {
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "cohere": "COHERE_API_KEY",
-            "huggingface": "HF_API_KEY",
-        }
-
-        # Check environment first (most secure)
-        if provider in env_names:
-            env_key = os.getenv(env_names[provider])
-            if env_key:
-                return env_key
+        # Priority: Environment > Explicitly set > Config file.
+        # The env-var chain per provider is derived from the canonical
+        # provider-support table (traigent/config/provider_support.py) so the
+        # key map can no longer drift from the validator's env reading. This is
+        # what gives google (GOOGLE_API_KEY/GEMINI_API_KEY) and mistral
+        # (MISTRAL_API_KEY) first-class key-manager support (#1568) and keeps
+        # the HuggingFace alias chain HF_TOKEN -> HUGGING_FACE_HUB_TOKEN ->
+        # HF_API_KEY intact.
+        env_key = resolve_api_key_from_env(provider)
+        if env_key:
+            return env_key
 
         # Return explicitly set key
         with self._lock:

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
 
+from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import BackendConfig
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 
@@ -23,10 +23,10 @@ class ProjectManagementConfig:
     extra_headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.backend_origin = self.backend_origin.rstrip("/")
-        parsed_origin = urlparse(self.backend_origin)
-        if parsed_origin.scheme not in {"http", "https"} or not parsed_origin.netloc:
-            raise ValueError("backend_origin must be an absolute http or https URL")
+        backend_origin = self.backend_origin.rstrip("/")
+        self.backend_origin = validate_cloud_base_url(
+            backend_origin, purpose="project management request"
+        )
         self.tenant_id = (
             self.tenant_id.strip() or None if self.tenant_id is not None else None
         )

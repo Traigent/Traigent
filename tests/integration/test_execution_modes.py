@@ -133,15 +133,10 @@ class TestExecutionModes:
 
         assert client.execution_mode == ExecutionMode.HYBRID
 
-    def test_cloud_mode_deprecated_resolves_to_edge_analytics(self):
-        """Test that 'cloud' mode (deprecated) emits DeprecationWarning and resolves to edge_analytics."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            client = TraigentClient(execution_mode="cloud", api_key="test_key")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_cloud_mode_deprecated_fails_closed(self):
+        """Test that 'cloud' mode raises before backend initialization."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            TraigentClient(execution_mode="cloud", api_key="test_key")
 
     def test_execution_mode_auto_detection(self):
         """Test automatic execution mode detection.
@@ -185,8 +180,11 @@ class TestExecutionModes:
         assert mode == "edge_analytics"
 
     @pytest.mark.asyncio
-    async def test_metric_submission_batching(self):
+    async def test_metric_submission_batching(self, monkeypatch):
         """Test metric submission batching in optimizer client."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        monkeypatch.setenv("ENVIRONMENT", "development")
         with patch("aiohttp.ClientSession") as MockSession:
             # Setup mock session
             mock_session = AsyncMock()
@@ -195,7 +193,16 @@ class TestExecutionModes:
             mock_response.json = AsyncMock(return_value={"status": "accepted"})
             mock_response.raise_for_status = Mock()
 
-            mock_session.post = AsyncMock(return_value=mock_response)
+            # `session.post(...)` must behave like aiohttp's real API: a
+            # synchronous call returning an async context manager. A bare
+            # AsyncMock here makes `session.post(...)` return a coroutine,
+            # which breaks `async with` and silently routes every call
+            # through the except-and-log error path - masking the actual
+            # request behavior being tested.
+            post_cm = AsyncMock()
+            post_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            post_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_session.post = Mock(return_value=post_cm)
             mock_session.close = AsyncMock()
             MockSession.return_value = mock_session
 
@@ -227,8 +234,14 @@ class TestExecutionModes:
                 # Should trigger batch submission
                 await asyncio.sleep(0.2)
 
-            # Verify batch submission was called
-            assert mock_session.post.called
+            # With batch_size=2, two submissions for the same session should
+            # be flushed together as a single batched POST to the
+            # "/batch" endpoint, carrying both submissions.
+            assert mock_session.post.call_count == 1
+            call_url, call_kwargs = mock_session.post.call_args
+            assert call_url[0] == "http://optimizer:8000/api/v1/metrics/session1/batch"
+            submissions = call_kwargs["json"]["submissions"]
+            assert [s["trial_id"] for s in submissions] == ["trial1", "trial2"]
 
     def test_invalid_mode_raises_configuration_error(self, mock_agent_builder):
         """Test that invalid modes raise ConfigurationError."""

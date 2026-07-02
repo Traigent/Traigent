@@ -12,10 +12,13 @@ from traigent.api.strategy_presets import (
     MAX_ACCURACY_THEN_CHEAPEST,
     PARETO_FRONTIER,
     QUALITY_FLOOR_MIN_COST,
+    VALID_PRESET_NAMES,
+    UnknownStrategyPresetError,
 )
 from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
+from traigent.utils.exceptions import ConfigurationError
 
 
 def _write_environment_tvl_spec(tmp_path: Path) -> Path:
@@ -113,14 +116,15 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_deprecated_cloud_resolves_to_edge_analytics_mode(self):
-        """Deprecated cloud keeps cloud-first policy with edge_analytics compat mode."""
-        import warnings
-
+    def test_execution_bundle_deprecated_cloud_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Deprecated cloud fails closed even when the old env override is set."""
         from traigent.api.decorators import ExecutionOptions
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
+
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -131,11 +135,6 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
-
-        assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.execution_mode == "edge_analytics"
-        assert sample_function.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
         """Direct runtime options should accept hybrid_api_transport."""
@@ -166,8 +165,12 @@ class TestOptimizeDecorator:
                 return x
 
         assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.execution_mode == "edge_analytics"
-        assert any(issubclass(w.category, DeprecationWarning) for w in local_warnings)
+        assert sample_function.execution_mode == "local"
+        # "local" is the PREFERRED client-side value and must NOT warn;
+        # edge_analytics is the deprecated alias.
+        assert not any(
+            issubclass(w.category, DeprecationWarning) for w in local_warnings
+        )
 
         # "standard" is now a deprecated alias (emits DeprecationWarning, resolves to hybrid)
         with warnings.catch_warnings(record=True) as caught:
@@ -193,7 +196,7 @@ class TestOptimizeDecorator:
         """Regression: max_trials from decorator must reach OptimizedFunction.
 
         Bug: max_trials went into combined_settings via record_option but was
-        never extracted, so OptimizedFunction always got the default of 50.
+        never extracted, so OptimizedFunction always got the SDK default.
         """
 
         @optimize(
@@ -207,6 +210,18 @@ class TestOptimizeDecorator:
         assert sample_function.max_trials == 10, (
             f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
         )
+
+    def test_decorator_omitted_max_trials_uses_sdk_default(self):
+        """Omitting max_trials on the decorator should use the shared default."""
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.max_trials == 10
 
     def test_decorator_accepts_algorithm_runtime_default(self):
         """Decorator-level algorithm should become the optimize() default."""
@@ -222,8 +237,8 @@ class TestOptimizeDecorator:
         assert sample_function.algorithm == "grid"
 
     def test_decorator_rejects_unknown_strategy_name(self):
-        """Non-preset strategy values should raise ValueError."""
-        with pytest.raises(ValueError, match="Unknown strategy preset"):
+        """Non-preset strategy values should list valid presets."""
+        with pytest.raises(ValueError) as exc_info:
 
             @optimize(
                 configuration_space={"x": [1, 2]},
@@ -231,6 +246,15 @@ class TestOptimizeDecorator:
             )
             def sample_function(x: int) -> int:
                 return x
+
+        assert isinstance(exc_info.value, UnknownStrategyPresetError)
+        message = str(exc_info.value)
+        assert message == (
+            f"Unknown strategy preset 'grid'. Valid presets: "
+            f"{', '.join(VALID_PRESET_NAMES)}."
+        )
+        for preset_name in VALID_PRESET_NAMES:
+            assert preset_name in message
 
     def test_decorator_accepts_strategy_preset(self):
         """Registered strategy names should configure advisory preset metadata."""
@@ -442,12 +466,13 @@ class TestOptimizeDecorator:
         result = complex_function("test", 10, "extra", key="value")
         assert "test-10-1-1" in result
 
-    def test_decorator_with_cloud_execution_mode_deprecated(self):
-        """Deprecated cloud mode warns and keeps edge_analytics compat mode."""
-        import warnings
+    def test_decorator_with_cloud_execution_mode_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Deprecated cloud mode raises before decorator construction."""
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_CLOUD_EXECUTION_MODE", "1")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 configuration_space={"model": ["claude", "gpt-4"]},
@@ -455,11 +480,6 @@ class TestOptimizeDecorator:
             )
             def ai_function(model: str) -> str:
                 return f"Using {model}"
-
-        assert isinstance(ai_function, OptimizedFunction)
-        assert ai_function.execution_mode == "edge_analytics"
-        assert ai_function.execution_policy.intent.value == "cloud_brain"
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_decorator_accepts_cost_limit_runtime_override(self):
         """cost_limit should be accepted as a runtime override key."""
@@ -934,10 +954,12 @@ class TestOptimizedFunctionIntegration:
             "Decorating function test_func with @traigent.optimize"
         )
 
-        # Check info log for creation (message includes experiment_name)
-        mock_logger.info.assert_called_with(
-            "Created optimizable function: test_func (experiment_name='test_func')"
-        )
+        # Check info log for creation (message includes self-describing experiment_name)
+        info_calls = [str(call) for call in mock_logger.info.call_args_list]
+        assert any(
+            "Created optimizable function: test_func" in c and "experiment_name=" in c
+            for c in info_calls
+        ), f"Expected creation log with experiment_name, got calls: {info_calls}"
 
     def test_decorator_factory_pattern(self):
         """Test that optimize returns a decorator function."""
@@ -1201,14 +1223,23 @@ class TestRemovedDecoratorCompatibilityOptions:
 class TestExperimentName:
     """Tests for experiment_name parameter and TRAIGENT_EXPERIMENT_NAME env var."""
 
-    def test_experiment_name_default_is_func_name(self):
-        """When no experiment_name is passed, experiment_name == func.__name__."""
+    def test_experiment_name_default_is_self_describing(self):
+        """When no experiment_name is passed, the default is self-describing.
+
+        The name must start with the function name and include the objective name
+        and the tuned-variable (knob) name, not just the bare function name.
+        """
 
         @optimize(configuration_space={"x": [1, 2]})
         def my_pipeline(x: int) -> int:
             return x
 
-        assert my_pipeline.experiment_name == "my_pipeline"
+        name = my_pipeline.experiment_name
+        assert name.startswith("my_pipeline["), (
+            f"Expected name to start with 'my_pipeline[', got {name!r}"
+        )
+        assert "accuracy" in name, f"Expected 'accuracy' in name, got {name!r}"
+        assert "x" in name, f"Expected knob 'x' in name, got {name!r}"
 
     def test_experiment_name_override(self):
         """Explicit experiment_name is used instead of func.__name__."""
@@ -1248,14 +1279,17 @@ class TestExperimentName:
         assert my_pipeline.experiment_name == "explicit name"
 
     def test_experiment_name_env_var_cleared(self, monkeypatch):
-        """After env var is removed, falls back to func.__name__."""
+        """After env var is removed, falls back to a self-describing default."""
         monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME", raising=False)
 
         @optimize(configuration_space={"x": [1, 2]})
         def my_pipeline(x: int) -> int:
             return x
 
-        assert my_pipeline.experiment_name == "my_pipeline"
+        name = my_pipeline.experiment_name
+        assert name.startswith("my_pipeline["), (
+            f"Expected self-describing default, got {name!r}"
+        )
 
     def test_experiment_name_stored_on_optimized_function(self):
         """_experiment_name is stored on the OptimizedFunction instance."""
@@ -1269,11 +1303,159 @@ class TestExperimentName:
 
         assert my_func._experiment_name == "stored name"
 
-    def test_experiment_name_none_stores_none(self):
-        """When experiment_name=None (default), _experiment_name is None."""
+    def test_experiment_name_none_stores_self_describing(self):
+        """When experiment_name=None (default), the self-describing default is stored in
+        _default_experiment_name, while _experiment_name stays None so the runtime
+        env-var fallback (TRAIGENT_EXPERIMENT_NAME) is still checked at access time.
+
+        The auto-generated name is self-describing (includes objectives and knobs),
+        not just the bare function name.
+        """
 
         @optimize(configuration_space={"x": [1, 2]})
         def my_func(x: int) -> int:
             return x
 
-        assert my_func._experiment_name is None
+        # _experiment_name must be None — only explicit decorator values go here.
+        assert my_func._experiment_name is None, (
+            f"Expected _experiment_name=None for implicit default, got {my_func._experiment_name!r}"
+        )
+        # The self-describing default lives in _default_experiment_name.
+        assert my_func._default_experiment_name is not None
+        assert my_func._default_experiment_name.startswith("my_func["), (
+            f"Expected self-describing default starting with 'my_func[', got "
+            f"{my_func._default_experiment_name!r}"
+        )
+        # experiment_name property returns the self-describing default (no env var set).
+        assert my_func.experiment_name == my_func._default_experiment_name
+
+    def test_env_var_set_after_decoration_wins_over_default(self, monkeypatch):
+        """TRAIGENT_EXPERIMENT_NAME set AFTER decoration overrides the self-describing default.
+
+        Regression guard for the round-3 finding: in round-2, the self-describing default
+        was baked into _experiment_name at decoration time, so post-decoration env-var
+        changes were silently ignored.  The fix stores the default in _default_experiment_name
+        and keeps _experiment_name=None so the getter checks the env var lazily at each access.
+        """
+        monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME", raising=False)
+
+        @optimize(configuration_space={"x": [1, 2]})
+        def my_func(x: int) -> int:
+            return x
+
+        # No env var yet → self-describing default wins.
+        assert my_func.experiment_name.startswith("my_func["), (
+            f"Without env var, expected self-describing default, got {my_func.experiment_name!r}"
+        )
+
+        # Set env var AFTER decoration — must now win over the precomputed default.
+        monkeypatch.setenv("TRAIGENT_EXPERIMENT_NAME", "env_set_post_decoration")
+        assert my_func.experiment_name == "env_set_post_decoration", (
+            f"Expected env var to win after decoration, got {my_func.experiment_name!r}"
+        )
+
+        # Clear env var again — self-describing default resumes.
+        monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME")
+        assert my_func.experiment_name.startswith("my_func["), (
+            f"After clearing env var, expected self-describing default, got {my_func.experiment_name!r}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # New tests for self-describing default experiment name (#1422).      #
+    # ------------------------------------------------------------------ #
+
+    def test_default_name_includes_objectives_and_knobs(self):
+        """Default name with objectives + configuration_space includes both in the name.
+
+        This is the core requirement of #1422: the name must not be just the bare
+        function name when objectives and knob names are available.
+        """
+
+        @optimize(
+            objectives=["accuracy", "latency"],
+            configuration_space={
+                "model": ["gpt-3.5", "gpt-4"],
+                "temperature": [0.1, 0.9],
+            },
+        )
+        def my_agent(config=None) -> str:
+            return ""
+
+        name = my_agent.experiment_name
+        # Must include both objective names
+        assert "accuracy" in name, f"'accuracy' missing from {name!r}"
+        assert "latency" in name, f"'latency' missing from {name!r}"
+        # Must include at least one tuned-variable name
+        assert "model" in name or "temperature" in name, (
+            f"Expected at least one knob name in {name!r}"
+        )
+        # Must not be just the bare function name
+        assert name != "my_agent", "Default name must not be just the function name"
+
+    def test_explicit_experiment_name_passed_through_unchanged(self):
+        """An explicitly supplied experiment_name is stored verbatim, untouched."""
+
+        explicit = "Amir SQL v2 (F1=0.91, cost=0.003)"
+
+        @optimize(
+            objectives=["accuracy"],
+            configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+            experiment_name=explicit,
+        )
+        def my_pipeline(config=None) -> str:
+            return ""
+
+        assert my_pipeline.experiment_name == explicit
+        assert my_pipeline._experiment_name == explicit
+
+    def test_default_name_is_deterministic(self):
+        """Same decorator arguments always produce the same default experiment name."""
+
+        def make_func():
+            @optimize(
+                objectives=["accuracy"],
+                configuration_space={
+                    "temperature": [0.1, 0.5, 0.9],
+                    "model": ["gpt-4"],
+                },
+            )
+            def deterministic_fn(config=None) -> str:
+                return ""
+
+            return deterministic_fn
+
+        fn1 = make_func()
+        fn2 = make_func()
+        assert fn1.experiment_name == fn2.experiment_name, (
+            f"Default name is non-deterministic: {fn1.experiment_name!r} != {fn2.experiment_name!r}"
+        )
+
+    def test_long_func_name_preserves_objectives_and_knobs(self):
+        """A 130-char function name must never evict objectives or knob names.
+
+        Regression guard for the Codex review finding against #1422: before the
+        fix, a blind right-truncation at 120 chars removed both objective and
+        knob sections entirely when func.__name__ was longer than the cap.
+        The fix truncates only the function-name prefix (with a '~' marker) so
+        the self-describing payload is always visible.
+        """
+        from traigent.api.decorators import (  # noqa: PLC0415
+            _build_default_experiment_name,
+            _resolve_objective_schema,
+        )
+
+        long_name = "x" * 130  # clearly exceeds the 120-char cap on its own
+        schema = _resolve_objective_schema(["accuracy", "latency"])
+        config_space = {"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.9]}
+
+        name = _build_default_experiment_name(long_name, schema, config_space)
+
+        # Objectives must survive the truncation.
+        assert "accuracy" in name, f"'accuracy' missing from {name!r}"
+        assert "latency" in name, f"'latency' missing from {name!r}"
+        # At least one knob name must survive.
+        assert "model" in name or "temperature" in name, (
+            f"Expected at least one knob name in {name!r}"
+        )
+        # Must still respect the hard length cap.
+        assert len(name) <= 120, f"Name exceeds max length: {len(name)} > 120"

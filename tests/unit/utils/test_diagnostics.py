@@ -396,7 +396,7 @@ class TestTraigentDiagnostics:
         assert any(
             "SDK initialized successfully" in s["message"] for s in report.successes
         )
-        mock_initialize.assert_called_once_with(execution_mode="edge_analytics")
+        mock_initialize.assert_called_once_with(execution_mode="local")
 
     @patch("traigent.initialize")
     @patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"})
@@ -439,9 +439,9 @@ class TestTraigentDiagnostics:
         TraigentDiagnostics._check_permissions(report)
 
         # Should succeed for all test paths and exercise write/unlink mocks
-        assert (
-            mock_write.called
-        ), "write_text should have been called to test permissions"
+        assert mock_write.called, (
+            "write_text should have been called to test permissions"
+        )
         assert len(report.successes) >= 1
         assert any("Can write to" in s["message"] for s in report.successes)
 

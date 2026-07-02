@@ -44,7 +44,9 @@ class TestResolveCallbacks:
             callbacks = _resolve_callbacks([existing], None, progress_bar=None)
 
         progress_bars = [cb for cb in callbacks if isinstance(cb, ProgressBarCallback)]
-        table_callbacks = [cb for cb in callbacks if isinstance(cb, ResultsTableCallback)]
+        table_callbacks = [
+            cb for cb in callbacks if isinstance(cb, ResultsTableCallback)
+        ]
         assert len(progress_bars) == 1
         assert progress_bars[0] is existing
         assert table_callbacks == []
@@ -88,7 +90,9 @@ class TestResolveCallbacks:
             callbacks = _resolve_callbacks([existing_table], None, progress_bar=None)
 
         progress_bars = [cb for cb in callbacks if isinstance(cb, ProgressBarCallback)]
-        table_callbacks = [cb for cb in callbacks if isinstance(cb, ResultsTableCallback)]
+        table_callbacks = [
+            cb for cb in callbacks if isinstance(cb, ResultsTableCallback)
+        ]
         assert len(progress_bars) == 1
         assert table_callbacks == []
 

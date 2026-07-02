@@ -467,7 +467,7 @@ def _should_fetch_backend_recommendations() -> bool:
     try:
         if not BackendConfig.get_configured_backend_url():
             return False
-        return BackendConfig.has_auth_credentials()
+        return bool(BackendConfig.has_auth_credentials())
     except Exception:
         return False
 
@@ -477,7 +477,7 @@ def _edge_analytics_env_enabled() -> bool:
         os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").strip().lower(),
         os.getenv("TRAIGENT_EXECUTION_MODE", "").strip().lower(),
     }
-    return bool(values & {"true", "1", "yes", "edge_analytics"})
+    return bool(values & {"true", "1", "yes", "local", "edge_analytics"})
 
 
 _VALID_RANGE_TYPES = frozenset({"Range", "IntRange", "LogRange", "Choices"})

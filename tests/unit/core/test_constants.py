@@ -297,17 +297,18 @@ class TestEdgeCases:
         assert result > 0
 
     def test_constants_not_none(self):
-        """Test that critical constants are not None."""
-        critical_constants = [
-            "DEFAULT_TIMEOUT",
-            "DEFAULT_MODEL",
-            "MAX_RETRIES",
-            "EPSILON",
-        ]
+        """Test that critical constants have their documented values and types."""
+        expected = {
+            "DEFAULT_TIMEOUT": (60.0, float),
+            "DEFAULT_MODEL": ("gpt-4o-mini", str),
+            "MAX_RETRIES": (3, int),
+            "EPSILON": (1e-10, float),
+        }
 
-        for const_name in critical_constants:
+        for const_name, (expected_value, expected_type) in expected.items():
             value = getattr(constants, const_name)
-            assert value is not None
+            assert isinstance(value, expected_type)
+            assert value == expected_value
 
     def test_positive_numeric_constants(self):
         """Test that positive constants are indeed positive."""

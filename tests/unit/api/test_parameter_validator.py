@@ -45,22 +45,17 @@ class TestParameterValidator:
         """Test validation of valid execution modes.
 
         Edge analytics and hybrid are supported mode strings at decorator
-        validation time. Privacy is a legacy alias for hybrid.
+        validation time. Privacy now fails closed instead of normalizing.
         """
         result = self.validator._validate_execution_mode("edge_analytics")
-        assert result is ExecutionMode.EDGE_ANALYTICS
+        assert result is ExecutionMode.LOCAL
         assert self.validator._validate_execution_mode("hybrid") is ExecutionMode.HYBRID
-        with pytest.warns(DeprecationWarning):
-            assert (
-                self.validator._validate_execution_mode("privacy")
-                is ExecutionMode.HYBRID
-            )
+        with pytest.raises(ValidationError, match="fails closed"):
+            self.validator._validate_execution_mode("privacy")
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""
-        # "standard" and "cloud" are now deprecated aliases (emit DeprecationWarning)
-        # rather than hard errors. Only truly unknown strings are invalid.
-        invalid_modes = ["invalid", "remote", "unsupported"]
+        invalid_modes = ["invalid", "remote", "unsupported", "cloud"]
 
         for mode in invalid_modes:
             with pytest.raises(ValidationError) as exc_info:
@@ -319,7 +314,7 @@ class TestValidateOptimizeParameters:
         assert isinstance(result, OptimizeParameters)
         assert result.eval_dataset == "test.jsonl"
         assert result.objectives == ["accuracy"]
-        assert result.execution_mode == "edge_analytics"
+        assert result.execution_mode == "local"
 
     def test_validate_optimize_parameters_with_kwargs(self):
         """Test parameter validation with extra kwargs."""
@@ -362,23 +357,22 @@ class TestParameterValidatorIntegration:
     def test_real_world_parameters(self):
         """Test validation with realistic parameter combinations."""
         # Example from documentation
-        with pytest.warns(DeprecationWarning):
-            params = validate_optimize_parameters(
-                eval_dataset=["qa_test.jsonl", "qa_validation.jsonl"],
-                objectives=["accuracy", "cost", "latency"],
-                configuration_space={
-                    "model": ["gpt-3.5-turbo", "gpt-4"],
-                    "temperature": (0.1, 1.0),
-                    "max_tokens": [100, 500, 1000],
-                },
-                constraints=[lambda config: config.get("temperature", 0) < 0.9],
-                execution_mode="privacy",
-                parallel_config={
-                    "example_concurrency": 5,
-                    "trial_concurrency": 3,
-                },
-                custom_evaluator="my_evaluator",
-            )
+        params = validate_optimize_parameters(
+            eval_dataset=["qa_test.jsonl", "qa_validation.jsonl"],
+            objectives=["accuracy", "cost", "latency"],
+            configuration_space={
+                "model": ["gpt-3.5-turbo", "gpt-4"],
+                "temperature": (0.1, 1.0),
+                "max_tokens": [100, 500, 1000],
+            },
+            constraints=[lambda config: config.get("temperature", 0) < 0.9],
+            algorithm="auto",
+            parallel_config={
+                "example_concurrency": 5,
+                "trial_concurrency": 3,
+            },
+            custom_evaluator="my_evaluator",
+        )
 
         assert len(params.eval_dataset) == 2
         assert len(params.objectives) == 3

@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.hybrid.protocol import (
     BenchmarksResponse,
     ConfigSpaceResponse,
@@ -97,7 +98,7 @@ class HTTPTransport:
                 headers: dict[str, str] = {
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": "Traigent-SDK/1.0",
+                    "User-Agent": get_sdk_user_agent(),
                 }
                 if self._auth_header:
                     headers["Authorization"] = self._auth_header

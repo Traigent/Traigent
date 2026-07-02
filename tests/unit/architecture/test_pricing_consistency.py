@@ -129,9 +129,9 @@ class TestValidatorModelsResolvable:
 
         for alias, canonical in MODEL_NAME_ALIASES.items():
             assert alias in MODEL_COST_PER_1K, f"Missing alias in validator: {alias}"
-            assert (
-                canonical in MODEL_COST_PER_1K
-            ), f"Missing canonical model in validator: {canonical}"
+            assert canonical in MODEL_COST_PER_1K, (
+                f"Missing canonical model in validator: {canonical}"
+            )
             assert MODEL_COST_PER_1K[alias] == pytest.approx(
                 MODEL_COST_PER_1K[canonical]
             )

@@ -2,10 +2,13 @@
 
 import warnings
 
+import pytest
+
 from traigent.api.decorators import ExecutionOptions, optimize
 from traigent.config.types import ExecutionMode
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.utils.exceptions import ConfigurationError
 
 
 def _dataset() -> Dataset:
@@ -21,12 +24,11 @@ def _dataset() -> Dataset:
 
 
 class TestTraigentDecoratorCloudIntegration:
-    """Deprecated cloud mode resolves to edge_analytics; standard mode resolves to hybrid."""
+    """Deprecated cloud fails closed; standard still resolves to hybrid."""
 
-    def test_basic_decorator_with_cloud_mode_deprecated(self):
-        """A cloud request emits DeprecationWarning and resolves to edge_analytics."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+    def test_basic_decorator_with_cloud_mode_fails_closed(self):
+        """A cloud request raises before decorator construction."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 eval_dataset=_dataset(),
@@ -37,14 +39,9 @@ class TestTraigentDecoratorCloudIntegration:
             def answer(question: str) -> str:
                 return question
 
-        assert isinstance(answer, OptimizedFunction)
-        assert answer.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
-
-    def test_execution_bundle_with_cloud_mode_deprecated(self):
-        """ExecutionOptions with cloud emits DeprecationWarning and resolves to edge_analytics."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+    def test_execution_bundle_with_cloud_mode_fails_closed(self):
+        """ExecutionOptions with cloud raises before decorator construction."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
             @optimize(
                 eval_dataset=_dataset(),
@@ -57,10 +54,6 @@ class TestTraigentDecoratorCloudIntegration:
             )
             def answer(question: str) -> str:
                 return question
-
-        assert isinstance(answer, OptimizedFunction)
-        assert answer.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_standard_mode_deprecated_resolves_to_hybrid(self):
         """The deprecated standard mode resolves to hybrid with DeprecationWarning."""
@@ -80,22 +73,18 @@ class TestTraigentDecoratorCloudIntegration:
         assert answer.execution_mode == ExecutionMode.HYBRID.value
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_privacy_alias_maps_to_hybrid_with_privacy_enabled(self):
-        """Privacy remains a compatibility alias for hybrid."""
+    def test_privacy_alias_fails_closed(self):
+        """Privacy raises before decorator construction."""
+        with pytest.raises(ConfigurationError, match="fails closed"):
 
-        @optimize(
-            eval_dataset=_dataset(),
-            objectives=["accuracy"],
-            configuration_space={"model": ["gpt-4o-mini"]},
-            execution_mode="privacy",
-        )
-        def answer(question: str) -> str:
-            return question
-
-        assert isinstance(answer, OptimizedFunction)
-        assert answer.execution_mode == ExecutionMode.HYBRID.value
-        assert answer._effective_execution_mode is ExecutionMode.HYBRID
-        assert answer.privacy_enabled is True
+            @optimize(
+                eval_dataset=_dataset(),
+                objectives=["accuracy"],
+                configuration_space={"model": ["gpt-4o-mini"]},
+                execution_mode="privacy",
+            )
+            def answer(question: str) -> str:
+                return question
 
     def test_hybrid_mode_still_constructs(self):
         """Hybrid is the supported portal-tracked local mode."""

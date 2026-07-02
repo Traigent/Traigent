@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -560,6 +561,61 @@ def test_decorator_best_config_strict_rejects_invalid_repo_spec(tmp_path, monkey
         )(context_answer)
 
 
+def test_decorator_rejects_safety_sensitive_drift_even_when_not_strict(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    write_repo_best_config(
+        tmp_path / ".traigent" / "best-configs",
+        config_id="strict-answerer",
+        config={"temperature": 0.4},
+        function_ref=function_ref_for(context_answer),
+    )
+
+    with pytest.raises(ConfigurationError, match="safety-sensitive"):
+        optimize(
+            configuration_space={"quality": ["baseline"]},
+            config_id="strict-answerer",
+            best_config_source="repo",
+            best_config_strict=False,
+            default_config={"quality": "baseline"},
+        )(context_answer)
+
+
+def test_decorator_non_safety_drift_still_falls_back_when_not_strict(
+    tmp_path, monkeypatch, caplog
+):
+    monkeypatch.chdir(tmp_path)
+    write_repo_best_config(
+        tmp_path / ".traigent" / "best-configs",
+        config_id="relaxed-answerer",
+        config={"display_label": "fast"},
+        function_ref=function_ref_for(context_answer),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        wrapped = optimize(
+            configuration_space={"quality": ["baseline"]},
+            config_id="relaxed-answerer",
+            best_config_source="repo",
+            best_config_strict=False,
+            default_config={"quality": "baseline"},
+        )(context_answer)
+
+    assert wrapped.current_config == {"quality": "baseline"}
+    assert wrapped.best_config_snapshot.source == BestConfigSource.DEFAULT.value
+    assert "Ignoring repo best config relaxed-answerer" in caplog.text
+
+    with pytest.raises(ConfigurationError, match="Unknown best config keys"):
+        optimize(
+            configuration_space={"quality": ["baseline"]},
+            config_id="relaxed-answerer",
+            best_config_source="repo",
+            best_config_strict=True,
+            default_config={"quality": "baseline"},
+        )(context_answer)
+
+
 def test_decorator_enable_auto_load_dev_logs_reads_latest_config(tmp_path):
     artifacts_dir = (
         tmp_path
@@ -744,7 +800,7 @@ async def test_optimization_completion_refreshes_best_config_snapshot():
 
     class RuntimeConfig:
         @staticmethod
-        def is_edge_analytics_mode():
+        def is_local_mode():
             return False
 
     opt_func.traigent_config = RuntimeConfig()

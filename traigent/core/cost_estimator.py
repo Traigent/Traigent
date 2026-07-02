@@ -11,6 +11,7 @@ from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
 from traigent.utils.env_config import is_mock_llm
+from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -192,13 +193,16 @@ class CostEstimator:
         """Check cost approval before optimization.
 
         Estimates the total optimization cost and checks against the cost
-        enforcer's configured limit. Raises OptimizationAborted if declined.
+        enforcer's configured limit. If the pre-run approval is declined,
+        raises ``CostLimitExceeded`` (an ``OptimizationError`` subclass) with
+        the limit, spent amount, and estimate. Mid-run cost limits remain a
+        graceful stop: inspect ``OptimizationResult.stop_reason == "cost_limit"``.
 
         Args:
             dataset: The evaluation dataset for cost estimation
 
         Raises:
-            OptimizationAborted: If cost approval is declined
+            CostLimitExceeded: If pre-run cost approval is declined.
         """
         if is_mock_llm():
             logger.info(
@@ -209,19 +213,23 @@ class CostEstimator:
 
         estimated_cost = self.estimate_optimization_cost(dataset)
         if not self._cost_enforcer.check_and_approve(estimated_cost):
-            from traigent.core.cost_enforcement import OptimizationAborted
-
-            raise OptimizationAborted(
-                "Cost approval declined. Rough conservative upper-bound "
-                f"estimate: ${estimated_cost:.2f}, limit: "
-                f"${self._cost_enforcer.config.limit:.2f}. "
-                "Pre-run estimates use fixed token assumptions and conservative "
-                "fallback pricing when model pricing is unavailable. To proceed, "
-                "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
-                "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
-                "private/unpriced model rates with "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+            limit = self._cost_enforcer.config.limit
+            raise CostLimitExceeded(
+                accumulated=0.0,
+                limit=limit,
+                estimated=estimated_cost,
+                message=(
+                    "Cost approval declined. Rough conservative upper-bound "
+                    f"estimate: ${estimated_cost:.2f}, limit: "
+                    f"${limit:.2f}. "
+                    "Pre-run estimates use fixed token assumptions and conservative "
+                    "fallback pricing when model pricing is unavailable. To proceed, "
+                    "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
+                    "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
+                    "private/unpriced model rates with "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+                ),
             )
 
     def estimate_optimization_cost(self, dataset: Dataset) -> float:
@@ -231,7 +239,7 @@ class CostEstimator:
         - Estimates total samples based on configuration and dataset size
         - Uses max_total_examples if configured (shared budget across trials)
         - Otherwise estimates samples_per_trial x max_trials
-        - Includes retry factor (1.2x) for potential failures
+        - Applies a flat 1.2x conservative buffer to the estimate
         - Uses conservative estimates for unknown models
 
         Note: This is an ESTIMATE. Actual costs may vary significantly.
@@ -266,13 +274,15 @@ class CostEstimator:
             total_samples = max_trials * samples_per_trial
             estimation_mode = "per_trial_full_dataset"
 
-        # Total cost with retry factor for failures and potential re-evaluations
+        # Apply a flat conservative buffer. The optimizer eval path invokes
+        # invoker.invoke() directly today, so this does not model automatic
+        # per-example retries in the default evaluation loop.
         retry_factor = 1.2
         estimated_total = total_samples * base_cost_per_example * retry_factor
 
         logger.debug(
             f"Cost estimate ({estimation_mode}): {total_samples} total samples "
-            f"× ${base_cost_per_example}/sample × {retry_factor} retry = ${estimated_total:.2f} "
+            f"× ${base_cost_per_example}/sample × {retry_factor} buffer = ${estimated_total:.2f} "
             f"(pricing_source={pricing_source})"
         )
 

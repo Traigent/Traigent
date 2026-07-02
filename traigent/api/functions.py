@@ -19,7 +19,7 @@ from traigent.config.parallel import (
     coerce_parallel_config,
     merge_parallel_configs,
 )
-from traigent.config.types import TraigentConfig
+from traigent.config.types import TraigentConfig, validate_execution_mode
 from traigent.optimizers import list_optimizers
 from traigent.optimizers.registry import _is_smart_algorithm
 from traigent.utils.exceptions import (
@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 
 # Global configuration
 _GLOBAL_CONFIG: dict[str, Any] = {
-    "default_storage_backend": "edge_analytics",
+    "default_storage_backend": "local",
     "parallel_workers": 1,
     "cache_policy": "memory",
     "logging_level": "INFO",
@@ -48,6 +48,27 @@ _GLOBAL_CONFIG: dict[str, Any] = {
 
 if TYPE_CHECKING:
     from traigent.core.objectives import ObjectiveSchema
+
+
+__all__ = [
+    "configure",
+    "initialize",
+    "get_global_config",
+    "get_api_key",
+    "get_config",
+    "get_trial_config",
+    "get_current_config",
+    "override_config",
+    "configure_for_budget",
+    "set_strategy",
+    "get_available_strategies",
+    "list_recommendation_agent_types",
+    "recommend_configuration_space",
+    "get_version_info",
+    "get_optimization_insights",
+    "get_global_parallel_config",
+    "with_usage",
+]
 
 
 def configure(
@@ -63,7 +84,7 @@ def configure(
     """Configure global Traigent SDK settings.
 
     Args:
-        default_storage_backend: Default storage ("edge_analytics", "s3", "gcs")
+        default_storage_backend: Default storage ("local", "s3", "gcs")
         parallel_workers: Default number of parallel workers
         cache_policy: Cache policy ("memory", "disk", "distributed")
         logging_level: Logging verbosity ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -193,7 +214,7 @@ def initialize(  # noqa: C901
 
         # Edge Analytics mode initialization (backend URL from env or config)
         # Set TRAIGENT_API_KEY environment variable for security
-        config = traigent.TraigentConfig.edge_analytics_mode()
+        config = traigent.TraigentConfig.local_mode()
         traigent.initialize(config=config)
 
         # Cloud mode with explicit URL
@@ -273,7 +294,7 @@ def _apply_config_settings(config: TraigentConfig) -> None:
         _GLOBAL_CONFIG["auto_sync"] = config.auto_sync
 
     _GLOBAL_CONFIG["default_storage_backend"] = (
-        "edge_analytics" if config.is_edge_analytics_mode() else "cloud"
+        "local" if config.is_local_mode() else "cloud"
     )
 
     logger.info(f"Traigent configured for {config.execution_mode} mode")
@@ -283,6 +304,8 @@ def _apply_additional_overrides(overrides: dict[str, Any]) -> None:
     """Merge arbitrary keyword overrides into the global configuration."""
 
     for key, value in overrides.items():
+        if key == "execution_mode" and value is not None:
+            value = validate_execution_mode(value).value
         _GLOBAL_CONFIG[key] = value
 
 
@@ -860,7 +883,7 @@ def list_recommendation_agent_types() -> tuple[str, ...]:
         list_recommendation_agent_types as _list_recommendation_agent_types,
     )
 
-    return _list_recommendation_agent_types()
+    return cast(tuple[str, ...], _list_recommendation_agent_types())
 
 
 def recommend_configuration_space(
@@ -895,10 +918,13 @@ def recommend_configuration_space(
         recommend_configuration_space as _recommend_configuration_space,
     )
 
-    return _recommend_configuration_space(
-        agent_type,
-        min_impact=min_impact,
-        min_confidence=min_confidence,
+    return cast(
+        dict[str, Any],
+        _recommend_configuration_space(
+            agent_type,
+            min_impact=min_impact,
+            min_confidence=min_confidence,
+        ),
     )
 
 

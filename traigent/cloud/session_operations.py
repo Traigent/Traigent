@@ -33,6 +33,7 @@ from traigent.cloud.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
 )
+from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
@@ -71,6 +72,68 @@ def _get_session_creation_failure_detail(
     return None
 
 
+# Transient signals: the SDK could not REACH/validate the backend (the auth
+# layer fails closed on these for safety, but the run should still degrade
+# gracefully as it did before, not hard-fail).
+_AUTH_TRANSIENT_MARKERS = (
+    "timed out",
+    "timeout",
+    "transport error",
+    "rate limited",
+    "temporarily unavailable",
+    "service unavailable",
+    "connection",
+)
+# Definitive signals: the backend REJECTED the credential (user-actionable;
+# fix the key). Only these fail closed.
+_AUTH_REJECTION_MARKERS = (
+    "unauthorized",
+    "invalid api key",
+    "invalid_api_key",
+    "api_key_validation_failed",
+    "reported key invalid",
+    "revoked",
+    "forbidden",
+    "expired",
+    "permission",
+)
+
+
+def _is_definitive_auth_rejection(exc: Exception) -> bool:
+    """True only when an auth failure is a DEFINITIVE credential rejection.
+
+    A configured key that the backend rejected (invalid / revoked / expired /
+    unauthorized / forbidden — typically 401/403) is user-actionable and must
+    fail closed. A transient inability to validate the key (timeout / transport
+    error / 5xx / 429 during ``/keys/validate``) is NOT a rejection: the auth
+    layer fails closed on it for safety, but the optimization run should still
+    degrade gracefully (as before), not hard-fail. Ambiguous errors default to
+    NOT a rejection, preserving the prior resilient fallback.
+    """
+    # Primary source: the real session API attaches the HTTP status on the
+    # structured failure detail (api_operations._handle_session_error maps a
+    # 401/403 to AuthenticationError with exc.session_creation_failure). A bare
+    # exc.status_code is a secondary source.
+    detail = getattr(exc, "session_creation_failure", None)
+    detail_status = getattr(detail, "status_code", None)
+    if isinstance(detail_status, int) and detail_status in (401, 403):
+        return True
+    if isinstance(detail_status, int) and (
+        detail_status == 429 or detail_status >= 500
+    ):
+        return False
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        if status in (401, 403):
+            return True
+        if status == 429 or status >= 500:
+            return False
+    msg = str(exc).lower()
+    if any(marker in msg for marker in _AUTH_TRANSIENT_MARKERS):
+        return False
+    return any(marker in msg for marker in _AUTH_REJECTION_MARKERS)
+
+
 class SessionOperations:
     """Handles session management operations."""
 
@@ -97,9 +160,68 @@ class SessionOperations:
         """Validate that an integer is positive."""
         validate_or_raise(CoreValidators.validate_positive_int(value, field_name))
 
+    @staticmethod
+    def _config_value_contains_bool(value: Any) -> bool:
+        """Return True if a configuration_space value contains boolean(s).
+
+        Handles all supported parameter shapes:
+          - scalar bool: ``True`` / ``False``
+          - list/tuple of values containing a bool: ``[True, False]``
+          - typed/structured dict whose ``choices`` or ``values`` list contains a
+            bool: ``{"type": "categorical", "choices": [True, False]}``
+
+        Note: ``bool`` is a subclass of ``int`` in Python.  We use
+        ``type(v) is bool`` so plain ints/floats (including 0/1) are NOT
+        rejected — only literal ``True``/``False`` values.
+        """
+        if type(value) is bool:
+            return True
+        if isinstance(value, (list, tuple)):
+            return any(type(v) is bool for v in value)
+        if isinstance(value, dict):
+            for key in ("choices", "values"):
+                seq = value.get(key)
+                if isinstance(seq, (list, tuple)) and any(type(v) is bool for v in seq):
+                    return True
+        return False
+
+    @staticmethod
+    def _validate_configuration_space_no_bools(
+        space: dict[str, Any], field_name: str
+    ) -> None:
+        """Raise ValidationException when a parameter contains boolean values.
+
+        The cloud session API rejects boolean knobs with a generic HTTP 400
+        VALIDATION_ERROR that names no field.  Catching the problem client-side
+        gives a clear, actionable error before any network round-trip.
+
+        Catches booleans in ALL supported configuration_space value shapes:
+          - scalar bool: ``{"flag": True}``
+          - list/tuple of values: ``{"flag": [True, False]}``
+          - typed param dict: ``{"flag": {"type": "categorical", "choices": [True, False]}}``
+
+        Note: ``bool`` is a subclass of ``int`` in Python.  We use
+        ``type(v) is bool`` (not ``isinstance``) so plain ints and floats such
+        as 0/1 are NOT rejected — only literal ``True``/``False`` values.
+        """
+        offending = [
+            key
+            for key, value in space.items()
+            if SessionOperations._config_value_contains_bool(value)
+        ]
+        if offending:
+            field_refs = ", ".join(f'"{k}"' for k in offending)
+            raise ValidationException(
+                f"{field_name}[{field_refs}]: boolean values are not supported "
+                f"by the cloud session API — encode as strings "
+                f'(e.g. "true"/"false") or 0/1'
+            )
+
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
 
+        if getattr(self.client, "_url_invalid", False) is True:
+            raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(
             operation,
             no_egress=getattr(self.client, "no_egress", False),
@@ -246,7 +368,7 @@ class SessionOperations:
                     },
                 )
                 logger.debug("Created local fallback session: %s", session_id)
-                return session_id
+                return cast(str, session_id)
             except Exception as storage_e:
                 logger.debug("Local storage fallback failed: %s", storage_e)
 
@@ -319,6 +441,54 @@ class SessionOperations:
                 storage_e,
             )
 
+    def _auth_fallback_result(
+        self,
+        exc: Exception,
+        fallback_id: str,
+        detail: str,
+        failure_response: SessionCreationFailureDetail | None,
+        function_name: str,
+        intends_cloud_egress: bool,
+    ) -> SessionCreationResult:
+        """Build the fallback result for a non-fail-loud AuthenticationError.
+
+        A run that INTENDS cloud egress but hit a non-definitive auth failure
+        (could-not-validate / transient) takes the UNREACHABLE contract: degrade
+        to LOCAL but FLAG it (degraded=True + SESSION_FAILED + WARN) so it is
+        never mistaken for a managed run. A LOCAL-routed run only ever wanted
+        OPTIONAL backend tracking, so a rejected/invalid key is irrelevant: it
+        continues untracked locally (degraded=False) — intentional local
+        execution, NOT a downgrade (#1421).
+        """
+        if intends_cloud_egress:
+            logger.warning(
+                "Managed session creation failed (could not validate credentials "
+                "— backend unreachable) for '%s'; degrading to LOCAL execution — "
+                "results are NOT tracked on the backend (set offline=True to make "
+                "this explicit): %s",
+                function_name,
+                exc,
+            )
+            return SessionCreationResult.fallback(
+                session_id=fallback_id,
+                reason=SessionCreationFailureReason.SESSION_FAILED,
+                detail=detail,
+                failure_response=failure_response,
+                degraded=True,
+            )
+        logger.warning(
+            "Backend tracking unavailable (auth) for local run '%s'; continuing "
+            "untracked locally: %s",
+            function_name,
+            exc,
+        )
+        return SessionCreationResult.fallback(
+            session_id=fallback_id,
+            reason=SessionCreationFailureReason.AUTH,
+            detail=detail,
+            failure_response=failure_response,
+        )
+
     def create_session(
         self,
         function_name: str,
@@ -328,6 +498,11 @@ class SessionOperations:
         objectives: list[Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
+        warm_start_from: str | None = None,
+        smart_pruning: dict[str, Any] | None = None,
+        artifact_fingerprints: dict[str, str | None] | None = None,
+        fingerprint_meta: dict[str, Any] | None = None,
+        cost_limit: float | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -345,9 +520,11 @@ class SessionOperations:
         """
         self._validate_non_empty_string(function_name, "function_name")
         self._validate_mapping(search_space, "search_space")
+        self._validate_configuration_space_no_bools(search_space, "configuration_space")
         self._validate_non_empty_string(optimization_goal, "optimization_goal")
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
+        normalized_smart_pruning = normalize_smart_pruning_options(smart_pruning)
 
         # Phase 8 (review round 2): the local-availability fallback is for
         # NON-governed sessions only. A governed/strict session that cannot
@@ -356,7 +533,32 @@ class SessionOperations:
         # misconfiguration, and old-BE typed rejection as success.
         governed = bool(promotion_policy or tvl_governance)
 
+        # Does this run actually INTEND cloud egress (managed / auto-cloud)? The
+        # backend session manager sets this from the runtime-resolved execution
+        # policy before calling us (mirrors the existing ``no_egress`` flag). A
+        # LOCAL-routed run (algorithm grid/random, offline, or runtime-resolved
+        # -to-local) creates a backend session only for OPTIONAL tracking — a
+        # configured-but-invalid/rejected key is irrelevant to it and must NOT
+        # hard-fail the local optimization. Default True keeps fail-closed for
+        # direct callers that do not declare intent. (#1421 regression.)
+        intends_cloud_egress = bool(getattr(self.client, "cloud_egress_intent", True))
+
         def _must_fail_loud(exc: Exception) -> bool:
+            # A DEFINITIVELY rejected credential (invalid / revoked / expired /
+            # unauthorized — a key WAS configured; the no-key path returns
+            # NO_API_KEY before any HTTP) is a user-actionable error on a run
+            # that INTENDS cloud egress: silently degrading such a managed run
+            # to a local/anonymous one would change execution semantics (managed
+            # Bayesian -> local search), drop the backend/billing/governance
+            # record, and present the degraded run as success — so fail closed.
+            # On a LOCAL-routed run the same rejected key is irrelevant (zero
+            # cloud egress), so do NOT fail loud. A *transient* failure to
+            # reach/validate the backend is never a rejection and still degrades
+            # gracefully (see _is_definitive_auth_rejection).
+            if isinstance(exc, AuthenticationError):
+                return governed or (
+                    intends_cloud_egress and _is_definitive_auth_rejection(exc)
+                )
             return governed or isinstance(
                 exc, (CloudEgressBlockedError, SessionContractError)
             )
@@ -422,6 +624,16 @@ class SessionOperations:
                     f"Using max_trials from metadata: {max_trials_from_metadata}"
                 )
 
+            # Server-side cost cap (defense-in-depth alongside the client-side
+            # CostEnforcer): only arm it when the user actually set a positive
+            # cost_limit — an unset/zero/negative limit must stay uncapped on
+            # the wire exactly as it is uncapped locally.
+            budget = (
+                {"max_cost_usd": float(cost_limit)}
+                if cost_limit is not None and float(cost_limit) > 0
+                else None
+            )
+
             session_request = SessionCreationRequest(
                 function_name=function_name,
                 configuration_space=search_space,
@@ -430,6 +642,8 @@ class SessionOperations:
                 # fallback when the caller supplied none (legacy shape keeps
                 # reading objectives[0] as its optimization_goal).
                 objectives=list(objectives) if objectives else [optimization_goal],
+                warm_start_from=warm_start_from or None,
+                smart_pruning=normalized_smart_pruning,
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
                     # Carry the dataset label (content is not submitted) so the
@@ -438,12 +652,15 @@ class SessionOperations:
                     "privacy_mode": True,
                 },
                 max_trials=max_trials_from_metadata,
+                budget=budget,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
                 optimization_strategy={"mode": "local_execution"},
                 user_id=None,  # Privacy preserving
                 billing_tier="privacy",
                 metadata=metadata or {},
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
             )
 
             try:
@@ -570,27 +787,40 @@ class SessionOperations:
                 await self._reset_client_session("create_session auth_failure")
                 if _must_fail_loud(e):
                     raise
-                logger.debug("Backend auth failed for '%s': %s", function_name, e)
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
                 )
-                return SessionCreationResult.fallback(
-                    session_id=fallback_id,
-                    reason=SessionCreationFailureReason.AUTH,
-                    detail=(
-                        failure_response.one_line_summary()
-                        if failure_response
-                        else str(e)[:200]
-                    ),
-                    failure_response=failure_response,
+                detail = (
+                    failure_response.one_line_summary()
+                    if failure_response
+                    else str(e)[:200]
+                )
+                return self._auth_fallback_result(
+                    e,
+                    fallback_id,
+                    detail,
+                    failure_response,
+                    function_name,
+                    intends_cloud_egress,
                 )
 
             except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
                 if _must_fail_loud(e):
                     raise
-                logger.debug("Backend unavailable for '%s': %s", function_name, e)
+                # A configured key intended a managed/cloud run, but the backend
+                # was unreachable. We degrade to LOCAL execution for resilience —
+                # but this is a DOWNGRADE (managed search/tracking is lost), so
+                # surface it at WARNING and flag degraded=True on the result so a
+                # caller never mistakes the local run for a managed one.
+                logger.warning(
+                    "Managed session creation failed (backend unreachable) for "
+                    "'%s'; degrading to LOCAL execution — results are NOT tracked "
+                    "on the backend (set offline=True to make this explicit): %s",
+                    function_name,
+                    e,
+                )
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
                     function_name, search_space, optimization_goal, metadata
@@ -605,6 +835,10 @@ class SessionOperations:
                     reason=SessionCreationFailureReason.SESSION_FAILED,
                     detail=detail,
                     failure_response=failure_response,
+                    typed_legacy_session_create_400=bool(
+                        getattr(e, "typed_legacy_session_create_400", False)
+                    ),
+                    degraded=True,
                 )
 
         # Run async method in sync context
@@ -633,31 +867,41 @@ class SessionOperations:
         except AuthenticationError as exc:
             if _must_fail_loud(exc):
                 raise
-            logger.debug(
-                "Backend auth failed for '%s': %s",
-                function_name,
-                exc,
-            )
+            # Issue #1373 "outer create_session swallow": an auth failure that
+            # ESCAPES _create_session_async (e.g. the has_api_key preflight or
+            # the async-runner machinery). A DEFINITIVE rejection on a cloud-
+            # intended run fails loud above. Reaching here is a non-definitive
+            # auth failure OR a LOCAL-routed run — both handled by the shared
+            # helper (cloud-intent: degrade+flag; local: continue untracked).
+            # The two auth sites are mutually exclusive per failure.
             failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
                 function_name, search_space, optimization_goal, metadata
             )
-            return SessionCreationResult.fallback(
-                session_id=fallback_id,
-                reason=SessionCreationFailureReason.AUTH,
-                detail=(
-                    failure_response.one_line_summary()
-                    if failure_response
-                    else str(exc)[:200]
-                ),
-                failure_response=failure_response,
+            detail = (
+                failure_response.one_line_summary()
+                if failure_response
+                else str(exc)[:200]
+            )
+            return self._auth_fallback_result(
+                exc,
+                fallback_id,
+                detail,
+                failure_response,
+                function_name,
+                intends_cloud_egress,
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
             if _must_fail_loud(exc):
                 raise
-            logger.debug(
-                "Error in create_session for function '%s': %s",
+            # Backend unreachable on the outer path — same downgrade semantics as
+            # the inner sibling: WARN + flag degraded so the local run is never
+            # mistaken for a managed one.
+            logger.warning(
+                "Managed session creation failed (backend unreachable) for '%s'; "
+                "degrading to LOCAL execution — results are NOT tracked on the "
+                "backend (set offline=True to make this explicit): %s",
                 function_name,
                 exc,
             )
@@ -675,6 +919,7 @@ class SessionOperations:
                 reason=SessionCreationFailureReason.SESSION_FAILED,
                 detail=detail,
                 failure_response=failure_response,
+                degraded=True,
             )
 
         except Exception as exc:
@@ -684,8 +929,11 @@ class SessionOperations:
             # governed/contract failures, which must stay loud.
             if _must_fail_loud(exc):
                 raise
-            logger.debug(
-                "Unexpected error in create_session for function '%s': %s",
+            # An unexpected error that degrades a managed run to local is still a
+            # downgrade — surface at WARNING and flag degraded (was debug-only).
+            logger.warning(
+                "Unexpected error in create_session for '%s'; degrading to LOCAL "
+                "execution — results are NOT tracked on the backend: %s",
                 function_name,
                 exc,
             )
@@ -696,6 +944,7 @@ class SessionOperations:
                 session_id=fallback_id,
                 reason=SessionCreationFailureReason.SESSION_FAILED,
                 detail=str(exc)[:200],
+                degraded=True,
             )
 
     async def create_hybrid_session(
@@ -1016,6 +1265,12 @@ class SessionOperations:
         backend_stop_reason = backend_summary.get("stop_reason")
         backend_convergence_history = backend_summary.get("convergence_history")
         backend_full_history = backend_summary.get("full_history")
+        backend_metadata = backend_summary.get("metadata")
+        backend_warm_start_transfer = (
+            backend_metadata.get("warm_start_transfer")
+            if isinstance(backend_metadata, dict)
+            else None
+        )
 
         summary_fields: list[str] = []
 
@@ -1116,6 +1371,14 @@ class SessionOperations:
                 # before treating best_config/best_metrics as authoritative.
                 "summary_available": summary_available,
                 "summary_fields": summary_fields,
+                # Pass the backend's opaque, IP-safe warm-start transfer block
+                # (transfer_mode / refused_reason / search_space_overlap / ...)
+                # through so the SDK can surface result.metadata.warm_start_transfer.
+                **(
+                    {"warm_start_transfer": backend_warm_start_transfer}
+                    if isinstance(backend_warm_start_transfer, dict)
+                    else {}
+                ),
             },
         )
 
@@ -1340,7 +1603,9 @@ class SessionOperations:
     def get_active_sessions(self) -> dict[str, OptimizationSession]:
         """Get all active optimization sessions."""
         with self.client._active_sessions_lock:
-            return self.client._active_sessions.copy()
+            return cast(
+                dict[str, OptimizationSession], self.client._active_sessions.copy()
+            )
 
     def get_session_mapping(self, session_id: str) -> SessionExperimentMapping | None:
         """Get session to experiment mapping."""

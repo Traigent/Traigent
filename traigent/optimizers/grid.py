@@ -5,15 +5,18 @@
 from __future__ import annotations
 
 import itertools
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from traigent.api.types import TrialResult
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils.discrete_domains import discrete_values_for_config_param
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_MAX_GRID_COMBINATIONS = 100_000
 
 
 class GridSearchOptimizer(BaseOptimizer):
@@ -99,11 +102,15 @@ class GridSearchOptimizer(BaseOptimizer):
         order_spec = kwargs.get("parameter_order")
         if order_spec is None:
             order_spec = kwargs.get("order")
+        self._max_grid_combinations = int(
+            kwargs.get("max_grid_combinations", DEFAULT_MAX_GRID_COMBINATIONS)
+        )
 
         super().__init__(config_space, objectives, context, objective_weights, **kwargs)
 
         self._parameter_order = self._normalize_parameter_order(order_spec)
         self._ordered_param_names = self._resolve_parameter_names()
+        self._guard_grid_cardinality()
 
         # Generate all parameter combinations
         self._grid_points = self._generate_grid()
@@ -124,13 +131,24 @@ class GridSearchOptimizer(BaseOptimizer):
             raise OptimizationError("No valid parameter combinations found")
 
         param_names = self._ordered_param_names.copy()
-        param_values = []
+        param_values: list[Sequence[Any]] = []
         for param_name in param_names:
             param_def = self.config_space[param_name]
 
             if isinstance(param_def, list):
                 # Categorical parameter
                 param_values.append(param_def)
+            elif isinstance(param_def, dict):
+                values = discrete_values_for_config_param(param_def)
+                if values is None:
+                    raise OptimizationError(
+                        f"Grid search cannot optimize continuous parameter '{param_name}' "
+                        f"with range {param_def}. Grid search requires discrete values "
+                        "to enumerate. Options: (1) provide a step for the range, "
+                        "(2) use a list of discrete values, (3) use 'random' optimizer "
+                        "instead for continuous ranges"
+                    )
+                param_values.append(values)
             elif isinstance(param_def, tuple) and len(param_def) == 2:
                 # Continuous parameter - not directly supported in basic grid search
                 low, high = param_def
@@ -151,12 +169,10 @@ class GridSearchOptimizer(BaseOptimizer):
                 # Single value (fixed parameter)
                 param_values.append([param_def])
 
-        # Generate cartesian product
-        combinations = list(itertools.product(*param_values))
-
-        # Convert to list of dictionaries
+        # Convert cartesian product to dictionaries without materializing a second
+        # list of raw tuples.
         grid_points = []
-        for combination in combinations:
+        for combination in itertools.product(*param_values):
             config = dict(zip(param_names, combination, strict=False))
             grid_points.append(config)
 
@@ -164,6 +180,25 @@ class GridSearchOptimizer(BaseOptimizer):
             raise OptimizationError("No valid parameter combinations found")
 
         return grid_points
+
+    def _guard_grid_cardinality(self) -> None:
+        """Fail fast before constructing an unsafe grid."""
+
+        if self._max_grid_combinations <= 0:
+            raise OptimizationError(
+                "max_grid_combinations must be a positive integer for grid search"
+            )
+
+        cardinality = self.config_space_cardinality
+        if cardinality is None or cardinality <= self._max_grid_combinations:
+            return
+
+        raise OptimizationError(
+            "Grid search would enumerate "
+            f"{cardinality} combinations, exceeding the safety cap of "
+            f"{self._max_grid_combinations}. Reduce the configuration space or "
+            "use algorithm='random' with max_trials for large discrete spaces."
+        )
 
     def _normalize_parameter_order(
         self, order_spec: Mapping[str, Any] | None
@@ -242,10 +277,18 @@ class GridSearchOptimizer(BaseOptimizer):
         if not metrics:
             return 0.0
 
-        # Use scalarize_objectives for weighted scoring
+        # Use scalarize_objectives for weighted scoring, honoring objective
+        # orientation so minimize objectives (cost/latency/error) lower the
+        # composite instead of raising it (#1466).
         from traigent.utils.multi_objective import scalarize_objectives
 
-        return scalarize_objectives(metrics, self.objective_weights)
+        return float(
+            scalarize_objectives(
+                metrics,
+                self.objective_weights,
+                minimize_objectives=self._minimize_objectives,
+            )
+        )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate.

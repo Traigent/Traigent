@@ -85,7 +85,9 @@ def test_write_summary_markdown_writes_guarded_summary(tmp_path: Path) -> None:
     assert summary.is_relative_to(gate_results.resolve())
 
 
-def test_write_inventories_writes_guarded_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_inventories_writes_guarded_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     module = _load_release_gate_runner_module()
     run_dir = tmp_path / "run-1"
     inventories = run_dir / "inventories"
@@ -94,8 +96,12 @@ def test_write_inventories_writes_guarded_files(tmp_path: Path, monkeypatch: pyt
     project_dir = tmp_path / "project"
     (project_dir / "traigent").mkdir(parents=True)
     (project_dir / "tests").mkdir(parents=True)
-    (project_dir / "traigent" / "sample.py").write_text("print('src')\n", encoding="utf-8")
-    (project_dir / "tests" / "test_sample.py").write_text("def test_sample():\n    pass\n", encoding="utf-8")
+    (project_dir / "traigent" / "sample.py").write_text(
+        "print('src')\n", encoding="utf-8"
+    )
+    (project_dir / "tests" / "test_sample.py").write_text(
+        "def test_sample():\n    pass\n", encoding="utf-8"
+    )
 
     monkeypatch.chdir(project_dir)
     module.write_inventories(run_dir)

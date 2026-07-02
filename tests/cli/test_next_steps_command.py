@@ -72,6 +72,33 @@ def test_next_steps_table_mode(
     assert "traigent results compare run_123 baseline" in result.output
     assert "Caveat:" in result.output
     assert "Recommendations are category-level" in result.output
+    assert "Posture:" not in result.output
+
+
+def test_next_steps_table_mode_prints_posture_summary(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_with_posture = {
+        **next_steps_payload,
+        "posture": {
+            "summary_text": "Evidence is sufficient for a cautious promotion.",
+            "generated_at": "2026-06-27T09:30:00Z",
+        },
+    }
+    _FakeNextStepsClient.payload = payload_with_posture
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient",
+        _FakeNextStepsClient,
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123"])
+
+    assert result.exit_code == 0
+    assert "Posture:" in result.output
+    assert "Evidence is sufficient for a cautious promotion." in result.output
+    assert "compare_with_baseline" in result.output
 
 
 def test_next_steps_json_mode(
