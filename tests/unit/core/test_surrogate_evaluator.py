@@ -26,6 +26,7 @@ from traigent.core.optimization_pipeline import (
     get_surrogate_evaluator,
     get_surrogate_evaluator_name,
     resolve_surrogate_evaluator,
+    resolve_surrogate_evaluator_and_name,
     resolve_surrogate_evaluator_name,
     surrogate_evaluator_id,
 )
@@ -187,6 +188,70 @@ def test_resolve_name_prefers_optimize_arg_over_decorator():
         resolve_surrogate_evaluator_name(None, decorator_surrogate_evaluator_name=None)
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# resolve_surrogate_evaluator_and_name: name is bound to its callable
+# ---------------------------------------------------------------------------
+
+
+def test_paired_resolve_runtime_callable_override_without_name_never_inherits_decorator_name():
+    # Review round 2 finding: a runtime callable override with NO runtime name
+    # must never be stamped with the decorator's name -- that name identifies
+    # the decorator's scorer, not the one just substituted at runtime. Falls
+    # back to callable-derived id ("surrogate" for an anonymous scorer).
+    decorator_scorer = lambda output: 0.1  # noqa: E731
+    runtime_scorer = lambda output: 0.9  # noqa: E731
+    callable_, name = resolve_surrogate_evaluator_and_name(
+        runtime_scorer,
+        None,
+        decorator_surrogate_evaluator=decorator_scorer,
+        decorator_surrogate_evaluator_name="decorator_A",
+    )
+    assert callable_ is runtime_scorer
+    assert name is None
+    assert (
+        build_surrogate_descriptor(callable_, name=name)["evaluator_id"] == "surrogate"
+    )
+
+
+def test_paired_resolve_decorator_pair_unchanged_uses_decorator_name():
+    decorator_scorer = lambda output: 0.1  # noqa: E731
+    callable_, name = resolve_surrogate_evaluator_and_name(
+        None,
+        None,
+        decorator_surrogate_evaluator=decorator_scorer,
+        decorator_surrogate_evaluator_name="decorator_A",
+    )
+    assert callable_ is decorator_scorer
+    assert name == "decorator_A"
+
+
+def test_paired_resolve_runtime_pair_uses_runtime_name():
+    decorator_scorer = lambda output: 0.1  # noqa: E731
+    runtime_scorer = lambda output: 0.9  # noqa: E731
+    callable_, name = resolve_surrogate_evaluator_and_name(
+        runtime_scorer,
+        "runtime_B",
+        decorator_surrogate_evaluator=decorator_scorer,
+        decorator_surrogate_evaluator_name="decorator_A",
+    )
+    assert callable_ is runtime_scorer
+    assert name == "runtime_B"
+
+
+def test_paired_resolve_runtime_name_without_runtime_callable_still_wins():
+    # Documented choice: an explicit runtime name always wins, even when the
+    # decorator's callable ends up in effect (no runtime callable override).
+    decorator_scorer = lambda output: 0.1  # noqa: E731
+    callable_, name = resolve_surrogate_evaluator_and_name(
+        None,
+        "runtime_B",
+        decorator_surrogate_evaluator=decorator_scorer,
+        decorator_surrogate_evaluator_name="decorator_A",
+    )
+    assert callable_ is decorator_scorer
+    assert name == "runtime_B"
 
 
 def test_attach_and_get_name_roundtrip():
@@ -555,6 +620,37 @@ def test_create_effective_evaluator_runtime_surrogate_overrides_decorator():
         name=get_surrogate_evaluator_name(evaluator),
     )
     assert descriptor["evaluator_id"] == "runtime_name"
+
+
+def test_create_effective_evaluator_runtime_override_without_name_does_not_inherit_decorator_name():
+    # Review round 2 finding: decorator(A, name="decorator_A") + optimize(surrogate=B,
+    # no name) must NOT stamp B's descriptor with "decorator_A" -- that would
+    # identify the wrong evaluator to the backend's fingerprint/tensor reader.
+    decorator_scorer = lambda output: 0.1  # noqa: E731
+    runtime_scorer = lambda output: 0.9  # noqa: E731
+    evaluator, _aux = create_effective_evaluator(
+        timeout=None,
+        custom_evaluator=None,
+        effective_batch_size=1,
+        effective_thread_workers=1,
+        effective_privacy_enabled=False,
+        objectives=["accuracy"],
+        execution_mode="edge_analytics",
+        mock_mode_config=None,
+        metric_functions=None,
+        scoring_function=None,
+        decorator_custom_evaluator=None,
+        surrogate_evaluator=runtime_scorer,
+        decorator_surrogate_evaluator=decorator_scorer,
+        decorator_surrogate_evaluator_name="decorator_A",
+    )
+    assert get_surrogate_evaluator(evaluator) is runtime_scorer
+    assert get_surrogate_evaluator_name(evaluator) is None
+    descriptor = build_surrogate_descriptor(
+        get_surrogate_evaluator(evaluator),
+        name=get_surrogate_evaluator_name(evaluator),
+    )
+    assert descriptor["evaluator_id"] == "surrogate"
 
 
 @pytest.mark.asyncio

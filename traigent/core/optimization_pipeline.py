@@ -349,6 +349,45 @@ def resolve_surrogate_evaluator_name(
     return provided if isinstance(provided, str) and provided else None
 
 
+def resolve_surrogate_evaluator_and_name(
+    surrogate_evaluator: Callable[..., Any] | None,
+    surrogate_evaluator_name: str | None,
+    *,
+    decorator_surrogate_evaluator: Callable[..., Any] | None,
+    decorator_surrogate_evaluator_name: str | None,
+) -> tuple[Callable[..., Any] | None, str | None]:
+    """Resolve the surrogate callable and its descriptor name as a bound pair.
+
+    Resolving the callable and the name independently lets the decorator's
+    name survive a runtime callable override: with a runtime scorer B and no
+    runtime name, each resolver falls back to its own decorator-level value
+    in isolation, so B would be stamped with the decorator's name for A --
+    mislabeling the evaluator the backend's fingerprint/tensor reader
+    identifies. The decorator's name may only apply when the decorator's
+    callable is the one actually in effect.
+
+    An explicit runtime name is different: it is the caller directly
+    overriding the descriptor id, so it always wins regardless of which
+    callable ends up resolved (including when the decorator's callable is
+    used because no runtime callable was supplied).
+    """
+    resolved_callable = resolve_surrogate_evaluator(
+        surrogate_evaluator,
+        decorator_surrogate_evaluator=decorator_surrogate_evaluator,
+    )
+    if isinstance(surrogate_evaluator_name, str) and surrogate_evaluator_name:
+        return resolved_callable, surrogate_evaluator_name
+    if surrogate_evaluator is not None:
+        # Runtime callable override, no runtime name: never inherit the
+        # decorator's name -- it names a different callable.
+        return resolved_callable, None
+    decorator_name = decorator_surrogate_evaluator_name
+    return (
+        resolved_callable,
+        decorator_name if isinstance(decorator_name, str) and decorator_name else None,
+    )
+
+
 def attach_surrogate_evaluator(
     evaluator: Any,
     surrogate_evaluator: Callable[..., Any] | None,
@@ -673,12 +712,10 @@ def create_effective_evaluator(
     # Resolve the optional surrogate (pre-screen) scorer and stash it on the
     # constructed evaluator so the trial-lifecycle seam can reach it. When no
     # surrogate is configured this is a no-op and the evaluator is unchanged.
-    resolved_surrogate = resolve_surrogate_evaluator(
+    resolved_surrogate, resolved_surrogate_name = resolve_surrogate_evaluator_and_name(
         surrogate_evaluator,
-        decorator_surrogate_evaluator=decorator_surrogate_evaluator,
-    )
-    resolved_surrogate_name = resolve_surrogate_evaluator_name(
         surrogate_evaluator_name,
+        decorator_surrogate_evaluator=decorator_surrogate_evaluator,
         decorator_surrogate_evaluator_name=decorator_surrogate_evaluator_name,
     )
 
