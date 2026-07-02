@@ -37,6 +37,7 @@ from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
+from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -1547,7 +1548,7 @@ class BaseEvaluator(ABC):
             )
 
             with ConfigurationContext(config):
-                if asyncio.iscoroutinefunction(func):
+                if is_coroutine_callable(func):
                     output = await self._execute_async_with_timeout(
                         func, call_args, call_kwargs
                     )
@@ -2224,7 +2225,7 @@ class BaseEvaluator(ABC):
         with _maybe_restore_trial_context(trial_ctx):
             with ConfigurationContext(config):
                 with capture_key(example_id):
-                    if asyncio.iscoroutinefunction(self.custom_eval_func):
+                    if is_coroutine_callable(self.custom_eval_func):
                         result = await self.custom_eval_func(func, config, example)
                     else:
                         result = self.custom_eval_func(func, config, example)
@@ -3262,7 +3263,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 # Execute function with configuration context
                 with _maybe_restore_trial_context(trial_ctx):
                     with ConfigurationContext(config):
-                        if asyncio.iscoroutinefunction(func):
+                        if is_coroutine_callable(func):
                             raw_output = await func(**example.input_data)
                         else:
                             raw_output = func(**example.input_data)

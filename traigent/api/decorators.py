@@ -654,6 +654,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
     "plateau_epsilon": None,  # Improvement threshold for plateau detection
+    "semantic_saturation": None,  # Opt-in semantic saturation stop condition config
     # Multi-agent configuration
     "agents": None,  # Explicit agent definitions
     "agent_prefixes": None,  # Prefix-based agent inference
@@ -732,6 +733,7 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "metric_include_pruned",
         "plateau_window",
         "plateau_epsilon",
+        "semantic_saturation",
         "cost_limit",
         "cost_approved",
         "tie_breakers",
@@ -2350,6 +2352,11 @@ def optimize(  # NOSONAR(S107)
                 Requires metric_name. Use for counters such as total tokens or
                 cumulative latency, not hard money-spend control.
             metric_name: Metric summed by metric_limit.
+            semantic_saturation: Opt-in stop condition config matching
+                TraigentSchema
+                ``optimization/semantic_saturation_schema.json``. When provided,
+                the SDK evaluates per-example metric-vector churn and continuous
+                objective improvement using sanitized diagnostics only.
 
         Additional controls:
             legacy: Adapter for the legacy decorator signature. Accepts either a
@@ -2359,8 +2366,9 @@ def optimize(  # NOSONAR(S107)
                 the decorator. The currently supported keys are:
                 ``metric_limit``, ``metric_name``,
                 ``metric_include_pruned``, ``plateau_window``,
-                ``plateau_epsilon``, ``cost_limit``, ``cost_approved``,
-                ``tie_breakers``, and ``tvl_parameter_agents``.
+                ``plateau_epsilon``, ``semantic_saturation``, ``cost_limit``,
+                ``cost_approved``, ``tie_breakers``, and
+                ``tvl_parameter_agents``.
                 Note: ``algorithm`` and ``max_trials`` are first-class
                 parameters of this decorator (not in ``**runtime_overrides``);
                 ``timeout`` is supported on

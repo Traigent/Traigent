@@ -615,6 +615,7 @@ class OptimizationOrchestrator:
             metric_limit=metric_limit,
             metric_name=metric_name,
             metric_include_pruned=metric_include_pruned,
+            semantic_saturation=self.config.get("semantic_saturation"),
         )
 
         self._setup_convergence_condition()
@@ -3340,6 +3341,7 @@ class OptimizationOrchestrator:
                 "timeout": "timeout",
                 "metric_limit": "metric_limit",
                 "convergence": "convergence",
+                "semantic_saturation": "semantic_saturation",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
             if mapped_reason == "cost_limit" or not self._stop_reason:
@@ -3597,6 +3599,12 @@ class OptimizationOrchestrator:
             safeguards_telemetry,
             strategy_preset_metadata,
         )
+        semantic_saturation = (
+            self._stop_condition_manager.semantic_saturation_diagnostics(self._trials)
+        )
+        if semantic_saturation is not None:
+            result_metadata["semantic_saturation"] = semantic_saturation
+
         if selection.best_trial_id:
             result_metadata["best_trial_id"] = selection.best_trial_id
 

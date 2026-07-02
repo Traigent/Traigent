@@ -118,6 +118,7 @@ from traigent.utils.exceptions import (
     TVLValidationError,
     ValidationError,
 )
+from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import (
@@ -1748,6 +1749,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "samples_include_pruned",
             "plateau_window",
             "plateau_epsilon",
+            "semantic_saturation",
             "tie_breakers",
             "tvl_parameter_agents",
         ):
@@ -2525,7 +2527,7 @@ Remediation:
                 algorithm_kwargs,
                 decorator_parallel_config=self.parallel_config,
                 config_space_size=self._estimate_search_space_size(),
-                is_async_func=asyncio.iscoroutinefunction(self.func),
+                is_async_func=is_coroutine_callable(self.func),
             )
         )
 

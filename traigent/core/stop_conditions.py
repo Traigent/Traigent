@@ -4,12 +4,17 @@
 
 from __future__ import annotations
 
+import copy
+import json
+import math
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from traigent.api.types import TrialResult, TrialStatus
+from traigent.config.feature_flags import _coerce_bool as _coerce_config_bool_value
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.utils import extract_examples_attempted
 from traigent.utils.logging import get_logger
@@ -18,6 +23,272 @@ if TYPE_CHECKING:
     from traigent.core.cost_enforcement import CostEnforcer
 
 logger = get_logger(__name__)
+
+
+_AUTO_SELECTOR = "auto"
+_SEMANTIC_SATURATION_ALLOWED_KEYS = frozenset(
+    {
+        "enabled",
+        "window",
+        "min_trials",
+        "score_tolerance",
+        "per_example_tol",
+        "churn_threshold",
+        "min_overlap",
+        "relative_improvement_epsilon",
+        "absolute_improvement_epsilon",
+        "objectives",
+        "example_score_metrics",
+        "accuracy_metrics",
+        "continuous_objectives",
+        "include_example_ids",
+        "max_example_ids",
+        "max_ids_in_diagnostic",
+    }
+)
+_QUALITY_NAME_MARKERS = (
+    "accuracy",
+    "score",
+    "success",
+    "correct",
+    "pass",
+    "passed",
+    "match",
+    "quality",
+    "f1",
+    "precision",
+    "recall",
+)
+_CONTINUOUS_NAME_MARKERS = (
+    "cost",
+    "latency",
+    "token",
+    "duration",
+    "time",
+    "ms",
+    "seconds",
+    "error",
+    "loss",
+    "price",
+    "memory",
+)
+_MINIMIZE_NAME_MARKERS = (
+    "cost",
+    "latency",
+    "token",
+    "duration",
+    "time",
+    "ms",
+    "seconds",
+    "error",
+    "loss",
+    "price",
+    "memory",
+)
+_SEMANTIC_DEFAULT_WINDOW = 4
+_SEMANTIC_DEFAULT_MIN_TRIALS = 4
+_SEMANTIC_DEFAULT_SCORE_TOLERANCE = 1e-9
+_SEMANTIC_DEFAULT_CHURN_THRESHOLD = 0.0
+_SEMANTIC_DEFAULT_MIN_OVERLAP = 0.8
+_SEMANTIC_DEFAULT_RELATIVE_IMPROVEMENT_EPSILON = 0.01
+_SEMANTIC_DEFAULT_ABSOLUTE_IMPROVEMENT_EPSILON = 0.0
+_SEMANTIC_DEFAULT_MAX_EXAMPLE_IDS = 50
+
+
+@dataclass(frozen=True, slots=True)
+class _SemanticSaturationConfig:
+    enabled: bool = True
+    window: int = _SEMANTIC_DEFAULT_WINDOW
+    min_trials: int = _SEMANTIC_DEFAULT_MIN_TRIALS
+    score_tolerance: float = _SEMANTIC_DEFAULT_SCORE_TOLERANCE
+    churn_threshold: float = _SEMANTIC_DEFAULT_CHURN_THRESHOLD
+    min_overlap: float = _SEMANTIC_DEFAULT_MIN_OVERLAP
+    relative_improvement_epsilon: float = _SEMANTIC_DEFAULT_RELATIVE_IMPROVEMENT_EPSILON
+    absolute_improvement_epsilon: float = _SEMANTIC_DEFAULT_ABSOLUTE_IMPROVEMENT_EPSILON
+    example_score_metrics: tuple[str, ...] | None = None
+    continuous_objectives: tuple[str, ...] | None = None
+    include_example_ids: bool = True
+    max_example_ids: int = _SEMANTIC_DEFAULT_MAX_EXAMPLE_IDS
+
+    @classmethod
+    def from_raw(
+        cls, raw: bool | Mapping[str, Any] | None
+    ) -> _SemanticSaturationConfig:
+        if raw is None:
+            raw = {}
+        if isinstance(raw, bool):
+            return cls(enabled=raw)
+        if not isinstance(raw, Mapping):
+            raise ValueError("semantic_saturation must be a boolean or config object")
+
+        unknown = set(raw) - _SEMANTIC_SATURATION_ALLOWED_KEYS
+        if unknown:
+            raise ValueError(
+                f"Unknown semantic_saturation option(s): {sorted(unknown)}"
+            )
+
+        score_tolerance = raw.get(
+            "score_tolerance",
+            raw.get("per_example_tol", _SEMANTIC_DEFAULT_SCORE_TOLERANCE),
+        )
+        max_example_ids = raw.get(
+            "max_example_ids",
+            raw.get("max_ids_in_diagnostic", _SEMANTIC_DEFAULT_MAX_EXAMPLE_IDS),
+        )
+        example_score_metrics = raw.get(
+            "example_score_metrics", raw.get("accuracy_metrics")
+        )
+        continuous_objectives = raw.get("continuous_objectives", raw.get("objectives"))
+
+        return cls(
+            enabled=_coerce_config_bool(raw.get("enabled", True), "enabled"),
+            window=_coerce_positive_int(
+                raw.get("window", _SEMANTIC_DEFAULT_WINDOW), "window"
+            ),
+            min_trials=_coerce_positive_int(
+                raw.get("min_trials", _SEMANTIC_DEFAULT_MIN_TRIALS), "min_trials"
+            ),
+            score_tolerance=_coerce_non_negative_float(
+                score_tolerance, "score_tolerance"
+            ),
+            churn_threshold=_coerce_bounded_float(
+                raw.get("churn_threshold", _SEMANTIC_DEFAULT_CHURN_THRESHOLD),
+                "churn_threshold",
+                minimum=0.0,
+                maximum=1.0,
+            ),
+            min_overlap=_coerce_bounded_float(
+                raw.get("min_overlap", _SEMANTIC_DEFAULT_MIN_OVERLAP),
+                "min_overlap",
+                minimum=0.0,
+                maximum=1.0,
+            ),
+            relative_improvement_epsilon=_coerce_non_negative_float(
+                raw.get(
+                    "relative_improvement_epsilon",
+                    _SEMANTIC_DEFAULT_RELATIVE_IMPROVEMENT_EPSILON,
+                ),
+                "relative_improvement_epsilon",
+            ),
+            absolute_improvement_epsilon=_coerce_non_negative_float(
+                raw.get(
+                    "absolute_improvement_epsilon",
+                    _SEMANTIC_DEFAULT_ABSOLUTE_IMPROVEMENT_EPSILON,
+                ),
+                "absolute_improvement_epsilon",
+            ),
+            example_score_metrics=_normalize_metric_selector(
+                example_score_metrics,
+                "example_score_metrics",
+            ),
+            continuous_objectives=_normalize_metric_selector(
+                continuous_objectives,
+                "continuous_objectives",
+            ),
+            include_example_ids=_coerce_config_bool(
+                raw.get("include_example_ids", True), "include_example_ids"
+            ),
+            max_example_ids=_coerce_positive_int(
+                max_example_ids,
+                "max_example_ids",
+            ),
+        )
+
+
+def _coerce_config_bool(value: Any, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        coerced = _coerce_config_bool_value(value)
+        if coerced is not None:
+            return coerced
+    if isinstance(value, str):
+        coerced = _coerce_config_bool_value(value)
+        if coerced is not None:
+            return coerced
+    raise ValueError(f"{name} must be a boolean")
+
+
+def _coerce_positive_int(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer")
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if number <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return number
+
+
+def _coerce_non_negative_float(value: Any, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a non-negative number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a non-negative number") from exc
+    if not math.isfinite(number) or number < 0.0:
+        raise ValueError(f"{name} must be a non-negative finite number")
+    return number
+
+
+def _coerce_bounded_float(
+    value: Any, name: str, *, minimum: float, maximum: float
+) -> float:
+    number = _coerce_non_negative_float(value, name)
+    if number < minimum or number > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return number
+
+
+def _normalize_metric_selector(value: Any, name: str) -> tuple[str, ...] | None:
+    if value is None or value == _AUTO_SELECTOR:
+        return None
+    if isinstance(value, str):
+        if not value:
+            raise ValueError(f"{name} entries must be non-empty strings")
+        return (value,)
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or not item:
+                raise ValueError(f"{name} entries must be non-empty strings")
+            if item not in normalized:
+                normalized.append(item)
+        return tuple(normalized)
+    raise ValueError(f"{name} must be 'auto', a string, or a list of strings")
+
+
+def _coerce_numeric_or_bool(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _looks_like_quality_metric(name: str) -> bool:
+    lowered = name.lower()
+    return any(marker in lowered for marker in _QUALITY_NAME_MARKERS)
+
+
+def _looks_like_continuous_metric(name: str) -> bool:
+    lowered = name.lower()
+    return any(marker in lowered for marker in _CONTINUOUS_NAME_MARKERS)
+
+
+def _infer_direction_from_name(name: str) -> str:
+    lowered = name.lower()
+    if any(marker in lowered for marker in _MINIMIZE_NAME_MARKERS):
+        return "minimize"
+    return "maximize"
 
 
 class StopCondition(ABC):
@@ -279,6 +550,426 @@ class MaxSamplesStopCondition(StopCondition):
 
         self._last_index = len(trial_seq)
         return self._total_attempted >= self._max_samples
+
+
+class SemanticSaturationStopCondition(StopCondition):
+    """Stop when per-example quality vectors and continuous objectives saturate.
+
+    The privacy boundary is deliberately narrow: this condition reads only
+    ``example_id`` and numeric or boolean values from per-example ``metrics``.
+    It never reads raw inputs, expected outputs, actual outputs, model text, or
+    document content, and diagnostics emit IDs only under the configured cap.
+    """
+
+    reason = "semantic_saturation"
+
+    def __init__(
+        self,
+        semantic_saturation: bool | Mapping[str, Any] | None = None,
+        *,
+        objective_schema: ObjectiveSchema | None = None,
+    ) -> None:
+        self._config = _SemanticSaturationConfig.from_raw(semantic_saturation)
+        self._schema = objective_schema
+        self._last_diagnostics: dict[str, Any] | None = None
+
+    def reset(self) -> None:
+        self._last_diagnostics = None
+
+    @property
+    def diagnostics(self) -> dict[str, Any] | None:
+        if self._last_diagnostics is None:
+            return None
+        return copy.deepcopy(self._last_diagnostics)
+
+    def should_stop(self, trials: Iterable[TrialResult]) -> bool:
+        if isinstance(trials, Sequence):
+            trial_seq = trials
+        else:
+            trial_seq = list(trials)
+
+        diagnostics = self._evaluate(trial_seq)
+        self._last_diagnostics = diagnostics
+        return bool(diagnostics["decision"] == "stop")
+
+    def _evaluate(self, trials: Sequence[TrialResult]) -> dict[str, Any]:
+        cfg = self._config
+        distinct_trials = self._latest_distinct_completed_trials(trials)
+        base = self._base_diagnostics(distinct_trials)
+
+        if not cfg.enabled:
+            return {**base, "decision": "continue", "reason_detail": "disabled"}
+
+        required_trials = max(cfg.window, cfg.min_trials)
+        if len(distinct_trials) < required_trials:
+            return {**base, "decision": "continue", "reason_detail": "warmup"}
+
+        window_trials = distinct_trials[-cfg.window :]
+        base = self._base_diagnostics(window_trials)
+        quality_metrics = self._resolve_quality_metrics(window_trials)
+        objectives: dict[str, dict[str, Any]] = {}
+
+        if not quality_metrics:
+            return {
+                **base,
+                "decision": "continue",
+                "reason_detail": "insufficient_example_scores",
+            }
+
+        for metric in quality_metrics:
+            objectives[metric] = self._evaluate_quality_metric(metric, window_trials)
+
+        quality_saturated = all(diag["saturated"] for diag in objectives.values())
+        if not quality_saturated:
+            reason_detail = (
+                "accuracy_churning"
+                if any(
+                    diag["reason_detail"] == "accuracy_churning"
+                    for diag in objectives.values()
+                )
+                else "insufficient_example_scores"
+            )
+            return {
+                **base,
+                "decision": "continue",
+                "reason_detail": reason_detail,
+                "objectives": objectives,
+            }
+
+        continuous_objectives = self._resolve_continuous_objectives(
+            window_trials,
+            quality_metrics,
+        )
+        for metric in continuous_objectives:
+            objectives[metric] = self._evaluate_continuous_objective(
+                metric,
+                window_trials,
+            )
+
+        all_saturated = all(diag["saturated"] for diag in objectives.values())
+        if all_saturated:
+            return {
+                **base,
+                "decision": "stop",
+                "reason_detail": "all_objectives_saturated",
+                "objectives": objectives,
+            }
+
+        return {
+            **base,
+            "decision": "continue",
+            "reason_detail": "quality_saturated_efficiency_improving",
+            "objectives": objectives,
+        }
+
+    def _base_diagnostics(self, trials: Sequence[TrialResult]) -> dict[str, Any]:
+        return {
+            "condition": "semantic_saturation",
+            "decision": "continue",
+            "reason_detail": "warmup",
+            "window": self._config.window,
+            "min_trials": self._config.min_trials,
+            "trials_considered": [str(trial.trial_id) for trial in trials],
+            "objectives": {},
+        }
+
+    def _latest_distinct_completed_trials(
+        self, trials: Sequence[TrialResult]
+    ) -> list[TrialResult]:
+        required_trials = max(self._config.window, self._config.min_trials)
+        seen_signatures: set[str] = set()
+        selected_reversed: list[TrialResult] = []
+
+        for trial in reversed(trials):
+            if trial.status != TrialStatus.COMPLETED:
+                continue
+            signature = self._config_signature(trial.config)
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            selected_reversed.append(trial)
+            if len(selected_reversed) >= required_trials:
+                break
+
+        return list(reversed(selected_reversed))
+
+    @staticmethod
+    def _config_signature(config: Mapping[str, Any] | None) -> str:
+        try:
+            return json.dumps(
+                config or {},
+                sort_keys=True,
+                separators=(",", ":"),
+                default=repr,
+            )
+        except (TypeError, ValueError):
+            return repr(config)
+
+    def _resolve_quality_metrics(
+        self, trials: Sequence[TrialResult]
+    ) -> tuple[str, ...]:
+        if self._config.example_score_metrics is not None:
+            return self._config.example_score_metrics
+
+        values_by_metric: dict[str, list[float]] = {}
+        for trial in trials:
+            for result in self._example_results_for_trial(trial):
+                metrics = self._read_example_metrics(result)
+                if not isinstance(metrics, Mapping):
+                    continue
+                for metric_name, raw_value in metrics.items():
+                    if not isinstance(metric_name, str):
+                        continue
+                    value = _coerce_numeric_or_bool(raw_value)
+                    if value is None:
+                        continue
+                    values_by_metric.setdefault(metric_name, []).append(value)
+
+        selected: list[str] = []
+        for metric_name in sorted(values_by_metric):
+            values = values_by_metric[metric_name]
+            if _looks_like_continuous_metric(metric_name):
+                continue
+            if _looks_like_quality_metric(metric_name) or self._all_binary(values):
+                selected.append(metric_name)
+        return tuple(selected)
+
+    @staticmethod
+    def _all_binary(values: Sequence[float]) -> bool:
+        return bool(values) and all(value in (0.0, 1.0) for value in values)
+
+    def _resolve_continuous_objectives(
+        self,
+        trials: Sequence[TrialResult],
+        quality_metrics: Sequence[str],
+    ) -> tuple[str, ...]:
+        quality_metric_set = set(quality_metrics)
+        if self._config.continuous_objectives is not None:
+            return tuple(
+                metric
+                for metric in self._config.continuous_objectives
+                if metric not in quality_metric_set
+            )
+
+        objective_names: list[str] = []
+        if self._schema is not None:
+            for objective in self._schema.objectives:
+                name = objective.name
+                if name in quality_metric_set:
+                    continue
+                if _looks_like_quality_metric(
+                    name
+                ) and not _looks_like_continuous_metric(name):
+                    continue
+                objective_names.append(name)
+            if objective_names:
+                return tuple(objective_names)
+
+        aggregate_metric_names: set[str] = set()
+        for trial in trials:
+            for metric_name, raw_value in (trial.metrics or {}).items():
+                if (
+                    not isinstance(metric_name, str)
+                    or metric_name in quality_metric_set
+                ):
+                    continue
+                if _coerce_numeric_or_bool(raw_value) is None:
+                    continue
+                if _looks_like_continuous_metric(metric_name):
+                    aggregate_metric_names.add(metric_name)
+        return tuple(sorted(aggregate_metric_names))
+
+    def _evaluate_quality_metric(
+        self,
+        metric: str,
+        trials: Sequence[TrialResult],
+    ) -> dict[str, Any]:
+        vectors = [self._example_score_vector(trial, metric) for trial in trials]
+        if any(not vector for vector in vectors):
+            return {
+                "regime": "example_vector",
+                "saturated": False,
+                "reason_detail": "insufficient_example_scores",
+                "examples_compared": 0,
+            }
+
+        common_ids = set(vectors[0])
+        union_ids = set(vectors[0])
+        for vector in vectors[1:]:
+            common_ids.intersection_update(vector)
+            union_ids.update(vector)
+
+        if not union_ids:
+            overlap_ratio = 0.0
+        else:
+            overlap_ratio = len(common_ids) / len(union_ids)
+
+        if not common_ids or overlap_ratio < self._config.min_overlap:
+            return {
+                "regime": "example_vector",
+                "saturated": False,
+                "reason_detail": "insufficient_overlap",
+                "overlap_ratio": overlap_ratio,
+                "examples_compared": len(common_ids),
+            }
+
+        changed_ids: list[str] = []
+        stable_ids: list[str] = []
+        for example_id in sorted(common_ids):
+            values = [vector[example_id] for vector in vectors]
+            if max(values) - min(values) > self._config.score_tolerance:
+                changed_ids.append(example_id)
+            else:
+                stable_ids.append(example_id)
+
+        changed_count = len(changed_ids)
+        stable_count = len(stable_ids)
+        churn = changed_count / len(common_ids)
+        saturated = churn <= self._config.churn_threshold
+        diagnostic: dict[str, Any] = {
+            "regime": "example_vector",
+            "saturated": saturated,
+            "reason_detail": "quality_saturated" if saturated else "accuracy_churning",
+            "max_churn": churn,
+            "churn_threshold": self._config.churn_threshold,
+            "overlap_ratio": overlap_ratio,
+            "examples_compared": len(common_ids),
+            "stable_example_count": stable_count,
+            "changed_example_count": changed_count,
+        }
+        if self._config.include_example_ids:
+            self._add_capped_ids(diagnostic, "changed", changed_ids)
+            self._add_capped_ids(diagnostic, "stable", stable_ids)
+        return diagnostic
+
+    def _example_score_vector(
+        self,
+        trial: TrialResult,
+        metric: str,
+    ) -> dict[str, float]:
+        vector: dict[str, float] = {}
+        for result in self._example_results_for_trial(trial):
+            example_id = self._read_example_id(result)
+            if example_id is None:
+                continue
+            metrics = self._read_example_metrics(result)
+            if not isinstance(metrics, Mapping):
+                continue
+            value = _coerce_numeric_or_bool(metrics.get(metric))
+            if value is not None:
+                vector[str(example_id)] = value
+        return vector
+
+    @staticmethod
+    def _example_results_for_trial(trial: TrialResult) -> list[Any]:
+        metadata = getattr(trial, "metadata", None)
+        if isinstance(metadata, Mapping):
+            results = metadata.get("example_results")
+            if isinstance(results, list):
+                return results
+        results = getattr(trial, "example_results", None)
+        if isinstance(results, list):
+            return results
+        return []
+
+    @staticmethod
+    def _read_example_id(result: Any) -> Any | None:
+        if isinstance(result, Mapping):
+            return result.get("example_id")
+        try:
+            return getattr(result, "example_id", None)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _read_example_metrics(result: Any) -> Any | None:
+        if isinstance(result, Mapping):
+            return result.get("metrics")
+        try:
+            return getattr(result, "metrics", None)
+        except Exception:
+            return None
+
+    def _add_capped_ids(
+        self,
+        diagnostic: dict[str, Any],
+        prefix: str,
+        example_ids: Sequence[str],
+    ) -> None:
+        cap = self._config.max_example_ids
+        diagnostic[f"{prefix}_example_ids"] = list(example_ids[:cap])
+        diagnostic[f"{prefix}_example_ids_truncated_count"] = max(
+            len(example_ids) - cap,
+            0,
+        )
+
+    def _evaluate_continuous_objective(
+        self,
+        metric: str,
+        trials: Sequence[TrialResult],
+    ) -> dict[str, Any]:
+        direction = self._direction_for_metric(metric)
+        if direction == "band":
+            return {
+                "regime": "continuous",
+                "saturated": False,
+                "reason_detail": "unsupported_band_objective",
+                "direction": "band",
+            }
+
+        values: list[float] = []
+        for trial in trials:
+            value = _coerce_numeric_or_bool((trial.metrics or {}).get(metric))
+            if value is None:
+                return {
+                    "regime": "continuous",
+                    "saturated": False,
+                    "reason_detail": "insufficient_continuous_metric",
+                    "direction": direction,
+                }
+            values.append(value)
+
+        if not values:
+            return {
+                "regime": "continuous",
+                "saturated": False,
+                "reason_detail": "insufficient_continuous_metric",
+                "direction": direction,
+            }
+
+        initial_best = values[0]
+        if direction == "minimize":
+            best = min(values)
+            improvement = max(0.0, initial_best - best)
+        else:
+            best = max(values)
+            improvement = max(0.0, best - initial_best)
+
+        threshold = max(
+            self._config.absolute_improvement_epsilon,
+            abs(initial_best) * self._config.relative_improvement_epsilon,
+        )
+        saturated = improvement <= threshold
+        return {
+            "regime": "continuous",
+            "saturated": saturated,
+            "reason_detail": (
+                "continuous_saturated"
+                if saturated
+                else "continuous_objective_improving"
+            ),
+            "direction": direction,
+            "best": best,
+            "improvement": improvement,
+            "improvement_threshold": threshold,
+        }
+
+    def _direction_for_metric(self, metric: str) -> str:
+        if self._schema is not None:
+            for objective in self._schema.objectives:
+                if objective.name == metric:
+                    return str(objective.orientation)
+        return _infer_direction_from_name(metric)
 
 
 class CostLimitStopCondition(StopCondition):
@@ -658,5 +1349,6 @@ __all__ = [
     "MaxTrialsStopCondition",
     "MetricLimitStopCondition",
     "PlateauAfterNStopCondition",
+    "SemanticSaturationStopCondition",
     "StopCondition",
 ]

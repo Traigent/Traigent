@@ -97,3 +97,27 @@ per-example `example_results[i].metrics["surrogate_score"]`, AND the rebuilt-wir
 this demo's assertions catch. The `0.90` and the `fp1:<sha>` value are not hardcoded/echoed
 by the demo; they are produced by the SDK's own surrogate-scoring and fingerprinting code
 from this demo's own `judge_surrogate_lenient` callable.
+
+## Judge panel construction — diversity needs different models, not prompts
+
+Separate from the surrogate feature above, this is a design implication worth stating
+explicitly because it's easy to get backwards. Observed on real Bedrock runs, one task
+domain so far — not a universal claim:
+
+- Two instances of the **same** strong judge model (Claude Haiku 4.5), one prompted as a
+  normal judge and one prompted as a lax "rubber-stamp" judge, **converged** on the same
+  correctness calls. A strong LLM judges the content properly more or less regardless of
+  the rubric text it's handed.
+- Consequence: a K>=2 judge panel built by varying the **prompt** on a single model has low
+  effective diversity — its judges largely agree, their errors are correlated, and the
+  panel collapses toward roughly one effective vote instead of K independent ones.
+- **Implication**: to build a genuinely diverse panel, vary the **model** (different
+  families and/or capability tiers), not just the prompt. Prompt variation alone is
+  decorative for diversity purposes.
+- This demo's surrogate exists for the **cost** axis, not diversity: a cheap, short-prompt
+  judge on the same strong model tracks the authoritative judge's score at a fraction of
+  the tokens (see `judge_surrogate_lenient` above). Don't treat a cost-motivated surrogate
+  as an independent panelist.
+- To check panel diversity empirically rather than assume K judges = K opinions, use the
+  shipped ACET evaluator-quality audit's panel "effective-independent-votes" /
+  `redundancy_ratio` metric — it will flag a panel with many judges but few effective votes.

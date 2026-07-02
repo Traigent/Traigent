@@ -247,6 +247,7 @@ async def optimize(
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
 | `budget_limit` / `budget_metric` / `budget_include_pruned` | Deprecated aliases for metric-limit controls. Use `cost_limit` for hard USD spend control. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
+| `semantic_saturation` | Configure opt-in semantic saturation. Uses per-example metric-vector churn plus continuous objective improvement and emits sanitized diagnostics in `OptimizationResult.metadata["semantic_saturation"]`. |
 | `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |
 | `order` | Alias for `parameter_order` (grid search only). |
 

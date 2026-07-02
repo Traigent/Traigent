@@ -15,6 +15,7 @@ from traigent.config.providers import get_provider
 from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import InvocationError
+from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -95,9 +96,10 @@ class LocalInvoker(BaseInvoker):
             configured_func = self._provider.inject_config(
                 func, config, self.config_param
             )
+            is_async_callable = is_coroutine_callable(configured_func)
 
             # Invoke function
-            if asyncio.iscoroutinefunction(configured_func):
+            if is_async_callable:
                 output = await self._invoke_async(
                     configured_func, input_data, start_time
                 )
@@ -114,7 +116,7 @@ class LocalInvoker(BaseInvoker):
                 end_time,
                 injection_mode=self.injection_mode,
                 function_name=func.__name__,
-                async_function=asyncio.iscoroutinefunction(configured_func),
+                async_function=is_async_callable,
             )
 
             return InvocationResult(
