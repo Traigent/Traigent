@@ -1,0 +1,313 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/semantic_saturation_schema.json",
+  "title": "Semantic Saturation Stop Condition Schema",
+  "description": "Configuration and sanitized diagnostics for stopping optimization when per-example score vectors and monitored objectives saturate.",
+  "type": "object",
+  "definitions": {
+    "MetricSelector": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "string",
+          "enum": [
+            "auto"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      ]
+    },
+    "SemanticSaturationConfig": {
+      "type": "object",
+      "description": "Opt-in SDK stop condition config. Example-level quality uses only example_id and numeric or boolean per-example metric values; raw inputs, outputs, expected outputs, and example content are out of contract.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4
+        },
+        "min_trials": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4
+        },
+        "score_tolerance": {
+          "type": "number",
+          "minimum": 0,
+          "default": 1e-09
+        },
+        "per_example_tol": {
+          "type": "number",
+          "minimum": 0,
+          "deprecated": true
+        },
+        "churn_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        },
+        "min_overlap": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.8
+        },
+        "relative_improvement_epsilon": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0.01
+        },
+        "absolute_improvement_epsilon": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        },
+        "objectives": {
+          "$ref": "#/definitions/MetricSelector"
+        },
+        "example_score_metrics": {
+          "$ref": "#/definitions/MetricSelector"
+        },
+        "accuracy_metrics": {
+          "$ref": "#/definitions/MetricSelector",
+          "deprecated": true
+        },
+        "continuous_objectives": {
+          "$ref": "#/definitions/MetricSelector"
+        },
+        "include_example_ids": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_example_ids": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 50
+        },
+        "max_ids_in_diagnostic": {
+          "type": "integer",
+          "minimum": 1,
+          "deprecated": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExampleVectorDiagnostic": {
+      "type": "object",
+      "description": "Sanitized example-vector diagnostic. It may include example IDs, but never raw example content or score values.",
+      "required": [
+        "regime",
+        "saturated",
+        "reason_detail"
+      ],
+      "properties": {
+        "regime": {
+          "type": "string",
+          "enum": [
+            "example_vector"
+          ]
+        },
+        "saturated": {
+          "type": "boolean"
+        },
+        "reason_detail": {
+          "type": "string",
+          "enum": [
+            "quality_saturated",
+            "accuracy_churning",
+            "insufficient_example_scores",
+            "insufficient_overlap"
+          ]
+        },
+        "max_churn": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "churn_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "overlap_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "examples_compared": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stable_example_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_example_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_example_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "changed_example_ids_truncated_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stable_example_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stable_example_ids_truncated_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ContinuousObjectiveDiagnostic": {
+      "type": "object",
+      "description": "Aggregate diagnostic for a direction-aware continuous objective such as cost, tokens, or latency.",
+      "required": [
+        "regime",
+        "saturated",
+        "reason_detail",
+        "direction"
+      ],
+      "properties": {
+        "regime": {
+          "type": "string",
+          "enum": [
+            "continuous"
+          ]
+        },
+        "saturated": {
+          "type": "boolean"
+        },
+        "reason_detail": {
+          "type": "string",
+          "enum": [
+            "continuous_saturated",
+            "continuous_objective_improving",
+            "insufficient_continuous_metric",
+            "unsupported_band_objective"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "maximize",
+            "minimize",
+            "band"
+          ]
+        },
+        "best": {
+          "type": "number"
+        },
+        "improvement": {
+          "type": "number",
+          "minimum": 0
+        },
+        "improvement_threshold": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SemanticSaturationDiagnostics": {
+      "type": "object",
+      "description": "Latest sanitized decision payload for the semantic saturation stop condition.",
+      "required": [
+        "condition",
+        "decision",
+        "reason_detail",
+        "window",
+        "min_trials",
+        "trials_considered",
+        "objectives"
+      ],
+      "properties": {
+        "condition": {
+          "type": "string",
+          "enum": [
+            "semantic_saturation"
+          ]
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "continue",
+            "stop"
+          ]
+        },
+        "reason_detail": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "warmup",
+            "insufficient_example_scores",
+            "accuracy_churning",
+            "quality_saturated_efficiency_improving",
+            "all_objectives_saturated"
+          ]
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_trials": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trials_considered": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "objectives": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "$ref": "#/definitions/ExampleVectorDiagnostic"
+              },
+              {
+                "$ref": "#/definitions/ContinuousObjectiveDiagnostic"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/SemanticSaturationConfig"
+    },
+    {
+      "$ref": "#/definitions/SemanticSaturationDiagnostics"
+    }
+  ]
+}

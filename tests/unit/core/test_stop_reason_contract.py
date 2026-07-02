@@ -187,6 +187,45 @@ def test_hypervolume_convergence_maps_to_public_convergence_stop_reason():
     assert orchestrator._stop_reason == "convergence"
 
 
+def test_semantic_saturation_maps_to_public_stop_reason():
+    schema = ObjectiveSchema.from_objectives(
+        [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+    )
+    orchestrator = _orchestrator(
+        objective_schema=schema,
+        semantic_saturation={
+            "window": 3,
+            "min_trials": 3,
+            "continuous_objectives": [],
+        },
+    )
+    orchestrator._trials = [
+        _trial(
+            "t1",
+            {"accuracy": 1.0},
+        ),
+        _trial(
+            "t2",
+            {"accuracy": 1.0},
+        ),
+        _trial(
+            "t3",
+            {"accuracy": 1.0},
+        ),
+    ]
+    for index, trial in enumerate(orchestrator._trials, start=1):
+        trial.config = {"temperature": index}
+        trial.metadata = {
+            "example_results": [
+                {"example_id": "ex1", "metrics": {"accuracy": 1.0}},
+                {"example_id": "ex2", "metrics": {"accuracy": 1.0}},
+            ]
+        }
+
+    assert orchestrator._should_stop(trial_count=3)
+    assert orchestrator._stop_reason == "semantic_saturation"
+
+
 def test_custom_stop_condition_maps_to_generic_condition_stop_reason():
     orchestrator = _orchestrator(max_trials=10)
     orchestrator._stop_condition_manager.add_condition(AlwaysStopCondition())

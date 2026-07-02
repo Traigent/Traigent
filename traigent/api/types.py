@@ -155,6 +155,7 @@ StopReason = Literal[
     "optimizer",
     "plateau",
     "convergence",
+    "semantic_saturation",
     "user_cancelled",
     "condition",  # Generic stop condition triggered
     "error",  # Optimization failed due to an exception
@@ -692,6 +693,8 @@ class OptimizationResult:
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)
             - "convergence": Built-in hypervolume convergence condition triggered
+            - "semantic_saturation": Per-example quality and continuous
+              objectives saturated
             - "user_cancelled": User cancelled or declined cost approval
             - "condition": Generic stop condition was triggered
             - "error": Optimization failed due to an exception

@@ -19,6 +19,7 @@ from traigent.core.stop_conditions import (
     MaxTrialsStopCondition,
     MetricLimitStopCondition,
     PlateauAfterNStopCondition,
+    SemanticSaturationStopCondition,
     StopCondition,
 )
 
@@ -40,6 +41,7 @@ class StopConditionManager:
         metric_limit: float | None,
         metric_name: str | None,
         metric_include_pruned: bool,
+        semantic_saturation: bool | dict[str, object] | None = None,
     ) -> None:
         self._conditions: list[StopCondition] = []
 
@@ -78,6 +80,14 @@ class StopConditionManager:
                     limit=metric_limit,
                     metric_name=metric_name,
                     include_pruned=metric_include_pruned,
+                )
+            )
+
+        if semantic_saturation is not None:
+            self._conditions.append(
+                SemanticSaturationStopCondition(
+                    semantic_saturation,
+                    objective_schema=objective_schema,
                 )
             )
 
@@ -143,6 +153,16 @@ class StopConditionManager:
                 reason = getattr(condition, "reason", condition.__class__.__name__)
                 return True, reason
         return False, None
+
+    def semantic_saturation_diagnostics(
+        self, trials: Iterable[TrialResult]
+    ) -> dict[str, object] | None:
+        """Return the latest semantic saturation diagnostics, if configured."""
+        for condition in self._conditions:
+            if isinstance(condition, SemanticSaturationStopCondition):
+                condition.should_stop(trials)
+                return condition.diagnostics
+        return None
 
     def register_cost_limit_condition(
         self, cost_enforcer: CostEnforcer
