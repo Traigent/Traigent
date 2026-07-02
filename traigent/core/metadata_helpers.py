@@ -409,6 +409,15 @@ def build_backend_metadata(
     if isinstance(comparability_payload, dict):
         trial_metadata["comparability"] = comparability_payload
 
+    # Carry the surrogate (pre-screen) evaluator descriptor explicitly. This
+    # metadata dict is rebuilt from scratch for submission, so without an explicit
+    # copy the descriptor set on ``TrialResult.metadata`` by the trial lifecycle
+    # would never reach the backend (feature dead on the wire). Only lands when a
+    # surrogate is configured, so the no-surrogate payload stays byte-identical.
+    surrogate_descriptor = trial_result.metadata.get("surrogate_evaluator")
+    if isinstance(surrogate_descriptor, dict):
+        trial_metadata["surrogate_evaluator"] = surrogate_descriptor
+
     privacy_on = getattr(traigent_config, "privacy_enabled", False)
     example_results = trial_result.metadata.get("example_results")
 
@@ -665,6 +674,13 @@ def _build_single_measure_privacy(
     # Add privacy-safe token and cost metrics
     if eval_metrics:
         _add_privacy_safe_metrics(metrics_dict, eval_metrics)
+
+    # The surrogate (pre-screen) score is a content-free numeric — it carries no
+    # output/expected content — so it is privacy-safe and rides alongside the
+    # score in privacy mode, feeding the backend's per-evaluator score tensor.
+    surrogate_value = eval_metrics.get("surrogate_score")
+    if _is_measure_metric_value(surrogate_value):
+        metrics_dict["surrogate_score"] = surrogate_value
 
     if not metrics_dict:
         logger.debug(

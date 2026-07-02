@@ -26,8 +26,8 @@ from traigent.config.types import (
     TraigentConfig,
     resolve_execution_mode,
 )
-from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
+from traigent.core.execution_policy_runtime import backend_egress_disabled
 from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
@@ -301,6 +301,183 @@ def resolve_custom_evaluator(
     return provided_custom_evaluator if provided_custom_evaluator is not None else None
 
 
+# ---------------------------------------------------------------------------
+# Surrogate (pre-screen) evaluator: a cheap second scorer over already
+# captured outputs. It NEVER re-executes the decorated function; the trial
+# lifecycle scores ``example_result.actual_output`` only. Resolution mirrors
+# ``resolve_custom_evaluator`` (optimize()-arg over decorator); the resolved
+# scorer is stashed on the evaluator instance so the trial-lifecycle seam can
+# reach it via the stable ``orchestrator.evaluator`` handle (the ``func`` that
+# reaches the seam is injection/effectuation-wrapped, so it is not a stable key).
+# ---------------------------------------------------------------------------
+
+_SURROGATE_ATTR = "_traigent_surrogate_evaluator"
+_SURROGATE_NAME_ATTR = "_traigent_surrogate_evaluator_name"
+
+
+def resolve_surrogate_evaluator(
+    surrogate_evaluator: Callable[..., Any] | None,
+    *,
+    decorator_surrogate_evaluator: Callable[..., Any] | None,
+) -> Callable[..., Any] | None:
+    """Resolve the effective surrogate evaluator (optimize()-arg over decorator).
+
+    Args:
+        surrogate_evaluator: Surrogate from an optimize() call (runtime override).
+        decorator_surrogate_evaluator: Surrogate from the decorator's
+            ``EvaluationOptions``.
+
+    Returns:
+        The surrogate to use, or None when none is configured.
+    """
+    provided = surrogate_evaluator or decorator_surrogate_evaluator
+    return provided if provided is not None else None
+
+
+def resolve_surrogate_evaluator_name(
+    surrogate_evaluator_name: str | None,
+    *,
+    decorator_surrogate_evaluator_name: str | None,
+) -> str | None:
+    """Resolve the effective surrogate name (optimize()-arg over decorator).
+
+    Mirrors :func:`resolve_surrogate_evaluator`'s precedence so the explicit
+    ``evaluator_id`` in the descriptor follows the same runtime-over-decorator
+    rule as the surrogate callable itself.
+    """
+    provided = surrogate_evaluator_name or decorator_surrogate_evaluator_name
+    return provided if isinstance(provided, str) and provided else None
+
+
+def resolve_surrogate_evaluator_and_name(
+    surrogate_evaluator: Callable[..., Any] | None,
+    surrogate_evaluator_name: str | None,
+    *,
+    decorator_surrogate_evaluator: Callable[..., Any] | None,
+    decorator_surrogate_evaluator_name: str | None,
+) -> tuple[Callable[..., Any] | None, str | None]:
+    """Resolve the surrogate callable and its descriptor name as a bound pair.
+
+    Resolving the callable and the name independently lets the decorator's
+    name survive a runtime callable override: with a runtime scorer B and no
+    runtime name, each resolver falls back to its own decorator-level value
+    in isolation, so B would be stamped with the decorator's name for A --
+    mislabeling the evaluator the backend's fingerprint/tensor reader
+    identifies. The decorator's name may only apply when the decorator's
+    callable is the one actually in effect.
+
+    An explicit runtime name is different: it is the caller directly
+    overriding the descriptor id, so it always wins regardless of which
+    callable ends up resolved (including when the decorator's callable is
+    used because no runtime callable was supplied).
+    """
+    resolved_callable = resolve_surrogate_evaluator(
+        surrogate_evaluator,
+        decorator_surrogate_evaluator=decorator_surrogate_evaluator,
+    )
+    if isinstance(surrogate_evaluator_name, str) and surrogate_evaluator_name:
+        return resolved_callable, surrogate_evaluator_name
+    if surrogate_evaluator is not None:
+        # Runtime callable override, no runtime name: never inherit the
+        # decorator's name -- it names a different callable.
+        return resolved_callable, None
+    decorator_name = decorator_surrogate_evaluator_name
+    return (
+        resolved_callable,
+        decorator_name if isinstance(decorator_name, str) and decorator_name else None,
+    )
+
+
+def attach_surrogate_evaluator(
+    evaluator: Any,
+    surrogate_evaluator: Callable[..., Any] | None,
+    *,
+    name: str | None = None,
+) -> None:
+    """Stash the resolved surrogate (and optional name) on the evaluator.
+
+    Backward compatible: when no surrogate is configured the attribute is never
+    set, so ``get_surrogate_evaluator`` returns None and behaviour/payloads are
+    byte-identical to the pre-surrogate path.
+    """
+    if surrogate_evaluator is None:
+        return
+    try:
+        setattr(evaluator, _SURROGATE_ATTR, surrogate_evaluator)
+        if isinstance(name, str) and name:
+            setattr(evaluator, _SURROGATE_NAME_ATTR, name)
+    except Exception:  # pragma: no cover - evaluators are plain objects
+        logger.warning(
+            "Could not attach surrogate evaluator to %s; surrogate scoring disabled",
+            type(evaluator).__name__,
+        )
+
+
+def get_surrogate_evaluator(evaluator: Any) -> Callable[..., Any] | None:
+    """Return the surrogate stashed on an evaluator, or None."""
+    return getattr(evaluator, _SURROGATE_ATTR, None)
+
+
+def get_surrogate_evaluator_name(evaluator: Any) -> str | None:
+    """Return the explicit surrogate name stashed on an evaluator, or None."""
+    name = getattr(evaluator, _SURROGATE_NAME_ATTR, None)
+    return name if isinstance(name, str) and name else None
+
+
+def surrogate_evaluator_id(surrogate_evaluator: Callable[..., Any]) -> str:
+    """Derive a stable, content-free id for the surrogate descriptor.
+
+    Uses the callable's ``__name__`` (falling back to its class name for
+    ``__call__`` instances), or ``"surrogate"`` for lambdas / anonymous scorers.
+    """
+    name = getattr(surrogate_evaluator, "__name__", None)
+    if isinstance(name, str) and name and name != "<lambda>":
+        return name
+    cls_name = type(surrogate_evaluator).__name__
+    if cls_name and cls_name not in (
+        "function",
+        "method",
+        "builtin_function_or_method",
+    ):
+        return cls_name
+    return "surrogate"
+
+
+def build_surrogate_descriptor(
+    surrogate_evaluator: Callable[..., Any],
+    *,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """Build the trial-metadata descriptor for a configured surrogate.
+
+    Matches the fixed cross-repo contract consumed by the backend evaluator
+    tensor reader. ``judge_model``/``prompt`` are always None here (the SDK
+    surrogate is a code callable, not a judge-model prompt); ``fingerprint_source``
+    is the fp1 hash of the scorer's source (or None when source is unavailable).
+
+    ``evaluator_id`` uses the explicit ``name`` when the caller supplied one
+    (``surrogate_evaluator_name`` from the decorator or ``optimize()`` call),
+    otherwise it is derived from the callable via :func:`surrogate_evaluator_id`
+    (falling back to ``"surrogate"`` for anonymous scorers).
+    """
+    from traigent.utils.artifact_fingerprints import compute_surrogate_fingerprint
+
+    evaluator_id = (
+        name
+        if isinstance(name, str) and name
+        else surrogate_evaluator_id(surrogate_evaluator)
+    )
+    return {
+        "evaluator_id": evaluator_id,
+        "metric_name": "surrogate_score",
+        "judge_model": None,
+        "prompt": None,
+        "config": {
+            "fingerprint_source": compute_surrogate_fingerprint(surrogate_evaluator)
+        },
+    }
+
+
 def build_metric_functions(
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
@@ -490,6 +667,10 @@ def create_effective_evaluator(
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
     decorator_custom_evaluator: Callable[..., Any] | None,
+    surrogate_evaluator: Callable[..., Any] | None = None,
+    decorator_surrogate_evaluator: Callable[..., Any] | None = None,
+    surrogate_evaluator_name: str | None = None,
+    decorator_surrogate_evaluator_name: str | None = None,
     hybrid_api_options: HybridAPIEvaluatorOptions | None = None,
 ) -> tuple[BaseEvaluator, Any]:
     """Create the appropriate evaluator for the optimization run.
@@ -528,33 +709,48 @@ def create_effective_evaluator(
             "pattern that produces a ranked mock board."
         )
 
+    # Resolve the optional surrogate (pre-screen) scorer and stash it on the
+    # constructed evaluator so the trial-lifecycle seam can reach it. When no
+    # surrogate is configured this is a no-op and the evaluator is unchanged.
+    resolved_surrogate, resolved_surrogate_name = resolve_surrogate_evaluator_and_name(
+        surrogate_evaluator,
+        surrogate_evaluator_name,
+        decorator_surrogate_evaluator=decorator_surrogate_evaluator,
+        decorator_surrogate_evaluator_name=decorator_surrogate_evaluator_name,
+    )
+
     if effective_evaluator:
         if not callable(effective_evaluator):
             raise ValueError("custom_evaluator must be callable") from None
-        return _create_wrapped_custom_evaluator(
+        evaluator_result = _create_wrapped_custom_evaluator(
             effective_evaluator,
             objectives=objectives,
             timeout=timeout,
         )
+    else:
+        execution_mode_enum = resolve_execution_mode(execution_mode)
+        if execution_mode_enum is ExecutionMode.HYBRID_API:
+            evaluator_result = _create_hybrid_api_evaluator(
+                timeout,
+                objectives=objectives,
+                hybrid_api_options=hybrid_api_options,
+            )
+        else:
+            evaluator_result = _create_local_evaluator(
+                timeout,
+                effective_batch_size,
+                effective_thread_workers,
+                objectives=objectives,
+                execution_mode=execution_mode,
+                mock_mode_config=mock_mode_config,
+                metric_functions=metric_functions,
+                scoring_function=scoring_function,
+            )
 
-    execution_mode_enum = resolve_execution_mode(execution_mode)
-    if execution_mode_enum is ExecutionMode.HYBRID_API:
-        return _create_hybrid_api_evaluator(
-            timeout,
-            objectives=objectives,
-            hybrid_api_options=hybrid_api_options,
-        )
-
-    return _create_local_evaluator(
-        timeout,
-        effective_batch_size,
-        effective_thread_workers,
-        objectives=objectives,
-        execution_mode=execution_mode,
-        mock_mode_config=mock_mode_config,
-        metric_functions=metric_functions,
-        scoring_function=scoring_function,
+    attach_surrogate_evaluator(
+        evaluator_result[0], resolved_surrogate, name=resolved_surrogate_name
     )
+    return evaluator_result
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ Classes:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 import time
 import uuid
@@ -21,6 +22,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.context import TrialContext, WorkflowTraceContext
+from traigent.core.optimization_pipeline import (
+    build_surrogate_descriptor,
+    get_surrogate_evaluator,
+    get_surrogate_evaluator_name,
+)
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
     extract_cost_from_results,
@@ -56,6 +62,144 @@ if TYPE_CHECKING:
 from traigent.core.cost_enforcement import Permit
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Surrogate (pre-screen) scoring
+#
+# A configured surrogate is a cheap SECOND scorer over the outputs the primary
+# evaluator already captured. It NEVER re-executes the decorated function: the
+# helpers below only read ``example_result.actual_output``. All scoring is
+# fail-soft — any error drops the surrogate field for that example/trial and is
+# logged at most once per trial; primary metrics are never perturbed.
+# ---------------------------------------------------------------------------
+
+
+def _build_surrogate_kwargs(
+    surrogate: Callable[..., Any], output: Any, expected: Any, example: Any
+) -> dict[str, Any] | None:
+    """Map (output, expected, example) onto the surrogate's parameter names.
+
+    Mirrors the ``scoring_function`` calling convention (``output``/``actual``,
+    ``expected``): the surrogate is a scorer of outputs, not a func-executor.
+    Returns None to signal "call positionally with the single output" when the
+    signature cannot be inspected or exposes no recognised parameter names.
+    """
+    try:
+        params = inspect.signature(surrogate).parameters
+    except (TypeError, ValueError):
+        return None
+
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    names = set(params)
+    kwargs: dict[str, Any] = {}
+    if "output" in names or has_var_kw:
+        kwargs["output"] = output
+    elif "actual" in names:
+        kwargs["actual"] = output
+    if "expected_output" in names or has_var_kw:
+        kwargs["expected_output"] = expected
+    elif "expected" in names:
+        kwargs["expected"] = expected
+    if "example" in names or has_var_kw:
+        kwargs["example"] = example
+    return kwargs or None
+
+
+async def _invoke_surrogate(
+    surrogate: Callable[..., Any], output: Any, expected: Any, example: Any
+) -> Any:
+    """Invoke the surrogate over a single captured output (sync or async)."""
+    kwargs = _build_surrogate_kwargs(surrogate, output, expected, example)
+    result = surrogate(output) if kwargs is None else surrogate(**kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+def _coerce_surrogate_score(raw: Any) -> float | None:
+    """Coerce a surrogate return value to a float in [0, 1], or None to drop it.
+
+    Out-of-range (``<0`` / ``>1``) and non-finite values are DROPPED, never
+    clipped: the backend evaluator-tensor reader rejects out-of-range surrogate
+    scores, so pre-clipping here would launder garbage past that guard. A dropped
+    score simply omits the surrogate field for that example (fail-soft).
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, dict):
+        raw = raw.get("surrogate_score", raw.get("score"))
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    if value < 0.0 or value > 1.0:
+        return None
+    return value
+
+
+async def apply_surrogate_scoring(
+    eval_result: Any, surrogate: Callable[..., Any], trial_id: str
+) -> None:
+    """Score already-captured per-example outputs with the surrogate, in place.
+
+    Injects ``surrogate_score`` into each scored example's metrics and the mean
+    onto the flat trial metrics. Skips (single warning) when per-example outputs
+    are unavailable — it never triggers a second execution pass.
+    """
+    example_results = getattr(eval_result, "example_results", None)
+    if not isinstance(example_results, list) or not example_results:
+        logger.warning(
+            "Surrogate evaluator configured but trial %s has no per-example "
+            "outputs; skipping surrogate scoring (no re-execution).",
+            trial_id,
+        )
+        return
+
+    scored: list[float] = []
+    errored = 0
+    for example_result in example_results:
+        output = getattr(example_result, "actual_output", None)
+        metrics = getattr(example_result, "metrics", None)
+        if output is None or not isinstance(metrics, dict):
+            # No captured output (e.g. a failed example) — nothing to score.
+            continue
+        try:
+            raw = await _invoke_surrogate(
+                surrogate,
+                output,
+                getattr(example_result, "expected_output", None),
+                example_result,
+            )
+            value = _coerce_surrogate_score(raw)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            errored += 1
+            continue
+        if value is None:
+            errored += 1
+            continue
+        metrics["surrogate_score"] = value
+        scored.append(value)
+
+    if errored:
+        logger.warning(
+            "Surrogate evaluator dropped surrogate_score for %d example(s) in "
+            "trial %s (per-example error, non-numeric, or out-of-range [0,1] "
+            "result).",
+            errored,
+            trial_id,
+        )
+
+    if scored:
+        aggregate = getattr(eval_result, "metrics", None)
+        if isinstance(aggregate, dict):
+            aggregate["surrogate_score"] = sum(scored) / len(scored)
 
 
 class TrialLifecycle:
@@ -412,6 +556,13 @@ class TrialLifecycle:
                 if closure.exhausted:
                     budget_exhausted = True
 
+            # Surrogate (pre-screen) scoring: cheap second scorer over the
+            # already-captured outputs. Runs after constraint enforcement so it
+            # never perturbs primary metrics/constraints; fully fail-soft. Mutates
+            # eval_result in place BEFORE build_success_result so the per-example
+            # and aggregate surrogate_score flow into the trial payload.
+            surrogate_descriptor = await self._score_surrogate(eval_result, trial_id)
+
             result = build_success_result(
                 trial_id=trial_id,
                 evaluation_config=evaluation_config,
@@ -431,6 +582,9 @@ class TrialLifecycle:
                     lambda: frozenset(),
                 )(),
             )
+            if surrogate_descriptor is not None:
+                result.metadata["surrogate_evaluator"] = surrogate_descriptor
+
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
@@ -979,6 +1133,68 @@ class TrialLifecycle:
                 orchestrator._stop_reason = "max_samples_reached"
 
         return closure
+
+    async def _score_surrogate(
+        self, eval_result: Any, trial_id: str
+    ) -> dict[str, Any] | None:
+        """Apply the configured surrogate scorer to captured outputs, fail-soft.
+
+        Returns the surrogate descriptor to attach to the trial metadata when a
+        surrogate is configured, or None otherwise. Any surrogate failure is
+        swallowed here: the surrogate fields are dropped and the trial proceeds
+        with its primary metrics untouched.
+        """
+        surrogate = get_surrogate_evaluator(self._orchestrator.evaluator)
+        if surrogate is None:
+            return None
+
+        surrogate_name = get_surrogate_evaluator_name(self._orchestrator.evaluator)
+
+        # Build the descriptor FIRST and require a valid source fingerprint. A
+        # surrogate whose source cannot be fingerprinted is unidentifiable: the
+        # descriptor's ``config.fingerprint_source`` would be None (violating the
+        # backend's ``^fp1:[0-9a-f]{64}$`` contract), and a scored-but-
+        # unidentifiable evaluator would corrupt the server-side score tensor.
+        # In that case we drop the WHOLE descriptor AND skip scoring (fail-soft),
+        # so no surrogate_score is emitted for this trial.
+        try:
+            descriptor: dict[str, Any] | None = build_surrogate_descriptor(
+                surrogate, name=surrogate_name
+            )
+        except Exception as descriptor_error:
+            logger.warning(
+                "Surrogate descriptor could not be built for trial %s: %s "
+                "(surrogate scoring skipped; primary metrics unaffected).",
+                trial_id,
+                descriptor_error,
+            )
+            return None
+
+        if not isinstance(descriptor, dict) or not isinstance(
+            descriptor.get("config"), dict
+        ):
+            return None
+        if descriptor["config"].get("fingerprint_source") is None:
+            logger.warning(
+                "Surrogate evaluator source could not be fingerprinted for trial "
+                "%s; dropping the surrogate descriptor and all surrogate scores "
+                "(an unidentifiable scorer would corrupt the server tensor).",
+                trial_id,
+            )
+            return None
+
+        try:
+            await apply_surrogate_scoring(eval_result, surrogate, trial_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as surrogate_error:
+            logger.warning(
+                "Surrogate evaluation failed for trial %s: %s (surrogate fields "
+                "dropped; primary metrics unaffected).",
+                trial_id,
+                surrogate_error,
+            )
+        return descriptor
 
     def _apply_budget_metadata(
         self,

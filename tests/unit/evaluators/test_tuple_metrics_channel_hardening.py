@@ -212,3 +212,37 @@ async def test_nested_tuple_unpacked_once() -> None:
     # carries that resolved output, so it must stay the inner tuple.
     assert captured_outputs, "expected per-example progress payloads"
     assert all(out == ("inner", {"x": 1.0}) for out in captured_outputs)
+
+
+# ---------------------------------------------------------------------------
+# Surrogate: surrogate_score is reserved, so it survives the ceiling cap and
+# cannot be overwritten by a user tuple key of the same name.
+# ---------------------------------------------------------------------------
+
+
+def test_surrogate_score_is_reserved() -> None:
+    from traigent.evaluators.metrics_tracker import is_reserved_metric_key
+
+    assert is_reserved_metric_key("surrogate_score") is True
+
+
+def test_surrogate_score_survives_user_metric_ceiling(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """50 user metrics + surrogate_score -> surrogate_score is never dropped."""
+    from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
+
+    target: dict[str, float] = {
+        f"composite_metric_{i}": float(i) for i in range(TOTAL_MEASURES_CEILING)
+    }
+    # The lifecycle-injected surrogate score pushes the total over the ceiling.
+    target["surrogate_score"] = 0.5
+    assert len(target) == TOTAL_MEASURES_CEILING + 1
+
+    with caplog.at_level(logging.WARNING):
+        enforce_user_metric_ceiling(target, context="surrogate-ceiling-test")
+
+    # Reserved surrogate_score survives; a user key was dropped instead.
+    assert target["surrogate_score"] == 0.5
+    assert len(target) == TOTAL_MEASURES_CEILING
+    assert any("ceiling" in record.getMessage().lower() for record in caplog.records)

@@ -106,6 +106,12 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         "examples_attempted",
         "examples_consumed",
         "execution_time_ms",
+        # Surrogate (pre-screen) evaluator: a cheap SECOND scorer injected by the
+        # trial lifecycle into per-example + aggregate metrics. Reserving it means
+        # (a) a user tuple key named ``surrogate_score`` cannot overwrite it, and
+        # (b) it is never sacrificed to the TOTAL_MEASURES_CEILING user-key cap —
+        # so a run with 50 user metrics still submits the surrogate score.
+        "surrogate_score",
         # TRANSPORT-reserved: the submission lane passes the measures array and
         # summary_stats object THROUGH the metrics dict and extracts them BY NAME
         # in ``trial_operations._extract_measures_from_metrics``; the submission

@@ -225,6 +225,26 @@ def compute_evaluator_fingerprint(
         return None
 
 
+def compute_surrogate_fingerprint(
+    surrogate_evaluator: Callable[..., Any] | None,
+) -> str | None:
+    """Return the fp1 fingerprint of a surrogate evaluator's source, or None.
+
+    The surrogate (pre-screen) evaluator is a cheap second scorer over already
+    captured outputs. Its descriptor carries ``fingerprint_source`` so the
+    backend can key a per-evaluator score tensor to the exact scorer source.
+    Content-free: hashes only the callable's source, never any output content.
+    Mirrors :func:`compute_evaluator_fingerprint`'s source-hashing path.
+    """
+
+    try:
+        if surrogate_evaluator is None:
+            return None
+        return _fingerprint_text(_callable_source(surrogate_evaluator))
+    except Exception:
+        return None
+
+
 def compute_config_space_fingerprint(configuration_space: Any) -> str | None:
     """Return the fp1 configuration-space fingerprint, or None on failure."""
 

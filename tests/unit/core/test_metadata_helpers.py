@@ -368,6 +368,71 @@ class TestBuildBackendMetadataPrivacy:
         )
 
 
+class TestBuildBackendMetadataSurrogateDescriptor:
+    """Surrogate (pre-screen) descriptor must survive the submit metadata rebuild."""
+
+    _DESCRIPTOR = {
+        "evaluator_id": "half_scorer",
+        "metric_name": "surrogate_score",
+        "judge_model": None,
+        "prompt": None,
+        "config": {"fingerprint_source": "fp1:" + "a" * 64},
+    }
+
+    def test_descriptor_carried_into_wire_metadata(
+        self, mock_trial_result, mock_config
+    ):
+        """The descriptor set on TrialResult.metadata rides into the wire dict."""
+        mock_trial_result.metadata = {"surrogate_evaluator": dict(self._DESCRIPTOR)}
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert metadata["surrogate_evaluator"] == self._DESCRIPTOR
+
+    def test_descriptor_absent_when_unconfigured(self, mock_trial_result, mock_config):
+        """No surrogate configured -> key absent (protects byte-identical payload)."""
+        mock_trial_result.metadata = {}
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert "surrogate_evaluator" not in metadata
+
+    def test_non_dict_descriptor_is_not_carried(self, mock_trial_result, mock_config):
+        """A malformed (non-dict) descriptor is dropped, not forwarded."""
+        mock_trial_result.metadata = {"surrogate_evaluator": "not-a-dict"}
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert "surrogate_evaluator" not in metadata
+
+
+class TestBuildBackendMetadataSurrogatePrivacyMeasure:
+    """The content-free surrogate_score must survive into privacy-mode measures."""
+
+    def test_privacy_measure_includes_surrogate_score_no_content(
+        self, mock_trial_result, mock_config
+    ):
+        sentinel = "SDK_PRIVACY_SURROGATE_SENTINEL_DO_NOT_EMIT"
+        mock_config.privacy_enabled = True
+        mock_config.execution_mode = "edge_analytics"
+        example = Mock()
+        example.example_id = "row-1"
+        example.metrics = {"accuracy": 0.9, "surrogate_score": 0.42}
+        example.execution_time = 0.5
+        example.expected_output = sentinel
+        example.actual_output = sentinel
+        mock_trial_result.metadata = {"example_results": [example]}
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert "measures" in metadata
+        measure = metadata["measures"][0]
+        assert measure["metrics"]["surrogate_score"] == 0.42
+        # Privacy mode still strips content.
+        assert sentinel not in json.dumps(metadata["measures"])
+        assert "example_results" not in metadata
+
+
 class TestMeasuresProducerCap:
     """Regression tests for #1285: producer-side cap on per-example measures.
 
