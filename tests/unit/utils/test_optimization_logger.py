@@ -324,7 +324,7 @@ class TestOptimizationLoggerInit:
 
     def test_execution_mode_resolved(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path)
-        assert log.execution_mode == "edge_analytics"
+        assert log.execution_mode == "local"
 
     def test_buffer_size(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path, buffer_size=5)

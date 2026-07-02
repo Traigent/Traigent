@@ -396,7 +396,7 @@ class TestTraigentDiagnostics:
         assert any(
             "SDK initialized successfully" in s["message"] for s in report.successes
         )
-        mock_initialize.assert_called_once_with(execution_mode="edge_analytics")
+        mock_initialize.assert_called_once_with(execution_mode="local")
 
     @patch("traigent.initialize")
     @patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"})
