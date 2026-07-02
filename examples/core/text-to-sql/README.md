@@ -46,7 +46,7 @@ The bundled eval set is at
 JSON object with two keys:
 
 ```json
-{"question": "find customers with unpaid bills", "expected": "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid'"}
+{"input": "find customers with unpaid bills", "expected": "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid'"}
 ```
 
 Questions cover:
@@ -81,7 +81,7 @@ SPIDER benchmark (Yale, 2018) is the standard choice: 10,181 questions across
    with open("spider_eval.jsonl", "w") as f:
        for row in spider_dev:
            f.write(json.dumps({
-               "question": row["question"],
+               "input": row["question"],
                "expected": row["query"],
            }) + "\n")
    ```
