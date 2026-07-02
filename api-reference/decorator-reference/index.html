@@ -5012,7 +5012,7 @@ or custom) is unchanged — there is no fabricated random-score path.</p>
 <p>Legacy <code>execution_mode=</code> inputs are deprecated compatibility shims. Use
 <code>algorithm=</code> and <code>offline=</code> for new code.</p>
 <p>Run controls such as <code>max_trials</code> and <code>timeout</code> are passed to <code>.optimize()</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>Cost Controls</strong>:</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>

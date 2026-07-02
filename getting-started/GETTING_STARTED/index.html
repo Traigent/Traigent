@@ -4033,6 +4033,7 @@ python<span class="w"> </span>hello_world.py
 <span class="kn">from</span><span class="w"> </span><span class="nn">langchain_openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatOpenAI</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
+
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
         <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">],</span>
@@ -4045,6 +4046,7 @@ python<span class="w"> </span>hello_world.py
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
     <span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
     <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">question</span><span class="p">)</span><span class="o">.</span><span class="n">content</span>
+
 
 <span class="c1"># Run optimization</span>
 <span class="n">result</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">6</span><span class="p">))</span>
@@ -4086,21 +4088,22 @@ python<span class="w"> </span>hello_world.py
 <h2 id="datasets">🧪 Datasets<a class="headerlink" href="#datasets" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Format: JSONL with <code>input</code> and optional <code>output</code>/<code>expected_output</code></li>
+<li>Beginner examples use the flat <code>eval_dataset=</code> keyword. The bundled
+  <code>evaluation=EvaluationOptions(...)</code> form is also supported when you want to
+  group evaluation settings, but <code>eval_dataset=</code> is the recommended minimal-call
+  shape in this guide.</li>
 <li>Minimal example:</li>
 </ul>
 <div class="highlight"><pre><span></span><code>{&quot;input&quot;: {&quot;question&quot;: &quot;What is AI?&quot;}, &quot;output&quot;: &quot;Artificial Intelligence&quot;}
 {&quot;input&quot;: {&quot;question&quot;: &quot;Capital of France?&quot;}, &quot;output&quot;: &quot;Paris&quot;}
 </code></pre></div>
 <h2 id="multiple-objectives">🎛️ Multiple Objectives<a class="headerlink" href="#multiple-objectives" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.api.decorators</span><span class="w"> </span><span class="kn">import</span> <span class="n">EvaluationOptions</span>
-
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="n">EvaluationOptions</span><span class="p">(</span><span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span><span class="p">),</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">]},</span>
 <span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">classify</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="o">...</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">classify</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
 <h2 id="examples">🧪 Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4124,6 +4127,7 @@ traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">litellm</span><span class="w"> </span><span class="kn">import</span> <span class="n">completion</span>
 
+
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
         <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;claude-3-haiku-20240307&quot;</span><span class="p">,</span> <span class="s2">&quot;gemini/gemini-pro&quot;</span><span class="p">],</span>
@@ -4133,7 +4137,9 @@ traigent<span class="w"> </span>plot<span class="w"> </span>my_run<span class="w
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">response</span> <span class="o">=</span> <span class="n">completion</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">),</span> <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">query</span><span class="p">}])</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">completion</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">),</span> <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">query</span><span class="p">}]</span>
+    <span class="p">)</span>
     <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="portal-results">📊 Portal Results<a class="headerlink" href="#portal-results" title="Permanent link">&para;</a></h2>

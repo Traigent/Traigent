@@ -5678,7 +5678,7 @@ object with structured constraints.</p>
 <p>Unknown keys are forwarded to the optimizer and may raise errors when unsupported.</p>
 <p><strong>Example:</strong>
 <div class="highlight"><pre><span></span><code><span class="c1"># Run optimization with the default smart optimizer</span>
-<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
 
 <span class="c1"># Save results</span>
 <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">save_optimization_results</span><span class="p">(</span><span class="s2">&quot;results.json&quot;</span><span class="p">)</span>
