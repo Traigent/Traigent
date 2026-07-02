@@ -47,6 +47,7 @@ from typing import Any  # noqa: E402
 REAL_LLM_MODE = False
 # Number of parallel workers for trial execution (set by args parsing)
 PARALLEL_WORKERS = 1
+PORTAL_EXPERIMENTS_URL = "https://portal.traigent.ai/experiments"
 
 # Add project root to path for imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1470,18 +1471,20 @@ async def submit_to_backend(
                     config_space[key].append(value)
 
         # Create the optimization session
-        session_id, experiment_id, experiment_run_id = (
-            await client.create_privacy_optimization_session(
-                function_name=result.agent_name.replace(" ", "_").lower(),
-                configuration_space=config_space,
-                objectives=["maximize"],
-                dataset_metadata={
-                    "type": "safety_demo",
-                    "spec_path": result.spec_path,
-                    "base_spec": result.base_spec,
-                },
-                max_trials=result.total_trials,
-            )
+        (
+            session_id,
+            experiment_id,
+            experiment_run_id,
+        ) = await client.create_privacy_optimization_session(
+            function_name=result.agent_name.replace(" ", "_").lower(),
+            configuration_space=config_space,
+            objectives=["maximize"],
+            dataset_metadata={
+                "type": "safety_demo",
+                "spec_path": result.spec_path,
+                "base_spec": result.base_spec,
+            },
+            max_trials=result.total_trials,
         )
 
         # Submit each trial result
@@ -1758,7 +1761,7 @@ def main() -> None:
         if not fast:
             for i in range(qa_trial_count):
                 time.sleep(0.3)
-                sys.stdout.write(f"\r  Trial {i+1}/{qa_trial_count}...")
+                sys.stdout.write(f"\r  Trial {i + 1}/{qa_trial_count}...")
                 sys.stdout.flush()
         print(f"\r  Trial {qa_trial_count}/{qa_trial_count}... done!")
 
@@ -1785,7 +1788,7 @@ def main() -> None:
         if not fast:
             for i in range(support_trial_count):
                 time.sleep(0.3)
-                sys.stdout.write(f"\r  Trial {i+1}/{support_trial_count}...")
+                sys.stdout.write(f"\r  Trial {i + 1}/{support_trial_count}...")
                 sys.stdout.flush()
         print(f"\r  Trial {support_trial_count}/{support_trial_count}... done!")
 
@@ -1822,8 +1825,8 @@ def main() -> None:
   │ Objective: Accuracy (3x)            │ Objective: Latency (2x) + Cost (2x) │
   │                                     │                                     │
   │ Best Model: {qa_model:<22} │ Best Model: {support_model:<22} │
-  │ Accuracy: {qa_result.best_metrics['accuracy']:.1%}                      │ Latency: {support_result.best_metrics['latency_p50_ms']:.0f}ms                        │
-  │ Latency: {qa_result.best_metrics['latency_p95_ms']:.0f}ms                        │ Cost: ${support_result.best_metrics['cost']:.4f}                      │
+  │ Accuracy: {qa_result.best_metrics["accuracy"]:.1%}                      │ Latency: {support_result.best_metrics["latency_p50_ms"]:.0f}ms                        │
+  │ Latency: {qa_result.best_metrics["latency_p95_ms"]:.0f}ms                        │ Cost: ${support_result.best_metrics["cost"]:.4f}                      │
   │                                     │                                     │
   │ {Colors.GREEN}✓ Passed Safety: {qa_result.passed_trials}/{qa_result.total_trials}{Colors.END}               │ {Colors.GREEN}✓ Passed Safety: {support_result.passed_trials}/{support_result.total_trials}{Colors.END}               │
   │ {Colors.RED}✗ Rejected: {qa_result.rejected_trials}{Colors.END}                       │ {Colors.RED}✗ Rejected: {support_result.rejected_trials}{Colors.END}                       │
@@ -1843,7 +1846,7 @@ def main() -> None:
     if qa_experiment_id or support_experiment_id:
         print(f"\n  📊 {Colors.GREEN}Results submitted to backend!{Colors.END}")
         print(
-            f"\n  View in dashboard: {Colors.CYAN}https://app.traigent.ai/experiments{Colors.END}"
+            f"\n  View in dashboard: {Colors.CYAN}{PORTAL_EXPERIMENTS_URL}{Colors.END}"
         )
         if qa_experiment_id:
             print(f"     • Q&A Agent: {Colors.CYAN}{qa_experiment_id}{Colors.END}")
@@ -1854,7 +1857,7 @@ def main() -> None:
     else:
         experiment_id = f"safety-demo-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         print(
-            f"\n  📊 View results: {Colors.CYAN}https://app.traigent.ai/experiments/{experiment_id}{Colors.END}"
+            f"\n  📊 View results: {Colors.CYAN}{PORTAL_EXPERIMENTS_URL}/view/{experiment_id}{Colors.END}"
         )
         if not submit_backend:
             print(
