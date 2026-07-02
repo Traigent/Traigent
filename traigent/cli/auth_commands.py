@@ -1253,6 +1253,48 @@ class TraigentAuthCLI:
                 "TRAIGENT_MASTER_PASSWORD and rerun the command.[/yellow]"
             )
 
+    async def _enforce_password_login_rate_limit(self) -> None:
+        """Delay password login attempts using PasswordAuthHandler state."""
+        try:
+            should_rate_limit = self.auth_manager._should_rate_limit_login()
+            wait_time = (
+                self.auth_manager._get_rate_limit_wait() if should_rate_limit else 0.0
+            )
+        except Exception as exc:
+            logger.error("Unable to verify password login rate-limit state: %s", exc)
+            raise AuthenticationError(
+                "Unable to verify password login rate-limit state"
+            ) from exc
+
+        if not should_rate_limit:
+            return
+
+        logger.warning(
+            "CLI password login rate limited after repeated failures; waiting %.2fs",
+            wait_time,
+        )
+        try:
+            await asyncio.sleep(wait_time)
+        except Exception as exc:
+            logger.error("Unable to enforce password login rate-limit delay: %s", exc)
+            raise AuthenticationError(
+                "Unable to enforce password login rate-limit delay"
+            ) from exc
+
+    def _record_password_login_failure(self) -> None:
+        """Record a failed CLI password login through PasswordAuthHandler state."""
+        try:
+            self.auth_manager._record_failure()
+        except Exception as exc:
+            logger.error("Unable to record password login failure: %s", exc)
+            raise AuthenticationError(
+                "Unable to record password login failure"
+            ) from exc
+
+    def _reset_password_login_failures(self) -> None:
+        """Reset CLI password login failure tracking after a successful login."""
+        self.auth_manager._reset_failure_tracking()
+
     async def login(
         self, email: str | None = None, non_interactive: bool = False
     ) -> bool:
@@ -1283,7 +1325,9 @@ class TraigentAuthCLI:
         try:
             # Authenticate with backend
             console.print("\n[yellow]Authenticating...[/yellow]")
+            await self._enforce_password_login_rate_limit()
             credentials = await self._authenticate_with_backend(email, password)
+            self._reset_password_login_failures()
 
             # Store and display results
             storage_location = self._save_credentials(credentials)
@@ -1295,16 +1339,19 @@ class TraigentAuthCLI:
             return True
 
         except AuthenticationError as e:
+            self._record_password_login_failure()
             console.print(f"\n[red]❌ Authentication failed: {e}[/red]")
             console.print("\nPlease check your credentials and try again.")
             console.print(f"If you don't have an account, visit: {SIGNUP_URL}\n")
             return False
         except TimeoutError as e:
+            self._record_password_login_failure()
             console.print(f"\n[red]❌ Connection timed out: {e}[/red]")
             console.print("\nThe backend server took too long to respond.")
             console.print(MSG_CHECK_NETWORK)
             return False
         except NETWORK_ERRORS as e:
+            self._record_password_login_failure()
             error_type = type(e).__name__
             console.print(f"\n[red]❌ Connection error ({error_type}): {e}[/red]")
             console.print("\nCould not connect to the authentication server.")
