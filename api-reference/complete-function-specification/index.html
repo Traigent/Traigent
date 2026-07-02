@@ -5666,6 +5666,10 @@ object with structured constraints.</p>
 <td>Configure plateau detection stop conditions.</td>
 </tr>
 <tr>
+<td><code>semantic_saturation</code></td>
+<td>Configure opt-in semantic saturation. Uses per-example metric-vector churn plus continuous objective improvement and emits sanitized diagnostics in <code>OptimizationResult.metadata["semantic_saturation"]</code>.</td>
+</tr>
+<tr>
 <td><code>parameter_order</code></td>
 <td>Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest.</td>
 </tr>

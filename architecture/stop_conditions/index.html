@@ -3477,6 +3477,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#semantic-saturation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic saturation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#vendor-error-pause-semantics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3935,6 +3946,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#semantic-saturation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic saturation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#vendor-error-pause-semantics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4089,6 +4111,11 @@ combined freely:</p>
 <td>Stops when hypervolume improvement remains below a threshold across a sliding window.</td>
 <td><code>convergence_metric="hypervolume_improvement"</code>, <code>convergence_window</code>, <code>convergence_threshold</code>.</td>
 </tr>
+<tr>
+<td><code>SemanticSaturationStopCondition</code></td>
+<td>Stops when per-example quality vectors are stable and monitored continuous objectives are no longer improving.</td>
+<td><code>semantic_saturation={...}</code>.</td>
+</tr>
 </tbody>
 </table>
 <p><code>budget_limit</code> remains as a deprecated alias for <code>metric_limit</code> for compatibility.
@@ -4130,6 +4157,32 @@ running trials may finish after the limit is reached.</p>
 <code>_configure_stop_conditions()</code> and calls <code>reset()</code> for every run so state never leaks
 between optimizations. <code>_should_stop()</code> evaluates all configured conditions before
 fallback logic (timeout or optimizer-provided stop signals).</p>
+<h2 id="semantic-saturation">Semantic saturation<a class="headerlink" href="#semantic-saturation" title="Permanent link">&para;</a></h2>
+<p><code>semantic_saturation</code> is an opt-in stop condition for runs where aggregate
+accuracy alone is not enough to decide convergence. It only reads <code>example_id</code>
+and numeric or boolean values from each example's <code>metrics</code> map. It never reads
+or emits inputs, expected outputs, actual outputs, model text, or document
+content.</p>
+<p>The condition selects the latest completed trials with distinct configuration
+signatures, warms up until <code>max(window, min_trials)</code> distinct configs are
+available, then evaluates the latest <code>window</code> configs:</p>
+<ul>
+<li>Quality metrics come from <code>example_score_metrics</code>/<code>accuracy_metrics</code> or from
+  accuracy-like and binary per-example metrics.</li>
+<li>Quality saturation is measured as churn across common example IDs, gated by
+  <code>min_overlap</code>, <code>score_tolerance</code>, and <code>churn_threshold</code>.</li>
+<li>Continuous objectives come from <code>continuous_objectives</code>/<code>objectives</code>, the
+  <code>ObjectiveSchema</code>, or cost/latency/token-like aggregate metrics.</li>
+<li>Continuous objectives use direction-aware best improvement over the window,
+  compared to <code>relative_improvement_epsilon</code> and
+  <code>absolute_improvement_epsilon</code>.</li>
+</ul>
+<p>The run stops only when every quality metric and every continuous objective is
+saturated. When it fires, <code>OptimizationResult.stop_reason</code> is
+<code>"semantic_saturation"</code>. The latest sanitized decision payload is emitted under
+<code>OptimizationResult.metadata["semantic_saturation"]</code> and follows TraigentSchema
+<code>optimization/semantic_saturation_schema.json</code>; example ID lists are capped by
+<code>max_example_ids</code>.</p>
 <h2 id="vendor-error-pause-semantics">Vendor-error pause semantics<a class="headerlink" href="#vendor-error-pause-semantics" title="Permanent link">&para;</a></h2>
 <p>When every trial in a parallel batch fails with a vendor-classifiable error
 (rate limit, quota, service unavailable, insufficient funds), the orchestrator
@@ -4211,6 +4264,8 @@ they were declared in <code>@optimize</code>.</p>
 <p>All three examples share the same stop-condition machinery with no additional
 plumbing.</p>
 <p>Built-in convergence stops report <code>OptimizationResult.stop_reason = "convergence"</code>.
+Semantic saturation reports
+<code>OptimizationResult.stop_reason = "semantic_saturation"</code>.
 Custom stop-condition instances still report the generic <code>"condition"</code> reason
 unless they are explicitly mapped into the public <code>StopReason</code> contract.</p>
 <h2 id="testing-coverage">Testing &amp; coverage<a class="headerlink" href="#testing-coverage" title="Permanent link">&para;</a></h2>
@@ -4220,6 +4275,11 @@ unless they are explicitly mapped into the public <code>StopReason</code> contra
 <li>Max-trial threshold (including invalid inputs).</li>
 <li>Plateau detection, weight handling, reset semantics, and parameter validation.</li>
 <li>Metric-limit enforcement, compatibility fallback, and pruned-trial filtering.</li>
+<li>Stop-condition exports include semantic saturation.</li>
+<li><code>tests/unit/core/test_semantic_saturation_stop_condition.py</code> – verifies:</li>
+<li>Stable vectors, boolean scores, aggregate-flat no-stop behavior, repeated
+    config warmup, cost-improving continuation, schema-valid result metadata,
+    and the privacy boundary.</li>
 <li><code>tests/unit/core/test_orchestrator.py</code> – integration tests for plateau and metric limit
   within the orchestrator, ensuring early termination and reasonable counts in
   sequential runs.</li>
