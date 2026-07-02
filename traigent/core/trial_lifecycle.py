@@ -25,6 +25,7 @@ from traigent.config.context import TrialContext, WorkflowTraceContext
 from traigent.core.optimization_pipeline import (
     build_surrogate_descriptor,
     get_surrogate_evaluator,
+    get_surrogate_evaluator_name,
 )
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
@@ -117,7 +118,13 @@ async def _invoke_surrogate(
 
 
 def _coerce_surrogate_score(raw: Any) -> float | None:
-    """Coerce a surrogate return value to a float in [0, 1], or None to drop it."""
+    """Coerce a surrogate return value to a float in [0, 1], or None to drop it.
+
+    Out-of-range (``<0`` / ``>1``) and non-finite values are DROPPED, never
+    clipped: the backend evaluator-tensor reader rejects out-of-range surrogate
+    scores, so pre-clipping here would launder garbage past that guard. A dropped
+    score simply omits the surrogate field for that example (fail-soft).
+    """
     if isinstance(raw, bool):
         return None
     if isinstance(raw, dict):
@@ -130,7 +137,9 @@ def _coerce_surrogate_score(raw: Any) -> float | None:
         return None
     if math.isnan(value) or math.isinf(value):
         return None
-    return max(0.0, min(1.0, value))
+    if value < 0.0 or value > 1.0:
+        return None
+    return value
 
 
 async def apply_surrogate_scoring(
@@ -181,7 +190,8 @@ async def apply_surrogate_scoring(
     if errored:
         logger.warning(
             "Surrogate evaluator dropped surrogate_score for %d example(s) in "
-            "trial %s (per-example error or non-numeric result).",
+            "trial %s (per-example error, non-numeric, or out-of-range [0,1] "
+            "result).",
             errored,
             trial_id,
         )
@@ -1138,9 +1148,42 @@ class TrialLifecycle:
         if surrogate is None:
             return None
 
-        descriptor: dict[str, Any] | None = None
+        surrogate_name = get_surrogate_evaluator_name(self._orchestrator.evaluator)
+
+        # Build the descriptor FIRST and require a valid source fingerprint. A
+        # surrogate whose source cannot be fingerprinted is unidentifiable: the
+        # descriptor's ``config.fingerprint_source`` would be None (violating the
+        # backend's ``^fp1:[0-9a-f]{64}$`` contract), and a scored-but-
+        # unidentifiable evaluator would corrupt the server-side score tensor.
+        # In that case we drop the WHOLE descriptor AND skip scoring (fail-soft),
+        # so no surrogate_score is emitted for this trial.
         try:
-            descriptor = build_surrogate_descriptor(surrogate)
+            descriptor: dict[str, Any] | None = build_surrogate_descriptor(
+                surrogate, name=surrogate_name
+            )
+        except Exception as descriptor_error:
+            logger.warning(
+                "Surrogate descriptor could not be built for trial %s: %s "
+                "(surrogate scoring skipped; primary metrics unaffected).",
+                trial_id,
+                descriptor_error,
+            )
+            return None
+
+        if not isinstance(descriptor, dict) or not isinstance(
+            descriptor.get("config"), dict
+        ):
+            return None
+        if descriptor["config"].get("fingerprint_source") is None:
+            logger.warning(
+                "Surrogate evaluator source could not be fingerprinted for trial "
+                "%s; dropping the surrogate descriptor and all surrogate scores "
+                "(an unidentifiable scorer would corrupt the server tensor).",
+                trial_id,
+            )
+            return None
+
+        try:
             await apply_surrogate_scoring(eval_result, surrogate, trial_id)
         except asyncio.CancelledError:
             raise

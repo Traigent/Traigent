@@ -312,6 +312,7 @@ def resolve_custom_evaluator(
 # ---------------------------------------------------------------------------
 
 _SURROGATE_ATTR = "_traigent_surrogate_evaluator"
+_SURROGATE_NAME_ATTR = "_traigent_surrogate_evaluator_name"
 
 
 def resolve_surrogate_evaluator(
@@ -333,10 +334,28 @@ def resolve_surrogate_evaluator(
     return provided if provided is not None else None
 
 
+def resolve_surrogate_evaluator_name(
+    surrogate_evaluator_name: str | None,
+    *,
+    decorator_surrogate_evaluator_name: str | None,
+) -> str | None:
+    """Resolve the effective surrogate name (optimize()-arg over decorator).
+
+    Mirrors :func:`resolve_surrogate_evaluator`'s precedence so the explicit
+    ``evaluator_id`` in the descriptor follows the same runtime-over-decorator
+    rule as the surrogate callable itself.
+    """
+    provided = surrogate_evaluator_name or decorator_surrogate_evaluator_name
+    return provided if isinstance(provided, str) and provided else None
+
+
 def attach_surrogate_evaluator(
-    evaluator: Any, surrogate_evaluator: Callable[..., Any] | None
+    evaluator: Any,
+    surrogate_evaluator: Callable[..., Any] | None,
+    *,
+    name: str | None = None,
 ) -> None:
-    """Stash the resolved surrogate on the evaluator instance (no-op if None).
+    """Stash the resolved surrogate (and optional name) on the evaluator.
 
     Backward compatible: when no surrogate is configured the attribute is never
     set, so ``get_surrogate_evaluator`` returns None and behaviour/payloads are
@@ -346,6 +365,8 @@ def attach_surrogate_evaluator(
         return
     try:
         setattr(evaluator, _SURROGATE_ATTR, surrogate_evaluator)
+        if isinstance(name, str) and name:
+            setattr(evaluator, _SURROGATE_NAME_ATTR, name)
     except Exception:  # pragma: no cover - evaluators are plain objects
         logger.warning(
             "Could not attach surrogate evaluator to %s; surrogate scoring disabled",
@@ -356,6 +377,12 @@ def attach_surrogate_evaluator(
 def get_surrogate_evaluator(evaluator: Any) -> Callable[..., Any] | None:
     """Return the surrogate stashed on an evaluator, or None."""
     return getattr(evaluator, _SURROGATE_ATTR, None)
+
+
+def get_surrogate_evaluator_name(evaluator: Any) -> str | None:
+    """Return the explicit surrogate name stashed on an evaluator, or None."""
+    name = getattr(evaluator, _SURROGATE_NAME_ATTR, None)
+    return name if isinstance(name, str) and name else None
 
 
 def surrogate_evaluator_id(surrogate_evaluator: Callable[..., Any]) -> str:
@@ -379,6 +406,8 @@ def surrogate_evaluator_id(surrogate_evaluator: Callable[..., Any]) -> str:
 
 def build_surrogate_descriptor(
     surrogate_evaluator: Callable[..., Any],
+    *,
+    name: str | None = None,
 ) -> dict[str, Any]:
     """Build the trial-metadata descriptor for a configured surrogate.
 
@@ -386,11 +415,21 @@ def build_surrogate_descriptor(
     tensor reader. ``judge_model``/``prompt`` are always None here (the SDK
     surrogate is a code callable, not a judge-model prompt); ``fingerprint_source``
     is the fp1 hash of the scorer's source (or None when source is unavailable).
+
+    ``evaluator_id`` uses the explicit ``name`` when the caller supplied one
+    (``surrogate_evaluator_name`` from the decorator or ``optimize()`` call),
+    otherwise it is derived from the callable via :func:`surrogate_evaluator_id`
+    (falling back to ``"surrogate"`` for anonymous scorers).
     """
     from traigent.utils.artifact_fingerprints import compute_surrogate_fingerprint
 
+    evaluator_id = (
+        name
+        if isinstance(name, str) and name
+        else surrogate_evaluator_id(surrogate_evaluator)
+    )
     return {
-        "evaluator_id": surrogate_evaluator_id(surrogate_evaluator),
+        "evaluator_id": evaluator_id,
         "metric_name": "surrogate_score",
         "judge_model": None,
         "prompt": None,
@@ -591,6 +630,8 @@ def create_effective_evaluator(
     decorator_custom_evaluator: Callable[..., Any] | None,
     surrogate_evaluator: Callable[..., Any] | None = None,
     decorator_surrogate_evaluator: Callable[..., Any] | None = None,
+    surrogate_evaluator_name: str | None = None,
+    decorator_surrogate_evaluator_name: str | None = None,
     hybrid_api_options: HybridAPIEvaluatorOptions | None = None,
 ) -> tuple[BaseEvaluator, Any]:
     """Create the appropriate evaluator for the optimization run.
@@ -636,6 +677,10 @@ def create_effective_evaluator(
         surrogate_evaluator,
         decorator_surrogate_evaluator=decorator_surrogate_evaluator,
     )
+    resolved_surrogate_name = resolve_surrogate_evaluator_name(
+        surrogate_evaluator_name,
+        decorator_surrogate_evaluator_name=decorator_surrogate_evaluator_name,
+    )
 
     if effective_evaluator:
         if not callable(effective_evaluator):
@@ -665,7 +710,9 @@ def create_effective_evaluator(
                 scoring_function=scoring_function,
             )
 
-    attach_surrogate_evaluator(evaluator_result[0], resolved_surrogate)
+    attach_surrogate_evaluator(
+        evaluator_result[0], resolved_surrogate, name=resolved_surrogate_name
+    )
     return evaluator_result
 
 

@@ -414,6 +414,10 @@ class OptimizedFunction(Generic[_P, _R]):
         # Surrogate (pre-screen) scorer; set post-construction by the optimize
         # decorator and read by _create_effective_evaluator. None when unconfigured.
         self._surrogate_evaluator: Callable[..., Any] | None = None
+        # Explicit surrogate descriptor id; set post-construction by the optimize
+        # decorator (``surrogate_evaluator_name``). None -> id derived from the
+        # callable. A runtime optimize() name overrides this decorator value.
+        self._surrogate_evaluator_name: str | None = None
         # Config persistence parameters
         self._auto_load_best = kwargs.pop("auto_load_best", False)
         self._load_from = kwargs.pop("load_from", None)
@@ -1434,6 +1438,8 @@ class OptimizedFunction(Generic[_P, _R]):
         timeout: float | None = None,
         save_to: str | None = None,
         custom_evaluator: Callable[..., Any] | None = None,
+        surrogate_evaluator: Callable[..., Any] | None = None,
+        surrogate_evaluator_name: str | None = None,
         callbacks: list[Callable[..., Any]] | None = None,
         configuration_space: dict[str, Any] | None = None,
         objectives: ObjectiveSchema | Sequence[str] | None = None,
@@ -1455,6 +1461,12 @@ class OptimizedFunction(Generic[_P, _R]):
             save_to: Path to save results
             custom_evaluator: Custom evaluation function that takes (func, config, input_data)
                             and returns metrics dict. If provided, overrides default evaluation.
+            surrogate_evaluator: Optional cheap pre-screen scorer over captured
+                outputs. When provided, overrides any decorator-level surrogate
+                (same runtime-over-decorator precedence as ``custom_evaluator``).
+            surrogate_evaluator_name: Optional explicit id for the surrogate
+                descriptor's ``evaluator_id``. Overrides a decorator-level name;
+                when omitted the id is derived from the callable.
             callbacks: List of callback objects for progress tracking
             configuration_space: Override configuration space for this optimization run.
                                 Takes precedence over decorator configuration_space.
@@ -1562,6 +1574,8 @@ class OptimizedFunction(Generic[_P, _R]):
                 timeout=timeout,
                 save_to=save_to,
                 custom_evaluator=custom_evaluator,
+                surrogate_evaluator=surrogate_evaluator,
+                surrogate_evaluator_name=surrogate_evaluator_name,
                 callbacks=callbacks,
                 configuration_space=configuration_space,
                 algorithm_kwargs=algorithm_kwargs,
@@ -1583,6 +1597,8 @@ class OptimizedFunction(Generic[_P, _R]):
         timeout: float | None = None,
         save_to: str | None = None,
         custom_evaluator: Callable[..., Any] | None = None,
+        surrogate_evaluator: Callable[..., Any] | None = None,
+        surrogate_evaluator_name: str | None = None,
         callbacks: list[Callable[..., Any]] | None = None,
         configuration_space: dict[str, Any] | None = None,
         objectives: ObjectiveSchema | Sequence[str] | None = None,
@@ -1642,6 +1658,8 @@ class OptimizedFunction(Generic[_P, _R]):
             timeout=timeout,
             save_to=save_to,
             custom_evaluator=custom_evaluator,
+            surrogate_evaluator=surrogate_evaluator,
+            surrogate_evaluator_name=surrogate_evaluator_name,
             callbacks=callbacks,
             configuration_space=configuration_space,
             objectives=objectives,
@@ -1780,6 +1798,8 @@ class OptimizedFunction(Generic[_P, _R]):
         effective_thread_workers: int | None,
         effective_privacy_enabled: bool,
         *,
+        surrogate_evaluator: Callable[..., Any] | None = None,
+        surrogate_evaluator_name: str | None = None,
         force_auto_discover_tvars: bool | None = None,
     ) -> BaseEvaluator:
         """Create the appropriate evaluator. Delegates to optimization_pipeline."""
@@ -1795,9 +1815,13 @@ class OptimizedFunction(Generic[_P, _R]):
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
-            # Surrogate (pre-screen) scorer set by the optimize decorator; stashed
-            # on the evaluator so the trial lifecycle can score captured outputs.
+            # Surrogate (pre-screen) scorer: runtime optimize()-arg overrides the
+            # decorator value (same precedence as custom_evaluator); stashed on the
+            # evaluator so the trial lifecycle can score captured outputs.
+            surrogate_evaluator=surrogate_evaluator,
             decorator_surrogate_evaluator=self._surrogate_evaluator,
+            surrogate_evaluator_name=surrogate_evaluator_name,
+            decorator_surrogate_evaluator_name=self._surrogate_evaluator_name,
             **self._hybrid_api_evaluator_kwargs(
                 force_auto_discover_tvars=force_auto_discover_tvars
             ),
@@ -2350,6 +2374,8 @@ Remediation:
         timeout: float | None,
         save_to: str | None,
         custom_evaluator: Callable[..., Any] | None,
+        surrogate_evaluator: Callable[..., Any] | None = None,
+        surrogate_evaluator_name: str | None = None,
         callbacks: list[Callable[..., Any]] | None,
         configuration_space: dict[str, Any] | None,
         algorithm_kwargs: dict[str, Any],
@@ -2374,6 +2400,8 @@ Remediation:
                 effective_batch_size=None,
                 effective_thread_workers=None,
                 effective_privacy_enabled=effective_privacy_enabled,
+                surrogate_evaluator=surrogate_evaluator,
+                surrogate_evaluator_name=surrogate_evaluator_name,
                 force_auto_discover_tvars=True,
             )
 
@@ -2540,6 +2568,8 @@ Remediation:
                 effective_batch_size=effective_batch_size,
                 effective_thread_workers=effective_thread_workers,
                 effective_privacy_enabled=effective_privacy_enabled,
+                surrogate_evaluator=surrogate_evaluator,
+                surrogate_evaluator_name=surrogate_evaluator_name,
             )
 
         # Phase 7: Create optimizer

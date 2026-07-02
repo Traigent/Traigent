@@ -24,7 +24,9 @@ from traigent.core.optimization_pipeline import (
     build_surrogate_descriptor,
     create_effective_evaluator,
     get_surrogate_evaluator,
+    get_surrogate_evaluator_name,
     resolve_surrogate_evaluator,
+    resolve_surrogate_evaluator_name,
     surrogate_evaluator_id,
 )
 from traigent.core.trial_lifecycle import (
@@ -79,6 +81,11 @@ class _Evaluator:
 def half_scorer(output, expected_output=None, example=None):
     """A trivial deterministic surrogate."""
     return 0.5
+
+
+def boom_scorer(output, expected_output=None, example=None):
+    """A module-level surrogate whose source is fingerprintable but which raises."""
+    raise RuntimeError("kaboom")
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +160,43 @@ def test_fingerprint_is_stable_and_content_free():
     assert a == b and FP_RE.match(a)
 
 
+def test_descriptor_uses_explicit_name_when_provided():
+    # An explicit name overrides the callable-derived id.
+    named = build_surrogate_descriptor(half_scorer, name="my_prescreen")
+    assert named["evaluator_id"] == "my_prescreen"
+    # Omitting the name falls back to the callable derivation.
+    unnamed = build_surrogate_descriptor(half_scorer, name=None)
+    assert unnamed["evaluator_id"] == "half_scorer"
+    # A blank name is ignored (falls back to derivation).
+    blank = build_surrogate_descriptor(half_scorer, name="")
+    assert blank["evaluator_id"] == "half_scorer"
+
+
+def test_resolve_name_prefers_optimize_arg_over_decorator():
+    assert (
+        resolve_surrogate_evaluator_name(
+            "call", decorator_surrogate_evaluator_name="dec"
+        )
+        == "call"
+    )
+    assert (
+        resolve_surrogate_evaluator_name(None, decorator_surrogate_evaluator_name="dec")
+        == "dec"
+    )
+    assert (
+        resolve_surrogate_evaluator_name(None, decorator_surrogate_evaluator_name=None)
+        is None
+    )
+
+
+def test_attach_and_get_name_roundtrip():
+    ev = _Evaluator()
+    assert get_surrogate_evaluator_name(ev) is None
+    attach_surrogate_evaluator(ev, half_scorer, name="prescreen_a")
+    assert get_surrogate_evaluator(ev) is half_scorer
+    assert get_surrogate_evaluator_name(ev) == "prescreen_a"
+
+
 # ---------------------------------------------------------------------------
 # per-example + aggregate scoring
 # ---------------------------------------------------------------------------
@@ -174,15 +218,25 @@ async def test_scores_injected_per_example_and_aggregate():
 
 
 @pytest.mark.asyncio
-async def test_scores_are_clipped_to_unit_interval():
-    result = _eval_result([_example(0, "hi"), _example(1, "lo")])
+async def test_out_of_range_scores_are_dropped_not_clipped():
+    # The backend evaluator-tensor reader REJECTS out-of-range surrogate scores;
+    # the SDK must NOT pre-clip (that would launder garbage past that guard). An
+    # out-of-range value drops the surrogate field for that example (fail-soft).
+    result = _eval_result([_example(0, "hi"), _example(1, "lo"), _example(2, "ok")])
 
     def scorer(output, expected_output=None, example=None):
-        return 5.0 if output == "hi" else -3.0
+        if output == "hi":
+            return 5.0  # > 1 -> dropped
+        if output == "lo":
+            return -3.0  # < 0 -> dropped
+        return 0.5  # in range -> kept
 
-    await apply_surrogate_scoring(result, scorer, "trial-clip")
-    assert result.example_results[0].metrics["surrogate_score"] == 1.0
-    assert result.example_results[1].metrics["surrogate_score"] == 0.0
+    await apply_surrogate_scoring(result, scorer, "trial-oor")
+    assert "surrogate_score" not in result.example_results[0].metrics
+    assert "surrogate_score" not in result.example_results[1].metrics
+    assert result.example_results[2].metrics["surrogate_score"] == 0.5
+    # Aggregate is the mean over ONLY the in-range score.
+    assert result.metrics["surrogate_score"] == pytest.approx(0.5)
 
 
 @pytest.mark.asyncio
@@ -295,14 +349,20 @@ async def test_dict_return_coerced_via_known_keys():
     assert result.example_results[0].metrics["surrogate_score"] == 0.3
 
 
-def test_coerce_rejects_bool_and_nonfinite():
+def test_coerce_rejects_bool_nonfinite_and_out_of_range():
     assert _coerce_surrogate_score(True) is None
     assert _coerce_surrogate_score(float("nan")) is None
     assert _coerce_surrogate_score(float("inf")) is None
     assert _coerce_surrogate_score("not a number") is None
     assert _coerce_surrogate_score({"score": 0.7}) == 0.7
     assert _coerce_surrogate_score(0.42) == 0.42
-    assert _coerce_surrogate_score(2.0) == 1.0
+    # Out-of-range values are DROPPED (None), never clipped.
+    assert _coerce_surrogate_score(2.0) is None
+    assert _coerce_surrogate_score(-0.5) is None
+    assert _coerce_surrogate_score(1.000001) is None
+    # Exact interval bounds are kept.
+    assert _coerce_surrogate_score(0.0) == 0.0
+    assert _coerce_surrogate_score(1.0) == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -340,19 +400,40 @@ async def test_score_surrogate_returns_descriptor_and_scores_when_configured():
 
 @pytest.mark.asyncio
 async def test_score_surrogate_is_fail_soft_on_total_error():
-    class Boom:
-        def __call__(self, output, expected_output=None, example=None):
-            raise RuntimeError("kaboom")
-
+    # ``boom_scorer`` is a module-level function, so its source IS fingerprintable
+    # (descriptor survives) — but scoring raises, so the per-example/aggregate
+    # scores are dropped fail-soft while the descriptor still rides to the backend.
     evaluator = _Evaluator()
-    attach_surrogate_evaluator(evaluator, Boom())
+    attach_surrogate_evaluator(evaluator, boom_scorer)
     lifecycle = TrialLifecycle(_Orchestrator(evaluator))
     result = _eval_result([_example(0, "a")])
 
-    # Descriptor is still returned; per-example scoring failed softly.
     descriptor = await lifecycle._score_surrogate(result, "trial-z")
     assert descriptor is not None
+    assert descriptor["config"]["fingerprint_source"] is not None
     assert "surrogate_score" not in result.example_results[0].metrics
+    assert "surrogate_score" not in result.metrics
+
+
+@pytest.mark.asyncio
+async def test_score_surrogate_dropped_when_fingerprint_unavailable(monkeypatch):
+    # Finding 3: a surrogate whose source cannot be fingerprinted is
+    # unidentifiable — the descriptor's fingerprint_source would be None,
+    # violating ^fp1:[0-9a-f]{64}$. Drop the WHOLE descriptor AND all scores so a
+    # scored-but-unidentifiable evaluator can never corrupt the server tensor.
+    import traigent.utils.artifact_fingerprints as afp
+
+    monkeypatch.setattr(afp, "compute_surrogate_fingerprint", lambda _s: None)
+
+    evaluator = _Evaluator()
+    attach_surrogate_evaluator(evaluator, half_scorer)
+    lifecycle = TrialLifecycle(_Orchestrator(evaluator))
+    result = _eval_result([_example(0, "a"), _example(1, "b")])
+
+    descriptor = await lifecycle._score_surrogate(result, "trial-nofp")
+    assert descriptor is None
+    assert "surrogate_score" not in result.example_results[0].metrics
+    assert "surrogate_score" not in result.example_results[1].metrics
     assert "surrogate_score" not in result.metrics
 
 
@@ -443,3 +524,129 @@ def test_create_effective_evaluator_no_surrogate_leaves_attr_absent():
         decorator_custom_evaluator=None,
     )
     assert get_surrogate_evaluator(evaluator) is None
+
+
+def test_create_effective_evaluator_runtime_surrogate_overrides_decorator():
+    # Finding 5: the runtime optimize()-arg surrogate must win over the decorator
+    # surrogate, mirroring custom_evaluator's precedence.
+    decorator_surrogate = lambda output: 0.2  # noqa: E731
+    evaluator, _aux = create_effective_evaluator(
+        timeout=None,
+        custom_evaluator=None,
+        effective_batch_size=1,
+        effective_thread_workers=1,
+        effective_privacy_enabled=False,
+        objectives=["accuracy"],
+        execution_mode="edge_analytics",
+        mock_mode_config=None,
+        metric_functions=None,
+        scoring_function=None,
+        decorator_custom_evaluator=None,
+        surrogate_evaluator=half_scorer,
+        decorator_surrogate_evaluator=decorator_surrogate,
+        surrogate_evaluator_name="runtime_name",
+        decorator_surrogate_evaluator_name="decorator_name",
+    )
+    assert get_surrogate_evaluator(evaluator) is half_scorer
+    # Runtime name wins and rides into the descriptor's evaluator_id.
+    assert get_surrogate_evaluator_name(evaluator) == "runtime_name"
+    descriptor = build_surrogate_descriptor(
+        get_surrogate_evaluator(evaluator),
+        name=get_surrogate_evaluator_name(evaluator),
+    )
+    assert descriptor["evaluator_id"] == "runtime_name"
+
+
+@pytest.mark.asyncio
+async def test_score_surrogate_uses_attached_name_in_descriptor():
+    evaluator = _Evaluator()
+    attach_surrogate_evaluator(evaluator, half_scorer, name="prescreen_v2")
+    lifecycle = TrialLifecycle(_Orchestrator(evaluator))
+    result = _eval_result([_example(0, "a")])
+
+    descriptor = await lifecycle._score_surrogate(result, "trial-name")
+    assert descriptor is not None
+    assert descriptor["evaluator_id"] == "prescreen_v2"
+    assert result.example_results[0].metrics["surrogate_score"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Public-path runtime override: optimize()-arg surrogate wins over decorator
+# ---------------------------------------------------------------------------
+
+
+def _decorator_scorer(output, expected_output=None, example=None):
+    return 0.2
+
+
+def test_optimized_function_runtime_surrogate_overrides_decorator():
+    # Finding 5: on the public OptimizedFunction seam, a runtime surrogate B
+    # passed to optimize() (threaded via _create_effective_evaluator) must win
+    # over the decorator-configured surrogate A, and the runtime name must
+    # propagate into the descriptor's evaluator_id.
+    from traigent.core.optimized_function import OptimizedFunction
+
+    def func(text: str) -> str:
+        return text
+
+    opt = OptimizedFunction(
+        func=func,
+        configuration_space={"temperature": [0.0, 1.0]},
+        objectives=["accuracy"],
+    )
+    # Decorator-level surrogate A + name.
+    opt._surrogate_evaluator = _decorator_scorer
+    opt._surrogate_evaluator_name = "decorator_A"
+
+    # Runtime optimize()-arg surrogate B + name.
+    evaluator = opt._create_effective_evaluator(
+        timeout=None,
+        custom_evaluator=None,
+        effective_batch_size=1,
+        effective_thread_workers=1,
+        effective_privacy_enabled=False,
+        surrogate_evaluator=half_scorer,
+        surrogate_evaluator_name="runtime_B",
+    )
+    assert get_surrogate_evaluator(evaluator) is half_scorer
+    assert get_surrogate_evaluator_name(evaluator) == "runtime_B"
+    descriptor = build_surrogate_descriptor(
+        get_surrogate_evaluator(evaluator),
+        name=get_surrogate_evaluator_name(evaluator),
+    )
+    assert descriptor["evaluator_id"] == "runtime_B"
+
+
+def test_optimized_function_decorator_surrogate_used_without_runtime_override():
+    # Without a runtime override, the decorator surrogate + name are used.
+    from traigent.core.optimized_function import OptimizedFunction
+
+    def func(text: str) -> str:
+        return text
+
+    opt = OptimizedFunction(
+        func=func,
+        configuration_space={"temperature": [0.0, 1.0]},
+        objectives=["accuracy"],
+    )
+    opt._surrogate_evaluator = half_scorer
+    opt._surrogate_evaluator_name = "decorator_only"
+
+    evaluator = opt._create_effective_evaluator(
+        timeout=None,
+        custom_evaluator=None,
+        effective_batch_size=1,
+        effective_thread_workers=1,
+        effective_privacy_enabled=False,
+    )
+    assert get_surrogate_evaluator(evaluator) is half_scorer
+    assert get_surrogate_evaluator_name(evaluator) == "decorator_only"
+
+
+def test_evaluation_options_accepts_surrogate_name():
+    opts = EvaluationOptions(
+        surrogate_evaluator=half_scorer, surrogate_evaluator_name="my_id"
+    )
+    assert opts.surrogate_evaluator_name == "my_id"
+    # Backward compatible: still optional.
+    assert EvaluationOptions().surrogate_evaluator_name is None

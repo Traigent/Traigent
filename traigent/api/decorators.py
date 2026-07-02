@@ -141,6 +141,12 @@ class EvaluationOptions(BaseModel):
     #: ``surrogate_score``/``score``). Results ride alongside primary metrics as
     #: ``surrogate_score`` and feed the backend's per-evaluator score tensor.
     surrogate_evaluator: Callable[..., Any] | None = None
+    #: Optional explicit id for the surrogate descriptor's ``evaluator_id`` (the
+    #: key the backend tensor uses for this scorer). When omitted, the id is
+    #: derived from the callable's ``__name__``/class name (or ``"surrogate"`` for
+    #: anonymous scorers). A runtime ``optimize(surrogate_evaluator_name=...)``
+    #: overrides this decorator value.
+    surrogate_evaluator_name: str | None = None
 
 
 class InjectionOptions(BaseModel):
@@ -2709,6 +2715,11 @@ def optimize(  # NOSONAR(S107)
     surrogate_evaluator = (
         evaluation_bundle.surrogate_evaluator if evaluation_bundle is not None else None
     )
+    surrogate_evaluator_name = (
+        evaluation_bundle.surrogate_evaluator_name
+        if evaluation_bundle is not None
+        else None
+    )
     if surrogate_evaluator is not None:
         _validate_surrogate_evaluator_signature(surrogate_evaluator)
 
@@ -3047,6 +3058,8 @@ def optimize(  # NOSONAR(S107)
         # no-surrogate path stays byte-identical.
         if surrogate_evaluator is not None:
             optimized_func._surrogate_evaluator = surrogate_evaluator
+            if isinstance(surrogate_evaluator_name, str) and surrogate_evaluator_name:
+                optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
 
         logger.info(
             f"Created optimizable function: {func.__name__} (experiment_name={effective_experiment_name!r})"
