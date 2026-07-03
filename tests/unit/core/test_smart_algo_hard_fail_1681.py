@@ -194,7 +194,14 @@ class TestFailClosedGuardUnit:
 
     @pytest.mark.parametrize(
         "stop_reason",
-        ["timeout", "user_cancelled", "cost_limit", "vendor_error", "network_error", "error"],
+        [
+            "timeout",
+            "user_cancelled",
+            "cost_limit",
+            "vendor_error",
+            "network_error",
+            "error",
+        ],
     )
     def test_no_raise_for_owned_stop_reasons(self, stop_reason: str) -> None:
         """Empty stops already owned by another cause (timeout, user cancel,
