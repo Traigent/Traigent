@@ -427,7 +427,9 @@ class TestGridSearchOptimizerWeights:
         )
         schema = ObjectiveSchema.from_objectives(
             [
-                ObjectiveDefinition(name="accuracy", orientation="maximize", weight=0.3),
+                ObjectiveDefinition(
+                    name="accuracy", orientation="maximize", weight=0.3
+                ),
                 ObjectiveDefinition(name="cost", orientation="minimize", weight=0.7),
             ]
         )

@@ -517,9 +517,7 @@ class ObjectiveSchema:
         """
         if len(self.objectives) <= 1:
             return False
-        values = [
-            self.weights_normalized.get(obj.name, 0.0) for obj in self.objectives
-        ]
+        values = [self.weights_normalized.get(obj.name, 0.0) for obj in self.objectives]
         first = values[0]
         return any(abs(value - first) > 1e-9 for value in values)
 

@@ -1199,9 +1199,9 @@ class TestWeightedSelection:
         )
         with_schema = self._select(trials_b, single)
 
-        assert with_schema.best_config == legacy.best_config == {
-            "model": "gpt-4o-analog"
-        }
+        assert (
+            with_schema.best_config == legacy.best_config == {"model": "gpt-4o-analog"}
+        )
         assert with_schema.best_score == legacy.best_score
         assert with_schema.session_summary == legacy.session_summary
         assert not any("score" in t.metrics for t in trials_b)
@@ -1272,14 +1272,10 @@ class TestWeightedSelection:
                     weight=0.8,
                     band=BandTarget(low=0.8, high=0.9),
                 ),
-                ObjectiveDefinition(
-                    name="cost", orientation="minimize", weight=0.2
-                ),
+                ObjectiveDefinition(name="cost", orientation="minimize", weight=0.2),
             ]
         )
         assert resolve_weighted_selection_schema(banded) is None
         assert resolve_weighted_selection_schema(None) is None
-        assert (
-            resolve_weighted_selection_schema(_weighted_schema(0.7, 0.3)) is not None
-        )
+        assert resolve_weighted_selection_schema(_weighted_schema(0.7, 0.3)) is not None
         assert resolve_weighted_selection_schema(_weighted_schema(1.0, 1.0)) is None
