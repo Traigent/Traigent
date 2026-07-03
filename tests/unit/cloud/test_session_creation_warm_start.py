@@ -697,9 +697,7 @@ class TestCreateResponseWarmStartTransferRetention:
     def test_block_stored_verbatim_copy_in_active_session_metadata(self):
         client = WarmStartCreateFakeClient(warm_start_transfer=CREATE_TRANSFER)
         _create_session(client)
-        stored = client._active_sessions["session-001"].metadata[
-            "warm_start_transfer"
-        ]
+        stored = client._active_sessions["session-001"].metadata["warm_start_transfer"]
         assert stored == CREATE_TRANSFER
         assert stored is not CREATE_TRANSFER  # defensive copy, still verbatim
 
@@ -707,8 +705,7 @@ class TestCreateResponseWarmStartTransferRetention:
         client = WarmStartCreateFakeClient(warm_start_transfer=None)
         _create_session(client)
         assert (
-            "warm_start_transfer"
-            not in client._active_sessions["session-001"].metadata
+            "warm_start_transfer" not in client._active_sessions["session-001"].metadata
         )
 
     def test_plain_tuple_create_result_still_supported(self):
@@ -716,8 +713,7 @@ class TestCreateResponseWarmStartTransferRetention:
         client = CapturingFakeClient()
         _create_session(client)
         assert (
-            "warm_start_transfer"
-            not in client._active_sessions["session-001"].metadata
+            "warm_start_transfer" not in client._active_sessions["session-001"].metadata
         )
 
 
@@ -820,9 +816,7 @@ class TestWarmStartRefusalWarning:
             "n_seed_configs_applied": 0,
             "refused_reason": "no_seed_configs",
         }
-        records = self._attach(
-            caplog, warm_start_from="exp_prior_99", transfer=refused
-        )
+        records = self._attach(caplog, warm_start_from="exp_prior_99", transfer=refused)
         assert len(records) == 1
         message = records[0].getMessage()
         assert "no_seed_configs" in message
@@ -850,7 +844,5 @@ class TestWarmStartRefusalWarning:
         assert records == []
 
     def test_silent_when_no_transfer_block(self, caplog):
-        records = self._attach(
-            caplog, warm_start_from="exp_prior_99", transfer=None
-        )
+        records = self._attach(caplog, warm_start_from="exp_prior_99", transfer=None)
         assert records == []
