@@ -69,7 +69,7 @@ async def test_orchestrator_parallel_trials(monkeypatch):
         eval_dataset=ds,
         configuration_space={"p": [1, 2, 3, 4]},
         objectives=["accuracy"],
-        execution_mode="edge_analytics",
+        execution_mode="local",
     )
     def fn(x: int) -> str:
         # Each call ~0.1s; with trial_concurrency=2 total ~ half of sequential

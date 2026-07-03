@@ -41,30 +41,18 @@ class TestTraigentConfig:
         assert config.temperature == 0.7
         assert config.max_tokens == 1000
 
-    def test_deprecated_edge_analytics_config_warns_once_but_still_works(self):
-        """Deprecated edge_analytics config remains behavior-compatible."""
-        import warnings
+    def test_removed_edge_analytics_config_raises_with_migration_message(self):
+        """Removed edge_analytics selector hard-fails with migration guidance."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            TraigentConfig(execution_mode="edge_analytics")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            first = TraigentConfig(execution_mode="edge_analytics")
-            second = TraigentConfig(execution_mode="edge_analytics")
-
-        messages = [
-            str(warning.message)
-            for warning in caught
-            if issubclass(warning.category, DeprecationWarning)
-        ]
-        assert len(messages) == 1
-        assert "execution_mode='edge_analytics' is deprecated" in messages[0]
-        assert "algorithm='grid'" in messages[0]
-        assert "algorithm='random'" in messages[0]
-        assert "prefer local over edge_analytics" in messages[0].lower()
-        assert "future major" in messages[0]
-        assert first.execution_mode == "local"
-        assert second.execution_mode == "local"
-        assert first.is_local_mode() is True
-        assert second.is_local_mode() is True
+        message = str(exc_info.value)
+        assert "edge_analytics" in message
+        assert "has been removed" in message
+        assert "offline=True" in message
+        assert "algorithm='grid'" in message
+        assert "algorithm='random'" in message
+        assert "algorithm='auto'" in message
 
     @pytest.mark.parametrize("algorithm", ("grid", "random"))
     def test_preferred_local_config_emits_no_deprecation_warning(self, algorithm):
@@ -330,7 +318,6 @@ class TestValidateExecutionMode:
     @pytest.mark.parametrize(
         ("mode", "expected"),
         [
-            ("edge_analytics", "local"),
             ("hybrid", "hybrid"),
             ("hybrid_api", "hybrid_api"),
         ],
@@ -411,16 +398,61 @@ class TestValidateExecutionMode:
             if issubclass(warning.category, DeprecationWarning)
         ]
 
-    def test_deprecated_edge_analytics_public_alias_still_resolves_to_local(
-        self,
-    ) -> None:
-        import warnings
+    def test_removed_edge_analytics_alias_hard_fails_everywhere(self) -> None:
+        """The removed EDGE_ANALYTICS alias raises on every access path."""
+        with pytest.raises(AttributeError, match="has been removed"):
+            _ = ExecutionMode.EDGE_ANALYTICS
+        with pytest.raises(KeyError, match="has been removed"):
+            _ = ExecutionMode["EDGE_ANALYTICS"]
+        with pytest.raises(ValueError, match="has been removed"):
+            ExecutionMode("edge_analytics")
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            assert ExecutionMode.EDGE_ANALYTICS is ExecutionMode.LOCAL
-            assert ExecutionMode["EDGE_ANALYTICS"] is ExecutionMode.LOCAL
-            assert ExecutionMode("edge_analytics") is ExecutionMode.LOCAL
+    def test_post_construction_assignment_validates_like_construction(self) -> None:
+        """Assignment applies the same raise/normalize rules as construction."""
+        config = TraigentConfig()
+
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            config.execution_mode = "edge_analytics"
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            config.execution_mode = "privacy"
+        # Failed assignments must not corrupt the stored value.
+        assert config.execution_mode == "local"
+
+        with pytest.warns(DeprecationWarning):
+            config.execution_mode = "hybrid"
+        assert config.execution_mode == "hybrid"
+
+    def test_merge_and_from_dict_reject_removed_selector(self) -> None:
+        """Dict-based construction paths hard-fail like the constructor."""
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            TraigentConfig.from_dict({"execution_mode": "edge_analytics"})
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            TraigentConfig().merge({"execution_mode": "edge_analytics"})
+
+    def test_resolve_execution_policy_rejects_removed_selector(self) -> None:
+        """The policy-resolution path (decorator/client entry) hard-fails too."""
+        from traigent.config.types import resolve_execution_policy
+
+        with pytest.raises(ConfigurationError, match="has been removed") as exc_info:
+            resolve_execution_policy(execution_mode="edge_analytics")
+
+        message = str(exc_info.value)
+        assert "offline=True" in message
+        assert "algorithm='grid'" in message
+        assert "algorithm='auto'" in message
+
+    def test_removed_edge_analytics_selector_raises_migration_error(self) -> None:
+        """resolve/validate hard-fail on edge_analytics with migration guidance."""
+        with pytest.raises(ValueError, match="has been removed") as resolve_exc:
+            resolve_execution_mode("edge_analytics")
+        with pytest.raises(ConfigurationError, match="has been removed") as val_exc:
+            validate_execution_mode("edge_analytics")
+
+        for message in (str(resolve_exc.value), str(val_exc.value)):
+            assert "offline=True" in message
+            assert "algorithm='grid'" in message
+            assert "algorithm='random'" in message
+            assert "algorithm='auto'" in message
 
     def test_deprecated_is_edge_analytics_mode_delegates_to_is_local_mode(
         self,
@@ -440,7 +472,6 @@ class TestValidateExecutionMode:
         assert result is ExecutionMode.HYBRID
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
         assert list(accepted_execution_mode_values()) == [
-            "edge_analytics",
             "hybrid",
             "hybrid_api",
             "local",

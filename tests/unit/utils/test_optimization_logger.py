@@ -76,7 +76,7 @@ def _make_logger(tmp_path: Path, **kwargs: Any) -> OptimizationLogger:
     defaults: dict[str, Any] = {
         "experiment_name": "test_exp",
         "session_id": "sess12345678",
-        "execution_mode": "edge_analytics",
+        "execution_mode": "local",
         "base_path": tmp_path,
     }
     defaults.update(kwargs)

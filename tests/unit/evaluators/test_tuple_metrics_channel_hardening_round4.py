@@ -68,7 +68,7 @@ def test_computable_names_include_metric_functions_local_evaluator() -> None:
     evaluator = LocalEvaluator(
         metric_functions={"f1": _custom_f1},
         detailed=True,
-        execution_mode="edge_analytics",
+        execution_mode="local",
     )
     assert "f1" in evaluator._evaluator_computable_metric_names()
 

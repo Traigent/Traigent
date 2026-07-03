@@ -69,40 +69,49 @@ def test_offline_true_resolves_local_only_policy() -> None:
     assert sample.execution_mode == "local"
 
 
-def test_legacy_edge_analytics_maps_to_offline_with_warning() -> None:
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+def test_removed_edge_analytics_raises_via_decorator() -> None:
+    """Issue #1684 headline repro: the decorator itself must hard-fail."""
+    with pytest.raises(ConfigurationError, match="has been removed") as exc_info:
 
         @optimize(configuration_space={"x": [1, 2]}, execution_mode="edge_analytics")
         def sample(x: int) -> int:
             return x
 
-    messages = [
-        str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
-    ]
-    policy = _assert_policy(sample)
-    assert policy.intent is ExecutionIntent.LOCAL_ONLY
-    assert policy.offline is True
-    assert len(messages) == 1
-    assert "execution_mode='edge_analytics' is deprecated" in messages[0]
-    assert "algorithm='grid'" in messages[0]
-    assert "algorithm='random'" in messages[0]
-    assert "prefer local over edge_analytics" in messages[0].lower()
-    assert "future major" in messages[0]
+    message = str(exc_info.value)
+    assert "edge_analytics" in message
+    assert "offline=True" in message
+    assert "algorithm='grid'" in message
+    assert "algorithm='random'" in message
+    assert "algorithm='auto'" in message
 
 
-def test_legacy_edge_analytics_warning_is_once_per_process() -> None:
+def test_removed_edge_analytics_raises_in_policy_resolution() -> None:
+    """resolve_execution_policy no longer warn-maps the removed selector."""
+    with pytest.raises(ConfigurationError, match="has been removed"):
+        resolve_execution_policy(execution_mode="edge_analytics")
+
+
+def test_blank_and_unset_execution_mode_behavior_is_unchanged() -> None:
+    """Splitting edge_analytics out of the ""-branch must not change ""/None.
+
+    - execution_mode unset (None) keeps the cloud-first default policy.
+    - execution_mode="" keeps its legacy warn-and-map to offline/local.
+    """
+    unset = resolve_execution_policy(execution_mode=None)
+    assert unset.intent is ExecutionIntent.CLOUD_BRAIN
+    assert unset.offline is False
+
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        first = resolve_execution_policy(execution_mode="edge_analytics")
-        second = resolve_execution_policy(execution_mode="edge_analytics")
+        blank = resolve_execution_policy(execution_mode="")
 
+    assert blank.intent is ExecutionIntent.LOCAL_ONLY
+    assert blank.offline is True
     messages = [
         str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
     ]
-    assert first == second
-    assert first.intent is ExecutionIntent.LOCAL_ONLY
     assert len(messages) == 1
+    assert "offline=True" in messages[0]
 
 
 @pytest.mark.parametrize("algorithm", ("grid", "random"))

@@ -17,7 +17,6 @@ from traigent.config.types import (
     ResolvedExecutionPolicy,
     resolve_execution_policy,
     validate_algorithm_name,
-    validate_execution_mode,
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
@@ -98,25 +97,10 @@ class ParameterValidator:
 
         return params
 
-    @staticmethod
-    def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
-        if isinstance(execution_mode, str):
-            return execution_mode.strip().lower() == "privacy"
-        return False
-
-    def _validate_execution_mode(
-        self, execution_mode: str | ExecutionMode
-    ) -> ExecutionMode:
-        """Validate deprecated execution mode parameter."""
-        from traigent.utils.exceptions import ConfigurationError
-
-        try:
-            return validate_execution_mode(execution_mode)
-        except (TypeError, ValueError, ConfigurationError) as exc:
-            raise ValidationError(
-                f"Invalid execution_mode '{execution_mode}'. {exc}. "
-                "Use algorithm='auto'|'grid'|'random' and offline=True for no egress."
-            ) from exc
+    # NOTE: execution_mode validation is NOT duplicated here (#1393). The
+    # single validation path is _resolve_execution_policy ->
+    # traigent.config.types.resolve_execution_policy, which raises on removed
+    # (edge_analytics) and fail-closed (privacy/cloud) legacy selectors.
 
     def _validate_algorithm(self, algorithm: str) -> str:
         """Validate the algorithm selector."""

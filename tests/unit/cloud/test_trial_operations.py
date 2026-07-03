@@ -150,7 +150,7 @@ class TestMeasuresDictValidationInSubmission:
             clean_metrics={"accuracy": 0.95},
             backend_status="COMPLETED",
             mode="local",
-            metadata={"execution_mode": "edge_analytics", "custom": "value"},
+            metadata={"execution_mode": "local", "custom": "value"},
         )
 
         metadata = result_data["metadata"]
@@ -231,7 +231,7 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
-        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
 
         ops = TrialOperations(mock_client)
@@ -274,7 +274,7 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
-        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
 
         ops = TrialOperations(mock_client)
@@ -347,7 +347,7 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
-        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
 
         ops = TrialOperations(mock_client)
@@ -818,7 +818,7 @@ class TestOfflineModeReturnsNone:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="ACTIVE")
-        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._normalize_execution_mode = Mock(return_value="local")
         return TrialOperations(mock_client)
 
     @pytest.mark.asyncio
@@ -1194,7 +1194,7 @@ class TestHandle400NotFound:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
-        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
         return TrialOperations(mock_client)
 
@@ -1304,7 +1304,7 @@ class TestHandle400NotFound:
                 config={"temperature": 0.5},
                 metrics={"score": 0.8},
                 status="completed",
-                execution_mode="edge_analytics",
+                execution_mode="local",
             )
 
         # Must return None (transient/skipped), not False (hard failure)

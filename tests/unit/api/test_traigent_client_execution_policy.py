@@ -66,15 +66,20 @@ def test_traigent_client_offline_uses_local_only_policy(
     backend_client_factory.assert_not_called()
 
 
-def test_traigent_client_deprecated_execution_mode_warns_and_maps_local(
+def test_traigent_client_removed_edge_analytics_raises_migration_error(
     backend_client_factory: Mock,
 ) -> None:
-    with pytest.warns(DeprecationWarning, match="execution_mode"):
-        client = TraigentClient(execution_mode="edge_analytics")
+    """Removed edge_analytics selector hard-fails instead of warn-and-map."""
+    import warnings
 
-    assert client.execution_policy.intent is ExecutionIntent.LOCAL_ONLY
-    assert client.execution_mode is ExecutionMode.LOCAL
-    assert client.backend_client is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with pytest.raises(ConfigurationError, match="has been removed") as exc_info:
+            TraigentClient(execution_mode="edge_analytics")
+
+    message = str(exc_info.value)
+    assert "offline=True" in message
+    assert "algorithm='grid'" in message
     backend_client_factory.assert_not_called()
 
 

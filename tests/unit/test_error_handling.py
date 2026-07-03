@@ -54,16 +54,16 @@ class TestExceptionChaining:
 
     def test_parameter_validation_chaining(self):
         """Test exception chaining in parameter validation."""
-        from traigent.api.parameter_validator import ParameterValidator
+        from traigent.api.parameter_validator import validate_optimize_parameters
 
-        validator = ParameterValidator()
-
-        # Test that internal ValueErrors are properly chained
+        # Internal ConfigurationErrors are chained into ValidationError on
+        # the single validation path (resolve_execution_policy, #1393).
         with pytest.raises(ValidationError) as exc_info:
-            validator._validate_execution_mode("invalid_mode")
+            validate_optimize_parameters(execution_mode="invalid_mode")
 
-        # Should be a ValidationError with proper message
-        assert "Invalid execution_mode" in str(exc_info.value)
+        # Should be a ValidationError with proper message and chained cause
+        assert "invalid_mode" in str(exc_info.value)
+        assert exc_info.value.__cause__ is not None
 
     def test_configuration_error_chaining(self):
         """Test exception chaining in configuration building."""
@@ -229,16 +229,13 @@ class TestContextualErrorInfo:
 
     def test_validation_error_context(self):
         """Test that validation errors include parameter context."""
-        from traigent.api.parameter_validator import ParameterValidator
-
-        validator = ParameterValidator()
+        from traigent.api.parameter_validator import validate_optimize_parameters
 
         with pytest.raises(ValidationError) as exc_info:
-            validator._validate_execution_mode("invalid_mode")
+            validate_optimize_parameters(execution_mode="invalid_mode")
 
         error_msg = str(exc_info.value)
         assert "invalid_mode" in error_msg
-        assert "execution_mode" in error_msg
         # New error contract: the message points users at the supported
         # algorithm selectors and the offline flag, not legacy mode names.
         assert "algorithm=" in error_msg

@@ -43,10 +43,10 @@ class TestCloudIntegration:
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
                 eval_dataset=sample_dataset,
-                execution_mode="edge_analytics",
+                execution_mode="local",
                 cloud_fallback_policy="auto",
             )
-        assert opt_func.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
+        assert opt_func.execution_mode == ExecutionMode.LOCAL.value
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
     def test_hybrid_mode_remains_supported(
@@ -81,7 +81,7 @@ class TestCloudIntegration:
         assert opt_func.execution_mode == ExecutionMode.HYBRID.value
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_edge_mode_remains_supported(
+    def test_local_mode_remains_supported(
         self, simple_function, sample_config_space, sample_objectives
     ):
         """Default local execution still initializes normally."""
@@ -89,8 +89,24 @@ class TestCloudIntegration:
             func=simple_function,
             configuration_space=sample_config_space,
             objectives=sample_objectives,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
 
-        assert opt_func.execution_mode == ExecutionMode.EDGE_ANALYTICS.value
-        assert opt_func._effective_execution_mode is ExecutionMode.EDGE_ANALYTICS
+        assert opt_func.execution_mode == ExecutionMode.LOCAL.value
+        assert opt_func._effective_execution_mode is ExecutionMode.LOCAL
+
+    def test_removed_edge_analytics_mode_raises_migration_error(
+        self, simple_function, sample_config_space, sample_objectives
+    ):
+        """The removed edge_analytics selector hard-fails at construction."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with pytest.raises(ConfigurationError, match="has been removed"):
+                OptimizedFunction(
+                    func=simple_function,
+                    configuration_space=sample_config_space,
+                    objectives=sample_objectives,
+                    execution_mode="edge_analytics",
+                )

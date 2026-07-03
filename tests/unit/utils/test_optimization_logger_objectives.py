@@ -23,7 +23,7 @@ class TestOptimizationLoggerObjectives:
         logger = OptimizationLogger(
             experiment_name="test_experiment",
             session_id="test_session_123",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             base_path=tmp_path,
         )
 
@@ -102,7 +102,7 @@ class TestOptimizationLoggerObjectives:
         logger = OptimizationLogger(
             experiment_name="test_experiment",
             session_id="test_session_456",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             base_path=tmp_path,
         )
 
@@ -152,7 +152,7 @@ class TestOptimizationLoggerObjectives:
         logger = OptimizationLogger(
             experiment_name="test_experiment",
             session_id="test_session_789",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             base_path=tmp_path,
         )
 
@@ -193,7 +193,7 @@ class TestOptimizationLoggerObjectives:
         logger = OptimizationLogger(
             experiment_name="legacy_test",
             session_id="legacy_123",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             base_path=tmp_path,
         )
 
@@ -233,7 +233,7 @@ class TestOptimizationLoggerObjectives:
         logger = OptimizationLogger(
             experiment_name="complex_test",
             session_id="complex_123",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             base_path=tmp_path,
         )
 
@@ -297,7 +297,7 @@ class TestOptimizationLoggerObjectives:
         logger = OptimizationLogger(
             experiment_name="reload_test",
             session_id="reload_123",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             base_path=tmp_path,
         )
 
@@ -341,7 +341,7 @@ class TestOptimizationLoggerObjectives:
         logger = OptimizationLogger(
             experiment_name="metadata_test",
             session_id="metadata_123",
-            execution_mode="edge_analytics",
+            execution_mode="local",
             base_path=tmp_path,
         )
 

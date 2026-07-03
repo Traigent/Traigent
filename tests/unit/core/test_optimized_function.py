@@ -289,7 +289,7 @@ class TestOptimizedFunction:
         @traigent.optimize(
             eval_dataset=sample_dataset,
             configuration_space={"temperature": [0.3]},
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         def decorated(question: str, config: dict | None = None) -> str:
             return "42"
@@ -307,7 +307,7 @@ class TestOptimizedFunction:
             eval_dataset=sample_dataset,
             objectives=["accuracy"],
             configuration_space={"temperature": [0.1]},
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         def decorated(question: str, config: dict | None = None) -> str:
             return "42"
@@ -839,7 +839,7 @@ class TestOptimizedFunction:
                 func=mock_function,
                 configuration_space=sample_config_space,
                 objectives=sample_objectives,
-                execution_mode="edge_analytics",
+                execution_mode="local",
                 cloud_fallback_policy="auto",
                 max_trials=3,
                 eval_dataset=sample_dataset,

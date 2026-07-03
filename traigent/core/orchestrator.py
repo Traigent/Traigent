@@ -51,6 +51,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcerConfig,
     Permit,
     normalize_cost_approved,
+    validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import (
@@ -602,8 +603,15 @@ class OptimizationOrchestrator:
         cost_approved = normalize_cost_approved(self.config.get("cost_approved", False))
         cost_config = None
         if cost_limit is not None or cost_approved:
+            # None means "use the default"; any provided value (including a
+            # falsy 0) must pass config-time validation instead of being
+            # silently coerced to the default (issue #1684 item 3).
             cost_config = CostEnforcerConfig(
-                limit=float(cost_limit) if cost_limit else DEFAULT_COST_LIMIT_USD,
+                limit=(
+                    DEFAULT_COST_LIMIT_USD
+                    if cost_limit is None
+                    else float(validate_cost_limit(cost_limit))
+                ),
                 approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
@@ -2647,6 +2655,21 @@ class OptimizationOrchestrator:
         cost_enforcer = getattr(self, "cost_enforcer", None)
         return bool(cost_enforcer is not None and cost_enforcer.is_limit_reached)
 
+    def _describe_budget_gate_block(self, remaining_trials: float) -> str:
+        """Build the explicit budget-gate block message (issue #1684 item 3).
+
+        Format: ``budget gate blocked N planned trials (estimated $X > limit $Y)``.
+        """
+        planned = (
+            None if math.isinf(remaining_trials) else max(int(remaining_trials), 0)
+        )
+        cost_enforcer = getattr(self, "cost_enforcer", None)
+        describe = getattr(cost_enforcer, "budget_block_message", None)
+        if callable(describe):
+            return str(describe(planned))
+        blocked = "all remaining" if planned is None else str(planned)
+        return f"budget gate blocked {blocked} planned trials (cost limit reached)"
+
     def _check_budget_limits(
         self, trial_count: int
     ) -> tuple[float, float, StopReason | None]:
@@ -2660,7 +2683,14 @@ class OptimizationOrchestrator:
         )
 
         if self._is_cost_limit_reached():
-            logger.info("Cost limit reached")
+            # Loud, explicit block: log the exact scope of what the budget
+            # gate is cutting off (issue #1684 item 3). The WARNING log is the
+            # user-visible surface today; ``_budget_gate_detail`` stages the
+            # same string for the run-status/metadata surfacing follow-up
+            # (owned by the status-logic unit) and is not read anywhere yet.
+            detail = self._describe_budget_gate_block(remaining)
+            logger.warning("%s (completed trials so far: %d)", detail, trial_count)
+            self._budget_gate_detail = detail
             return remaining, 0, "cost_limit"
 
         if remaining <= 0:

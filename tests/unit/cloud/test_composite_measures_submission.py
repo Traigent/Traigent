@@ -258,7 +258,7 @@ async def _trial_metrics_from_tuple_returning_function() -> dict[str, float]:
         return str(run.output), metrics
 
     evaluator = LocalEvaluator(
-        metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+        metrics=["accuracy"], detailed=True, execution_mode="local"
     )
     result = await evaluator.evaluate(answer, {}, dataset)
     return result.metrics

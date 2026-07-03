@@ -34,7 +34,7 @@ def _evaluator() -> LocalEvaluator:
     return LocalEvaluator(
         metrics=["accuracy"],
         detailed=True,
-        execution_mode="edge_analytics",
+        execution_mode="local",
     )
 
 
