@@ -52,6 +52,9 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "analytics_get_parameter_insights",
     "analytics_get_example_insights",
     "analytics_render_chart",
+    "analytics_list_experiment_groups",
+    "analytics_get_experiment_group",
+    "analytics_list_experiment_group_configuration_runs",
 )
 
 _SUPPORTED_CHART_KINDS: tuple[str, ...] = ("run_pareto", "run_correlations")
@@ -259,7 +262,14 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
             backend_url=backend_url,
         )
 
-    return {"ok": True, what.replace(" ", "_"): data}
+    return {"ok": True, what.replace(" ", "_"): _to_plain_payload(data)}
+
+
+def _to_plain_payload(data: Any) -> Any:
+    to_dict = getattr(data, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    return data
 
 
 async def health_check_tool() -> dict[str, Any]:
@@ -594,3 +604,84 @@ def analytics_render_chart_tool(
         return _failure("Chart rendering failed.", code="render_failed")
 
     return {"ok": True, "kind": kind, "chart_path": path}
+
+
+async def analytics_list_experiment_groups_tool(
+    project_id: str,
+    agent_id: str | None = None,
+    dataset_id: str | None = None,
+) -> dict[str, Any]:
+    """List experiment groups/cohorts for a project.
+
+    A cohort is a **source-preserving grouped view** keyed by
+    ``(agent_id + dataset_id)``. Rows remain individual source runs (join on
+    ``experiment_run_id`` / ``configuration_run_id`` / ``experiment_id``, never
+    on config hash). Grouping is NOT a merged analytics run.
+    """
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+
+    aid = str(agent_id).strip() if agent_id is not None else None
+    did = str(dataset_id).strip() if dataset_id is not None else None
+    if aid == "":
+        aid = None
+    if did == "":
+        did = None
+
+    return await _call_backend(
+        lambda reader: reader.list_experiment_groups(
+            pid,
+            agent_id=aid,
+            dataset_id=did,
+        ),
+        what="experiment groups",
+    )
+
+
+async def analytics_get_experiment_group_tool(
+    project_id: str,
+    group_id: str,
+) -> dict[str, Any]:
+    """Fetch one experiment group/cohort detail.
+
+    A cohort is a **source-preserving grouped view** keyed by
+    ``(agent_id + dataset_id)``. Rows remain individual source runs (join on
+    ``experiment_run_id`` / ``configuration_run_id`` / ``experiment_id``, never
+    on config hash). Grouping is NOT a merged analytics run.
+    """
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        gid = _require_identifier(group_id, field="group_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.get_experiment_group(gid, pid),
+        what="experiment group",
+    )
+
+
+async def analytics_list_experiment_group_configuration_runs_tool(
+    project_id: str,
+    group_id: str,
+) -> dict[str, Any]:
+    """List configuration runs for one experiment group/cohort.
+
+    A cohort is a **source-preserving grouped view** keyed by
+    ``(agent_id + dataset_id)``. Rows remain individual source runs (join on
+    ``experiment_run_id`` / ``configuration_run_id`` / ``experiment_id``, never
+    on config hash). Grouping is NOT a merged analytics run.
+
+    This returns the "one aggregated multi-run table": one row per
+    configuration-run with ``configuration`` + ``measures`` + source ids.
+    """
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        gid = _require_identifier(group_id, field="group_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.list_experiment_group_configuration_runs(gid, pid),
+        what="experiment group configuration runs",
+    )
