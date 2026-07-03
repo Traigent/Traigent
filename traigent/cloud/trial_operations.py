@@ -119,6 +119,19 @@ class TrialOperations:
             no_egress=getattr(self.client, "no_egress", False),
         )
 
+    def _is_privacy_enabled(self) -> bool:
+        """Return the effective privacy-mode flag when this client carries one."""
+
+        client_attrs = getattr(self.client, "__dict__", {})
+        traigent_config = client_attrs.get("traigent_config") or client_attrs.get(
+            "_traigent_config"
+        )
+        if traigent_config is not None:
+            return bool(getattr(traigent_config, "privacy_enabled", False))
+        if "privacy_enabled" in client_attrs:
+            return bool(client_attrs["privacy_enabled"])
+        return False
+
     @staticmethod
     def _summarize_actor(info: dict[str, Any] | None) -> str:
         """Return a concise description of an authenticated actor."""
@@ -333,10 +346,16 @@ class TrialOperations:
                 "in_progress", endpoint="config_run"
             )
 
+            registration_config = (
+                self._redact_privacy_config(config)
+                if self._is_privacy_enabled()
+                else config
+            )
+
             # Prepare trial registration data
             registration_data = {
                 "trial_id": trial_id,
-                "config": config,
+                "config": registration_config,
                 "status": backend_status,  # Use mapped status (RUNNING)
                 "metrics": {},  # Empty metrics at start
             }

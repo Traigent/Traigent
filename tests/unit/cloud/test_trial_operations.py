@@ -1,6 +1,7 @@
 """Tests for trial_operations.py - particularly new code paths."""
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -523,11 +524,12 @@ class TestPrivacyConfigRedactionSubmission:
     """Privacy-mode config redaction must apply to the actual POST payload."""
 
     @staticmethod
-    def _make_ops() -> TrialOperations:
+    def _make_ops(privacy_enabled: bool = False) -> TrialOperations:
         mock_client = Mock()
         mock_client.backend_config = Mock()
         mock_client.backend_config.backend_base_url = "https://api.example.com"
         mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.traigent_config = SimpleNamespace(privacy_enabled=privacy_enabled)
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
@@ -630,6 +632,33 @@ class TestPrivacyConfigRedactionSubmission:
         assert payload["config"]["temperature"] == 0.2
         assert payload["config"]["enabled"] is True
         assert payload["config"]["optional"] is None
+        assert sentinel not in str(payload)
+
+    @pytest.mark.asyncio
+    async def test_privacy_trial_start_redacts_config_payload(self) -> None:
+        sentinel = "SENTINEL-PII-8842"
+        ops = self._make_ops(privacy_enabled=True)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_session = self._install_post_mock(mock_aiohttp)
+
+            result = await ops.register_trial_start(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"system_prompt": sentinel, "temperature": 0.7},
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["config"]["system_prompt"] == "[REDACTED:17 chars]"
+        assert payload["config"]["temperature"] == 0.7
         assert sentinel not in str(payload)
 
     @pytest.mark.asyncio

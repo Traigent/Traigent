@@ -60,10 +60,15 @@ string value. It does not send dataset example inputs, expected outputs, model
 responses, or example metadata unless you put that content into the tuned
 configuration itself.
 
-Use `privacy_enabled=True` when you need backend coordination without sending
+Use privacy-mode redaction when you need backend coordination without sending
 tuned string values. Privacy submissions preserve which keys were tuned, but
 redact sensitive-key values and all string/free-text config values. Numeric,
-boolean, and `None` config values still pass through.
+boolean, and `None` config values still pass through. This redaction is gated by
+the run's effective `TraigentConfig.privacy_enabled` setting, including
+configuration loaded from `TRAIGENT_PRIVACY_MODE=true` for compatibility. Do not
+use `@traigent.optimize(..., privacy_enabled=True)` for new code; that decorator
+keyword is deprecated and emits a warning. Use `offline=True` instead when the
+requirement is no Traigent backend egress.
 
 Use `offline=True` when your policy requires no Traigent backend egress at all:
 
@@ -78,9 +83,10 @@ Use `offline=True` when your policy requires no Traigent backend egress at all:
 No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
-Use `TRAIGENT_DISABLE_TELEMETRY=true` for SDK telemetry opt-out,
-`privacy_enabled=True` to redact tuned string config values on privacy-mode
-submissions, and `offline=True` for zero Traigent backend egress.
+Use `TRAIGENT_DISABLE_TELEMETRY=true` for SDK telemetry opt-out, effective
+`TraigentConfig.privacy_enabled` privacy mode to redact tuned string config
+values on privacy-mode submissions, and `offline=True` for zero Traigent backend
+egress.
 
 ### OpenTelemetry Tracing
 
@@ -324,9 +330,10 @@ For HIPAA compliance or handling sensitive data:
 
 ### Q: Is telemetry enabled by default?
 
-**A**: Yes, for local optimization metadata. The default portal-backed path sends
-configuration IDs/schema and numeric metrics only; use `offline=True` for zero
-Traigent backend egress.
+**A**: Yes, for local optimization metadata. The default portal-backed path can
+send tuned config-space values, configuration IDs/schema, and numeric metrics;
+use privacy-mode redaction when backend coordination is needed without tuned
+string values, or `offline=True` for zero Traigent backend egress.
 
 ### Q: How do I verify telemetry is disabled?
 
