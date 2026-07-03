@@ -295,7 +295,7 @@ async def test_privacy_mode_sanitizes_measures():
 @pytest.mark.asyncio
 async def test_local_mode_includes_aggregated_summary_in_submission():
     # Edge Analytics mode with backend available should submit aggregated summary as part of trial metadata
-    cfg = TraigentConfig(execution_mode="edge_analytics", privacy_enabled=False)
+    cfg = TraigentConfig(execution_mode="local", privacy_enabled=False)
 
     class _DummyBackend:
         def __init__(self):

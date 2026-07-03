@@ -189,7 +189,7 @@ async def test_offline_option_makes_zero_backend_calls_even_with_key(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("legacy_mode", ["edge_analytics", "local"])
+@pytest.mark.parametrize("legacy_mode", ["local"])
 async def test_legacy_local_modes_make_zero_backend_calls(
     monkeypatch: pytest.MonkeyPatch,
     legacy_mode: str,

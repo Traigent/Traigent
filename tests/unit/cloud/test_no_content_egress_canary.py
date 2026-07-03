@@ -654,7 +654,7 @@ def test_offline_and_legacy_local_modes_construct_no_backend_clients(
     assert capture.calls == []
 
     legacy_result = _run_canary_optimization(
-        execution_mode="edge_analytics",
+        execution_mode="local",
         local_storage_path=tmp_path / "legacy-edge",
     )
     assert legacy_result.source == "offline"

@@ -6,6 +6,45 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-07-03
+
+No-silent-legacy hardening release: five classes of silent failure now either
+work correctly or fail loudly.
+
+### Fixed
+- `ObjectiveSchema` weights now govern `best_config` selection for grid/random
+  runs via observed-range (min-max, orientation-aware) weighted scoring;
+  per-trial `metrics["score"]` is populated and post-hoc
+  `calculate_weighted_scores` uses the same scorer. Flipping weights
+  0.9/0.1 ↔ 0.1/0.9 on an accuracy/cost tradeoff now flips the winner. (#1682)
+- `warm_start_transfer` returned in the session-create response now reaches
+  `result.metadata` (previously dropped; runs reported `no_seed_configs` from
+  valid cloud-tracked priors). An explicit `warm_start_from` that applies 0
+  seeds emits a warning naming the refusal reason. (#1683)
+- Dataset file-not-found errors name the resolution rule
+  (`TRAIGENT_DATASET_ROOT` vs cwd), the registry-resolved path, and the exact
+  candidate tried — the doubled-path case is self-diagnosing. (#1684)
+
+### Changed (fail loud instead of silent)
+- Smart algorithms (`bayesian`, `tpe`, `cmaes`, `nsga2`, `optuna*`) raise an
+  actionable error when the managed cloud path cannot execute them, instead of
+  returning a silent 0-trial COMPLETED result with `best_config=None`. Runtime
+  `optimize(algorithm=...)` smart overrides re-resolve to cloud-required
+  policy (no silent local fallback). (#1681)
+- `.optimize()` rejects decorator-only arguments at call time with a
+  move-it-to-the-decorator `TypeError` — `warm_start_from` and 39 sibling
+  options were previously swallowed silently. (#1683)
+- Deprecated `execution_mode` selectors (notably `"edge_analytics"`) raise
+  `ConfigurationError` with `algorithm=` + `offline=` migration guidance on
+  every entry path (decorator, `initialize`, `TraigentConfig`, client) —
+  previously a silent 0-trial run. On the wire, `metadata["mode"]` now carries
+  the canonical `local`/`hybrid`/`hybrid_api` vocabulary. (#1684, #1393)
+- Nonpositive cost limits raise at configuration time; a budget-gate block
+  logs "budget gate blocked N planned trials (estimated $X > limit $Y)"
+  instead of silently completing with 0 trials. (#1684)
+- Flagship multi-objective examples and docs migrated off removed/deprecated
+  parameters (`execution_mode`, `budget_limit`). (#1684)
+
 ## [0.19.0] - 2026-07-03
 
 ### Added

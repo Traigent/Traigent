@@ -696,15 +696,29 @@ class TestObjectiveOrientationInCompositeScore:
         expensive = {"accuracy": 0.9, "cost": 0.9}
         return cheap, expensive
 
-    def test_grid_composite_prefers_cheaper(self):
-        """GridSearchOptimizer composite ranks lower cost above higher cost."""
-        optimizer = get_optimizer("grid", self.config_space, self.objectives)
+    def test_grid_selection_scorer_prefers_cheaper(self):
+        """Grid-track scoring ranks lower cost above higher cost.
+
+        Post-#1682, GridSearchOptimizer owns no private composite scorer —
+        grid selection routes through the shared
+        ``ObjectiveSchema.compute_weighted_score``. The #1466 orientation
+        guarantee therefore lives there: for equal accuracy, the cheaper
+        metrics must score strictly higher.
+        """
+        from traigent.core.objectives import create_default_objectives
+
+        assert "_calculate_composite_score" not in GridSearchOptimizer.__dict__
+
+        schema = create_default_objectives(
+            self.objectives, weights={"accuracy": 0.6, "cost": 0.4}
+        )
         cheap, expensive = self._cheap_and_expensive_metrics()
 
-        cheap_score = optimizer._calculate_composite_score(cheap)
-        expensive_score = optimizer._calculate_composite_score(expensive)
+        cheap_score = schema.compute_weighted_score(cheap)
+        expensive_score = schema.compute_weighted_score(expensive)
 
-        # Pre-fix this was reversed (cost added positively → expensive higher).
+        assert cheap_score is not None and expensive_score is not None
+        # Pre-#1466 this was reversed (cost added positively → expensive higher).
         assert cheap_score > expensive_score
 
     def test_parallel_batch_composite_prefers_cheaper(self):

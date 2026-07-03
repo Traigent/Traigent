@@ -59,7 +59,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=["accuracy", "latency", "success_rate"],
             metric_functions={"accuracy": custom_accuracy},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
@@ -102,14 +102,14 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=["my_score"],
             metric_functions={"my_score": custom_my_score},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
         # Mock compute_metrics -- it should NOT be called in this branch
         mock_compute = MagicMock(return_value={})
         with patch.object(evaluator, "compute_metrics", mock_compute):
-            result = await evaluator.evaluate(_simple_func, {}, dataset)
+            await evaluator.evaluate(_simple_func, {}, dataset)
 
         # compute_metrics should NOT have been called since there are
         # no built-in metrics to compute (all are custom-only).
@@ -131,7 +131,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=original_metrics.copy(),
             metric_functions={"accuracy": custom_accuracy},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
@@ -163,7 +163,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=original_metrics.copy(),
             metric_functions={"accuracy": custom_accuracy},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
@@ -186,7 +186,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=["accuracy", "latency"],
             metric_functions=None,  # No custom metric functions
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 

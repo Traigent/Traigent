@@ -39,7 +39,7 @@ def _logger(tmp_path: Path, **kwargs) -> OptimizationLogger:
     return OptimizationLogger(
         experiment_name="exp",
         session_id="sess12345678",
-        execution_mode="edge_analytics",
+        execution_mode="local",
         base_path=tmp_path,
         buffer_size=1,
         **kwargs,

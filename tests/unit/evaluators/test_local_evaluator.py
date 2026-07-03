@@ -52,7 +52,7 @@ class TestLocalEvaluatorTokenEstimation:
     def evaluator(self):
         """Create a LocalEvaluator instance."""
         return LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
     def test_privacy_enabled_kwarg_is_deprecated_noop(self):
@@ -286,7 +286,7 @@ class TestLocalEvaluatorTokenEstimation:
         config = {}
 
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
         result = await evaluator.evaluate(test_function, config, sample_dataset)
@@ -366,7 +366,7 @@ class TestLocalEvaluatorIntegration:
                 return "neutral"
 
         evaluator = LocalEvaluator(
-            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+            metrics=["accuracy"], detailed=True, execution_mode="local"
         )
 
         config = {"temperature": 0.3}
@@ -409,7 +409,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = self._single_example_dataset(input_data)
 
@@ -437,7 +437,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = self._single_example_dataset(input_data)
 
@@ -464,7 +464,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = self._single_example_dataset(input_data)
 
@@ -500,7 +500,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         example = EvaluationExample(
             input_data={"prompt": "customer secret"},
@@ -544,7 +544,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         example = EvaluationExample(
             input_data={"prompt": "customer secret"},
@@ -580,7 +580,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = self._single_example_dataset(input_data)
 
@@ -606,7 +606,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = self._single_example_dataset(input_data)
 
@@ -634,7 +634,7 @@ class TestPromptTemplateFallbackLength:
         evaluator = LocalEvaluator(
             metrics=["accuracy"],
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = self._single_example_dataset(input_data)
 

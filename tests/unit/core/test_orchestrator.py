@@ -1934,7 +1934,7 @@ class TestOptimizationOrchestrator:
         self, mock_optimizer, mock_evaluator, objective_schema
     ):
         """Test orchestrator initialization with versioned logger."""
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=mock_optimizer,
@@ -1956,7 +1956,7 @@ class TestOptimizationOrchestrator:
         self, mock_optimizer, mock_evaluator
     ):
         """Test orchestrator initialization with legacy logger."""
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=mock_optimizer,
@@ -1986,9 +1986,7 @@ class TestOptimizationOrchestrator:
         monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = TraigentConfig(
-                execution_mode="edge_analytics", local_storage_path=tmpdir
-            )
+            config = TraigentConfig(execution_mode="local", local_storage_path=tmpdir)
 
             orchestrator = OptimizationOrchestrator(
                 optimizer=mock_optimizer,
@@ -2040,7 +2038,7 @@ class TestOptimizationOrchestrator:
         self, mock_optimizer, mock_evaluator, objective_schema
     ):
         """Test logging trial with legacy logger."""
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=mock_optimizer,
@@ -2075,7 +2073,7 @@ class TestOptimizationOrchestrator:
         self, mock_optimizer, mock_evaluator
     ):
         """Test logging checkpoint with legacy logger."""
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=mock_optimizer,
@@ -2116,7 +2114,7 @@ class TestOptimizationOrchestrator:
             logger = OptimizationLogger(
                 experiment_name="test_exp",
                 session_id="test_123",
-                execution_mode="edge_analytics",
+                execution_mode="local",
                 base_path=temp_dir,
                 buffer_size=1,
             )
@@ -2141,7 +2139,7 @@ class TestOptimizationOrchestrator:
         self, mock_optimizer, mock_evaluator, sample_dataset, objective_schema
     ):
         """Test optimization with objective schema."""
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=mock_optimizer,
@@ -2863,6 +2861,75 @@ class TestStopReasonInResult:
         assert orchestrator._stop_reason == "cost_limit"
         assert len(result.trials) >= 1
         assert orchestrator.cost_enforcer.get_status().limit_reached is True
+
+    @pytest.mark.asyncio
+    async def test_cost_limit_block_emits_explicit_budget_gate_message(
+        self, sample_dataset, monkeypatch, caplog
+    ):
+        """Budget-gate blocks are loud: N planned trials, $X vs limit $Y (#1684)."""
+        import logging
+        import re
+
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_metrics({"accuracy": 0.5, "cost": 0.06})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            config=TraigentConfig.edge_analytics_mode(),
+            cost_limit=0.12,
+            cost_approved=True,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="traigent.core.orchestrator"):
+            result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "cost_limit"
+
+        log_text = " ".join(record.getMessage() for record in caplog.records)
+        match = re.search(
+            r"budget gate blocked (\d+) planned trials "
+            r"\(estimated \$(\d+\.\d{2}) > limit \$(\d+\.\d{2})\)",
+            log_text,
+        )
+        assert match, f"Expected explicit budget-gate message, got: {log_text!r}"
+        assert int(match.group(1)) > 0
+        assert float(match.group(2)) >= float(match.group(3))
+        assert float(match.group(3)) == pytest.approx(0.12)
+
+        # The precise detail is retained for stop metadata surfacing.
+        detail = getattr(orchestrator, "_budget_gate_detail", None)
+        assert detail is not None
+        assert "budget gate blocked" in detail
+
+    @pytest.mark.parametrize("bad_limit", [-1.0, 0, 0.0])
+    def test_nonpositive_cost_limit_raises_at_orchestrator_config_time(self, bad_limit):
+        """A nonpositive cost limit fails at config time, not as a 0-trial run.
+
+        Includes the literal-0 boundary: a provided-but-falsy limit must raise
+        rather than being silently coerced to the $2.00 default.
+        """
+        from traigent.utils.exceptions import ConfigurationError
+
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        with pytest.raises(ConfigurationError, match="must be > 0"):
+            OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=2,
+                config=TraigentConfig.edge_analytics_mode(),
+                cost_limit=bad_limit,
+                cost_approved=True,
+            )
 
     @pytest.mark.asyncio
     async def test_stop_reason_cost_limit_parallel(self, sample_dataset, monkeypatch):

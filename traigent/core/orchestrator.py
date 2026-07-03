@@ -51,6 +51,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcerConfig,
     Permit,
     normalize_cost_approved,
+    validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import (
@@ -66,6 +67,7 @@ from traigent.core.execution_policy_runtime import (
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
+    policy_is_cloud_required,
 )
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
@@ -94,6 +96,8 @@ from traigent.core.result_selection import (
     TieBreaker,
     _primary_scores_tied,
     _secondary_metric_key,
+    observed_metric_ranges,
+    resolve_weighted_selection_schema,
     select_best_configuration,
 )
 from traigent.core.sample_budget import SampleBudgetManager
@@ -130,6 +134,21 @@ logger = get_logger(__name__)
 
 # Orchestrator constants
 PROGRESS_LOG_INTERVAL = 10  # Log progress every N trials
+
+# Stop reasons that already own an empty (0-trial) cloud-required run and must
+# not be relabeled by the smart-managed-path fail-closed guard (issue #1681):
+# an interrupted/timed-out/cancelled run, a cost-limit stop (#1684 owns that),
+# or an explicit provider/connectivity error already surfaced elsewhere.
+_EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
+    {
+        "timeout",
+        "user_cancelled",
+        "cost_limit",
+        "vendor_error",
+        "network_error",
+        "error",
+    }
+)
 
 
 class OptimizationOrchestrator:
@@ -584,8 +603,15 @@ class OptimizationOrchestrator:
         cost_approved = normalize_cost_approved(self.config.get("cost_approved", False))
         cost_config = None
         if cost_limit is not None or cost_approved:
+            # None means "use the default"; any provided value (including a
+            # falsy 0) must pass config-time validation instead of being
+            # silently coerced to the default (issue #1684 item 3).
             cost_config = CostEnforcerConfig(
-                limit=float(cost_limit) if cost_limit else DEFAULT_COST_LIMIT_USD,
+                limit=(
+                    DEFAULT_COST_LIMIT_USD
+                    if cost_limit is None
+                    else float(validate_cost_limit(cost_limit))
+                ),
                 approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
@@ -1129,10 +1155,69 @@ class OptimizationOrchestrator:
             )
             return self._simple_is_better(candidate_trial)
 
+    def _weighted_selection_schema(self) -> ObjectiveSchema | None:
+        """Schema governing weighted incumbent ranking, or None for legacy.
+
+        Mirrors the terminal-selection gate in ``result_selection`` (issue
+        #1682): weighted ranking activates only for schemas with meaningful
+        (non-uniform) weights over >1 non-banded objectives.
+        """
+        return resolve_weighted_selection_schema(self.objective_schema)
+
+    def _weighted_is_better(
+        self, schema: ObjectiveSchema, trial_result: TrialResult
+    ) -> bool:
+        """Compare candidate vs incumbent by the schema's weighted aggregate.
+
+        Normalization uses the min-max ranges observed SO FAR (successful
+        trials seen to date plus the incumbent and the candidate), matching
+        terminal selection's observed-range normalization (issue #1682).
+        Ranges evolve as trials arrive, so the incumbent comparison is
+        recomputed under current ranges each time; live tracking is therefore
+        an online approximation — the authoritative ``best_config`` comes
+        from terminal selection over the full trial set.
+        """
+        observed: list[TrialResult] = [
+            trial for trial in self._trials if trial.is_successful
+        ]
+        observed.append(trial_result)
+        if self._best_trial_cached is not None:
+            observed.append(self._best_trial_cached)
+        ranges = observed_metric_ranges(
+            observed, (obj.name for obj in schema.objectives)
+        )
+
+        new_weighted = schema.compute_weighted_score(
+            trial_result.metrics or {}, ranges=ranges
+        )
+        if new_weighted is None or not math.isfinite(new_weighted):
+            return False
+
+        if self._best_trial_cached is None:
+            return True
+
+        current_weighted = schema.compute_weighted_score(
+            self._best_trial_cached.metrics or {}, ranges=ranges
+        )
+        if current_weighted is None or not math.isfinite(current_weighted):
+            return True
+
+        if _primary_scores_tied(new_weighted, current_weighted):
+            return self._secondary_tie_breaks_incumbent(
+                trial_result, self.optimizer.objectives[0]
+            )
+        return bool(new_weighted > current_weighted)
+
     def _simple_is_better(self, trial_result: TrialResult) -> bool:
         """Check if trial_result is better than current best using simple comparison."""
         if not self.optimizer.objectives:
             return True
+
+        weighted_schema = self._weighted_selection_schema()
+        if weighted_schema is not None:
+            # Honor declared ObjectiveSchema weights in live incumbent
+            # tracking (issue #1682) via the shared objectives.py scorer.
+            return self._weighted_is_better(weighted_schema, trial_result)
 
         primary_objective = self.optimizer.objectives[0]
         new_score_value = coerce_finite_objective_score(
@@ -2570,6 +2655,21 @@ class OptimizationOrchestrator:
         cost_enforcer = getattr(self, "cost_enforcer", None)
         return bool(cost_enforcer is not None and cost_enforcer.is_limit_reached)
 
+    def _describe_budget_gate_block(self, remaining_trials: float) -> str:
+        """Build the explicit budget-gate block message (issue #1684 item 3).
+
+        Format: ``budget gate blocked N planned trials (estimated $X > limit $Y)``.
+        """
+        planned = (
+            None if math.isinf(remaining_trials) else max(int(remaining_trials), 0)
+        )
+        cost_enforcer = getattr(self, "cost_enforcer", None)
+        describe = getattr(cost_enforcer, "budget_block_message", None)
+        if callable(describe):
+            return str(describe(planned))
+        blocked = "all remaining" if planned is None else str(planned)
+        return f"budget gate blocked {blocked} planned trials (cost limit reached)"
+
     def _check_budget_limits(
         self, trial_count: int
     ) -> tuple[float, float, StopReason | None]:
@@ -2583,7 +2683,14 @@ class OptimizationOrchestrator:
         )
 
         if self._is_cost_limit_reached():
-            logger.info("Cost limit reached")
+            # Loud, explicit block: log the exact scope of what the budget
+            # gate is cutting off (issue #1684 item 3). The WARNING log is the
+            # user-visible surface today; ``_budget_gate_detail`` stages the
+            # same string for the run-status/metadata surfacing follow-up
+            # (owned by the status-logic unit) and is not read anywhere yet.
+            detail = self._describe_budget_gate_block(remaining)
+            logger.warning("%s (completed trials so far: %d)", detail, trial_count)
+            self._budget_gate_detail = detail
             return remaining, 0, "cost_limit"
 
         if remaining <= 0:
@@ -3061,6 +3168,51 @@ class OptimizationOrchestrator:
         # during finalization is not caught above and still propagates.
         return result
 
+    def _fail_closed_on_empty_smart_managed_run(self) -> None:
+        """Reject a cloud-required smart run that executed zero trials.
+
+        A smart algorithm (``bayesian``/``tpe``/``cmaes``/``nsga2``/
+        ``optuna*``) resolves to a ``CLOUD_REQUIRED`` policy whose managed
+        cloud path must either run trials or raise. When that managed path
+        returns without executing a single trial, the run would otherwise be
+        finalized as a silent ``COMPLETED`` result with ``best_config=None`` —
+        the exact silent-empty failure of issue #1681. Surface it as an
+        actionable error instead of a hollow success.
+
+        Deliberately narrow so it never hijacks a legitimate empty stop:
+
+        * only fires for a genuinely empty run (``len(self._trials) == 0``);
+        * only when the resolved policy is ``CLOUD_REQUIRED`` (a smart
+          algorithm), never for local/hybrid/cloud-brain runs;
+        * leaves an explicit ``max_trials<=0`` no-op run alone (mirrors the
+          ``_try_cloud_execution`` guard for non-positive trial budgets);
+        * defers to already-owned stop causes (timeout / user cancel / cost
+          limit #1684 / vendor or network error) rather than relabeling them.
+        """
+
+        if self._trials:
+            return
+        policy = policy_from_config(self.traigent_config)
+        if not policy_is_cloud_required(policy):
+            return
+        if self._max_trials is not None and self._max_trials <= 0:
+            return
+        if self._stop_reason in _EMPTY_SMART_RUN_OWNED_STOP_REASONS:
+            return
+
+        algorithm = getattr(policy, "algorithm", None) or "the requested algorithm"
+        raise OptimizationError(
+            f"Smart optimization ('{algorithm}') requires the Traigent managed "
+            "cloud service, but the run finished without executing a single "
+            "trial (0 trials, no best configuration). This algorithm is not "
+            "available as a first-party service on this backend yet, and a "
+            "cloud-required run must not silently report success. The local "
+            "SDK runs only 'grid' and 'random'; connect to a Traigent backend "
+            "that provides smart optimization, or call "
+            "optimize(algorithm='grid') / optimize(algorithm='random') to run "
+            "locally."
+        )
+
     async def _run_optimization_with_tracing(
         self,
         func: Callable[..., Any],
@@ -3115,6 +3267,11 @@ class OptimizationOrchestrator:
                 await self._run_optimization_loop(
                     func, dataset, session_id, function_identifier
                 )
+
+            # A cloud-required (smart) run that executed zero trials must not be
+            # reported as a silent COMPLETED with best_config=None: fail closed
+            # with an actionable error instead (issue #1681).
+            self._fail_closed_on_empty_smart_managed_run()
 
             # Set final status
             self._status = (
@@ -3533,6 +3690,9 @@ class OptimizationOrchestrator:
             certified_config=certified_config,
             certified_score=certified_score,
             objective_orientations=_obj_orientations,
+            # Weighted-selection gating happens inside the selector; schemas
+            # without meaningful weights keep legacy ranking (issue #1682).
+            objective_schema=self.objective_schema,
         )
         best_config = selection.best_config
         best_score = selection.best_score

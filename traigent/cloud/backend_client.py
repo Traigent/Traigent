@@ -24,7 +24,7 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
-from traigent.cloud.api_operations import ApiOperations
+from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import AuthenticationError, _build_api_key_auth_headers
 from traigent.cloud.backend_bridges import SDKBackendBridge, SessionExperimentMapping
 from traigent.cloud.backend_bridges import bridge as _bridge
@@ -2172,23 +2172,19 @@ class BackendIntegratedClient:
         return cast(str, self._api_ops.map_to_backend_status(status, endpoint=endpoint))
 
     def _normalize_execution_mode(self, execution_mode: str | None) -> str:
-        """Translate SDK execution modes to backend-supported values."""
-        if not execution_mode:
-            return "standard"
+        """Translate SDK execution modes to backend wire values.
 
-        normalized = execution_mode.strip().lower()
-        mode_aliases = {
-            "edge_analytics": "local",
-            "edge": "local",
-            "local": "local",
-            "privacy": "privacy",
-            "private": "privacy",
-            "hybrid": "local",
-            "standard": "standard",
-            "cloud": "cloud",
-            "saas": "cloud",
-        }
-        return mode_aliases.get(normalized, "standard")
+        Delegates to the canonical resolution in ``traigent.config.types``
+        (issue #1393 dedup): removed and fail-closed legacy selectors
+        (``edge_analytics``, ``privacy``, ``cloud``) raise instead of being
+        silently remapped, and unknown selectors raise instead of silently
+        defaulting.
+        """
+        # Local import: avoid a module-level cloud -> config-resolution
+        # dependency for a single compatibility shim.
+        from traigent.config.types import validate_execution_mode
+
+        return validate_execution_mode(execution_mode).value
 
     def _sanitize_error_message(self, error_message: str | None) -> str | None:
         """Sanitize error message for transmission.
@@ -2197,11 +2193,16 @@ class BackendIntegratedClient:
 
     async def _create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
-    ) -> tuple[str, str, str]:
+    ) -> TraigentSessionApiResult:
         """Create a Traigent optimization session using the new session endpoints.
+
+        Returns the typed session-CREATE result (a 3-tuple of session /
+        experiment / run ids, plus owning-context and warm_start_transfer
+        attributes — issue #1683 Bug B: the warm-start decision arrives at
+        CREATE time and must not be narrowed away here).
         Delegates to api_operations module."""
         return cast(
-            tuple[str, str, str],
+            TraigentSessionApiResult,
             await self._api_ops.create_traigent_session_via_api(session_request),
         )
 

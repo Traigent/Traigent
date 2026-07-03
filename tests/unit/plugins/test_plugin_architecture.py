@@ -799,11 +799,11 @@ class TestFeatureNotAvailableErrorGuards:
                     sys.modules[mod] = module_obj
 
 
-class TestTraigentClientEdgeAnalyticsMode:
-    """Tests for TraigentClient edge_analytics mode without cloud dependencies."""
+class TestTraigentClientLocalMode:
+    """Tests for TraigentClient local mode without cloud dependencies."""
 
-    def test_traigent_client_edge_analytics_without_cloud(self):
-        """TraigentClient should initialize in edge_analytics mode without cloud."""
+    def test_traigent_client_local_without_cloud(self):
+        """TraigentClient should initialize in local mode without cloud."""
         from importlib.abc import MetaPathFinder
 
         class CloudBlocker(MetaPathFinder):
@@ -834,17 +834,17 @@ class TestTraigentClientEdgeAnalyticsMode:
             # Import fresh module with cloud blocked
             import traigent.traigent_client as traigent_client
 
-            # Should be able to create client in edge_analytics mode
+            # Should be able to create client in local mode
             client = traigent_client.TraigentClient(
-                execution_mode="edge_analytics",
+                execution_mode="local",
                 agent_builder=None,  # Not needed for init
             )
 
-            # Verify edge_analytics mode was selected
+            # Verify local mode was selected
             from traigent.config.types import ExecutionMode
 
-            assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
-            # Backend client should be None in edge_analytics mode
+            assert client.execution_mode == ExecutionMode.LOCAL
+            # Backend client should be None in local mode
             assert client.backend_client is None
         finally:
             sys.meta_path.remove(blocker)

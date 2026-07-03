@@ -294,7 +294,7 @@ class TestApplyBestConfig:
             func=mock_function,
             configuration_space=sample_config_space,
             objectives=sample_objectives,
-            execution_mode="edge_analytics",
+            execution_mode="local",
             use_cloud_service=False,
         )
 

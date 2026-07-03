@@ -1761,3 +1761,33 @@ class BackendSessionManager:
                 pass  # Silently ignore if mapping not available
 
         result.metadata.update(update_payload)
+        self._warn_on_refused_warm_start(result.metadata)
+
+    @staticmethod
+    def _warn_on_refused_warm_start(result_metadata: dict[str, Any]) -> None:
+        """Warn loudly when an explicitly requested warm start applied 0 seeds.
+
+        #1683: a user who set ``warm_start_from`` must not silently get a cold
+        start. Emits aggregate info only (prior experiment id, refused_reason,
+        seed count) — never seed contents.
+        """
+        warm_start_from = result_metadata.get("warm_start_from")
+        transfer = result_metadata.get("warm_start_transfer")
+        if not warm_start_from or not isinstance(transfer, dict):
+            return
+        refused_reason = transfer.get("refused_reason")
+        n_applied = transfer.get("n_seed_configs_applied")
+        zero_applied = (
+            isinstance(n_applied, int)
+            and not isinstance(n_applied, bool)
+            and n_applied == 0
+        )
+        if refused_reason or zero_applied:
+            logger.warning(
+                "warm_start_from=%r was requested but the backend applied no "
+                "seed configs (refused_reason=%r, n_seed_configs_applied=%r). "
+                "The run effectively started cold.",
+                warm_start_from,
+                refused_reason,
+                n_applied,
+            )

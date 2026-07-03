@@ -1349,6 +1349,33 @@ class OptimizationResult:
             for obj in self.objectives
         )
 
+    def _weighted_score_for_trial(
+        self,
+        trial: TrialResult,
+        normalized: dict[str, float],
+        normalized_weights: dict[str, float],
+        ranges: dict[str, tuple[float, float]],
+        objective_schema: Any | None,
+    ) -> float:
+        """Weighted score for one trial, single-sourced with live selection.
+
+        With a real ObjectiveSchema this delegates to
+        ``ObjectiveSchema.compute_weighted_score(metrics, ranges=...)`` — the
+        same scoring function live selection uses (issue #1682) — so post-hoc
+        analysis and live selection share one implementation. Without a
+        schema, the documented legacy cross-SDK path (auto-detected minimize
+        list + observed-range normalization) is retained.
+        """
+        # Import here to avoid circular dependency during module load
+        from traigent.core.objectives import ObjectiveSchema as _ObjectiveSchema
+
+        if isinstance(objective_schema, _ObjectiveSchema):
+            weighted = objective_schema.compute_weighted_score(
+                trial.metrics or {}, ranges=ranges
+            )
+            return float(weighted) if weighted is not None else 0.0
+        return self._score_trial(normalized, normalized_weights) if normalized else 0.0
+
     def _compute_weighted_scores(
         self,
         ranges: dict[str, tuple[float, float]],
@@ -1367,8 +1394,8 @@ class OptimizationResult:
             normalized = self._normalize_trial_metrics(
                 trial, ranges, minimize_objectives, objective_schema
             )
-            weighted_score = (
-                self._score_trial(normalized, objective_weights) if normalized else 0.0
+            weighted_score = self._weighted_score_for_trial(
+                trial, normalized, objective_weights, ranges, objective_schema
             )
             weighted_scores.append((trial, weighted_score))
 
@@ -1437,8 +1464,8 @@ class OptimizationResult:
             normalized = self._normalize_trial_metrics(
                 trial, ranges, resolved_minimize, resolved_schema
             )
-            weighted = (
-                self._score_trial(normalized, normalized_weights) if normalized else 0.0
+            weighted = self._weighted_score_for_trial(
+                trial, normalized, normalized_weights, ranges, resolved_schema
             )
             per_trial.append(
                 {

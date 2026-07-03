@@ -110,7 +110,6 @@ def test_presence_penalty_rejects_invalid_range(penalty):
 @given(
     st.sampled_from(
         [
-            "edge_analytics",
             "local",
             "hybrid",
             "hybrid_api",
@@ -135,8 +134,6 @@ def test_execution_mode_accepts_valid_values(mode):
         warnings.simplefilter("ignore", DeprecationWarning)
         config = TraigentConfig(execution_mode=mode)
     expected = mode.value if isinstance(mode, ExecutionMode) else mode
-    if expected == "edge_analytics":
-        expected = "local"
     assert config.execution_mode == expected
 
 
@@ -147,13 +144,15 @@ def test_execution_mode_fails_closed_on_legacy_egress_selectors(mode):
         TraigentConfig(execution_mode=mode)
 
 
-@given(st.sampled_from(["standard", "edge_analytics"]))
+@given(st.sampled_from(["standard"]))
 def test_execution_mode_deprecated_values_warn_and_resolve(mode):
     """Property: Deprecated string aliases emit DeprecationWarning and resolve to a canonical mode.
 
     "local" is the PREFERRED client-side value and intentionally does NOT warn (its
     no-warn behavior is covered by test_execution_mode_accepts_valid_values); the
-    deprecated aliases that warn are "standard" (-> hybrid) and "edge_analytics".
+    only deprecated alias that still warns-and-maps is "standard" (-> hybrid).
+    "edge_analytics" has been removed and hard-fails (see
+    test_execution_mode_removed_edge_analytics_raises).
     """
     import warnings
 
@@ -167,6 +166,12 @@ def test_execution_mode_deprecated_values_warn_and_resolve(mode):
     expected = "hybrid" if mode == "standard" else "local"
     assert config.execution_mode == expected
     assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+
+def test_execution_mode_removed_edge_analytics_raises():
+    """Removed edge_analytics selector hard-fails with migration guidance."""
+    with pytest.raises(ConfigurationError, match="has been removed"):
+        TraigentConfig(execution_mode="edge_analytics")
 
 
 @given(
@@ -301,7 +306,6 @@ def test_custom_params_preserved(custom_params):
 @given(
     st.sampled_from(
         [
-            "edge_analytics",
             "local",
             "hybrid",
             "hybrid_api",

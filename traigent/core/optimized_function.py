@@ -52,7 +52,6 @@ from traigent.config.types import (
     ExecutionMode,
     ResolvedExecutionPolicy,
     TraigentConfig,
-    is_local_algorithm,
     normalize_algorithm_name,
     resolve_execution_policy,
     validate_execution_mode,
@@ -1045,10 +1044,86 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         return cast(Callable[..., Any], application.wrapped_callable)
 
+    # Decorator-only parameters that MUST NOT be accepted as call-time
+    # ``.optimize(**algorithm_kwargs)`` keys. Before this guard they were
+    # silently absorbed into ``BaseOptimizer.algorithm_config`` with zero
+    # effect (issue #1683, Bug A: ``warm_start_from`` passed at call time was
+    # structurally dead but raised no error — no-silent-legacy policy).
+    #
+    # Keys listed here are the ``_OPTIMIZE_DEFAULTS`` decorator options that
+    # are (a) not explicit ``optimize()`` signature parameters and (b) never
+    # consumed from ``algorithm_kwargs`` anywhere downstream. Keys that ARE
+    # legitimately consumed downstream (``parallel_config``,
+    # ``max_total_examples``, ``samples_include_pruned``, ``max_examples``,
+    # ``plateau_window``, ``plateau_epsilon``, ``semantic_saturation``,
+    # ``cache_policy``, ``cost_limit``, ``cost_approved``, ``metric_*``,
+    # ``tie_breakers``, ``tvl_parameter_agents``, ``invocations_per_example``,
+    # algorithm-specific options like ``seed``/``parameter_order``) must stay
+    # OFF this list. General allowlist validation of every unknown kwarg is a
+    # tracked follow-up (see issue #1683).
+    _DECORATOR_ONLY_OPTIMIZE_PARAMS: frozenset[str] = frozenset(
+        {
+            "warm_start_from",
+            "eval_dataset",
+            "experiment_name",
+            "default_config",
+            "constraints",
+            "safety_constraints",
+            "injection_mode",
+            "config_param",
+            "agents",
+            "agent_prefixes",
+            "agent_measures",
+            "global_measures",
+            "auto_load_best",
+            "load_from",
+            "config_id",
+            "best_config_source",
+            "best_config_strict",
+            "best_config_cache_dir",
+            "best_config_cache_ttl_seconds",
+            "best_config_stale_ok_ttl_seconds",
+            "enable_auto_load_dev_logs",
+            "smart_pruning",
+            "mock_mode_config",
+            "evaluator",
+            "local_storage_path",
+            "minimal_logging",
+            "scoring_function",
+            "metric_functions",
+            "evaluation",
+            "injection",
+            "execution",
+            "mock",
+            "offline",
+            "framework_targets",
+            "auto_override_frameworks",
+            "effectuation",
+            "auto_detect_tvars",
+            "auto_detect_tvars_mode",
+            "auto_detect_tvars_min_confidence",
+            "auto_detect_tvars_include",
+            "auto_detect_tvars_exclude",
+        }
+    )
+
     def _prepare_algorithm_kwargs(
         self, algorithm_kwargs: dict[str, Any]
     ) -> dict[str, Any]:
         """Merge decorator overrides into algorithm kwargs and validate."""
+        # Hard-fail on decorator-only params passed at call time (issue #1683
+        # Bug A). Previously these were silently swallowed into the
+        # optimizer's algorithm_config and had no effect.
+        rejected = self._DECORATOR_ONLY_OPTIMIZE_PARAMS.intersection(algorithm_kwargs)
+        if rejected:
+            rejected_names = ", ".join(sorted(rejected))
+            raise TypeError(
+                f"{rejected_names} is a @traigent.optimize decorator argument "
+                "and is not accepted by .optimize() at call time; move it to "
+                f"the decorator: @traigent.optimize({sorted(rejected)[0]}=...). "
+                "Previously this was silently ignored (issue #1683)."
+            )
+
         decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})
         if decorator_overrides:
             merged = {**decorator_overrides, **algorithm_kwargs}
@@ -2073,8 +2148,15 @@ class OptimizedFunction(Generic[_P, _R]):
             or is_offline_requested(policy)
         ):
             if policy_is_cloud_required(policy) and is_offline_requested(policy):
+                requested = getattr(policy, "algorithm", None) or "smart"
                 raise ConfigurationError(
-                    "Cloud execution is required but offline mode is set"
+                    f"Smart optimization ('{requested}') requires the Traigent "
+                    "managed cloud service, but offline mode is set "
+                    "(offline=True or TRAIGENT_OFFLINE/TRAIGENT_OFFLINE_MODE). "
+                    "The local SDK runs only 'grid' and 'random'. Either drop "
+                    "offline mode and connect to a Traigent backend that "
+                    "provides smart optimization, or use algorithm='grid' / "
+                    "algorithm='random' to run locally."
                 )
             return None
 
@@ -2321,19 +2403,28 @@ Remediation:
 
         The policy stored on the instance is resolved at construction time
         *without* knowing the algorithm that ``optimize(...)`` is finally called
-        with. A runtime override such as ``optimize(algorithm="grid")`` must
-        route from that resolved runtime algorithm, exactly like the decorator
-        path (``decorators._resolve_execution_policy_from_options``). Otherwise a
-        stale ``auto`` policy (intent ``CLOUD_BRAIN``) keeps grid/random on the
-        backend-guided/typed cloud session, which samples one config per trial
-        instead of running the exhaustive local ``GridSearchOptimizer`` (#1421).
+        with. A runtime override such as ``optimize(algorithm="grid")`` (or
+        ``optimize(algorithm="bayesian")``) must route from that resolved runtime
+        algorithm, exactly like the decorator path
+        (``decorators._resolve_execution_policy_from_options``). Otherwise a stale
+        ``auto`` policy (intent ``CLOUD_BRAIN``) keeps the runtime algorithm on
+        the backend-guided/typed cloud session:
 
-        Scope is deliberately narrow: only a runtime override to a *local*
-        algorithm (``grid``/``random``) flips an otherwise cloud-capable policy
-        to ``LOCAL_ONLY``. Everything else keeps the stored policy verbatim so
-        that:
+        * a local override (``grid``/``random``) samples one config per trial on
+          the cloud session instead of running the exhaustive local
+          ``GridSearchOptimizer`` (#1421);
+        * a smart override (``bayesian``/``tpe``/``cmaes``/``nsga2``/``optuna*``)
+          silently reuses the laxer ``CLOUD_BRAIN`` policy, which either runs the
+          *auto* strategy under a different name or falls back to local — instead
+          of the fallback-forbidden ``CLOUD_REQUIRED`` semantics a smart algorithm
+          demands (#1681).
 
-        * genuinely cloud algorithms (``auto``/smart) keep their cloud routing;
+        The override — not the construction-time default — decides cloud-vs-local
+        so that:
+
+        * a local override flips a cloud-capable policy to ``LOCAL_ONLY``;
+        * a smart override yields ``CLOUD_REQUIRED`` (no silent local fallback);
+        * ``auto`` (or an unchanged algorithm) keeps its stored cloud routing;
         * ``offline`` / ``require_cloud`` / ``HYBRID_API`` intent is preserved;
         * unknown algorithm names still fail through the existing optimizer
           lookup (``get_optimizer``) rather than being rejected early here,
@@ -2344,29 +2435,39 @@ Remediation:
             return None
 
         # Already local (offline or explicit grid/random decorator): nothing to
-        # flip — and never silently relax an offline/no-egress guarantee.
+        # flip — and never silently relax an offline/no-egress guarantee. A smart
+        # runtime override on an offline wrapper still fails closed downstream via
+        # get_optimizer(), which rejects smart algorithms for local execution.
         if stored_policy.intent is ExecutionIntent.LOCAL_ONLY:
             return stored_policy
 
-        # Only a local runtime override needs to leave the cloud path. Anything
-        # else (auto, smart, or an unknown name) keeps the stored cloud-capable
-        # policy and is validated/routed downstream as before.
-        if not is_local_algorithm(runtime_algorithm):
+        normalized_runtime = normalize_algorithm_name(runtime_algorithm)
+
+        # No effective override: the runtime algorithm already matches the policy
+        # the wrapper resolved at construction. Keep the stored object (identity)
+        # so genuinely cloud algorithms keep their exact cloud routing untouched.
+        if normalized_runtime == stored_policy.algorithm:
             return stored_policy
 
-        normalized_runtime = normalize_algorithm_name(runtime_algorithm)
         legacy_mode = (
             ExecutionMode.HYBRID_API
             if stored_policy.legacy_execution_mode is ExecutionMode.HYBRID_API
             else None
         )
-        return resolve_execution_policy(
-            algorithm=normalized_runtime,
-            offline=stored_policy.offline,
-            require_cloud=stored_policy.require_cloud,
-            execution_mode=legacy_mode,
-            source_hint="optimize_runtime",
-        )
+        try:
+            return resolve_execution_policy(
+                algorithm=normalized_runtime,
+                offline=stored_policy.offline,
+                require_cloud=stored_policy.require_cloud,
+                execution_mode=legacy_mode,
+                source_hint="optimize_runtime",
+            )
+        except ValueError:
+            # Unknown/unvalidated runtime algorithm name: preserve the stored
+            # policy so the downstream optimizer lookup (get_optimizer) raises the
+            # canonical "Unknown optimizer" error instead of a policy-resolution
+            # ValueError leaking from here (error semantics unchanged, #1421).
+            return stored_policy
 
     async def _execute_optimization(
         self,

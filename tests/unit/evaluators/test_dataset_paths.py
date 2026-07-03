@@ -149,6 +149,203 @@ def test_dataset_registry_lookup(monkeypatch, tmp_path):
     assert "dataset_hash" in dataset.metadata
 
 
+def test_dataset_registry_relative_path_resolves_against_noncwd_root(
+    monkeypatch, tmp_path
+):
+    """Registry-relative paths must join against dataset_root, not cwd.
+
+    Regresses the "double-prefix" failure mode: cwd is set to an unrelated
+    directory so any accidental cwd-based join (instead of dataset_root-based)
+    would either miss the file or resolve to the wrong location.
+    """
+    dataset_root = tmp_path / "root"
+    nested = dataset_root / "nested"
+    nested.mkdir(parents=True)
+    dataset_file = nested / "data.jsonl"
+    _write_sample_dataset(dataset_file)
+
+    unrelated_cwd = tmp_path / "elsewhere"
+    unrelated_cwd.mkdir()
+
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps({"datasets": {"my_ds": {"path": "nested/data.jsonl"}}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.setenv("TRAIGENT_DATASET_REGISTRY", str(registry))
+    monkeypatch.chdir(unrelated_cwd)
+    clear_dataset_registry_cache()
+
+    dataset = Dataset.from_jsonl("my_ds")
+    assert len(dataset) == 1
+    assert dataset.metadata["source_path"] == str(dataset_file.resolve())
+
+
+def test_dataset_relative_path_error_names_resolution_rule_and_candidate(
+    monkeypatch, tmp_path
+):
+    """A missing relative dataset must name the root, rule, and candidate tried."""
+    dataset_root = tmp_path / "datasets"
+    dataset_root.mkdir()
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+
+    missing_relative = "data/math.jsonl"
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl(missing_relative)
+
+    message = str(exc_info.value)
+    assert missing_relative in message
+    assert "TRAIGENT_DATASET_ROOT" in message
+    assert str(dataset_root) in message
+    assert str((dataset_root / missing_relative).resolve()) in message
+
+
+def test_dataset_absolute_path_error_names_used_as_is_rule_and_candidate(
+    monkeypatch, tmp_path
+):
+    """A missing absolute dataset must state the used-as-is rule and the candidate.
+
+    Exercises the ``is_absolute_path=True`` branch of
+    ``_dataset_not_found_message``: no dataset root is prepended, and the
+    message must say so and name the exact absolute path that was tried.
+    """
+    dataset_root = tmp_path / "datasets"
+    dataset_root.mkdir()
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+
+    missing_absolute = dataset_root / "nowhere" / "math.jsonl"
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl(str(missing_absolute))
+
+    message = str(exc_info.value)
+    assert "absolute path, used as-is (no dataset root prepended)" in message
+    assert f"Tried: {missing_absolute}" in message
+
+
+def test_dataset_registry_missing_file_error_names_registry_resolution(
+    monkeypatch, tmp_path
+):
+    """A missing registry-resolved dataset must name both the key and its path."""
+    dataset_root = tmp_path / "datasets"
+    dataset_root.mkdir()
+
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps({"datasets": {"ghost": {"path": "ghost.jsonl"}}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.setenv("TRAIGENT_DATASET_REGISTRY", str(registry))
+    clear_dataset_registry_cache()
+
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl("ghost")
+
+    message = str(exc_info.value)
+    assert "ghost" in message
+    assert "ghost.jsonl" in message
+    assert str(dataset_root) in message
+
+
+def test_dataset_relative_path_matching_root_subdir_does_not_silently_double(
+    monkeypatch, tmp_path
+):
+    """Reproduces the reported "doubled path" symptom with a self-explanatory error.
+
+    When TRAIGENT_DATASET_ROOT already points at a "data" subdirectory and the
+    caller also writes a redundant "data/" prefix (a natural mistake once the
+    root already scopes to that directory), resolution deterministically joins
+    dataset_root with the relative path exactly once. The file genuinely is not
+    at that joined location, so the failure must explain the rule and name the
+    exact (non-existent) candidate instead of a bare, confusing "not found".
+    """
+    project_root = tmp_path
+    dataset_root = project_root / "data"
+    dataset_root.mkdir()
+    actual_file = dataset_root / "math.jsonl"
+    _write_sample_dataset(actual_file)
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl("data/math.jsonl")
+
+    message = str(exc_info.value)
+    doubled_candidate = dataset_root / "data" / "math.jsonl"
+    assert str(doubled_candidate) in message
+    assert "TRAIGENT_DATASET_ROOT" in message
+    assert "relative" in message
+
+    # The real file resolves cleanly once the redundant prefix is dropped.
+    dataset = Dataset.from_jsonl("math.jsonl")
+    assert len(dataset) == 1
+
+
+def test_dataset_registry_path_matching_root_subdir_does_not_silently_double(
+    monkeypatch, tmp_path
+):
+    """Registry-resolved paths must not silently double-prefix either.
+
+    Same "doubled path" symptom as
+    ``test_dataset_relative_path_matching_root_subdir_does_not_silently_double``,
+    but reached through a registry entry: ``resolve_dataset_reference`` (base
+    module 147-164) hands back a registry-relative path that is then joined
+    against ``dataset_root`` exactly once by ``_resolve_dataset_source``
+    (base.py 204-245). When the registry entry's path itself repeats the
+    dataset root's own subdirectory name, the join is still performed exactly
+    once, but the resulting candidate looks doubled to a human; the error must
+    name the registry key, the resolved registry path, and the exact
+    candidate tried instead of a bare file-not-found.
+    """
+    project_root = tmp_path
+    dataset_root = project_root / "data"
+    dataset_root.mkdir()
+    actual_file = dataset_root / "math.jsonl"
+    _write_sample_dataset(actual_file)
+
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps({"datasets": {"math": {"path": "data/math.jsonl"}}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.setenv("TRAIGENT_DATASET_REGISTRY", str(registry))
+    clear_dataset_registry_cache()
+
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl("math")
+
+    message = str(exc_info.value)
+    doubled_candidate = dataset_root / "data" / "math.jsonl"
+    assert "math" in message
+    assert "data/math.jsonl" in message
+    assert str(doubled_candidate) in message
+    assert "TRAIGENT_DATASET_ROOT" in message
+    assert "relative" in message
+
+    # Fixing the registry entry to drop the redundant prefix resolves cleanly.
+    registry.write_text(
+        json.dumps({"datasets": {"math": {"path": "math.jsonl"}}}),
+        encoding="utf-8",
+    )
+    clear_dataset_registry_cache()
+
+    dataset = Dataset.from_jsonl("math")
+    assert len(dataset) == 1
+
+
 def test_dataset_registry_outside_root_rejected(monkeypatch, tmp_path):
     dataset_root = tmp_path / "datasets"
     dataset_root.mkdir()

@@ -114,7 +114,7 @@ jobs:
           # release/hotfix sync PRs: analyze but do not block on new-code metrics (issue #217)
           WAIT=true
           case "${{ github.head_ref }}" in
-            release/*|hotfix/*) WAIT=false ;;
+            develop|release/*|hotfix/*) WAIT=false ;;
           esac
           sonar-scanner \
             -Dsonar.host.url="${SONAR_HOST_URL}" \

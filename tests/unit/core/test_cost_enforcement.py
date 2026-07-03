@@ -808,11 +808,17 @@ class TestCostEnforcerEnvironmentVariables:
             enforcer = CostEnforcer()
             assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
 
-    def test_negative_env_uses_default(self) -> None:
-        """Negative values fall back to defaults."""
-        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "-5.0"}):
-            enforcer = CostEnforcer()
-            assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
+    @pytest.mark.parametrize("raw_limit", ["-5.0", "0", "0.0"])
+    def test_nonpositive_env_limit_raises_at_config_time(self, raw_limit: str) -> None:
+        """Nonpositive limits raise instead of silently zeroing the run (#1684)."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": raw_limit}):
+            with pytest.raises(
+                ConfigurationError, match="TRAIGENT_RUN_COST_LIMIT"
+            ) as exc_info:
+                CostEnforcer()
+        assert "must be > 0" in str(exc_info.value)
 
     def test_invalid_divergence_threshold_raises(self) -> None:
         """Non-numeric divergence threshold should fail fast at initialization."""
@@ -1773,13 +1779,53 @@ class TestCostEnforcerEdgeCases:
         with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
-    def test_check_thresholds_zero_limit(self) -> None:
-        """_check_thresholds handles zero limit gracefully."""
-        config = CostEnforcerConfig(limit=0.0)
-        enforcer = CostEnforcer(config=config)
+    def test_zero_limit_config_raises_at_construction(self) -> None:
+        """Nonpositive limits raise at config time instead of zeroing the run."""
+        from traigent.utils.exceptions import ConfigurationError
 
-        # Should not raise or divide by zero
-        enforcer._check_thresholds()
+        with pytest.raises(ConfigurationError, match="must be > 0"):
+            CostEnforcerConfig(limit=0.0)
+        with pytest.raises(ConfigurationError, match="must be > 0"):
+            CostEnforcerConfig(limit=-1.0)
+
+    def test_update_limit_rejects_nonpositive(self) -> None:
+        """update_limit applies the same config-time validation."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=1.0))
+        with pytest.raises(ConfigurationError, match="must be > 0"):
+            enforcer.update_limit(0.0)
+        assert enforcer.config.limit == 1.0
+
+    def test_budget_block_message_reports_blocked_trials_and_costs(self) -> None:
+        """Budget-gate blocks are loud: N planned trials, $X vs limit $Y (#1684)."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=1.0))
+        enforcer._accumulated_cost = 1.25
+
+        message = enforcer.budget_block_message(5)
+        assert message == (
+            "budget gate blocked 5 planned trials (estimated $1.25 > limit $1.00)"
+        )
+
+        unbounded = enforcer.budget_block_message(None)
+        assert unbounded == (
+            "budget gate blocked all remaining planned trials "
+            "(estimated $1.25 > limit $1.00)"
+        )
+
+    def test_budget_block_message_unknown_cost_mode_reports_trial_fallback(
+        self,
+    ) -> None:
+        """Unknown-cost fallback blocks still explain themselves loudly."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=2.0, fallback_trial_limit=3)
+        )
+        enforcer._unknown_cost_mode = True
+        enforcer._trial_count = 3
+
+        message = enforcer.budget_block_message(4)
+        assert "budget gate blocked 4 planned trials" in message
+        assert "fallback trial limit 3" in message
 
     def test_cost_confidence_with_zero_mean(self) -> None:
         """get_cost_confidence handles edge case of zero mean."""
