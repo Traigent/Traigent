@@ -16,7 +16,11 @@ During optimization runs, Traigent collects:
 - Trial suggested/intermediate/completed timestamps
 - Trial status (completed, failed, pruned)
 - Trial duration
-- Trial configuration (parameter values being tested, with internal keys stripped)
+- Trial configuration. On the default portal-backed path, this includes tuned
+  config-space key/value pairs being tested, with internal keys stripped. If you
+  tune prompt variants or other free-text strings as configuration values, those
+  tuned values are sent on the default path so the portal can display winning
+  configs.
 - Trial metrics (accuracy, cost, latency, etc.)
 
 **Optimization Run Metadata**:
@@ -26,7 +30,7 @@ During optimization runs, Traigent collects:
 - Total optimization duration
 - Result source (`cloud_brain`, `local_fallback`, `explicit_local`, or `offline`)
 - Stop conditions triggered
-- Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set `TRAIGENT_TVAR_OBSERVATION=off` to disable them, or use `TRAIGENT_TVAR_OBSERVATION=hashed` (default) to hash free-form string values. Only `off` and `hashed` are supported; unsupported values fall back to `hashed`.
+- Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set `TRAIGENT_TVAR_OBSERVATION=off` to disable the `tvar_observation_v1` metadata sub-field, or use `TRAIGENT_TVAR_OBSERVATION=hashed` (default) to hash free-form string values in that sub-field. Only `off` and `hashed` are supported; unsupported values fall back to `hashed`. This setting does not control the trial `config` field.
 
 **Performance Metrics**:
 - LLM API response times
@@ -36,7 +40,8 @@ During optimization runs, Traigent collects:
 
 ### What is NOT Collected
 
-Traigent does **not** collect:
+Outside tuned configuration values explicitly sent on the default portal-backed
+path, Traigent does **not** collect:
 
 - **User prompts or inputs**
 - **LLM responses or outputs**
@@ -47,10 +52,20 @@ Traigent does **not** collect:
 
 ### Data Boundary and No-Egress Runs
 
-The default portal-backed path sends configuration identifiers and numeric metrics. It
-does not send dataset example inputs, expected outputs, prompts, responses, or
-example metadata. Use `offline=True` when your policy requires no Traigent
-backend egress at all:
+The default portal-backed path sends tuned config-space values and numeric
+metrics. This is deliberate: the portal uses those values to display and compare
+winning configs. If a prompt variant, persona instruction, model name, or other
+string is part of the tuned configuration space, the default path sends that
+string value. It does not send dataset example inputs, expected outputs, model
+responses, or example metadata unless you put that content into the tuned
+configuration itself.
+
+Use `privacy_enabled=True` when you need backend coordination without sending
+tuned string values. Privacy submissions preserve which keys were tuned, but
+redact sensitive-key values and all string/free-text config values. Numeric,
+boolean, and `None` config values still pass through.
+
+Use `offline=True` when your policy requires no Traigent backend egress at all:
 
 ```python
 @traigent.optimize(
@@ -63,8 +78,9 @@ backend egress at all:
 No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
-Use `TRAIGENT_DISABLE_TELEMETRY=true` for telemetry opt-out and `offline=True`
-for zero Traigent backend egress.
+Use `TRAIGENT_DISABLE_TELEMETRY=true` for SDK telemetry opt-out,
+`privacy_enabled=True` to redact tuned string config values on privacy-mode
+submissions, and `offline=True` for zero Traigent backend egress.
 
 ### OpenTelemetry Tracing
 
@@ -128,7 +144,7 @@ Telemetry data is used for:
 - No data is sent to the Traigent backend
 
 **Portal-backed runs**:
-- Configuration IDs/schema and numeric metrics can be sent to Traigent backend for optimization coordination
+- Tuned config-space values, configuration IDs/schema, and numeric metrics can be sent to Traigent backend for optimization coordination
 - Retention policies depend on your managed-service agreement
 - You can request data deletion at any time
 
@@ -249,7 +265,10 @@ control and CI artifact collection in sensitive projects.
 ### Data Sanitization
 
 Configuration data is sanitized before telemetry. Private/internal keys
-(starting with `_`) are automatically removed.
+(starting with `_`) are automatically removed. On default portal-backed
+submissions, tuned config values are otherwise sent unchanged so the portal can
+display winning configs. On privacy-mode submissions, sensitive-key values and
+all string/free-text config values are redacted while preserving the tuned keys.
 
 ### Error Handling
 

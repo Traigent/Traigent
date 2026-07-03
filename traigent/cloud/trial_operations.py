@@ -70,6 +70,26 @@ class TrialSlotResult:
 class TrialOperations:
     """Handles trial management operations."""
 
+    _SENSITIVE_CONFIG_KEY_PATTERNS = {
+        "api_key",
+        "apikey",
+        "token",
+        "secret",
+        "password",
+        "credential",
+        "prompt",
+        "response",
+        "input",
+        "output",
+        "content",
+        "message",
+        "text",
+        "query",
+        "answer",
+        "system_prompt",
+        "user_prompt",
+    }
+
     def __init__(self, client: "BackendIntegratedClient"):
         """Initialize trial operations handler.
 
@@ -186,6 +206,69 @@ class TrialOperations:
         return value
 
     @staticmethod
+    def _is_sensitive_config_key(key: str) -> bool:
+        """Whether a key matches the existing sensitive-key denylist."""
+
+        key_lower = key.lower().replace("_", "").replace("-", "")
+        return any(
+            sensitive_key.replace("_", "") in key_lower
+            for sensitive_key in TrialOperations._SENSITIVE_CONFIG_KEY_PATTERNS
+        )
+
+    @staticmethod
+    def _redaction_marker(value: Any) -> str:
+        """Return the same redaction marker format used by payload logging."""
+
+        if isinstance(value, str):
+            return f"[REDACTED:{len(value)} chars]"
+        if isinstance(value, (list, dict, tuple, set)):
+            return f"[REDACTED:{type(value).__name__}]"
+        return "[REDACTED]"
+
+    @staticmethod
+    def _contains_string(value: Any, depth: int = 0) -> bool:
+        """Return True when a config value contains free-text string content."""
+
+        if depth > 10:
+            return True
+        if isinstance(value, str):
+            return True
+        if isinstance(value, dict):
+            return any(
+                TrialOperations._contains_string(item, depth + 1)
+                for item in value.values()
+            )
+        if isinstance(value, (list, tuple, set)):
+            return any(
+                TrialOperations._contains_string(item, depth + 1) for item in value
+            )
+        return False
+
+    @staticmethod
+    def _redact_privacy_config(config: dict[str, Any]) -> dict[str, Any]:
+        """Redact tuned config values for privacy-mode backend submission.
+
+        Privacy mode preserves tuned keys for backend attribution, but redacts
+        sensitive-key values and all string/free-text values. Numeric, boolean,
+        None, and string-free container values pass through after JSON coercion.
+        """
+
+        sanitized_config = TrialOperations._sanitize_for_json(config)
+        if not isinstance(sanitized_config, dict):
+            raise TypeError("privacy config must sanitize to a dictionary")
+
+        redacted_config: dict[str, Any] = {}
+        for key, value in sanitized_config.items():
+            key_text = str(key)
+            if TrialOperations._is_sensitive_config_key(
+                key_text
+            ) or TrialOperations._contains_string(value):
+                redacted_config[key_text] = TrialOperations._redaction_marker(value)
+            else:
+                redacted_config[key_text] = value
+        return redacted_config
+
+    @staticmethod
     def _redact_sensitive_fields(data: Any, depth: int = 0) -> Any:
         """Recursively redact sensitive fields from data for safe logging.
 
@@ -194,41 +277,11 @@ class TrialOperations:
         if depth > 10:  # Prevent infinite recursion
             return "[MAX_DEPTH]"
 
-        # Sensitive field patterns (case-insensitive matching)
-        sensitive_keys = {
-            "api_key",
-            "apikey",
-            "token",
-            "secret",
-            "password",
-            "credential",
-            "prompt",
-            "response",
-            "input",
-            "output",
-            "content",
-            "message",
-            "text",
-            "query",
-            "answer",
-            "system_prompt",
-            "user_prompt",
-        }
-
         if isinstance(data, dict):
             redacted = {}
             for key, value in data.items():
-                key_lower = key.lower().replace("_", "").replace("-", "")
-                is_sensitive = any(
-                    s.replace("_", "") in key_lower for s in sensitive_keys
-                )
-                if is_sensitive:
-                    if isinstance(value, str):
-                        redacted[key] = f"[REDACTED:{len(value)} chars]"
-                    elif isinstance(value, (list, dict, tuple, set)):
-                        redacted[key] = f"[REDACTED:{type(value).__name__}]"
-                    else:
-                        redacted[key] = "[REDACTED]"
+                if TrialOperations._is_sensitive_config_key(str(key)):
+                    redacted[key] = TrialOperations._redaction_marker(value)
                 else:
                     redacted[key] = TrialOperations._redact_sensitive_fields(
                         value, depth + 1
@@ -1013,7 +1066,7 @@ class TrialOperations:
             # For privacy mode, send summary stats as metrics
             submission_data = {
                 "trial_id": trial_id,
-                "config": config,
+                "config": self._redact_privacy_config(config),
                 "metrics": summary_stats.get(
                     "metrics", {}
                 ),  # Send summary stats metrics here
