@@ -19,6 +19,7 @@ optional dependency (``pip install 'traigent[analytics]'`` or
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Literal
 
@@ -92,7 +93,7 @@ def _as_float(value: Any) -> float | None:
     else:
         return None
     # Reject NaN/inf so matplotlib never plots a meaningless point.
-    if result != result or result in (float("inf"), float("-inf")):
+    if not math.isfinite(result):
         return None
     return result
 

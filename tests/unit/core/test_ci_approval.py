@@ -150,6 +150,19 @@ class TestValidateLegacyToken:
         token = {"approved_by": "tester", "expires_at": future}
         assert _validate_legacy_token(token) is True
 
+    def test_valid_token_logs_identifier_not_approver(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        raw_approver = "user@example.com\ninject=true"
+        token = {"approved_by": raw_approver, "expires_at": future}
+
+        with caplog.at_level("WARNING", logger="traigent.core.ci_approval"):
+            assert _validate_legacy_token(token) is True
+
+        assert raw_approver not in caplog.text
+        assert "legacy-approver:" in caplog.text
+
     def test_expired_token(self) -> None:
         past = (datetime.now(UTC) - timedelta(hours=1)).replace(tzinfo=None).isoformat()
         token = {"approved_by": "tester", "expires_at": past}
@@ -250,6 +263,23 @@ class TestValidateHmacToken:
             {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
         ):
             assert _validate_hmac_token(token) is True
+
+    def test_valid_signed_token_logs_identifier_not_approver(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        raw_approver = "ci-bot@example.com\ninject=true"
+        token = self._make_signed_token(approver=raw_approver)
+        with (
+            patch.dict(
+                os.environ,
+                {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+            ),
+            caplog.at_level("INFO", logger="traigent.core.ci_approval"),
+        ):
+            assert _validate_hmac_token(token) is True
+
+        assert raw_approver not in caplog.text
+        assert "hmac-approver:" in caplog.text
 
     def test_invalid_signature(self) -> None:
         token = self._make_signed_token()

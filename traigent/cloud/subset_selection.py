@@ -593,7 +593,7 @@ class SmartSubsetSelector:
 
         # Analyze output diversity
         unique_outputs = len({str(ex.expected_output) for ex in dataset.examples})
-        output_diversity = unique_outputs / num_examples if num_examples else 0.0
+        output_diversity = unique_outputs / num_examples
 
         # Analyze input complexity
         input_lengths = [len(str(ex.input_data)) for ex in dataset.examples]

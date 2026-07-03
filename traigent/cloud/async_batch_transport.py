@@ -152,7 +152,7 @@ class AsyncBatchTransport:
             if send_task is not None:
                 await send_task
         except asyncio.CancelledError:
-            return
+            raise
 
     async def _send_available(self) -> None:
         try:

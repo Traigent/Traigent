@@ -10,15 +10,134 @@ evaluation data into DeepEval's ``LLMTestCase`` format.
 from __future__ import annotations
 
 import copy
+import os
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+_MISSING = object()
+
+
+@dataclass(frozen=True)
+class _TracerProviderSnapshot:
+    trace_module: Any
+    provider: Any
+    raw_provider: Any
+    once_guard: Any
+    once_done: Any
+
+
+# Aikido Intel flags deepeval telemetry as exfiltrating host OpenTelemetry
+# spans to deepeval/New Relic; upstream issue confident-ai/deepeval#2497 is
+# still open. These must be set before any import path can execute deepeval.
+_DEEPEVAL_TELEMETRY_OPT_OUT_ENV: dict[str, str] = {
+    "DEEPEVAL_TELEMETRY_OPT_OUT": "YES",  # deepeval analytics/PostHog opt-out
+    "ERROR_REPORTING": "NO",  # deepeval Sentry/error-reporting opt-out
+}
+
+
+def _set_deepeval_telemetry_opt_out_env() -> None:
+    """Disable deepeval telemetry knobs unless the host configured them."""
+    for name, value in _DEEPEVAL_TELEMETRY_OPT_OUT_ENV.items():
+        os.environ.setdefault(name, value)
+
+
+def _capture_otel_tracer_provider() -> _TracerProviderSnapshot | None:
+    """Capture the global OpenTelemetry tracer provider state if available."""
+    try:
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+    except Exception:
+        return None
+
+    once_guard = getattr(trace, "_TRACER_PROVIDER_SET_ONCE", _MISSING)
+    once_done = getattr(once_guard, "_done", _MISSING)
+    return _TracerProviderSnapshot(
+        trace_module=trace,
+        provider=provider,
+        raw_provider=getattr(trace, "_TRACER_PROVIDER", _MISSING),
+        once_guard=once_guard,
+        once_done=once_done,
+    )
+
+
+def _restore_otel_tracer_provider(
+    snapshot: _TracerProviderSnapshot | None,
+) -> None:
+    """Restore OpenTelemetry state if deepeval changed the global provider."""
+    if snapshot is None:
+        return
+
+    trace = snapshot.trace_module
+    try:
+        current_provider = trace.get_tracer_provider()
+    except Exception:
+        return
+    if current_provider is snapshot.provider:
+        return
+
+    restored_once_guard = False
+    if snapshot.raw_provider is not _MISSING:
+        try:
+            trace._TRACER_PROVIDER = snapshot.raw_provider
+        except Exception:
+            pass
+
+    if snapshot.once_guard is not _MISSING and snapshot.once_done is not _MISSING:
+        try:
+            snapshot.once_guard._done = snapshot.once_done
+            restored_once_guard = True
+        except Exception:
+            pass
+
+    try:
+        restored = trace.get_tracer_provider() is snapshot.provider
+    except Exception:
+        restored = False
+
+    if not restored:
+        try:
+            trace.set_tracer_provider(snapshot.provider)
+            restored = trace.get_tracer_provider() is snapshot.provider
+        except Exception:
+            restored = False
+
+    if restored:
+        logger.warning(
+            "Restored host OpenTelemetry TracerProvider after deepeval import "
+            "changed the global provider; see Aikido Intel and deepeval#2497."
+        )
+    else:
+        logger.warning(
+            "deepeval import changed the global OpenTelemetry TracerProvider, "
+            "but Traigent could not restore it; see Aikido Intel and "
+            "deepeval#2497."
+        )
+
+    if restored and not restored_once_guard:
+        logger.warning(
+            "OpenTelemetry TracerProvider was restored, but the provider "
+            "one-shot guard state could not be restored."
+        )
+
+
+def _import_deepeval_test_case() -> Any:
+    _set_deepeval_telemetry_opt_out_env()
+    tracer_snapshot = _capture_otel_tracer_provider()
+    try:
+        from deepeval.test_case import LLMTestCase
+    finally:
+        _restore_otel_tracer_provider(tracer_snapshot)
+    return LLMTestCase
+
+
 try:  # pragma: no cover - import guard
-    from deepeval.test_case import LLMTestCase
+    LLMTestCase = _import_deepeval_test_case()
 
     DEEPEVAL_AVAILABLE = True
     DEEPEVAL_IMPORT_ERROR: Exception | None = None
@@ -69,7 +188,12 @@ def _get_shortcut_classes() -> dict[str, type]:
         return _SHORTCUT_TO_CLASS
 
     _ensure_deepeval_available()
-    import deepeval.metrics as dm
+    _set_deepeval_telemetry_opt_out_env()
+    tracer_snapshot = _capture_otel_tracer_provider()
+    try:
+        import deepeval.metrics as dm
+    finally:
+        _restore_otel_tracer_provider(tracer_snapshot)
 
     _SHORTCUT_TO_CLASS = {}
     for class_name in set(DEEPEVAL_METRIC_SHORTCUTS.values()):

@@ -74,6 +74,13 @@ def _sanitize_for_log(value: str, max_len: int = 50) -> str:
     return "".join(c for c in str(value)[:max_len] if c.isalnum() or c in "-_@.")
 
 
+def _identifier_for_log(value: Any, *, prefix: str) -> str:
+    """Return a stable non-reversible identifier for user-controlled log fields."""
+    value_bytes = str(value).encode("utf-8", errors="replace")
+    digest = hashlib.sha256(value_bytes).hexdigest()[:12]
+    return f"{prefix}:{digest}"
+
+
 def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
     """Validate a legacy format approval token with a migration TTL cap."""
     if "approved_by" not in token_data or "expires_at" not in token_data:
@@ -85,11 +92,13 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
             logger.warning("Legacy CI approval token TTL exceeds 24 hours, rejecting")
             return False
         if expires_at > now:
-            safe_approver = _sanitize_for_log(token_data.get("approved_by", "unknown"))
             logger.warning(
-                "CI optimization approved by unsigned legacy token for %s; "
+                "CI optimization approved by unsigned legacy token for approver_id=%s; "
                 "migrate to HMAC-signed approval tokens",
-                safe_approver,
+                _identifier_for_log(
+                    token_data.get("approved_by", "unknown"),
+                    prefix="legacy-approver",
+                ),
             )
             return True
     except (ValueError, KeyError):
@@ -133,8 +142,11 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
             return False
         if expires_at > now:
             logger.info(
-                "CI optimization approved by HMAC token: %s",
-                _sanitize_for_log(token_data.get("approver", "unknown")),
+                "CI optimization approved by HMAC token for approver_id=%s",
+                _identifier_for_log(
+                    token_data.get("approver", "unknown"),
+                    prefix="hmac-approver",
+                ),
             )
             return True
         logger.debug("Token expired")

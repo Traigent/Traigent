@@ -1333,17 +1333,23 @@ class TestCostEnforcerApprovalToken:
         assert enforcer._check_approval_token() is True
         assert enforcer.config.limit == 10.5
 
-    def test_check_approval_token_invalid_format(self, tmp_path) -> None:
+    def test_check_approval_token_invalid_format(
+        self, tmp_path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Verify invalid token format is handled."""
         token_file = tmp_path / "cost_approval.token"
-        token_file.write_text("approved:invalid")
+        raw_token = "approved:invalid\ninject=true"
+        token_file.write_text(raw_token)
 
         enforcer = CostEnforcer()
         enforcer._approval_token_path = token_file
 
         # Should return True (approved) but keep default limit
-        assert enforcer._check_approval_token() is True
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            assert enforcer._check_approval_token() is True
         assert enforcer.config.limit == 2.0
+        assert raw_token not in caplog.text
+        assert "Invalid approval token format" in caplog.text
 
     def test_check_approval_token_missing(self, tmp_path) -> None:
         """Verify missing token returns False."""

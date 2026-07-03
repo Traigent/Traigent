@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.18.1.dev7"
+version = "0.19.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -199,7 +199,9 @@ ml = [
     "scipy>=1.7.0",
 ]
 
-# DeepEval integration (LLM evaluation metrics as optimization objectives)
+# DeepEval integration (LLM evaluation metrics as optimization objectives).
+# Explicit opt-in only while Aikido/deepeval#2497 telemetry exfiltration remains
+# unfixed upstream; Traigent applies telemetry and TracerProvider guards at import.
 deepeval = [
     "deepeval>=1.0.0",
 ]
