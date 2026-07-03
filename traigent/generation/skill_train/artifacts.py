@@ -22,6 +22,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
+
 from .trainer_result import SkillTrainResult
 
 
@@ -47,14 +49,7 @@ def write_artifacts(
     *,
     containment_root: str | Path | None = None,
 ) -> str:
-    path = Path(directory).expanduser().resolve()
-    if containment_root is not None:
-        root = Path(containment_root).expanduser().resolve()
-        if not path.is_relative_to(root):
-            raise ValueError(
-                "skill-train artifacts directory escapes its storage root: "
-                f"{path} is not under {root}"
-            )
+    path = _resolve_artifact_directory(directory, containment_root=containment_root)
     path.mkdir(parents=True, exist_ok=True)
 
     _artifact_target(path, "best_skill.md").write_text(
@@ -81,6 +76,25 @@ def write_artifacts(
             }
             handle.write(json.dumps(safe, sort_keys=True) + "\n")
     return str(path)
+
+
+def _resolve_artifact_directory(
+    directory: str | Path,
+    *,
+    containment_root: str | Path | None,
+) -> Path:
+    path = Path(directory).expanduser().resolve()
+    if containment_root is None:
+        return path
+
+    root = Path(containment_root).expanduser().resolve()
+    try:
+        return validate_path(directory, allowed_base=root)
+    except PathTraversalError as exc:
+        raise ValueError(
+            "skill-train artifacts directory escapes its storage root: "
+            f"{path} is not under {root}"
+        ) from exc
 
 
 __all__ = ["write_artifacts"]

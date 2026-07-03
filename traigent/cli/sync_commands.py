@@ -27,6 +27,22 @@ from traigent.config.types import TraigentConfig
 _PENDING_STATES = {"unsynced", "partial", "failed"}
 
 
+def _emit_session_warnings(result: dict[str, Any]) -> None:
+    warnings = list(result.get("warnings") or [])
+    if (
+        not warnings
+        and result.get("finalization_status") == "skipped_terminal_not_owned"
+    ):
+        current_status = result.get("finalization_current_status")
+        status_detail = f" is {current_status}" if current_status else ""
+        warnings.append(
+            "Experiment finalization skipped: cloud experiment"
+            f"{status_detail}; offline sync did not advance it to COMPLETED"
+        )
+    for warning in warnings:
+        click.echo(f"   ⚠️  {warning}")
+
+
 def _resolve_api_key(api_key: str | None) -> str | None:
     if api_key:
         return api_key
@@ -74,6 +90,7 @@ def _emit_session_result(result: dict[str, Any], *, dry_run: bool) -> None:
         click.echo(f"❌ {sid}: {status}")
         for error in result.get("errors", []):
             click.echo(f"   • {error}")
+    _emit_session_warnings(result)
 
 
 @click.command(name="sync")

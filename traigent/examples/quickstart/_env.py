@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 from collections.abc import MutableMapping
 
-_PORTAL_SIGNUP_URL = "https://app.traigent.ai"
+from traigent.examples._portal import PORTAL_API_KEYS_URL
 
 
 def configure_quickstart_env(env: MutableMapping[str, str]) -> None:
@@ -43,7 +43,7 @@ def configure_quickstart_env(env: MutableMapping[str, str]) -> None:
         env["TRAIGENT_OFFLINE_MODE"] = "true"
         print(
             "[traigent] No TRAIGENT_API_KEY set - results will print locally. "
-            f"Set TRAIGENT_API_KEY (get one at {_PORTAL_SIGNUP_URL}) with "
+            f"Set TRAIGENT_API_KEY (get one at {PORTAL_API_KEYS_URL}) with "
             "experiments:write, then run "
             "python -m traigent.examples.quickstart.publish_and_verify to sync "
             "a mock run to the portal.",

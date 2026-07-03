@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
+import builtins
+import gzip
 import hashlib
+import io
 import json
+import os
+import pickle
+import subprocess
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
-from traigent.api.types import OptimizationResult, OptimizationStatus
-from traigent.utils.persistence import PersistenceManager, ResumableOptimization
+import pytest
+
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialError,
+    TrialResult,
+    TrialStatus,
+)
+from traigent.utils.persistence import (
+    PersistenceManager,
+    RestrictedUnpickler,
+    ResumableOptimization,
+)
 
 
 def _make_optimization_result() -> OptimizationResult:
@@ -30,6 +50,10 @@ def _make_optimization_result() -> OptimizationResult:
             "configuration_space": {"param": [0, 1]},
         },
     )
+
+
+def _load_restricted(payload: bytes) -> object:
+    return RestrictedUnpickler(io.BytesIO(payload)).load()
 
 
 def test_get_result_hash_uses_metadata(tmp_path) -> None:
@@ -91,3 +115,185 @@ def test_resumable_can_resume_finds_checkpoint(tmp_path) -> None:
         )
         is None
     )
+
+
+def test_restricted_unpickler_rejects_issue_eval_exploit(tmp_path) -> None:
+    """The issue #1634 eval/REDUCE payload must not execute."""
+
+    sentinel = tmp_path / "eval_executed"
+
+    class Exploit:
+        def __reduce__(self):
+            code = f"__import__('pathlib').Path({str(sentinel)!r}).write_text('owned')"
+            return eval, (code,)
+
+    payload = pickle.dumps(Exploit(), protocol=2)
+
+    with pytest.raises(pickle.UnpicklingError):
+        _load_restricted(payload)
+
+    assert not sentinel.exists()
+
+
+@pytest.mark.parametrize(
+    ("callable_name", "args"),
+    [
+        ("eval", ("1 + 1",)),
+        ("exec", ("value = 1",)),
+        ("__import__", ("os",)),
+        ("open", ("unused", "w")),
+        ("getattr", ("text", "__class__")),
+        ("setattr", ("text", "x", 1)),
+        ("compile", ("1 + 1", "<payload>", "eval")),
+        ("globals", ()),
+    ],
+)
+def test_restricted_unpickler_rejects_dangerous_builtins_by_name(
+    callable_name: str, args: tuple[object, ...]
+) -> None:
+    class DangerousBuiltin:
+        def __reduce__(self):
+            return getattr(builtins, callable_name), args
+
+    payload = pickle.dumps(DangerousBuiltin(), protocol=2)
+
+    with pytest.raises(pickle.UnpicklingError):
+        _load_restricted(payload)
+
+
+def test_restricted_unpickler_rejects_builtin_import_gadget() -> None:
+    class ImportGadget:
+        def __reduce__(self):
+            return __import__, ("os",)
+
+    payload = pickle.dumps(ImportGadget(), protocol=2)
+
+    with pytest.raises(pickle.UnpicklingError):
+        _load_restricted(payload)
+
+
+def test_restricted_unpickler_rejects_os_system_gadget(tmp_path) -> None:
+    sentinel = tmp_path / "os_system_executed"
+
+    class OsSystemGadget:
+        def __reduce__(self):
+            command = (
+                f"{sys.executable} -c "
+                f'"from pathlib import Path; '
+                f"Path({str(sentinel)!r}).write_text('owned')\""
+            )
+            return os.system, (command,)
+
+    payload = pickle.dumps(OsSystemGadget(), protocol=2)
+
+    with pytest.raises(pickle.UnpicklingError):
+        _load_restricted(payload)
+
+    assert not sentinel.exists()
+
+
+def test_restricted_unpickler_rejects_subprocess_gadget(tmp_path) -> None:
+    sentinel = tmp_path / "subprocess_executed"
+
+    class SubprocessGadget:
+        def __reduce__(self):
+            return subprocess.check_call, (
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "from pathlib import Path; "
+                        f"Path({str(sentinel)!r}).write_text('owned')"
+                    ),
+                ],
+            )
+
+    payload = pickle.dumps(SubprocessGadget(), protocol=2)
+
+    with pytest.raises(pickle.UnpicklingError):
+        _load_restricted(payload)
+
+    assert not sentinel.exists()
+
+
+def test_legacy_pickle_fallback_roundtrips_real_trial_result(tmp_path) -> None:
+    persistence = PersistenceManager(base_dir=tmp_path)
+    timestamp = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    result = _make_optimization_result()
+    result.trials = [
+        TrialResult(
+            trial_id="trial-1",
+            config={"temperature": 0.2, "tags": ("baseline", "secure")},
+            metrics={"accuracy": 0.91},
+            status=TrialStatus.COMPLETED,
+            duration=1.25,
+            timestamp=timestamp,
+            metadata={
+                "attempts": {1, 2},
+                "modes": frozenset({"json", "pickle"}),
+                "payload": b"abc",
+                "complexity": complex(1, 2),
+            },
+            error=TrialError(
+                message="handled",
+                error_type="ValueError",
+                traceback="traceback text",
+                timestamp=timestamp,
+                config={"temperature": 0.2},
+            ),
+        )
+    ]
+
+    result_dir = Path(persistence.save_result(result, "legacy-only"))
+    (result_dir / "trials.json.gz").unlink()
+
+    loaded = persistence.load_result("legacy-only")
+
+    assert len(loaded.trials) == 1
+    loaded_trial = loaded.trials[0]
+    assert isinstance(loaded_trial, TrialResult)
+    assert loaded_trial.status is TrialStatus.COMPLETED
+    assert loaded_trial.timestamp == timestamp
+    assert loaded_trial.metadata["attempts"] == {1, 2}
+    assert loaded_trial.metadata["modes"] == frozenset({"json", "pickle"})
+    assert loaded_trial.metadata["payload"] == b"abc"
+    assert loaded_trial.metadata["complexity"] == complex(1, 2)
+    assert loaded_trial.error is not None
+    assert loaded_trial.error.error_type == "ValueError"
+
+
+def test_restricted_unpickler_loads_protocol_2_real_payload() -> None:
+    trial = TrialResult(
+        trial_id="trial-1",
+        config={"temperature": 0.2},
+        metrics={"accuracy": 0.91},
+        status=TrialStatus.COMPLETED,
+        duration=1.25,
+        timestamp=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        metadata={"payload": b"abc"},
+    )
+    payload = pickle.dumps([trial], protocol=2)
+
+    loaded = _load_restricted(payload)
+
+    assert isinstance(loaded, list)
+    assert loaded[0] == trial
+
+
+def test_restricted_unpickler_loads_gzipped_real_results_payload(tmp_path) -> None:
+    payload_path = tmp_path / "trials.pkl.gz"
+    trial = TrialResult(
+        trial_id="trial-1",
+        config={"temperature": 0.2},
+        metrics={"accuracy": 0.91},
+        status=TrialStatus.COMPLETED,
+        duration=1.25,
+        timestamp=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+    )
+    with gzip.open(payload_path, "wb") as fp:
+        pickle.dump([trial], fp, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with gzip.open(payload_path, "rb") as fp:
+        loaded = RestrictedUnpickler(fp).load()
+
+    assert loaded == [trial]

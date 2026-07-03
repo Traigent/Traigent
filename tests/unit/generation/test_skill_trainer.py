@@ -752,3 +752,29 @@ def test_write_artifacts_containment_root_enforced(tmp_path) -> None:
     inside = root / "skill_train" / "run1"
     written = write_artifacts(inside, result, history=[], containment_root=root)
     assert (Path(written) / "best_skill.md").read_text(encoding="utf-8") == "doc"
+
+
+def test_write_artifacts_refuses_symlinked_directory_escape(tmp_path) -> None:
+    from traigent.generation.skill_train.artifacts import write_artifacts
+    from traigent.generation.skill_train.trainer_result import SkillTrainResult
+
+    result = SkillTrainResult(
+        best_document="doc",
+        best_selection_score=1.0,
+        baseline_selection_score=0.0,
+        test_score=None,
+        evaluation_basis="selection_only",
+        accepted_edits=[],
+        all_edit_records=[],
+        epoch_summaries=[],
+        artifacts_dir=None,
+    )
+    root = tmp_path / "storage"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    escaped = root / "linked-outside"
+    escaped.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="escapes its storage root"):
+        write_artifacts(escaped / "run1", result, history=[], containment_root=root)

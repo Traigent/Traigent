@@ -74,6 +74,30 @@ def test_sync_dry_run_does_not_require_api_key():
     assert "Ready to sync s1" in result.output
 
 
+def test_sync_single_session_success_prints_finalization_warning():
+    manager = _patched_manager()
+    warning = (
+        "Experiment finalization skipped: Experiment e1 is FAILED; offline sync "
+        "will not advance it to COMPLETED because this SDK sync does not own "
+        "terminal-state recovery transitions"
+    )
+    manager.sync_session_to_cloud.return_value = {
+        "session_id": "s1",
+        "status": "success",
+        "cloud_experiment_id": "e1",
+        "finalization_status": "skipped_terminal_not_owned",
+        "finalization_current_status": "FAILED",
+        "warnings": [warning],
+    }
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(cli, ["sync", "s1", "--api-key", "k"])
+
+    assert result.exit_code == 0
+    assert "Synced s1" in result.output
+    assert warning in result.output
+    manager.sync_session_to_cloud.assert_called_once()
+
+
 def test_sync_status_needs_no_api_key():
     """Status-only `traigent sync` must work without an API key."""
     manager = _patched_manager()

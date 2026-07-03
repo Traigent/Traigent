@@ -764,6 +764,101 @@ class TestSyncManager:
         )
         assert put_calls[0].kwargs["json"] == {"status": "COMPLETED"}
 
+    @pytest.mark.parametrize("status", ["PENDING", "RUNNING"])
+    def test_finalize_experiment_active_status_puts_completed(
+        self, sync_manager: SyncManager, status: str
+    ) -> None:
+        """Active/non-terminal experiments still use PUT COMPLETED."""
+        sync_manager._session.get.return_value = backend_response(
+            status_code=200,
+            payload={"data": {"id": "experiment-id", "status": status}},
+        )
+        sync_manager._session.put.return_value = backend_response(status_code=200)
+
+        result = sync_manager._finalize_experiment("experiment-id")
+
+        assert result == {
+            "success": True,
+            "classification": "completed",
+            "current_status": status,
+        }
+        sync_manager._session.get.assert_called_once_with(
+            f"{sync_manager.base_url}/experiments/experiment-id",
+            timeout=sync_manager._request_timeout,
+        )
+        sync_manager._session.put.assert_called_once_with(
+            f"{sync_manager.base_url}/experiments/experiment-id",
+            json={"status": "COMPLETED"},
+            timeout=sync_manager._request_timeout,
+        )
+
+    def test_finalize_experiment_already_completed_is_noop(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Already-COMPLETED experiments are idempotent no-ops."""
+        sync_manager._session.get.return_value = backend_response(
+            status_code=200,
+            payload={"data": {"id": "experiment-id", "status": "COMPLETED"}},
+        )
+
+        result = sync_manager._finalize_experiment("experiment-id")
+
+        assert result == {
+            "success": True,
+            "classification": "already_completed",
+            "current_status": "COMPLETED",
+            "message": "Experiment experiment-id is already COMPLETED",
+        }
+        sync_manager._session.put.assert_not_called()
+
+    def test_finalize_experiment_failed_skips_without_illegal_put(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """FAILED experiments are not advanced by offline sync ownership."""
+        sync_manager._session.get.return_value = backend_response(
+            status_code=200,
+            payload={"data": {"id": "experiment-id", "status": "FAILED"}},
+        )
+
+        result = sync_manager._finalize_experiment("experiment-id")
+
+        assert result == {
+            "success": True,
+            "skipped": True,
+            "classification": "skipped_terminal_not_owned",
+            "current_status": "FAILED",
+            "message": (
+                "Experiment experiment-id is FAILED; offline sync will not advance it "
+                "to COMPLETED because this SDK sync does not own terminal-state "
+                "recovery transitions"
+            ),
+        }
+        sync_manager._session.put.assert_not_called()
+
+    def test_finalize_experiment_cancelled_skips_without_illegal_put(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """CANCELLED experiments are not advanced by offline sync ownership."""
+        sync_manager._session.get.return_value = backend_response(
+            status_code=200,
+            payload={"data": {"id": "experiment-id", "status": "CANCELLED"}},
+        )
+
+        result = sync_manager._finalize_experiment("experiment-id")
+
+        assert result == {
+            "success": True,
+            "skipped": True,
+            "classification": "skipped_terminal_not_owned",
+            "current_status": "CANCELLED",
+            "message": (
+                "Experiment experiment-id is CANCELLED; offline sync will not "
+                "advance it to COMPLETED because this SDK sync does not own "
+                "terminal-state recovery transitions"
+            ),
+        }
+        sync_manager._session.put.assert_not_called()
+
     @staticmethod
     def _wire_persisting_sync_state(
         sync_manager: SyncManager, session: OptimizationSession
@@ -837,6 +932,10 @@ class TestSyncManager:
         sync_manager._session.post.side_effect = [
             backend_response(payload={"id": "configuration-run-2"}),
         ]
+        sync_manager._session.get.return_value = backend_response(
+            200,
+            payload={"data": {"id": "experiment-id", "status": "RUNNING"}},
+        )
         # PUT finalizes the experiment to COMPLETED after all runs upload.
         sync_manager._session.put.return_value = backend_response(status_code=200)
 
@@ -997,6 +1096,78 @@ class TestSyncManager:
         )
         assert put_calls[0].kwargs["json"] == {"status": "COMPLETED"}
 
+    def test_sync_session_to_cloud_failed_experiment_finalization_is_loud_skip(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """A prior FAILED cloud experiment is a loud non-error skip, not partial."""
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.get.side_effect = [
+            backend_response(404),  # agent lookup
+            backend_response(404),  # benchmark lookup
+            backend_response(
+                200,
+                payload={"data": {"id": "experiment-id", "status": "FAILED"}},
+            ),
+        ]
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "agent-id"}),
+            backend_response(payload={"id": "benchmark-id"}),
+            backend_response(payload={"id": "experiment-id"}),
+            backend_response(payload={"id": "experiment-run-id"}),
+            backend_response(payload={"id": "configuration-run-1"}),
+            backend_response(payload={"id": "configuration-run-2"}),
+            backend_response(payload={"id": "configuration-run-3"}),
+        ]
+
+        result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert result["status"] == "success"
+        assert result["finalization_status"] == "skipped_terminal_not_owned"
+        assert result["finalization_current_status"] == "FAILED"
+        assert result["warnings"] == [
+            "Experiment finalization skipped: Experiment experiment-id is FAILED; "
+            "offline sync will not advance it to COMPLETED because this SDK sync "
+            "does not own terminal-state recovery transitions"
+        ]
+        assert result["errors"] == []
+        sync_manager._session.put.assert_not_called()
+
+    def test_sync_session_to_cloud_cancelled_experiment_finalization_is_loud_skip(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """A prior CANCELLED cloud experiment is a loud non-error skip, not partial."""
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.get.side_effect = [
+            backend_response(404),  # agent lookup
+            backend_response(404),  # benchmark lookup
+            backend_response(
+                200,
+                payload={"data": {"id": "experiment-id", "status": "CANCELLED"}},
+            ),
+        ]
+        sync_manager._session.post.side_effect = [
+            backend_response(payload={"id": "agent-id"}),
+            backend_response(payload={"id": "benchmark-id"}),
+            backend_response(payload={"id": "experiment-id"}),
+            backend_response(payload={"id": "experiment-run-id"}),
+            backend_response(payload={"id": "configuration-run-1"}),
+            backend_response(payload={"id": "configuration-run-2"}),
+            backend_response(payload={"id": "configuration-run-3"}),
+        ]
+
+        result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert result["status"] == "success"
+        assert result["finalization_status"] == "skipped_terminal_not_owned"
+        assert result["finalization_current_status"] == "CANCELLED"
+        assert result["warnings"] == [
+            "Experiment finalization skipped: Experiment experiment-id is CANCELLED; "
+            "offline sync will not advance it to COMPLETED because this SDK sync "
+            "does not own terminal-state recovery transitions"
+        ]
+        assert result["errors"] == []
+        sync_manager._session.put.assert_not_called()
+
     def test_sync_session_to_cloud_reuses_agent_and_benchmark_for_idempotency(
         self, sync_manager: SyncManager
     ) -> None:
@@ -1042,6 +1213,10 @@ class TestSyncManager:
                         }
                     ]
                 },
+            ),
+            backend_response(
+                200,
+                payload={"data": {"id": "experiment-id", "status": "RUNNING"}},
             ),
         ]
         sync_manager._session.post.side_effect = [
