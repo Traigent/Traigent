@@ -66,6 +66,7 @@ from traigent.core.execution_policy_runtime import (
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
+    policy_is_cloud_required,
 )
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
@@ -130,6 +131,21 @@ logger = get_logger(__name__)
 
 # Orchestrator constants
 PROGRESS_LOG_INTERVAL = 10  # Log progress every N trials
+
+# Stop reasons that already own an empty (0-trial) cloud-required run and must
+# not be relabeled by the smart-managed-path fail-closed guard (issue #1681):
+# an interrupted/timed-out/cancelled run, a cost-limit stop (#1684 owns that),
+# or an explicit provider/connectivity error already surfaced elsewhere.
+_EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
+    {
+        "timeout",
+        "user_cancelled",
+        "cost_limit",
+        "vendor_error",
+        "network_error",
+        "error",
+    }
+)
 
 
 class OptimizationOrchestrator:
@@ -3061,6 +3077,50 @@ class OptimizationOrchestrator:
         # during finalization is not caught above and still propagates.
         return result
 
+    def _fail_closed_on_empty_smart_managed_run(self) -> None:
+        """Reject a cloud-required smart run that executed zero trials.
+
+        A smart algorithm (``bayesian``/``tpe``/``cmaes``/``nsga2``/
+        ``optuna*``) resolves to a ``CLOUD_REQUIRED`` policy whose managed
+        cloud path must either run trials or raise. When that managed path
+        returns without executing a single trial, the run would otherwise be
+        finalized as a silent ``COMPLETED`` result with ``best_config=None`` —
+        the exact silent-empty failure of issue #1681. Surface it as an
+        actionable error instead of a hollow success.
+
+        Deliberately narrow so it never hijacks a legitimate empty stop:
+
+        * only fires for a genuinely empty run (``len(self._trials) == 0``);
+        * only when the resolved policy is ``CLOUD_REQUIRED`` (a smart
+          algorithm), never for local/hybrid/cloud-brain runs;
+        * leaves an explicit ``max_trials=0`` no-op run alone;
+        * defers to already-owned stop causes (timeout / user cancel / cost
+          limit #1684 / vendor or network error) rather than relabeling them.
+        """
+
+        if self._trials:
+            return
+        policy = policy_from_config(self.traigent_config)
+        if not policy_is_cloud_required(policy):
+            return
+        if self._max_trials == 0:
+            return
+        if self._stop_reason in _EMPTY_SMART_RUN_OWNED_STOP_REASONS:
+            return
+
+        algorithm = getattr(policy, "algorithm", None) or "the requested algorithm"
+        raise OptimizationError(
+            f"Smart optimization ('{algorithm}') requires the Traigent managed "
+            "cloud service, but the run finished without executing a single "
+            "trial (0 trials, no best configuration). This algorithm is not "
+            "available as a first-party service on this backend yet, and a "
+            "cloud-required run must not silently report success. The local "
+            "SDK runs only 'grid' and 'random'; connect to a Traigent backend "
+            "that provides smart optimization, or call "
+            "optimize(algorithm='grid') / optimize(algorithm='random') to run "
+            "locally."
+        )
+
     async def _run_optimization_with_tracing(
         self,
         func: Callable[..., Any],
@@ -3115,6 +3175,11 @@ class OptimizationOrchestrator:
                 await self._run_optimization_loop(
                     func, dataset, session_id, function_identifier
                 )
+
+            # A cloud-required (smart) run that executed zero trials must not be
+            # reported as a silent COMPLETED with best_config=None: fail closed
+            # with an actionable error instead (issue #1681).
+            self._fail_closed_on_empty_smart_managed_run()
 
             # Set final status
             self._status = (
