@@ -101,10 +101,19 @@ _LEGACY_SESSION_CONTRACT_DEPRECATION = (
 
 
 class TraigentSessionApiResult(tuple):
-    """Three-ID session creation result with optional owning context attrs."""
+    """Three-ID session creation result with optional owning context attrs.
+
+    ``warm_start_transfer`` carries the backend's opaque, IP-safe warm-start
+    decision block (transfer_mode / refused_reason / search_space_overlap /
+    n_seed_configs_applied / ...) when the session-CREATE response includes
+    one. The backend communicates the warm-start decision at CREATE time and
+    does not resend it at finalize, so dropping it here made the SDK report
+    cold-start defaults for valid warm starts (issue #1683, Bug B).
+    """
 
     project_id: str | None
     tenant_id: str | None
+    warm_start_transfer: dict[str, Any] | None
 
     def __new__(
         cls,
@@ -114,10 +123,12 @@ class TraigentSessionApiResult(tuple):
         *,
         project_id: str | None = None,
         tenant_id: str | None = None,
+        warm_start_transfer: dict[str, Any] | None = None,
     ):
         obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
         obj.project_id = project_id
         obj.tenant_id = tenant_id
+        obj.warm_start_transfer = warm_start_transfer
         return obj
 
 
@@ -473,17 +484,19 @@ class ApiOperations:
 
     async def create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
-    ) -> tuple[str, str, str]:
+    ) -> TraigentSessionApiResult:
         """Create a Traigent optimization session using the new session endpoints.
 
         Returns:
-            Tuple of (session_id, experiment_id, experiment_run_id)
+            TraigentSessionApiResult — unpacks as a tuple of
+            (session_id, experiment_id, experiment_run_id) and carries
+            owning-context / warm_start_transfer attributes (issue #1683).
         """
         # Skip cloud session creation if backend is offline
         # Note: is_backend_offline() returns True if TRAIGENT_OFFLINE_MODE=true
         if is_backend_offline():
             logger.debug("Backend offline: using local session IDs")
-            return (
+            return TraigentSessionApiResult(
                 f"mock_session_{int(time.time())}",
                 f"mock_exp_{int(time.time())}",
                 f"mock_run_{int(time.time())}",
@@ -771,7 +784,7 @@ class ApiOperations:
         payload: dict[str, Any],
         headers: dict[str, str],
         connector: Any | None,
-    ) -> tuple[str, str, str]:
+    ) -> TraigentSessionApiResult:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
@@ -813,6 +826,14 @@ class ApiOperations:
         tenant_id = self._optional_context_id(
             result.get("tenant_id") or metadata.get("tenant_id")
         )
+        # The backend communicates the warm-start decision in the CREATE
+        # response (top-level or under metadata) and does not resend it at
+        # finalize. Retain the block verbatim (issue #1683, Bug B).
+        warm_start_transfer = result.get("warm_start_transfer")
+        if not isinstance(warm_start_transfer, dict):
+            warm_start_transfer = metadata.get("warm_start_transfer")
+        if not isinstance(warm_start_transfer, dict):
+            warm_start_transfer = None
 
         logger.info(
             f"✅ Created Traigent session: {session_id} "
@@ -824,6 +845,7 @@ class ApiOperations:
             experiment_run_id,
             project_id=project_id,
             tenant_id=tenant_id,
+            warm_start_transfer=warm_start_transfer,
         )
 
     @staticmethod

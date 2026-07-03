@@ -1,13 +1,15 @@
 """Unit tests for warm_start_from threading through session creation."""
 
+import asyncio
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from traigent.cloud.api_operations import ApiOperations
+from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.models import OptimizationSession, SessionCreationRequest
 from traigent.cloud.session_operations import SessionOperations
 from traigent.core.backend_session_manager import BackendSessionManager
@@ -566,3 +568,289 @@ class TestAllSerializerPathsWarmStart:
     def test_omits_warm_start_when_empty_string(self, serialize):
         payload = serialize("")
         assert "warm_start_from" not in payload
+
+
+# ---------------------------------------------------------------------------
+# Tests (#1683 Bug B): the backend communicates the warm-start decision in the
+# session-CREATE response; the SDK must retain it and surface it in result
+# metadata instead of reporting cold-start defaults. Finalize-time block wins;
+# the CREATE-time block fills the gap when finalize carries none.
+# ---------------------------------------------------------------------------
+
+
+CREATE_TRANSFER = {
+    "transfer_mode": "accepted",
+    "final_warm_start_weight": "medium",
+    "search_space_overlap": "identical",
+    "n_seed_configs_applied": 3,
+    "refused_reason": None,
+}
+
+FINALIZE_TRANSFER = {
+    "transfer_mode": "replay_only",
+    "final_warm_start_weight": "low",
+    "search_space_overlap": "partial",
+    "n_seed_configs_applied": 1,
+    "refused_reason": None,
+}
+
+
+class FakeHttpResponse:
+    """Minimal aiohttp-response stand-in exposing async ``json()``."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    async def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class TestParseSessionResponseWarmStartTransfer:
+    """_parse_session_response retains the CREATE-time warm-start block."""
+
+    def _parse(self, payload: dict[str, Any]) -> TraigentSessionApiResult:
+        ops = _make_api_ops()
+        return asyncio.run(ops._parse_session_response(FakeHttpResponse(payload)))
+
+    def test_top_level_block_retained_verbatim(self):
+        result = self._parse(
+            {"session_id": "s1", "warm_start_transfer": CREATE_TRANSFER}
+        )
+        assert result.warm_start_transfer == CREATE_TRANSFER
+
+    def test_metadata_block_retained_verbatim(self):
+        result = self._parse(
+            {
+                "session_id": "s1",
+                "metadata": {
+                    "experiment_id": "e1",
+                    "experiment_run_id": "r1",
+                    "warm_start_transfer": CREATE_TRANSFER,
+                },
+            }
+        )
+        assert result.warm_start_transfer == CREATE_TRANSFER
+
+    def test_top_level_wins_over_metadata(self):
+        result = self._parse(
+            {
+                "session_id": "s1",
+                "warm_start_transfer": CREATE_TRANSFER,
+                "metadata": {"warm_start_transfer": FINALIZE_TRANSFER},
+            }
+        )
+        assert result.warm_start_transfer == CREATE_TRANSFER
+
+    @pytest.mark.parametrize("bad_value", [None, "opaque", 3, ["x"]])
+    def test_absent_or_non_dict_block_is_none(self, bad_value):
+        payload: dict[str, Any] = {"session_id": "s1"}
+        if bad_value is not None:
+            payload["warm_start_transfer"] = bad_value
+        result = self._parse(payload)
+        assert result.warm_start_transfer is None
+
+    def test_result_still_unpacks_as_three_tuple(self):
+        result = self._parse(
+            {"session_id": "s1", "warm_start_transfer": CREATE_TRANSFER}
+        )
+        session_id, experiment_id, experiment_run_id = result
+        assert session_id == "s1"
+        assert experiment_id == "s1"  # metadata fallback
+        assert experiment_run_id == "s1"
+
+
+class WarmStartCreateFakeClient(CapturingFakeClient):
+    """FakeClient whose CREATE response carries a warm_start_transfer block."""
+
+    def __init__(self, warm_start_transfer: dict[str, Any] | None = None) -> None:
+        super().__init__()
+        self._warm_start_transfer = warm_start_transfer
+
+    async def _create_traigent_session_via_api(
+        self, session_request: SessionCreationRequest
+    ):
+        self.captured_session_request = session_request
+        return TraigentSessionApiResult(
+            "session-001",
+            "exp-001",
+            "run-001",
+            warm_start_transfer=self._warm_start_transfer,
+        )
+
+
+def _create_session(
+    client: CapturingFakeClient,
+) -> SessionOperations:
+    ops = SessionOperations(cast(Any, client))
+    ops.create_session(
+        "my_func",
+        {"model": ["a", "b"]},
+        metadata={"max_trials": 5, "dataset_size": 10, "evaluation_set": "test"},
+        warm_start_from="exp_prior_123",
+    )
+    return ops
+
+
+class TestCreateResponseWarmStartTransferRetention:
+    """create_session retains the CREATE-time block in session metadata."""
+
+    def test_block_stored_verbatim_copy_in_active_session_metadata(self):
+        client = WarmStartCreateFakeClient(warm_start_transfer=CREATE_TRANSFER)
+        _create_session(client)
+        stored = client._active_sessions["session-001"].metadata[
+            "warm_start_transfer"
+        ]
+        assert stored == CREATE_TRANSFER
+        assert stored is not CREATE_TRANSFER  # defensive copy, still verbatim
+
+    def test_no_block_adds_no_key(self):
+        client = WarmStartCreateFakeClient(warm_start_transfer=None)
+        _create_session(client)
+        assert (
+            "warm_start_transfer"
+            not in client._active_sessions["session-001"].metadata
+        )
+
+    def test_plain_tuple_create_result_still_supported(self):
+        """Fakes/legacy clients returning a bare 3-tuple must keep working."""
+        client = CapturingFakeClient()
+        _create_session(client)
+        assert (
+            "warm_start_transfer"
+            not in client._active_sessions["session-001"].metadata
+        )
+
+
+class TestFinalizeMergesCreateTimeWarmStartTransfer:
+    """Finalize surfaces the CREATE-time block; a finalize-time block wins."""
+
+    def _finalize(
+        self,
+        create_block: dict[str, Any] | None,
+        finalize_payload: dict[str, Any] | None,
+    ):
+        client = WarmStartCreateFakeClient(warm_start_transfer=create_block)
+        ops = _create_session(client)
+        ops._finalize_session_via_api = AsyncMock(return_value=finalize_payload)  # type: ignore[method-assign]
+        return asyncio.run(ops.finalize_session("session-001"))
+
+    def test_create_time_block_fills_gap_when_finalize_has_none(self):
+        response = self._finalize(CREATE_TRANSFER, {})
+        assert response.metadata["warm_start_transfer"] == CREATE_TRANSFER
+
+    def test_finalize_time_block_wins_over_create_time_block(self):
+        response = self._finalize(
+            CREATE_TRANSFER,
+            {"metadata": {"warm_start_transfer": FINALIZE_TRANSFER}},
+        )
+        assert response.metadata["warm_start_transfer"] == FINALIZE_TRANSFER
+
+    def test_finalize_only_block_still_surfaced(self):
+        response = self._finalize(
+            None, {"metadata": {"warm_start_transfer": FINALIZE_TRANSFER}}
+        )
+        assert response.metadata["warm_start_transfer"] == FINALIZE_TRANSFER
+
+    def test_no_block_anywhere_adds_no_key(self):
+        response = self._finalize(None, {})
+        assert "warm_start_transfer" not in response.metadata
+
+    def test_create_time_block_propagates_to_result_metadata_verbatim(self):
+        """Full chain: CREATE response -> finalize response ->
+        attach_session_metadata -> result.metadata (verbatim contract)."""
+        response = self._finalize(CREATE_TRANSFER, {})
+
+        manager = BackendSessionManager.__new__(BackendSessionManager)
+        manager._backend_client = None
+        manager._egress_disabled = lambda: False
+        manager._session_owning_context = {}
+        result = SimpleNamespace(metadata={"warm_start_from": "exp_prior_123"})
+
+        manager.attach_session_metadata(
+            result=cast(Any, result),
+            session_id="session-001",
+            session_summary=cast(Any, response),
+        )
+
+        assert result.metadata["warm_start_transfer"] == CREATE_TRANSFER
+        assert result.metadata["warm_start_transfer"] is not CREATE_TRANSFER
+
+
+# ---------------------------------------------------------------------------
+# Tests (#1683 task 3): loud refusal — explicit warm_start_from + 0 seeds
+# applied (or refused_reason set) must emit a logging.warning with aggregate
+# info only; silent otherwise.
+# ---------------------------------------------------------------------------
+
+
+class TestWarmStartRefusalWarning:
+    def _manager(self):
+        manager = BackendSessionManager.__new__(BackendSessionManager)
+        manager._backend_client = None
+        manager._egress_disabled = lambda: False
+        manager._session_owning_context = {}
+        return manager
+
+    def _attach(self, caplog, *, warm_start_from, transfer):
+        result_metadata: dict[str, Any] = {}
+        if warm_start_from is not None:
+            result_metadata["warm_start_from"] = warm_start_from
+        result = SimpleNamespace(metadata=result_metadata)
+        summary = (
+            {"metadata": {"warm_start_transfer": transfer}}
+            if transfer is not None
+            else {"metadata": {}}
+        )
+        with caplog.at_level(logging.WARNING):
+            self._manager().attach_session_metadata(
+                result=cast(Any, result),
+                session_id="session-123",
+                session_summary=summary,
+            )
+        return [
+            record
+            for record in caplog.records
+            if "warm_start_from" in record.getMessage()
+        ]
+
+    def test_warns_on_refusal_with_reason_and_prior_experiment_id(self, caplog):
+        refused = {
+            "transfer_mode": "refused",
+            "search_space_overlap": "unknown",
+            "n_seed_configs_applied": 0,
+            "refused_reason": "no_seed_configs",
+        }
+        records = self._attach(
+            caplog, warm_start_from="exp_prior_99", transfer=refused
+        )
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert "no_seed_configs" in message
+        assert "exp_prior_99" in message
+        # Aggregate info only: never seed contents/scores/signals.
+        assert "score" not in message.lower().replace("seed configs", "")
+
+    def test_warns_on_zero_seeds_even_without_refused_reason(self, caplog):
+        transfer = {"n_seed_configs_applied": 0, "refused_reason": None}
+        records = self._attach(
+            caplog, warm_start_from="exp_prior_99", transfer=transfer
+        )
+        assert len(records) == 1
+
+    def test_silent_when_seeds_applied(self, caplog):
+        transfer = {"n_seed_configs_applied": 2, "refused_reason": None}
+        records = self._attach(
+            caplog, warm_start_from="exp_prior_99", transfer=transfer
+        )
+        assert records == []
+
+    def test_silent_when_warm_start_not_requested(self, caplog):
+        refused = {"n_seed_configs_applied": 0, "refused_reason": "no_seed_configs"}
+        records = self._attach(caplog, warm_start_from=None, transfer=refused)
+        assert records == []
+
+    def test_silent_when_no_transfer_block(self, caplog):
+        records = self._attach(
+            caplog, warm_start_from="exp_prior_99", transfer=None
+        )
+        assert records == []
