@@ -44,7 +44,7 @@ def mock_config():
     config.execution_mode = "edge_analytics"
     config.minimal_logging = False
     config.privacy_enabled = False
-    config.execution_mode_enum = ExecutionMode.EDGE_ANALYTICS
+    config.execution_mode_enum = ExecutionMode.LOCAL
     return config
 
 

@@ -59,7 +59,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=["accuracy", "latency", "success_rate"],
             metric_functions={"accuracy": custom_accuracy},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
@@ -102,7 +102,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=["my_score"],
             metric_functions={"my_score": custom_my_score},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
@@ -131,7 +131,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=original_metrics.copy(),
             metric_functions={"accuracy": custom_accuracy},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
@@ -163,7 +163,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=original_metrics.copy(),
             metric_functions={"accuracy": custom_accuracy},
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 
@@ -186,7 +186,7 @@ class TestBuiltinMetricsWithMetricFunctions:
             metrics=["accuracy", "latency"],
             metric_functions=None,  # No custom metric functions
             detailed=True,
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
         dataset = _make_dataset()
 

@@ -44,14 +44,16 @@ class TestParameterValidator:
     def test_validate_execution_mode_valid(self):
         """Test validation of valid execution modes.
 
-        Edge analytics and hybrid are supported mode strings at decorator
-        validation time. Privacy now fails closed instead of normalizing.
+        Local and hybrid are supported mode strings at decorator validation
+        time. Privacy fails closed and the removed edge_analytics selector
+        hard-fails with migration guidance instead of normalizing.
         """
-        result = self.validator._validate_execution_mode("edge_analytics")
-        assert result is ExecutionMode.LOCAL
+        assert self.validator._validate_execution_mode("local") is ExecutionMode.LOCAL
         assert self.validator._validate_execution_mode("hybrid") is ExecutionMode.HYBRID
         with pytest.raises(ValidationError, match="fails closed"):
             self.validator._validate_execution_mode("privacy")
+        with pytest.raises(ValidationError, match="has been removed"):
+            self.validator._validate_execution_mode("edge_analytics")
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""

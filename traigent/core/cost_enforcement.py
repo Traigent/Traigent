@@ -49,7 +49,7 @@ from threading import RLock
 from typing import TYPE_CHECKING
 
 from traigent.utils.env_config import is_truthy
-from traigent.utils.exceptions import CostLimitExceeded
+from traigent.utils.exceptions import ConfigurationError, CostLimitExceeded
 
 if TYPE_CHECKING:
     pass
@@ -58,6 +58,32 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_COST_LIMIT_USD = 2.0
 EMA_COLD_START_WARNING_TRIALS = 5
+
+
+def validate_cost_limit(limit: object) -> float:
+    """Validate a configured run cost limit, rejecting the ``<= 0`` footgun.
+
+    A nonpositive limit makes ``is_limit_reached`` true from trial 0, which
+    used to silently produce a 0-trial run reported as completed (issue
+    #1684 item 3). Configuration-time validation raises instead.
+
+    Raises:
+        ConfigurationError: If the limit is not a positive finite number.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)):
+        raise ConfigurationError(
+            f"cost limit must be a positive number of USD, got {limit!r} "
+            f"({type(limit).__name__})."
+        )
+    value = float(limit)
+    if math.isnan(value) or value <= 0:
+        raise ConfigurationError(
+            f"cost limit must be > 0 USD, got {value!r}. A nonpositive limit "
+            "would block every planned trial before it starts (silent 0-trial "
+            "run). Configure a positive limit or leave it unset to use the "
+            f"default ${DEFAULT_COST_LIMIT_USD:.2f}."
+        )
+    return value
 
 
 def normalize_cost_approved(value: object) -> bool:
@@ -131,7 +157,9 @@ class CostEnforcerConfig:
     """Configuration for cost enforcement.
 
     Attributes:
-        limit: Maximum USD spending per optimization run.
+        limit: Maximum USD spending per optimization run. Must be > 0;
+            nonpositive limits raise ``ConfigurationError`` at construction
+            time instead of silently blocking every trial.
         approved: Whether to skip the approval prompt.
         warning_threshold: Fraction of limit at which to emit warnings.
         fallback_trial_limit: If cost cannot be determined, limit by trial count.
@@ -145,6 +173,9 @@ class CostEnforcerConfig:
     warning_threshold: float = 0.5
     fallback_trial_limit: int = 10
     estimated_cost_per_trial: float = 0.05  # $0.05 default estimate
+
+    def __post_init__(self) -> None:
+        self.limit = validate_cost_limit(self.limit)
 
 
 def _get_approval_token_path() -> Path:
@@ -392,9 +423,14 @@ class CostEnforcer:
             self._sync_used = True
 
     def update_limit(self, new_limit: float) -> None:
-        """Update the cost limit with synchronization."""
+        """Update the cost limit with synchronization.
+
+        Raises:
+            ConfigurationError: If the new limit is not a positive number.
+        """
+        validated = validate_cost_limit(new_limit)
         with self._lock:
-            self.config.limit = new_limit
+            self.config.limit = validated
 
     def _load_config(self) -> CostEnforcerConfig:
         """Load configuration from environment variables with safe parsing."""
@@ -435,8 +471,35 @@ class CostEnforcer:
                 )
                 return default
 
+        def limit_from_env() -> float:
+            raw = os.getenv("TRAIGENT_RUN_COST_LIMIT")
+            if raw is None:
+                return DEFAULT_COST_LIMIT_USD
+            try:
+                parsed = float(raw)
+            except ValueError:
+                logger.warning(
+                    "Invalid TRAIGENT_RUN_COST_LIMIT=%r, using default %s",
+                    raw,
+                    DEFAULT_COST_LIMIT_USD,
+                )
+                return DEFAULT_COST_LIMIT_USD
+            # Nonpositive limits raise at config time instead of silently
+            # blocking every trial (issue #1684 item 3); validate_cost_limit
+            # in CostEnforcerConfig.__post_init__ enforces this, but raising
+            # here names the environment variable in the error.
+            if parsed <= 0:
+                raise ConfigurationError(
+                    f"TRAIGENT_RUN_COST_LIMIT={raw!r} must be > 0 USD. A "
+                    "nonpositive limit would block every planned trial before "
+                    "it starts (silent 0-trial run). Set a positive limit or "
+                    "unset the variable to use the default "
+                    f"${DEFAULT_COST_LIMIT_USD:.2f}."
+                )
+            return parsed
+
         return CostEnforcerConfig(
-            limit=safe_float("TRAIGENT_RUN_COST_LIMIT", DEFAULT_COST_LIMIT_USD),
+            limit=limit_from_env(),
             approved=os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true",
             warning_threshold=safe_float("TRAIGENT_COST_WARNING_THRESHOLD", 0.5),
             fallback_trial_limit=safe_int("TRAIGENT_FALLBACK_TRIAL_LIMIT", 10),
@@ -465,6 +528,37 @@ class CostEnforcer:
             if self._unknown_cost_mode:
                 return self._trial_count >= self.config.fallback_trial_limit
             return self._accumulated_cost >= self.config.limit
+
+    def budget_block_message(self, planned_trials: int | None) -> str:
+        """Explicit message for a budget-gate block of planned trials.
+
+        Issue #1684 item 3: a budget gate that blocks planned trials must say
+        so loudly instead of letting the run end silently. Format:
+        ``budget gate blocked N planned trials (estimated $X > limit $Y)``.
+
+        Args:
+            planned_trials: Number of remaining planned trials being blocked,
+                or None when the plan is unbounded (no max_trials).
+        """
+        with self._lock:
+            blocked = (
+                "all remaining"
+                if planned_trials is None
+                else str(max(planned_trials, 0))
+            )
+            if self._unknown_cost_mode:
+                return (
+                    f"budget gate blocked {blocked} planned trials "
+                    f"(per-trial cost unknown: fallback trial limit "
+                    f"{self.config.fallback_trial_limit} reached at "
+                    f"{self._trial_count} trials; cost limit "
+                    f"${self.config.limit:.2f})"
+                )
+            estimated = self._accumulated_cost + self._reserved_cost
+            return (
+                f"budget gate blocked {blocked} planned trials "
+                f"(estimated ${estimated:.2f} > limit ${self.config.limit:.2f})"
+            )
 
     def check_and_approve(self, estimated_cost: float) -> bool:
         """Pre-optimization handshake. Returns True if approved.

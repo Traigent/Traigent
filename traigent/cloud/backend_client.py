@@ -2172,23 +2172,19 @@ class BackendIntegratedClient:
         return cast(str, self._api_ops.map_to_backend_status(status, endpoint=endpoint))
 
     def _normalize_execution_mode(self, execution_mode: str | None) -> str:
-        """Translate SDK execution modes to backend-supported values."""
-        if not execution_mode:
-            return "standard"
+        """Translate SDK execution modes to backend wire values.
 
-        normalized = execution_mode.strip().lower()
-        mode_aliases = {
-            "edge_analytics": "local",
-            "edge": "local",
-            "local": "local",
-            "privacy": "privacy",
-            "private": "privacy",
-            "hybrid": "local",
-            "standard": "standard",
-            "cloud": "cloud",
-            "saas": "cloud",
-        }
-        return mode_aliases.get(normalized, "standard")
+        Delegates to the canonical resolution in ``traigent.config.types``
+        (issue #1393 dedup): removed and fail-closed legacy selectors
+        (``edge_analytics``, ``privacy``, ``cloud``) raise instead of being
+        silently remapped, and unknown selectors raise instead of silently
+        defaulting.
+        """
+        # Local import: avoid a module-level cloud -> config-resolution
+        # dependency for a single compatibility shim.
+        from traigent.config.types import validate_execution_mode
+
+        return validate_execution_mode(execution_mode).value
 
     def _sanitize_error_message(self, error_message: str | None) -> str | None:
         """Sanitize error message for transmission.

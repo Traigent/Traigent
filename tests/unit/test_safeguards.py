@@ -91,7 +91,7 @@ class TestTrialCaps:
         evaluator = MagicMock(spec=BaseEvaluator)
 
         # Create config
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         # Create orchestrator with trial cap
         orchestrator = OptimizationOrchestrator(
@@ -116,7 +116,7 @@ class TestTrialCaps:
         )
 
         evaluator = MockEvaluator()
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
@@ -336,7 +336,7 @@ class TestDeduplication:
         evaluator = MockEvaluator()
 
         config = TraigentConfig(
-            execution_mode="edge_analytics",
+            execution_mode="local",
             local_storage_path=str(tmp_path),
         )
         orchestrator = OptimizationOrchestrator(
@@ -420,7 +420,7 @@ class TestSafeguardTelemetry:
 
         evaluator = MockEvaluator()
 
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
             evaluator=evaluator,

@@ -163,14 +163,6 @@ class ConfigurationBuilder:
         """Clear global configuration."""
         self.global_config.clear()
 
-    @staticmethod
-    def _normalize_execution_mode(execution_mode: str) -> str:
-        """Normalize execution mode labels (deprecated)."""
-        return resolve_execution_policy(
-            execution_mode=execution_mode,
-            source_hint="config_builder.normalize_execution_mode",
-        ).legacy_execution_mode.value
-
 
 # Module-level functions for backward compatibility
 def build_optimize_configuration(

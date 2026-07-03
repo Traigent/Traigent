@@ -57,16 +57,32 @@ class TestTraigentClientInitialization:
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
-    def test_init_with_edge_analytics_mode(
+    def test_init_with_local_mode(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test client initialization with edge analytics mode."""
+        """Test client initialization with local mode."""
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="edge_analytics")
+        client = TraigentClient(execution_mode="local")
 
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert client.execution_mode == ExecutionMode.LOCAL
+
+    @patch("traigent.traigent_client.BackendIntegratedClient")
+    @patch("traigent.config.backend_config.BackendConfig")
+    def test_init_with_removed_edge_analytics_mode_raises(
+        self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
+    ) -> None:
+        """The removed edge_analytics selector hard-fails at client init."""
+        import warnings
+
+        mock_backend_config.get_api_key.return_value = "key"
+        mock_backend_config.get_backend_url.return_value = "https://url"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with pytest.raises(ConfigurationError, match="has been removed"):
+                TraigentClient(execution_mode="edge_analytics")
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -88,15 +104,15 @@ class TestDetermineExecutionMode:
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
-    def test_explicit_edge_analytics_mode(
+    def test_explicit_local_mode(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test explicit edge analytics mode selection."""
+        """Test explicit local mode selection."""
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = TraigentClient(execution_mode="edge_analytics")
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        client = TraigentClient(execution_mode="local")
+        assert client.execution_mode == ExecutionMode.LOCAL
 
     def test_explicit_standard_mode_deprecated_resolves_to_hybrid(self) -> None:
         """Deprecated standard mode emits DeprecationWarning and resolves to hybrid."""
@@ -139,7 +155,7 @@ class TestDetermineExecutionMode:
 
         client = TraigentClient(execution_mode="auto")
 
-        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+        assert client.execution_mode == ExecutionMode.LOCAL
         assert client.backend_client is None
         mock_backend_client.assert_not_called()
 
@@ -434,7 +450,7 @@ class TestOptimizeValidation:
         """Test optimize auto-fills model in edge_analytics mode."""
         mock_builder = Mock()
         client = TraigentClient(
-            execution_mode="edge_analytics", agent_builder=mock_builder
+            execution_mode="local", agent_builder=mock_builder
         )
 
         def test_func() -> str:
@@ -461,7 +477,7 @@ class TestOptimizeValidation:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
                 # Create client WITHOUT agent_builder
-                client = TraigentClient(execution_mode="edge_analytics")
+                client = TraigentClient(execution_mode="local")
 
                 def test_func() -> str:
                     return "test"
@@ -848,7 +864,7 @@ class TestOptimizeLocal:
                 mock_config.get_backend_url.return_value = "https://url"
                 mock_builder = Mock()
                 return TraigentClient(
-                    execution_mode="edge_analytics", agent_builder=mock_builder
+                    execution_mode="local", agent_builder=mock_builder
                 )
 
     @pytest.mark.asyncio

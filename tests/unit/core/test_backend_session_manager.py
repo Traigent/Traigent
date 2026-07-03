@@ -76,7 +76,7 @@ def traigent_config(monkeypatch):
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     config = TraigentConfig()
-    config.execution_mode = "edge_analytics"
+    config.execution_mode = "local"
     return config
 
 

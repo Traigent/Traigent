@@ -2865,6 +2865,70 @@ class TestStopReasonInResult:
         assert orchestrator.cost_enforcer.get_status().limit_reached is True
 
     @pytest.mark.asyncio
+    async def test_cost_limit_block_emits_explicit_budget_gate_message(
+        self, sample_dataset, monkeypatch, caplog
+    ):
+        """Budget-gate blocks are loud: N planned trials, $X vs limit $Y (#1684)."""
+        import logging
+        import re
+
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_metrics({"accuracy": 0.5, "cost": 0.06})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            config=TraigentConfig.edge_analytics_mode(),
+            cost_limit=0.12,
+            cost_approved=True,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="traigent.core.orchestrator"):
+            result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "cost_limit"
+
+        log_text = " ".join(record.getMessage() for record in caplog.records)
+        match = re.search(
+            r"budget gate blocked (\d+) planned trials "
+            r"\(estimated \$(\d+\.\d{2}) > limit \$(\d+\.\d{2})\)",
+            log_text,
+        )
+        assert match, f"Expected explicit budget-gate message, got: {log_text!r}"
+        assert int(match.group(1)) > 0
+        assert float(match.group(2)) >= float(match.group(3))
+        assert float(match.group(3)) == pytest.approx(0.12)
+
+        # The precise detail is retained for stop metadata surfacing.
+        detail = getattr(orchestrator, "_budget_gate_detail", None)
+        assert detail is not None
+        assert "budget gate blocked" in detail
+
+    def test_negative_cost_limit_raises_at_orchestrator_config_time(self):
+        """A nonpositive cost limit fails at config time, not as a 0-trial run."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        with pytest.raises(ConfigurationError, match="must be > 0"):
+            OptimizationOrchestrator(
+                optimizer=optimizer,
+                evaluator=evaluator,
+                max_trials=2,
+                config=TraigentConfig.edge_analytics_mode(),
+                cost_limit=-1.0,
+                cost_approved=True,
+            )
+
+    @pytest.mark.asyncio
     async def test_stop_reason_cost_limit_parallel(self, sample_dataset, monkeypatch):
         """Parallel cost-limit cancellation still reports public stop_reason."""
         # Disable mock-LLM bypass so CostEnforcer tracks real permits.

@@ -34,25 +34,39 @@ def _warn_deprecated_once(key: str, message: str, *, stacklevel: int = 3) -> Non
     warnings.warn(message, DeprecationWarning, stacklevel=stacklevel)
 
 
-def _warn_deprecated_execution_mode_member_alias(*, stacklevel: int = 3) -> None:
-    _warn_deprecated_once(
-        "ExecutionMode.EDGE_ANALYTICS",
-        "ExecutionMode.EDGE_ANALYTICS is deprecated. Use ExecutionMode.LOCAL.",
-        stacklevel=stacklevel,
+def removed_legacy_execution_mode_message(surface: str = "edge_analytics") -> str:
+    """Migration error for the removed ``edge_analytics`` legacy selector.
+
+    ``edge_analytics`` previously normalized to ``local`` with a warning, but
+    runs configured through it could silently produce zero trials. Per the
+    no-silent-legacy policy it now hard-fails with migration guidance.
+    """
+
+    return (
+        f"{surface} has been removed and now fails instead of being silently "
+        "remapped: legacy edge_analytics runs could silently produce zero "
+        "trials. Migrate to the supported execution surface: offline=True with "
+        "algorithm='grid' or algorithm='random' for local, zero-egress "
+        "optimization, or omit execution_mode and use algorithm='auto' for "
+        "managed optimization."
     )
 
 
 class _ExecutionModeMeta(EnumType):
+    """Hard-fail on the removed ``EDGE_ANALYTICS`` member alias."""
+
     def __getattribute__(cls, name: str) -> Any:
         if name == "EDGE_ANALYTICS":
-            _warn_deprecated_execution_mode_member_alias(stacklevel=3)
-            return super().__getattribute__("LOCAL")
+            raise AttributeError(
+                removed_legacy_execution_mode_message("ExecutionMode.EDGE_ANALYTICS")
+            )
         return super().__getattribute__(name)
 
     def __getitem__(cls, name: str) -> Any:
         if name == "EDGE_ANALYTICS":
-            _warn_deprecated_execution_mode_member_alias(stacklevel=3)
-            return super().__getitem__("LOCAL")
+            raise KeyError(
+                removed_legacy_execution_mode_message("ExecutionMode['EDGE_ANALYTICS']")
+            )
         return super().__getitem__(name)
 
 
@@ -60,8 +74,8 @@ class ExecutionMode(StrEnum, metaclass=_ExecutionModeMeta):
     """Deprecated compatibility enum for runtime routing.
 
     Public SDK code should use ``algorithm`` plus ``offline``. ``LOCAL`` is the
-    canonical local-only member; ``EDGE_ANALYTICS`` remains a deprecated public
-    alias for backwards compatibility.
+    canonical local-only member. The former ``EDGE_ANALYTICS`` alias has been
+    removed and hard-fails with migration guidance.
     """
 
     LOCAL = "local"
@@ -71,8 +85,9 @@ class ExecutionMode(StrEnum, metaclass=_ExecutionModeMeta):
     @classmethod
     def _missing_(cls, value: object) -> ExecutionMode | None:
         if isinstance(value, str) and value.strip().lower() == "edge_analytics":
-            _warn_deprecated_execution_mode_member_alias(stacklevel=4)
-            return cls.LOCAL
+            raise ValueError(
+                removed_legacy_execution_mode_message("execution_mode='edge_analytics'")
+            )
         return None
 
 
@@ -119,13 +134,23 @@ _SUPPORTED_MODES = (
     ExecutionMode.HYBRID,
     ExecutionMode.HYBRID_API,
 )
-_EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {
-    "edge_analytics": ExecutionMode.LOCAL,
-}
+# No warn-and-remap aliases remain: removed legacy selectors hard-fail instead
+# (no-silent-legacy policy; see removed_legacy_execution_mode_message).
+_EXECUTION_MODE_ALIASES: dict[str, ExecutionMode] = {}
 _DEPRECATED_CONFIG_EXECUTION_MODE_VALUES = frozenset(
-    {"edge_analytics", ExecutionMode.HYBRID.value, ExecutionMode.HYBRID_API.value}
+    {ExecutionMode.HYBRID.value, ExecutionMode.HYBRID_API.value}
 )
 _FAIL_CLOSED_LEGACY_EXECUTION_MODES = frozenset({"privacy", "cloud"})
+_REMOVED_LEGACY_EXECUTION_MODES = frozenset({"edge_analytics"})
+
+
+def is_removed_legacy_execution_mode(mode: ExecutionMode | str | None) -> bool:
+    """Return whether a raw legacy selector has been removed and must raise."""
+
+    return (
+        isinstance(mode, str)
+        and mode.strip().lower() in _REMOVED_LEGACY_EXECUTION_MODES
+    )
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 _CONFIG_VALUE_UNSET = object()
@@ -348,6 +373,10 @@ def resolve_execution_mode(
                 "automatic optimization.",
             )
             return ExecutionMode.HYBRID
+        if normalized in _REMOVED_LEGACY_EXECUTION_MODES:
+            raise ValueError(
+                removed_legacy_execution_mode_message(f"execution_mode={mode!r}")
+            )
         if normalized in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
             raise ValueError(fail_closed_legacy_execution_mode_message(mode))
         if normalized in _EXECUTION_MODE_ALIASES:
@@ -372,7 +401,9 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     try:
         resolved = resolve_execution_mode(mode)
     except ValueError as exc:
-        if is_fail_closed_legacy_execution_mode(mode):
+        if is_fail_closed_legacy_execution_mode(mode) or (
+            is_removed_legacy_execution_mode(mode)
+        ):
             raise ConfigurationError(str(exc)) from None
         raise ConfigurationError(
             f"Unsupported execution selector {mode!r}; "

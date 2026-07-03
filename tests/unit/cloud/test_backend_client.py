@@ -113,6 +113,53 @@ class TestBackendClientConfig:
         assert config.session_sync_interval == 10.0
 
 
+class TestNormalizeExecutionModeDelegation:
+    """_normalize_execution_mode delegates to canonical resolution (#1393).
+
+    The former hand-rolled mapping silently remapped edge_analytics and passed
+    the fail-closed privacy/cloud selectors through to the wire. The deduped
+    path must produce only canonical wire values and raise on removed or
+    fail-closed legacy selectors.
+    """
+
+    @pytest.mark.parametrize(
+        ("execution_mode", "expected"),
+        [
+            ("local", "local"),
+            ("hybrid", "hybrid"),
+            ("hybrid_api", "hybrid_api"),
+            (None, "local"),
+            ("", "local"),
+        ],
+    )
+    def test_canonical_modes_pass_through(
+        self, backend_client, execution_mode, expected
+    ):
+        assert backend_client._normalize_execution_mode(execution_mode) == expected
+
+    @pytest.mark.parametrize("execution_mode", ["privacy", "cloud"])
+    def test_fail_closed_legacy_selectors_raise(self, backend_client, execution_mode):
+        from traigent.utils.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            backend_client._normalize_execution_mode(execution_mode)
+
+    def test_removed_edge_analytics_raises_migration_error(self, backend_client):
+        from traigent.utils.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            backend_client._normalize_execution_mode("edge_analytics")
+
+    @pytest.mark.parametrize("execution_mode", ["edge", "saas", "private", "bogus"])
+    def test_unknown_selectors_raise_instead_of_defaulting(
+        self, backend_client, execution_mode
+    ):
+        from traigent.utils.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="Unsupported execution selector"):
+            backend_client._normalize_execution_mode(execution_mode)
+
+
 class TestBackendIntegratedClient:
     """Test backend integrated client functionality."""
 
@@ -539,7 +586,7 @@ class TestBackendIntegratedClient:
             {"accuracy": 0.9},
             "completed",
             None,
-            "edge_analytics",
+            "local",
         )
 
         assert result is None
@@ -550,7 +597,7 @@ class TestBackendIntegratedClient:
             {"accuracy": 0.9},
             "completed",
             None,
-            "edge_analytics",
+            "local",
         )
 
     @pytest.mark.asyncio

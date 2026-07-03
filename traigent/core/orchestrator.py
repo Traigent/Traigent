@@ -2570,6 +2570,21 @@ class OptimizationOrchestrator:
         cost_enforcer = getattr(self, "cost_enforcer", None)
         return bool(cost_enforcer is not None and cost_enforcer.is_limit_reached)
 
+    def _describe_budget_gate_block(self, remaining_trials: float) -> str:
+        """Build the explicit budget-gate block message (issue #1684 item 3).
+
+        Format: ``budget gate blocked N planned trials (estimated $X > limit $Y)``.
+        """
+        planned = (
+            None if math.isinf(remaining_trials) else max(int(remaining_trials), 0)
+        )
+        cost_enforcer = getattr(self, "cost_enforcer", None)
+        describe = getattr(cost_enforcer, "budget_block_message", None)
+        if callable(describe):
+            return str(describe(planned))
+        blocked = "all remaining" if planned is None else str(planned)
+        return f"budget gate blocked {blocked} planned trials (cost limit reached)"
+
     def _check_budget_limits(
         self, trial_count: int
     ) -> tuple[float, float, StopReason | None]:
@@ -2583,7 +2598,12 @@ class OptimizationOrchestrator:
         )
 
         if self._is_cost_limit_reached():
-            logger.info("Cost limit reached")
+            # Loud, explicit block: log the exact scope of what the budget
+            # gate is cutting off and keep the detail for stop metadata so a
+            # cost-gated run can never end silently (issue #1684 item 3).
+            detail = self._describe_budget_gate_block(remaining)
+            logger.warning("%s (completed trials so far: %d)", detail, trial_count)
+            self._budget_gate_detail = detail
             return remaining, 0, "cost_limit"
 
         if remaining <= 0:

@@ -40,7 +40,7 @@ class TestIncentiveManagerInitialization:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -49,7 +49,7 @@ class TestIncentiveManagerInitialization:
     def config_without_analytics(self, temp_storage_path: str) -> TraigentConfig:
         """Create configuration without analytics enabled."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=False,
             local_storage_path=temp_storage_path,
         )
@@ -83,7 +83,7 @@ class TestIncentiveManagerInitialization:
     ) -> None:
         """Test initialization with custom storage path."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
         manager = IncentiveManager(config)
@@ -93,7 +93,7 @@ class TestIncentiveManagerInitialization:
     def test_initialization_with_none_storage_path(self) -> None:
         """Test initialization falls back to home directory when storage path is None."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=None,
         )
         manager = IncentiveManager(config)
@@ -141,7 +141,7 @@ class TestIncentiveManagerStateManagement:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -214,7 +214,7 @@ class TestIncentiveManagerStateManagement:
         """Test saving state creates parent directories if they don't exist."""
         nested_path = str(Path(temp_storage_path) / "nested" / "path")
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=nested_path,
         )
         manager = IncentiveManager(config)
@@ -258,7 +258,7 @@ class TestUpdateUsageStats:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -393,7 +393,7 @@ class TestShouldShowHint:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -523,7 +523,7 @@ class TestGetContextualHint:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -667,7 +667,7 @@ class TestShowAchievementUnlock:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -766,7 +766,7 @@ class TestCheckAchievements:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -873,7 +873,7 @@ class TestGetUpgradeValueProposition:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1036,7 +1036,7 @@ class TestShowContextSensitiveHint:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -1193,7 +1193,7 @@ class TestDismissUpgradeHints:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -1251,7 +1251,7 @@ class TestGetLocalVsCloudComparison:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -1294,7 +1294,7 @@ class TestShowOnboardingTips:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 
@@ -1340,7 +1340,7 @@ class TestGlobalFunctions:
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
             config = TraigentConfig(
-                execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+                execution_mode=ExecutionMode.LOCAL.value,
                 local_storage_path=temp_storage_path,
             )
             mock_config.return_value = config
@@ -1374,7 +1374,7 @@ class TestGlobalFunctions:
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
             config = TraigentConfig(
-                execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+                execution_mode=ExecutionMode.LOCAL.value,
                 local_storage_path=temp_storage_path,
             )
             mock_config.return_value = config
@@ -1414,7 +1414,7 @@ class TestEdgeCases:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=temp_storage_path,
         )
 

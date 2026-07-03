@@ -66,7 +66,7 @@ def _local_evaluator(metrics: list[str] | None = None) -> LocalEvaluator:
     return LocalEvaluator(
         metrics=metrics or ["accuracy"],
         detailed=True,
-        execution_mode="edge_analytics",
+        execution_mode="local",
     )
 
 

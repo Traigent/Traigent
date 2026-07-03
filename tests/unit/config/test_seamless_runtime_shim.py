@@ -200,7 +200,7 @@ def test_seamless_runtime_shim_multiple_parameters(
     assert observed_temperature == config_temperature
 
 
-@pytest.mark.parametrize("execution_mode", ["edge_analytics", "hybrid"])
+@pytest.mark.parametrize("execution_mode", ["local", "hybrid"])
 def test_seamless_runtime_shim_respects_configuration_context(
     execution_mode: str,
 ) -> None:

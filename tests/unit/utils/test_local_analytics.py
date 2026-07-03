@@ -43,7 +43,7 @@ class TestLocalAnalyticsInitialization:
     def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
         """Create edge analytics configuration."""
         return TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             analytics_endpoint="http://localhost:5000/analytics",
@@ -68,7 +68,7 @@ class TestLocalAnalyticsInitialization:
     ) -> None:
         """Test initialization with analytics disabled."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=False,
             local_storage_path=temp_storage_path,
         )
@@ -90,7 +90,7 @@ class TestLocalAnalyticsInitialization:
     def test_initialization_with_default_endpoint(self, temp_storage_path: str) -> None:
         """Test initialization uses default analytics endpoint when not specified."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             analytics_endpoint=None,
@@ -104,7 +104,7 @@ class TestLocalAnalyticsInitialization:
         """Test initialization uses provided anonymous user ID."""
         user_id = "test-user-12345"
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             anonymous_user_id=user_id,
@@ -116,7 +116,7 @@ class TestLocalAnalyticsInitialization:
     def test_initialization_creates_user_id(self, temp_storage_path: str) -> None:
         """Test initialization creates new anonymous user ID if not provided."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             anonymous_user_id=None,
@@ -138,7 +138,7 @@ class TestLocalAnalyticsInitialization:
     def test_user_id_persistence(self, temp_storage_path: str) -> None:
         """Test that user ID is persisted and reused."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             anonymous_user_id=None,
@@ -158,7 +158,7 @@ class TestLocalAnalyticsInitialization:
     def test_user_id_persistence_file_read_error(self, temp_storage_path: str) -> None:
         """Test user ID creation when analytics file cannot be read."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             anonymous_user_id=None,
@@ -184,7 +184,7 @@ class TestLocalAnalyticsInitialization:
     def test_user_id_persistence_file_write_error(self, temp_storage_path: str) -> None:
         """Test user ID creation when analytics file cannot be written."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             anonymous_user_id=None,
@@ -212,7 +212,7 @@ class TestCollectUsageStats:
     def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
         """Create LocalAnalytics instance for testing."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             anonymous_user_id="test-user-123",
@@ -228,7 +228,7 @@ class TestCollectUsageStats:
     def test_collect_usage_stats_disabled(self, temp_storage_path: str) -> None:
         """Test that collect_usage_stats returns empty dict when disabled."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=False,
             local_storage_path=temp_storage_path,
         )
@@ -451,7 +451,7 @@ class TestCollectUsageStats:
         with patch.object(analytics_instance.storage, "list_sessions", return_value=[]):
             stats = analytics_instance.collect_usage_stats()
 
-            assert stats["execution_mode"] == ExecutionMode.EDGE_ANALYTICS.value
+            assert stats["execution_mode"] == ExecutionMode.LOCAL.value
 
     def test_collect_usage_stats_includes_timestamp(
         self, analytics_instance: LocalAnalytics
@@ -507,7 +507,7 @@ class TestGetDaysSinceFirstUse:
     def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
         """Create LocalAnalytics instance for testing."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -581,7 +581,7 @@ class TestSubmitUsageStats:
     def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
         """Create LocalAnalytics instance for testing."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -597,7 +597,7 @@ class TestSubmitUsageStats:
     async def test_submit_usage_stats_disabled(self, temp_storage_path: str) -> None:
         """Test submit_usage_stats returns error when analytics disabled."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=False,
             local_storage_path=temp_storage_path,
         )
@@ -745,7 +745,7 @@ class TestSubmissionDueCheck:
     def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
         """Create LocalAnalytics instance for testing."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -822,7 +822,7 @@ class TestUpdateLastSubmission:
     def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
         """Create LocalAnalytics instance for testing."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -867,7 +867,7 @@ class TestCloudIncentiveData:
     def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
         """Create LocalAnalytics instance for testing."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1072,7 +1072,7 @@ class TestConvenienceFunctions:
     ) -> None:
         """Test collect_and_submit_analytics when analytics disabled."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=False,
             local_storage_path=temp_storage_path,
         )
@@ -1100,7 +1100,7 @@ class TestConvenienceFunctions:
     ) -> None:
         """Mock walkthroughs must not schedule remote analytics auth."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1121,7 +1121,7 @@ class TestConvenienceFunctions:
         import asyncio
 
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1141,7 +1141,7 @@ class TestConvenienceFunctions:
     ) -> None:
         """Test collect_and_submit_analytics handles errors gracefully."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1157,7 +1157,7 @@ class TestConvenienceFunctions:
     def test_get_enhanced_cloud_incentives(self, temp_storage_path: str) -> None:
         """Test get_enhanced_cloud_incentives function."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1184,7 +1184,7 @@ class TestEdgeCases:
     ) -> None:
         """Test collect_usage_stats handles invalid improvement data types."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1218,7 +1218,7 @@ class TestEdgeCases:
     ) -> None:
         """Test collect_usage_stats handles None improvement values."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1252,7 +1252,7 @@ class TestEdgeCases:
     ) -> None:
         """Test collect_usage_stats handles invalid config space."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1285,7 +1285,7 @@ class TestEdgeCases:
     ) -> None:
         """Test collect_usage_stats when optimization_config is None."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            execution_mode=ExecutionMode.LOCAL.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )

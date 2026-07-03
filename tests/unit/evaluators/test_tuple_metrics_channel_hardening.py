@@ -44,7 +44,7 @@ def _local_evaluator() -> LocalEvaluator:
     return LocalEvaluator(
         metrics=["accuracy"],
         detailed=True,
-        execution_mode="edge_analytics",
+        execution_mode="local",
     )
 
 
@@ -154,7 +154,7 @@ async def test_user_keys_never_overwrite_reserved_builtins(
     evaluator = LocalEvaluator(
         metrics=["accuracy", "success_rate", "latency"],
         detailed=True,
-        execution_mode="edge_analytics",
+        execution_mode="local",
     )
     with caplog.at_level(logging.WARNING):
         result = await evaluator.evaluate(func, {}, _two_example_dataset())
