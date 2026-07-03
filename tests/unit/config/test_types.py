@@ -407,6 +407,40 @@ class TestValidateExecutionMode:
         with pytest.raises(ValueError, match="has been removed"):
             ExecutionMode("edge_analytics")
 
+    def test_post_construction_assignment_validates_like_construction(self) -> None:
+        """Assignment applies the same raise/normalize rules as construction."""
+        config = TraigentConfig()
+
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            config.execution_mode = "edge_analytics"
+        with pytest.raises(ConfigurationError, match="fails closed"):
+            config.execution_mode = "privacy"
+        # Failed assignments must not corrupt the stored value.
+        assert config.execution_mode == "local"
+
+        with pytest.warns(DeprecationWarning):
+            config.execution_mode = "hybrid"
+        assert config.execution_mode == "hybrid"
+
+    def test_merge_and_from_dict_reject_removed_selector(self) -> None:
+        """Dict-based construction paths hard-fail like the constructor."""
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            TraigentConfig.from_dict({"execution_mode": "edge_analytics"})
+        with pytest.raises(ConfigurationError, match="has been removed"):
+            TraigentConfig().merge({"execution_mode": "edge_analytics"})
+
+    def test_resolve_execution_policy_rejects_removed_selector(self) -> None:
+        """The policy-resolution path (decorator/client entry) hard-fails too."""
+        from traigent.config.types import resolve_execution_policy
+
+        with pytest.raises(ConfigurationError, match="has been removed") as exc_info:
+            resolve_execution_policy(execution_mode="edge_analytics")
+
+        message = str(exc_info.value)
+        assert "offline=True" in message
+        assert "algorithm='grid'" in message
+        assert "algorithm='auto'" in message
+
     def test_removed_edge_analytics_selector_raises_migration_error(self) -> None:
         """resolve/validate hard-fail on edge_analytics with migration guidance."""
         with pytest.raises(ValueError, match="has been removed") as resolve_exc:

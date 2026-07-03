@@ -449,9 +449,7 @@ class TestOptimizeValidation:
     async def test_optimize_edge_analytics_auto_fills_model(self) -> None:
         """Test optimize auto-fills model in edge_analytics mode."""
         mock_builder = Mock()
-        client = TraigentClient(
-            execution_mode="local", agent_builder=mock_builder
-        )
+        client = TraigentClient(execution_mode="local", agent_builder=mock_builder)
 
         def test_func() -> str:
             return "test"

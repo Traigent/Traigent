@@ -49,7 +49,7 @@ class TestDeprecatedCloudMode:
                 eval_dataset=None,
                 objectives=["accuracy"],
                 configuration_space={"param": [1, 2, 3]},
-                execution_mode="edge_analytics",
+                execution_mode="local",
                 cloud_fallback_policy="auto",
             )
             def test_function(input_text: str) -> str:

@@ -51,6 +51,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcerConfig,
     Permit,
     normalize_cost_approved,
+    validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.exception_handler import (
@@ -584,8 +585,15 @@ class OptimizationOrchestrator:
         cost_approved = normalize_cost_approved(self.config.get("cost_approved", False))
         cost_config = None
         if cost_limit is not None or cost_approved:
+            # None means "use the default"; any provided value (including a
+            # falsy 0) must pass config-time validation instead of being
+            # silently coerced to the default (issue #1684 item 3).
             cost_config = CostEnforcerConfig(
-                limit=float(cost_limit) if cost_limit else DEFAULT_COST_LIMIT_USD,
+                limit=(
+                    DEFAULT_COST_LIMIT_USD
+                    if cost_limit is None
+                    else float(validate_cost_limit(cost_limit))
+                ),
                 approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
@@ -2599,8 +2607,10 @@ class OptimizationOrchestrator:
 
         if self._is_cost_limit_reached():
             # Loud, explicit block: log the exact scope of what the budget
-            # gate is cutting off and keep the detail for stop metadata so a
-            # cost-gated run can never end silently (issue #1684 item 3).
+            # gate is cutting off (issue #1684 item 3). The WARNING log is the
+            # user-visible surface today; ``_budget_gate_detail`` stages the
+            # same string for the run-status/metadata surfacing follow-up
+            # (owned by the status-logic unit) and is not read anywhere yet.
             detail = self._describe_budget_gate_block(remaining)
             logger.warning("%s (completed trials so far: %d)", detail, trial_count)
             self._budget_gate_detail = detail

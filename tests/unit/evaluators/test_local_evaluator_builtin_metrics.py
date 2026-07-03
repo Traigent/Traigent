@@ -109,7 +109,7 @@ class TestBuiltinMetricsWithMetricFunctions:
         # Mock compute_metrics -- it should NOT be called in this branch
         mock_compute = MagicMock(return_value={})
         with patch.object(evaluator, "compute_metrics", mock_compute):
-            result = await evaluator.evaluate(_simple_func, {}, dataset)
+            await evaluator.evaluate(_simple_func, {}, dataset)
 
         # compute_metrics should NOT have been called since there are
         # no built-in metrics to compute (all are custom-only).

@@ -151,6 +151,8 @@ def is_removed_legacy_execution_mode(mode: ExecutionMode | str | None) -> bool:
         isinstance(mode, str)
         and mode.strip().lower() in _REMOVED_LEGACY_EXECUTION_MODES
     )
+
+
 _NOT_YET_SUPPORTED_MODES: set[ExecutionMode] = set()
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 _CONFIG_VALUE_UNSET = object()
@@ -310,13 +312,10 @@ def _warn_deprecated_config_execution_mode(
     if normalized not in _DEPRECATED_CONFIG_EXECUTION_MODE_VALUES:
         return
 
-    if normalized == "edge_analytics":
-        guidance = (
-            "Use offline=True with algorithm='grid' or algorithm='random' for "
-            "local-only, zero-egress optimization. Prefer local over "
-            "edge_analytics where a compatibility wire value is still required."
-        )
-    elif normalized == ExecutionMode.HYBRID.value:
+    # NOTE: edge_analytics no longer reaches this warn helper — removed
+    # selectors raise via validate_execution_mode/resolve_execution_policy
+    # before any deprecation warning could fire (issue #1684 item 1).
+    if normalized == ExecutionMode.HYBRID.value:
         guidance = (
             "Omit execution_mode and use algorithm='auto' for managed "
             "optimization; set offline=True only when no egress is required."
@@ -462,21 +461,28 @@ def resolve_execution_policy(
         normalized_mode = raw_mode.strip().lower()
         hint_parts.append(f"legacy_execution_mode={normalized_mode}")
 
+        if normalized_mode in _REMOVED_LEGACY_EXECUTION_MODES:
+            # Removed selectors hard-fail on the policy-resolution path too
+            # (decorator/client entry points). Without this, the raw value is
+            # laundered to "local" before TraigentConfig construction and the
+            # config-level raise never fires (issue #1684 item 1).
+            raise ConfigurationError(
+                removed_legacy_execution_mode_message(f"execution_mode={raw_mode!r}")
+            )
         if normalized_mode in _FAIL_CLOSED_LEGACY_EXECUTION_MODES:
             raise ConfigurationError(
                 fail_closed_legacy_execution_mode_message(raw_mode)
             )
         if normalized_mode == "local":
             offline_requested = True
-        elif normalized_mode in {"", "edge_analytics"}:
+        elif normalized_mode == "":
             _warn_deprecated_once(
-                f"resolve_execution_policy.execution_mode:{normalized_mode or '<empty>'}",
+                "resolve_execution_policy.execution_mode:<empty>",
                 f"execution_mode={raw_mode!r} is deprecated. Mapping to "
                 "offline=True / LOCAL_ONLY to preserve the legacy no-egress "
                 "guarantee. Use offline=True with algorithm='grid' or "
-                "algorithm='random' directly; prefer local over edge_analytics "
-                "where a compatibility wire value is still required. This "
-                "compatibility selector will be removed in a future major release.",
+                "algorithm='random' directly. This compatibility selector "
+                "will be removed in a future major release.",
                 stacklevel=3,
             )
             offline_requested = True

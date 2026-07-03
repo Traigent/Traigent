@@ -42,28 +42,42 @@ class TestParameterValidator:
         self.validator = ParameterValidator()
 
     def test_validate_execution_mode_valid(self):
-        """Test validation of valid execution modes.
+        """Test validation of valid execution modes on the real surface.
 
-        Local and hybrid are supported mode strings at decorator validation
-        time. Privacy fails closed and the removed edge_analytics selector
-        hard-fails with migration guidance instead of normalizing.
+        Validation is single-path (#1393): validate_parameters routes through
+        resolve_execution_policy. Local and hybrid are supported; privacy
+        fails closed and the removed edge_analytics selector hard-fails with
+        migration guidance instead of normalizing.
         """
-        assert self.validator._validate_execution_mode("local") is ExecutionMode.LOCAL
-        assert self.validator._validate_execution_mode("hybrid") is ExecutionMode.HYBRID
+        import warnings
+
+        local = validate_optimize_parameters(execution_mode="local")
+        assert local.execution_mode == ExecutionMode.LOCAL.value
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            hybrid = validate_optimize_parameters(execution_mode="hybrid")
+        assert hybrid.execution_mode == ExecutionMode.HYBRID.value
+
         with pytest.raises(ValidationError, match="fails closed"):
-            self.validator._validate_execution_mode("privacy")
+            validate_optimize_parameters(execution_mode="privacy")
         with pytest.raises(ValidationError, match="has been removed"):
-            self.validator._validate_execution_mode("edge_analytics")
+            validate_optimize_parameters(execution_mode="edge_analytics")
 
     def test_validate_execution_mode_invalid(self):
-        """Test validation of invalid execution modes."""
-        invalid_modes = ["invalid", "remote", "unsupported", "cloud"]
+        """Test validation of invalid execution modes on the real surface."""
+        invalid_modes = ["invalid", "remote", "unsupported"]
 
         for mode in invalid_modes:
             with pytest.raises(ValidationError) as exc_info:
-                self.validator._validate_execution_mode(mode)
-            assert "Invalid execution_mode" in str(exc_info.value)
-            assert mode in str(exc_info.value)
+                validate_optimize_parameters(execution_mode=mode)
+            message = str(exc_info.value)
+            assert mode in message
+            assert "algorithm=" in message
+
+        # cloud is fail-closed rather than unknown, but still raises here.
+        with pytest.raises(ValidationError, match="fails closed"):
+            validate_optimize_parameters(execution_mode="cloud")
 
     def test_validate_injection_mode_enum(self):
         """Test validation of injection mode enum values."""
@@ -310,7 +324,7 @@ class TestValidateOptimizeParameters:
         result = validate_optimize_parameters(
             eval_dataset="test.jsonl",
             objectives=["accuracy"],
-            execution_mode="edge_analytics",
+            execution_mode="local",
         )
 
         assert isinstance(result, OptimizeParameters)
