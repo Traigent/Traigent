@@ -21,6 +21,7 @@ from traigent.cloud.models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+from traigent.cloud.trial_operations import TrialOperations
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -333,11 +334,13 @@ class PrivacyOperations:
         logger.debug(f"Submitting privacy trial results: {session_id}/{trial_id}")
 
         try:
+            redacted_config = TrialOperations._redact_privacy_config(config)
+
             # Submit via session endpoint only - no fallback to config run endpoint
             session_submitted = await self.client._submit_trial_result_via_session(
                 session_id,
                 trial_id,
-                config,  # Pass config for backend hash generation
+                redacted_config,  # Preserve tuned keys; redact privacy-mode values.
                 metrics,
                 "COMPLETED" if not error_message else "FAILED",
                 error_message,
