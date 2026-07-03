@@ -86,12 +86,9 @@ logger = logging.getLogger(__name__)
 
 print(f"Logging to {LOG_FILE} at level {LOG_LEVEL}")
 
-# Mock mode initialization
-if MOCK:
-    try:
-        traigent.initialize(execution_mode="edge_analytics")
-    except Exception:
-        pass
+# Mock mode runs fully local with zero Traigent backend egress. This is wired
+# through the `offline` option in _OPTIMIZE_KWARGS below — the modern
+# replacement for the removed `execution_mode="edge_analytics"` selector.
 
 
 # ==============================================================================
@@ -590,15 +587,17 @@ _OPTIMIZE_KWARGS: dict[str, Any] = {
         "temperature": TEMPERATURE_CHOICES,
         "max_tokens": MAX_TOKENS_CHOICES,
     },
-    "execution_mode": "edge_analytics",
     "injection_mode": "seamless",
     "parallel_config": PARALLEL_CONFIG,
     "algorithm": "grid",
+    # Mock mode: local-only, zero Traigent backend egress (grid runs locally
+    # either way; offline additionally disables portal sync).
+    "offline": MOCK,
     "max_trials": MAX_TRIALS,
 }
 
 if BUDGET_LIMIT is not None and BUDGET_LIMIT > 0:
-    _OPTIMIZE_KWARGS["budget_limit"] = BUDGET_LIMIT
+    _OPTIMIZE_KWARGS["cost_limit"] = BUDGET_LIMIT
 
 
 # ==============================================================================
@@ -673,8 +672,7 @@ async def main() -> None:
     if runtime_budget is not None and runtime_budget > 0:
         optimize_kwargs.update(
             {
-                "budget_limit": runtime_budget,
-                "budget_metric": "total_cost",
+                "cost_limit": runtime_budget,
                 "algorithm": "random",
                 "objectives": ["cost"],
             }

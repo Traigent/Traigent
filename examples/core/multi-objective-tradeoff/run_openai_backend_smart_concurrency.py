@@ -80,11 +80,9 @@ print(
     "(override via TRAIGENT_WEIGHTED_UPDATE_CONCURRENCY)."
 )
 
-if MOCK:
-    try:
-        traigent.initialize(execution_mode="edge_analytics")
-    except Exception:
-        pass
+# Mock mode runs fully local with zero Traigent backend egress. This is wired
+# through the `offline` option in _OPTIMIZE_KWARGS below — the modern
+# replacement for the removed `execution_mode="edge_analytics"` selector.
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 
@@ -568,15 +566,18 @@ _OPTIMIZE_KWARGS: dict[str, Any] = {
         "model": MODEL_CHOICES,
         "temperature": TEMPERATURE_CHOICES,
     },
-    "execution_mode": "edge_analytics",
     "injection_mode": "seamless",
     "parallel_config": PARALLEL_CONFIG,
-    "algorithm": "bayesian",
+    # `bayesian` is a smart algorithm and requires the managed backend; it is
+    # rejected together with offline=True. Mock mode therefore falls back to
+    # local random search with zero Traigent backend egress.
+    "algorithm": "random" if MOCK else "bayesian",
+    "offline": MOCK,
     "max_trials": MAX_TRIALS,
 }
 
 if BUDGET_LIMIT is not None and BUDGET_LIMIT > 0:
-    _OPTIMIZE_KWARGS["budget_limit"] = BUDGET_LIMIT
+    _OPTIMIZE_KWARGS["cost_limit"] = BUDGET_LIMIT
 
 
 @traigent.optimize(**_OPTIMIZE_KWARGS)
@@ -643,8 +644,7 @@ if __name__ == "__main__":
             if runtime_budget is not None and runtime_budget > 0:
                 optimize_kwargs.update(
                     {
-                        "budget_limit": runtime_budget,
-                        "budget_metric": "total_cost",
+                        "cost_limit": runtime_budget,
                     }
                 )
 

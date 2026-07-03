@@ -201,6 +201,51 @@ def _get_dataset_root() -> Path:
     return Path.cwd().resolve()
 
 
+def _dataset_root_description(dataset_root: Path) -> str:
+    """Describe how the dataset root was determined, for diagnostic messages."""
+
+    env_value = os.getenv(DATASET_ROOT_ENV)
+    if env_value:
+        return f"{DATASET_ROOT_ENV}={env_value!r} (resolved to {dataset_root})"
+    return f"the current working directory ({dataset_root}); {DATASET_ROOT_ENV} is not set"
+
+
+def _dataset_not_found_message(
+    *,
+    source: str,
+    resolved_reference: str,
+    is_absolute_path: bool,
+    dataset_root: Path,
+    candidate: Path,
+) -> str:
+    """Build a self-explanatory not-found message naming the resolution rule.
+
+    A bare ``f"Dataset file not found: {source}"`` gives no way to tell a
+    relative path was joined against the wrong root (e.g. a
+    ``TRAIGENT_DATASET_ROOT`` subdirectory doubling up with an already
+    root-relative ``eval_dataset`` value). Spelling out the rule and the exact
+    candidate path tried makes the mangled-path case self-diagnosing instead
+    of a mysterious file-not-found.
+    """
+
+    if is_absolute_path:
+        rule = "it is an absolute path, used as-is (no dataset root prepended)"
+    else:
+        rule = (
+            "it is relative, so it was resolved against the dataset root "
+            f"({_dataset_root_description(dataset_root)})"
+        )
+    lookup_note = (
+        f" Dataset registry entry {source!r} resolved to path {resolved_reference!r}."
+        if resolved_reference != source
+        else ""
+    )
+    return (
+        f"Dataset file not found: {source!r}.{lookup_note} Resolution rule: "
+        f"{rule}. Tried: {candidate}"
+    )
+
+
 def _resolve_dataset_source(
     source: str,
 ) -> tuple[Path, DatasetRegistryEntry | None]:
@@ -220,7 +265,15 @@ def _resolve_dataset_source(
     try:
         resolved_path = candidate.resolve(strict=True)
     except FileNotFoundError as exc:
-        raise ValidationError(f"Dataset file not found: {source}") from exc
+        raise ValidationError(
+            _dataset_not_found_message(
+                source=source,
+                resolved_reference=resolved_reference,
+                is_absolute_path=is_absolute_path,
+                dataset_root=dataset_root,
+                candidate=candidate,
+            )
+        ) from exc
     except RuntimeError as exc:  # pragma: no cover - symlink loops
         raise ValidationError(f"Invalid dataset path: {source}") from exc
 

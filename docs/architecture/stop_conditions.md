@@ -31,8 +31,10 @@ Built-in implementations:
 | `HypervolumeConvergenceStopCondition` | Stops when hypervolume improvement remains below a threshold across a sliding window. | `convergence_metric="hypervolume_improvement"`, `convergence_window`, `convergence_threshold`. |
 | `SemanticSaturationStopCondition` | Stops when per-example quality vectors are stable and monitored continuous objectives are no longer improving. | `semantic_saturation={...}`. |
 
-`budget_limit` remains as a deprecated alias for `metric_limit` for compatibility.
-New code should not use it.
+`budget_limit`/`budget_metric`/`budget_include_pruned` were removed in 0.13.0.
+Passing any of them to `@traigent.optimize` or `.optimize(...)` now raises
+`TypeError`. Use `cost_limit` for money-spend control, or `metric_limit`/
+`metric_name` for other cumulative metrics.
 
 ## Cost limit vs metric limit
 
@@ -59,10 +61,12 @@ def chat(question: str) -> str:
     ...
 ```
 
-Legacy migration:
+Removed legacy API:
 
 ```python
-# Deprecated compatibility path. Emits a DeprecationWarning.
+# Raises TypeError: budget_limit/budget_metric/budget_include_pruned were
+# removed in 0.13.0. Use cost_limit=<value> and/or metric_limit=<value> with
+# metric_name=<name> instead.
 @traigent.optimize(
     eval_dataset="qa.jsonl",
     configuration_space={"temperature": [0.0, 0.5, 0.9]},
@@ -73,9 +77,18 @@ def chat(question: str) -> str:
     ...
 ```
 
-If a legacy `budget_limit` call omits the metric name, Traigent defaults to
-`total_cost` for compatibility and warns that money spend control should use
-`cost_limit` instead.
+Migrate to:
+
+```python
+@traigent.optimize(
+    eval_dataset="qa.jsonl",
+    configuration_space={"temperature": [0.0, 0.5, 0.9]},
+    metric_limit=50_000,
+    metric_name="total_tokens",
+)
+def chat(question: str) -> str:
+    ...
+```
 
 The orchestrator instantiates the conditions during construction via
 `_configure_stop_conditions()` and calls `reset()` for every run so state never leaks

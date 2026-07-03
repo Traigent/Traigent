@@ -596,8 +596,9 @@ approve.
 )
 ```
 
-`budget_limit` / `budget_metric` / `budget_include_pruned` are deprecated aliases
-for compatibility. Use `cost_limit` for hard USD spend control.
+`budget_limit` / `budget_metric` / `budget_include_pruned` were removed in
+0.13.0 and now raise `TypeError`. Use `cost_limit` for hard USD spend control,
+or `metric_limit` / `metric_name` for other cumulative metrics.
 
 **Stop Conditions**:
 
