@@ -94,6 +94,8 @@ from traigent.core.result_selection import (
     TieBreaker,
     _primary_scores_tied,
     _secondary_metric_key,
+    observed_metric_ranges,
+    resolve_weighted_selection_schema,
     select_best_configuration,
 )
 from traigent.core.sample_budget import SampleBudgetManager
@@ -1129,10 +1131,69 @@ class OptimizationOrchestrator:
             )
             return self._simple_is_better(candidate_trial)
 
+    def _weighted_selection_schema(self) -> ObjectiveSchema | None:
+        """Schema governing weighted incumbent ranking, or None for legacy.
+
+        Mirrors the terminal-selection gate in ``result_selection`` (issue
+        #1682): weighted ranking activates only for schemas with meaningful
+        (non-uniform) weights over >1 non-banded objectives.
+        """
+        return resolve_weighted_selection_schema(self.objective_schema)
+
+    def _weighted_is_better(
+        self, schema: ObjectiveSchema, trial_result: TrialResult
+    ) -> bool:
+        """Compare candidate vs incumbent by the schema's weighted aggregate.
+
+        Normalization uses the min-max ranges observed SO FAR (successful
+        trials seen to date plus the incumbent and the candidate), matching
+        terminal selection's observed-range normalization (issue #1682).
+        Ranges evolve as trials arrive, so the incumbent comparison is
+        recomputed under current ranges each time; live tracking is therefore
+        an online approximation — the authoritative ``best_config`` comes
+        from terminal selection over the full trial set.
+        """
+        observed: list[TrialResult] = [
+            trial for trial in self._trials if trial.is_successful
+        ]
+        observed.append(trial_result)
+        if self._best_trial_cached is not None:
+            observed.append(self._best_trial_cached)
+        ranges = observed_metric_ranges(
+            observed, (obj.name for obj in schema.objectives)
+        )
+
+        new_weighted = schema.compute_weighted_score(
+            trial_result.metrics or {}, ranges=ranges
+        )
+        if new_weighted is None or not math.isfinite(new_weighted):
+            return False
+
+        if self._best_trial_cached is None:
+            return True
+
+        current_weighted = schema.compute_weighted_score(
+            self._best_trial_cached.metrics or {}, ranges=ranges
+        )
+        if current_weighted is None or not math.isfinite(current_weighted):
+            return True
+
+        if _primary_scores_tied(new_weighted, current_weighted):
+            return self._secondary_tie_breaks_incumbent(
+                trial_result, self.optimizer.objectives[0]
+            )
+        return bool(new_weighted > current_weighted)
+
     def _simple_is_better(self, trial_result: TrialResult) -> bool:
         """Check if trial_result is better than current best using simple comparison."""
         if not self.optimizer.objectives:
             return True
+
+        weighted_schema = self._weighted_selection_schema()
+        if weighted_schema is not None:
+            # Honor declared ObjectiveSchema weights in live incumbent
+            # tracking (issue #1682) via the shared objectives.py scorer.
+            return self._weighted_is_better(weighted_schema, trial_result)
 
         primary_objective = self.optimizer.objectives[0]
         new_score_value = coerce_finite_objective_score(
@@ -3533,6 +3594,9 @@ class OptimizationOrchestrator:
             certified_config=certified_config,
             certified_score=certified_score,
             objective_orientations=_obj_orientations,
+            # Weighted-selection gating happens inside the selector; schemas
+            # without meaningful weights keep legacy ranking (issue #1682).
+            objective_schema=self.objective_schema,
         )
         best_config = selection.best_config
         best_score = selection.best_score
