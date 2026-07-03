@@ -6,6 +6,47 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-03
+
+### Added
+- `SemanticSaturationStopCondition` rebuilt from the shipped schema plan
+  (FR-SDK-SEMANTIC-SATURATION-V1).
+- Surrogate (pre-screen) evaluator: a cheap second scorer over captured
+  outputs, with an e2e co-evolution demo in mock mode.
+- Smart-pruning producer wired end-to-end: per-example pruning is reachable
+  from the SDK, with real per-example accuracy threaded into pruning progress
+  and live-e2e-confirmed correctness/durability fixes.
+- `list_sessions()` with typed `SessionSummary`; `delete_session` defaults to
+  non-destructive and `cascade=True` now calls the backend DELETE.
+- Experiment group analytics client.
+
+### Changed
+- Deprecation warnings for the legacy session contract and the
+  `edge_analytics` wire value (now `local`).
+- Self-describing default experiment names.
+- Real streaming token-cost accounting with a plausibility clamp on
+  self-reported costs; `budget.max_cost_usd` is sent on typed session create
+  so the backend cost cap arms.
+
+### Fixed
+- Abort on systematic provider failures instead of reporting fake
+  convergence; fail fast when the optimizer is unavailable instead of
+  hanging.
+- Offline-sync finalization is status-aware and skips terminal non-COMPLETED
+  experiments; sync CLI surfaces terminal-skip warnings.
+- Trial-results table no longer double-scales 0-100 metrics; cost capture
+  works when the config has no `model` key.
+- `FunctionDescriptor` identity, metric batching, and audit-alert
+  ratchet-surfaced bugs.
+
+### Security
+- `RestrictedUnpickler` pinned to a precise (module, name) allowlist,
+  closing a pickle deserialization RCE vector.
+- CLI login rate limiting enforced; file-read containment for CWE-23.
+- Sensitive tuned config values are redacted on the privacy-mode submission
+  path; safety-sensitive-key blocking is non-bypassable on best-config
+  drift; CI-approval token expiry compared in UTC.
+
 ## [0.18.0] - 2026-06-27
 
 ### Added
