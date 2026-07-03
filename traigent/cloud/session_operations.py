@@ -672,6 +672,15 @@ class SessionOperations:
                 session_id, experiment_id, experiment_run_id = session_api_result
                 project_id = getattr(session_api_result, "project_id", None)
                 tenant_id = getattr(session_api_result, "tenant_id", None)
+                # #1683 Bug B: the backend sends the warm-start decision block
+                # in the CREATE response (it is not resent at finalize).
+                # Retain it verbatim so finalize can surface it in result
+                # metadata instead of reporting cold-start defaults.
+                create_warm_start_transfer = getattr(
+                    session_api_result, "warm_start_transfer", None
+                )
+                if not isinstance(create_warm_start_transfer, dict):
+                    create_warm_start_transfer = None
                 owning_context = {
                     key: normalized
                     for key, value in (
@@ -752,6 +761,18 @@ class SessionOperations:
                             "experiment_run_id": experiment_run_id,
                             **owning_context,
                             **(metadata or {}),
+                            # After **(metadata or {}) so the backend's CREATE
+                            # response block always wins over any inbound
+                            # request metadata of the same name (#1683 Bug B).
+                            **(
+                                {
+                                    "warm_start_transfer": dict(
+                                        create_warm_start_transfer
+                                    )
+                                }
+                                if create_warm_start_transfer is not None
+                                else {}
+                            ),
                         },
                     )
 
@@ -1271,6 +1292,24 @@ class SessionOperations:
             if isinstance(backend_metadata, dict)
             else None
         )
+        # #1683 Bug B: the backend communicates the warm-start decision block
+        # in the session-CREATE response and does not resend it at finalize.
+        # create_session retained that block in the active session's metadata;
+        # use it to fill the gap when the finalize payload carries none. A
+        # finalize-time block always wins verbatim (no per-key merging — the
+        # surfaced block must be exactly one backend-sent payload).
+        create_warm_start_transfer = (
+            session.metadata.get("warm_start_transfer") if session else None
+        )
+        effective_warm_start_transfer = (
+            backend_warm_start_transfer
+            if isinstance(backend_warm_start_transfer, dict)
+            else (
+                create_warm_start_transfer
+                if isinstance(create_warm_start_transfer, dict)
+                else None
+            )
+        )
 
         summary_fields: list[str] = []
 
@@ -1374,9 +1413,11 @@ class SessionOperations:
                 # Pass the backend's opaque, IP-safe warm-start transfer block
                 # (transfer_mode / refused_reason / search_space_overlap / ...)
                 # through so the SDK can surface result.metadata.warm_start_transfer.
+                # Finalize-time block wins; the CREATE-time block fills the gap
+                # when finalize carries none (#1683 Bug B).
                 **(
-                    {"warm_start_transfer": backend_warm_start_transfer}
-                    if isinstance(backend_warm_start_transfer, dict)
+                    {"warm_start_transfer": dict(effective_warm_start_transfer)}
+                    if isinstance(effective_warm_start_transfer, dict)
                     else {}
                 ),
             },

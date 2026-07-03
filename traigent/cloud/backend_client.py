@@ -24,7 +24,7 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
-from traigent.cloud.api_operations import ApiOperations
+from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import AuthenticationError, _build_api_key_auth_headers
 from traigent.cloud.backend_bridges import SDKBackendBridge, SessionExperimentMapping
 from traigent.cloud.backend_bridges import bridge as _bridge
@@ -2193,11 +2193,16 @@ class BackendIntegratedClient:
 
     async def _create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
-    ) -> tuple[str, str, str]:
+    ) -> TraigentSessionApiResult:
         """Create a Traigent optimization session using the new session endpoints.
+
+        Returns the typed session-CREATE result (a 3-tuple of session /
+        experiment / run ids, plus owning-context and warm_start_transfer
+        attributes — issue #1683 Bug B: the warm-start decision arrives at
+        CREATE time and must not be narrowed away here).
         Delegates to api_operations module."""
         return cast(
-            tuple[str, str, str],
+            TraigentSessionApiResult,
             await self._api_ops.create_traigent_session_via_api(session_request),
         )
 

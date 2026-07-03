@@ -123,18 +123,43 @@ class TestRuntimeGridPolicyRecompute:
         assert recomputed is stored
         assert recomputed.intent is ExecutionIntent.CLOUD_BRAIN
 
-    def test_runtime_smart_override_keeps_cloud(self) -> None:
-        """A smart runtime override on an auto wrapper is NOT regressed to local.
+    def test_runtime_smart_override_reresolves_to_cloud_required(self) -> None:
+        """A smart runtime override on an ``auto`` wrapper re-resolves to
+        ``CLOUD_REQUIRED`` (issue #1681).
 
-        The recompute is deliberately narrow (only ``grid``/``random`` flip to
-        local); a smart override keeps the stored cloud-capable policy and is
-        routed/validated downstream as before — never local.
+        The construction-time ``auto`` policy is ``CLOUD_BRAIN`` (managed-to-
+        local fallback allowed). A runtime ``optimize(algorithm="optuna")``
+        must NOT reuse that laxer policy verbatim — a smart algorithm demands
+        the fallback-forbidden ``CLOUD_REQUIRED`` semantics so an unavailable
+        managed path fails closed instead of silently degrading to local.
+        Still cloud, never local.
         """
         opt_func = _auto_optimized_function()
         stored = opt_func.execution_policy
         recomputed = opt_func._policy_for_runtime_algorithm(stored, "optuna")
-        assert recomputed is stored
+        assert recomputed is not None
+        assert recomputed is not stored
+        assert recomputed.algorithm == "optuna"
+        assert recomputed.intent is ExecutionIntent.CLOUD_REQUIRED
         assert recomputed.intent is not ExecutionIntent.LOCAL_ONLY
+
+    @pytest.mark.parametrize(
+        "smart_algorithm",
+        ["bayesian", "tpe", "cmaes", "nsga2", "optuna", "optuna_tpe", "optuna_cmaes"],
+    )
+    def test_every_smart_runtime_override_is_cloud_required(
+        self, smart_algorithm: str
+    ) -> None:
+        """Each smart runtime override re-resolves to fallback-forbidden
+        ``CLOUD_REQUIRED`` — never inherits the laxer ``CLOUD_BRAIN`` policy of
+        the construction-time ``auto`` default (issue #1681)."""
+        opt_func = _auto_optimized_function()
+        recomputed = opt_func._policy_for_runtime_algorithm(
+            opt_func.execution_policy, smart_algorithm
+        )
+        assert recomputed is not None
+        assert recomputed.algorithm == smart_algorithm
+        assert recomputed.intent is ExecutionIntent.CLOUD_REQUIRED
 
     def test_runtime_unknown_algorithm_keeps_stored_policy(self) -> None:
         """An unknown runtime algorithm is NOT validated/rejected by the
