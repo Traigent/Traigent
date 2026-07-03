@@ -524,8 +524,18 @@ class TestBackendSessionManagerTrialSubmission:
         value (e.g. a fitted threshold) must never ride to the backend, and
         the backend's create-time key-subset validation would reject it
         anyway (silently voiding the trial record)."""
-        backend_session_manager._optimizer.config_space = {"variant": ["a", "b"]}
-        mock_trial_result.config = {"variant": "a", "threshold": 0.7}
+        sentinel = "SENTINEL-PII-8842"
+        backend_session_manager._optimizer.config_space = {
+            "system_prompt": [sentinel],
+            "temperature": [0.7],
+            "variant": ["a", "b"],
+        }
+        mock_trial_result.config = {
+            "system_prompt": sentinel,
+            "temperature": 0.7,
+            "variant": "a",
+            "threshold": 0.7,
+        }
         mock_backend_client.request_trial_slot = AsyncMock(
             return_value="trial_backend_minted_3"
         )
@@ -539,10 +549,45 @@ class TestBackendSessionManagerTrialSubmission:
         )
 
         kwargs = mock_backend_client._submit_trial_result_via_session.call_args.kwargs
-        assert kwargs["config"] == {"variant": "a"}
+        assert kwargs["config"] == {
+            "system_prompt": sentinel,
+            "temperature": 0.7,
+            "variant": "a",
+        }
         assert "threshold" not in kwargs["config"]  # P8 canary
         # the LOCAL trial result keeps its full resolved view
-        assert mock_trial_result.config == {"variant": "a", "threshold": 0.7}
+        assert mock_trial_result.config == {
+            "system_prompt": sentinel,
+            "temperature": 0.7,
+            "variant": "a",
+            "threshold": 0.7,
+        }
+
+    @pytest.mark.asyncio
+    async def test_privacy_enabled_skips_default_remote_trial_submission(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
+    ):
+        """Privacy-enabled runs must not reach the unredacted default submit path."""
+        traigent_config.privacy_enabled = True
+        mock_trial_result.config = {
+            "system_prompt": "SENTINEL-PII-8842",
+            "temperature": 0.7,
+        }
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        mock_backend_client.request_trial_slot.assert_not_awaited()
+        mock_backend_client._submit_trial_result_via_session.assert_not_awaited()
+        assert not backend_session_manager.is_trial_backend_acknowledged(
+            "test-session-id", "trial-123"
+        )
 
     @pytest.mark.asyncio
     async def test_slot_allocated_but_submit_failed_is_never_attestable(

@@ -1233,6 +1233,16 @@ class BackendSessionManager:
 
         status = map_status_to_wire(trial_result.status.value, endpoint="config_run")
 
+        if bool(getattr(self._traigent_config, "privacy_enabled", False)):
+            logger.warning(
+                "Skipping default backend trial submission for privacy-enabled "
+                "session %s trial %s; use the privacy summary-stats submission "
+                "path for remote tracking.",
+                session_id,
+                trial_result.trial_id,
+            )
+            return None
+
         try:
             # The backend binds a result to a session by the configuration_run
             # id IT minted (via next-trial). A client-hashed id 404s with
