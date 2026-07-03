@@ -760,18 +760,6 @@ class PerformanceForecaster:
         else:
             avg_score = 0.5
 
-        # Check for missing metrics and add warnings
-        warnings = {}
-        if (
-            isinstance(config_or_config_history, dict)
-            and "metrics" in config_or_config_history
-        ):
-            metrics = config_or_config_history["metrics"]
-            expected_metrics = ["accuracy", "cost", "latency"]
-            missing = [m for m in expected_metrics if m not in metrics]
-            if missing:
-                warnings["missing_metrics"] = missing
-
         result = {
             "expected_improvement": 0.05,
             "confidence": 0.7,
@@ -779,9 +767,6 @@ class PerformanceForecaster:
             "recommendation": "Consider collecting more performance data",
             "predicted_score": avg_score,
         }
-
-        if warnings:
-            result["warnings"] = warnings
 
         return result
 

@@ -811,8 +811,8 @@ class OptimizationOrchestrator:
             self._best_trial_cached = best_trial
             return best_trial
 
-        # If no objectives defined, return last trial
-        return rankable_trials[-1] if rankable_trials else None
+        # If no objectives are defined, rankable_trials is known non-empty.
+        return rankable_trials[-1]
 
     def _get_config_hash(self, config: dict[str, Any] | None) -> str:
         """Generate a hash for a configuration to track metrics across trials."""

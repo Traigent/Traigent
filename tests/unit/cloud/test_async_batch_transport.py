@@ -76,3 +76,18 @@ async def test_transport_close_completes_during_concurrent_submit_and_flush():
     assert close_result.items_pending == 0
     assert close_result.failed_batches == 0
     assert close_result.items_dropped == 0
+
+
+@pytest.mark.asyncio
+async def test_flush_timer_propagates_cancellation():
+    async def sender(payloads: list[dict[str, int]]) -> dict[str, list[str]]:
+        await asyncio.sleep(1)
+        return {"warnings": []}
+
+    transport = AsyncBatchTransport(sender, batch_size=10, max_buffer_age=10.0)
+    timer_task = asyncio.create_task(transport._flush_after_delay())
+
+    timer_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await timer_task

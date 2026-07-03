@@ -65,25 +65,7 @@ class SafePath:
         Raises:
             PathTraversalError: If the resolved path escapes base_dir
         """
-        # Convert to Path and resolve
-        target = Path(path)
-
-        # If path is relative, join with base_dir
-        if not target.is_absolute():
-            target = self.base_dir / target
-
-        # Resolve to absolute path (follows symlinks, normalizes ..)
-        resolved = target.resolve()
-
-        # Security check: ensure resolved path is within base_dir
-        try:
-            resolved.relative_to(self.base_dir)
-        except ValueError as e:
-            raise PathTraversalError(
-                f"Path traversal detected: '{path}' resolves outside base directory"
-            ) from e
-
-        return resolved
+        return _resolve_path_in_base(path, self.base_dir)
 
     def is_safe(self, path: str | Path) -> bool:
         """Check if a path is safe (within base_dir) without raising.
