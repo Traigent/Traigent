@@ -53,14 +53,30 @@ def removed_legacy_execution_mode_message(surface: str = "edge_analytics") -> st
 
 
 class _ExecutionModeMeta(EnumType):
-    """Hard-fail on the removed ``EDGE_ANALYTICS`` member alias."""
+    """Hard-fail on the removed ``EDGE_ANALYTICS`` member alias.
 
-    def __getattribute__(cls, name: str) -> Any:
+    The interception lives in ``__getattr__`` (the attribute-miss path), not
+    ``__getattribute__``: on Python 3.11 ``EnumType`` still defines a
+    ``__getattr__`` fallback, so an ``AttributeError`` raised from
+    ``__getattribute__`` gets swallowed and re-raised as a bare
+    ``AttributeError(name)``, losing the migration message. ``__getattr__``
+    is the final stop on both 3.11 and 3.12, so the message survives on
+    either interpreter.
+    """
+
+    def __getattr__(cls, name: str) -> Any:
         if name == "EDGE_ANALYTICS":
             raise AttributeError(
                 removed_legacy_execution_mode_message("ExecutionMode.EDGE_ANALYTICS")
             )
-        return super().__getattribute__(name)
+        # Python 3.11: EnumType.__getattr__ still resolves some lookups and
+        # must stay in the chain. Python 3.12+: EnumType has no __getattr__
+        # (absent from typeshed too, hence getattr instead of super().__getattr__),
+        # so a miss is a plain miss.
+        super_getattr = getattr(super(), "__getattr__", None)
+        if super_getattr is None:
+            raise AttributeError(name)
+        return super_getattr(name)
 
     def __getitem__(cls, name: str) -> Any:
         if name == "EDGE_ANALYTICS":
