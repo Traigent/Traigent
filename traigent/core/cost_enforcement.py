@@ -184,7 +184,11 @@ def _check_approval_token_path(
                         config.limit = max(config.limit, token_limit)
                         logger.debug(f"Token limit: ${token_limit:.2f}")
                 except (ValueError, IndexError):
-                    logger.warning(f"Invalid token format: {content}")
+                    logger.warning(
+                        "Invalid approval token format: length=%d, contains_limit=%s",
+                        len(content),
+                        ":" in content,
+                    )
             return True
     except OSError as e:
         logger.warning(f"Failed to read approval token: {e}")
