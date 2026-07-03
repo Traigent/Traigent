@@ -16,7 +16,7 @@ To publish the run:
     TRAIGENT_API_KEY=<key-with-experiments-write> TRAIGENT_MOCK_LLM=true \
       python -m traigent.examples.quickstart.publish_and_verify
 
-After a key-backed run completes, open https://app.traigent.ai and look for the
+After a key-backed run completes, open {portal_url} and look for the
 experiment named "Quickstart Publish and Verify". If the backend returned a
 direct URL, the script prints it.
 """
@@ -27,6 +27,11 @@ import asyncio
 import os
 import sys
 from typing import Any
+
+from traigent.examples._portal import PORTAL_URL
+
+if __doc__ is not None:
+    __doc__ = __doc__.format(portal_url=PORTAL_URL)
 
 EXPERIMENT_NAME = "Quickstart Publish and Verify"
 CONFIG_SPACE = {
@@ -118,7 +123,7 @@ def _print_portal_verification(result: Any) -> None:
             print(f"[traigent] Open this portal run: {cloud_url}")
         else:
             print(
-                "[traigent] Open https://app.traigent.ai and look for "
+                f"[traigent] Open {PORTAL_URL} and look for "
                 f'experiment "{EXPERIMENT_NAME}".'
             )
         if experiment_id:

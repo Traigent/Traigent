@@ -20,8 +20,8 @@ Dataset note:
 
     For production-scale text2SQL benchmarking, use the public SPIDER dataset
     (https://yale-lily.github.io/spider) — download Spider 1.0, convert rows
-    to the same {"question": ..., "expected": ...} JSONL format (one object
-    per line), and pass the path via eval_dataset= in the @traigent.optimize
+    to the same {"input": ..., "expected": ...} JSONL format (one object per
+    line), and pass the path via eval_dataset= in the @traigent.optimize
     decorator or as a CLI argument. SPIDER is released under a non-commercial
     research license; do not redistribute modified copies.
 """

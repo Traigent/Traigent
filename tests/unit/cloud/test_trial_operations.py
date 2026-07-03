@@ -1,6 +1,7 @@
 """Tests for trial_operations.py - particularly new code paths."""
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -516,6 +517,213 @@ class TestSummaryStatsValidation:
 
         assert result is False
         mock_client.auth_manager.augment_headers.assert_not_awaited()
+        mock_aiohttp.ClientSession.assert_not_called()
+
+
+class TestPrivacyConfigRedactionSubmission:
+    """Privacy-mode config redaction must apply to the actual POST payload."""
+
+    @staticmethod
+    def _make_ops(privacy_enabled: bool = False) -> TrialOperations:
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.traigent_config = SimpleNamespace(privacy_enabled=privacy_enabled)
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="completed")
+        mock_client._normalize_execution_mode = Mock(return_value="hybrid")
+        mock_client._sanitize_error_message = Mock(return_value="")
+        return TrialOperations(mock_client)
+
+    @staticmethod
+    def _install_post_mock(mock_aiohttp: Mock, status: int = 201) -> Mock:
+        mock_response = Mock()
+        mock_response.status = status
+        mock_response.text = AsyncMock(return_value="")
+
+        mock_post_ctx = AsyncMock()
+        mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_post_ctx)
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+        mock_aiohttp.ClientTimeout = Mock()
+        return mock_session
+
+    @pytest.mark.asyncio
+    async def test_privacy_summary_stats_redacts_sensitive_config_values(
+        self,
+    ) -> None:
+        sentinel = "SENTINEL-PII-8842"
+        ops = self._make_ops()
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_session = self._install_post_mock(mock_aiohttp)
+
+            result = await ops.submit_summary_stats(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"system_prompt": sentinel, "temperature": 0.7},
+                summary_stats={"metrics": {"accuracy": 0.95}},
+                status="completed",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert "system_prompt" in payload["config"]
+        assert payload["config"]["system_prompt"] == "[REDACTED:17 chars]"
+        assert payload["config"]["temperature"] == 0.7
+        assert sentinel not in str(payload)
+
+    @pytest.mark.asyncio
+    async def test_privacy_summary_stats_redacts_unknown_string_config_keys(
+        self,
+    ) -> None:
+        sentinel = "SENTINEL-PII-8842"
+        ops = self._make_ops()
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_session = self._install_post_mock(mock_aiohttp)
+
+            result = await ops.submit_summary_stats(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={
+                    "persona_instructions": sentinel,
+                    "temperature": 0.2,
+                    "enabled": True,
+                    "optional": None,
+                },
+                summary_stats={"metrics": {"accuracy": 0.95}},
+                status="completed",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["config"]["persona_instructions"] == "[REDACTED:17 chars]"
+        assert payload["config"]["temperature"] == 0.2
+        assert payload["config"]["enabled"] is True
+        assert payload["config"]["optional"] is None
+        assert sentinel not in str(payload)
+
+    @pytest.mark.asyncio
+    async def test_privacy_trial_start_redacts_config_payload(self) -> None:
+        sentinel = "SENTINEL-PII-8842"
+        ops = self._make_ops(privacy_enabled=True)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_session = self._install_post_mock(mock_aiohttp)
+
+            result = await ops.register_trial_start(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"system_prompt": sentinel, "temperature": 0.7},
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["config"]["system_prompt"] == "[REDACTED:17 chars]"
+        assert payload["config"]["temperature"] == 0.7
+        assert sentinel not in str(payload)
+
+    @pytest.mark.asyncio
+    async def test_default_trial_submission_keeps_tuned_config_values(
+        self,
+    ) -> None:
+        sentinel = "SENTINEL-PII-8842"
+        ops = self._make_ops()
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_session = self._install_post_mock(mock_aiohttp)
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"system_prompt": sentinel, "temperature": 0.7},
+                metrics={"accuracy": 0.95},
+                status="completed",
+                execution_mode="hybrid",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["config"]["system_prompt"] == sentinel
+        assert payload["config"]["temperature"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_privacy_summary_stats_fails_closed_when_redaction_fails(
+        self,
+    ) -> None:
+        ops = self._make_ops()
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(
+                TrialOperations,
+                "_redact_privacy_config",
+                side_effect=RuntimeError("redaction failed"),
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            result = await ops.submit_summary_stats(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"system_prompt": "SENTINEL-PII-8842"},
+                summary_stats={"metrics": {"accuracy": 0.95}},
+                status="completed",
+            )
+
+        assert result is False
         mock_aiohttp.ClientSession.assert_not_called()
 
 

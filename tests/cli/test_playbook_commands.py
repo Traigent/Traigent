@@ -82,3 +82,14 @@ def test_playbook_status_renders_all_five_stages(tmp_path: Path) -> None:
     assert status_result.exit_code == 0
     for stage_name in ("dataset", "metric", "evaluator", "optimize", "gate"):
         assert stage_name in status_result.output
+
+
+def test_playbook_validate_rejects_non_yaml_path(tmp_path: Path) -> None:
+    path = tmp_path / "playbook.txt"
+    path.write_text("agent: {}\nstages: {}\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["playbook", "validate", "--path", str(path)])
+
+    assert result.exit_code != 0
+    assert "must end with .yaml or .yml" in result.output

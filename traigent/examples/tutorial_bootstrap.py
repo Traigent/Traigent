@@ -12,11 +12,11 @@ import sys
 from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 
+from traigent.examples._portal import PORTAL_API_KEYS_URL
 from traigent.testing import enable_mock_mode_for_quickstart
 
 _FALSEY = {"0", "false", "no", "off"}
 _TRUTHY = {"1", "true", "yes", "on"}
-_PORTAL_SIGNUP_URL = "https://app.traigent.ai"
 
 
 def _normalized_env_flag(value: str | None) -> bool | None:
@@ -74,7 +74,7 @@ def configure_tutorial_mock_mode(
         print(
             f"[traigent] {tutorial_name} is running in local mock mode. "
             "Set TRAIGENT_OFFLINE_MODE=false and TRAIGENT_API_KEY "
-            f"(get one at {_PORTAL_SIGNUP_URL}) to sync results to the portal.",
+            f"(get one at {PORTAL_API_KEYS_URL}) to sync results to the portal.",
             file=sys.stderr,
         )
         active_env["TRAIGENT_OFFLINE_MODE"] = "true"

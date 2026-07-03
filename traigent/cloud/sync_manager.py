@@ -45,6 +45,7 @@ VALID_SYNC_AGENT_TYPE_IDS = frozenset(
 DEFAULT_SYNC_AGENT_TYPE_ID = "completion"
 _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
+TERMINAL_NON_COMPLETED_EXPERIMENT_STATUSES = frozenset({"FAILED", "CANCELLED"})
 
 
 def build_experiment_url(
@@ -791,6 +792,16 @@ class SyncManager:
         # can resume and finish it.
         if configuration_result["success"]:
             finalize_result = self._finalize_experiment(experiment_id)
+            finalization_status = finalize_result.get("classification")
+            if finalization_status:
+                sync_result["finalization_status"] = finalization_status
+            current_status = finalize_result.get("current_status")
+            if current_status:
+                sync_result["finalization_current_status"] = current_status
+            if finalize_result.get("skipped"):
+                sync_result.setdefault("warnings", []).append(
+                    f"Experiment finalization skipped: {finalize_result['message']}"
+                )
             if not finalize_result["success"]:
                 sync_result["errors"].append(
                     f"Experiment finalization failed: {finalize_result['error']}"
@@ -1079,21 +1090,81 @@ class SyncManager:
           1. POST /experiments  (status="PENDING")
           2. POST /experiment-runs/{id}/runs
           3. POST /configuration-runs/runs/{run_id}/configurations  (N times)
-          4. PUT  /experiments/{id}  {"status":"COMPLETED"}   <-- this method
-        The PUT COMPLETED guard passes once >=1 experiment_run exists
-        (experiment_routes.py ~1108-1126).
+          4. GET  /experiments/{id}  (status preflight)
+          5. PUT  /experiments/{id}  {"status":"COMPLETED"}   <-- this method
+        The PUT COMPLETED guard passes once >=1 experiment_run exists, but the
+        transition guard rejects illegal terminal edges. A prior live/hybrid
+        owner may already have driven a deterministic experiment id to a
+        terminal non-COMPLETED state; offline sync must not issue the illegal
+        direct terminal -> COMPLETED PUT.
         """
         self._raise_if_backend_egress_disabled("finalize experiment")
         try:
+            current_status: str | None = None
+            status_response = self._session.get(
+                f"{self.base_url}/experiments/{experiment_id}",
+                timeout=self._request_timeout,
+            )
+            if status_response.status_code == 200:
+                payload = self._response_json(status_response)
+                current_status = self._extract_experiment_status(payload)
+                if not current_status:
+                    return {
+                        "success": False,
+                        "error": "Experiment status lookup response did not include status",
+                    }
+            elif status_response.status_code != 404:
+                return {
+                    "success": False,
+                    "error": (
+                        "Experiment status lookup failed: "
+                        f"HTTP {status_response.status_code}: {status_response.text}"
+                    ),
+                }
+            else:
+                logger.warning(
+                    "Could not preflight experiment status for %s before finalization "
+                    "(HTTP 404); continuing with legacy finalize path",
+                    experiment_id,
+                )
+
+            if current_status == "COMPLETED":
+                return {
+                    "success": True,
+                    "classification": "already_completed",
+                    "current_status": current_status,
+                    "message": f"Experiment {experiment_id} is already COMPLETED",
+                }
+
+            if current_status in TERMINAL_NON_COMPLETED_EXPERIMENT_STATUSES:
+                message = (
+                    f"Experiment {experiment_id} is {current_status}; offline sync "
+                    "will not advance it to COMPLETED because this SDK sync does "
+                    "not own terminal-state recovery transitions"
+                )
+                logger.warning(message)
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "classification": "skipped_terminal_not_owned",
+                    "current_status": current_status,
+                    "message": message,
+                }
+
             response = self._session.put(
                 f"{self.base_url}/experiments/{experiment_id}",
                 json={"status": "COMPLETED"},
                 timeout=self._request_timeout,
             )
             if response.status_code in [200, 204]:
-                return {"success": True}
+                return {
+                    "success": True,
+                    "classification": "completed",
+                    "current_status": current_status,
+                }
             return {
                 "success": False,
+                "current_status": current_status,
                 "error": f"HTTP {response.status_code}: {response.text}",
             }
         except Exception as e:
@@ -1307,6 +1378,26 @@ class SyncManager:
         payload = self._response_json(response)
         if isinstance(payload, Mapping):
             return self._extract_resource_id(payload)
+        return None
+
+    @staticmethod
+    def _extract_experiment_status(payload: Any) -> str | None:
+        """Extract a canonical experiment status from common response envelopes."""
+        if not isinstance(payload, Mapping):
+            return None
+
+        value = payload.get("status")
+        if value is not None:
+            normalized = str(getattr(value, "value", value)).strip().upper()
+            if normalized:
+                return normalized
+
+        for key in ("data", "experiment", "item", "result"):
+            nested = payload.get(key)
+            status = SyncManager._extract_experiment_status(nested)
+            if status:
+                return status
+
         return None
 
     @staticmethod

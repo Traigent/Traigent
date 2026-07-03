@@ -3,6 +3,7 @@
 import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -12,6 +13,7 @@ from traigent.cloud.client import (
 )
 from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 from traigent.cloud.privacy_operations import PrivacyOperations
+from traigent.cloud.trial_operations import TrialOperations
 
 
 class FakeLock:
@@ -35,6 +37,7 @@ class DummyClient:
         self._active_sessions: dict[str, OptimizationSession] = {}
         self._max_active_sessions = 5
         self._active_sessions_lock = lock
+        self.submitted_trial_results: list[tuple[tuple, dict]] = []
         self.session_bridge = SimpleNamespace(
             create_session_mapping=lambda **kwargs: None,
             get_session_mapping=lambda session_id: SimpleNamespace(
@@ -66,6 +69,7 @@ class DummyClient:
         return None
 
     async def _submit_trial_result_via_session(self, *args, **kwargs):
+        self.submitted_trial_results.append((args, kwargs))
         return True
 
 
@@ -158,6 +162,76 @@ async def test_submit_privacy_trial_results_increments_completed_trials():
     assert success is True
     assert client._active_sessions["session-1"].completed_trials == 2
     assert lock.enter_count == 4
+
+
+@pytest.mark.asyncio
+async def test_submit_privacy_trial_results_redacts_config_before_delegate():
+    """PrivacyOperations must not forward raw tuned string config values."""
+    lock = FakeLock()
+    client = DummyClient(lock)
+    ops = PrivacyOperations(client)
+    sentinel = "SENTINEL-PII-8842"
+
+    client._active_sessions["session-1"] = OptimizationSession(
+        session_id="session-1",
+        function_name="test",
+        configuration_space={},
+        objectives=["accuracy"],
+        max_trials=5,
+        status=OptimizationSessionStatus.ACTIVE,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    success = await ops.submit_privacy_trial_results(
+        session_id="session-1",
+        trial_id="trial-1",
+        config={"persona_instructions": sentinel, "temperature": 0.2},
+        metrics={"accuracy": 0.9},
+        duration=1.0,
+    )
+
+    assert success is True
+    forwarded_config = client.submitted_trial_results[-1][0][2]
+    assert "persona_instructions" in forwarded_config
+    assert forwarded_config["persona_instructions"] == "[REDACTED:17 chars]"
+    assert forwarded_config["temperature"] == 0.2
+    assert sentinel not in str(forwarded_config)
+
+
+@pytest.mark.asyncio
+async def test_submit_privacy_trial_results_fails_closed_when_redaction_fails():
+    """A privacy redaction failure must not fall back to raw config submission."""
+    lock = FakeLock()
+    client = DummyClient(lock)
+    ops = PrivacyOperations(client)
+
+    client._active_sessions["session-1"] = OptimizationSession(
+        session_id="session-1",
+        function_name="test",
+        configuration_space={},
+        objectives=["accuracy"],
+        max_trials=5,
+        status=OptimizationSessionStatus.ACTIVE,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    with patch.object(
+        TrialOperations,
+        "_redact_privacy_config",
+        side_effect=RuntimeError("redaction failed"),
+    ):
+        success = await ops.submit_privacy_trial_results(
+            session_id="session-1",
+            trial_id="trial-1",
+            config={"system_prompt": "SENTINEL-PII-8842"},
+            metrics={"accuracy": 0.9},
+            duration=1.0,
+        )
+
+    assert success is False
+    assert client.submitted_trial_results == []
 
 
 @pytest.mark.asyncio

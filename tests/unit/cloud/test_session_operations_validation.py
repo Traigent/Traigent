@@ -139,6 +139,113 @@ async def test_finalize_session_uses_lock(monkeypatch):
     assert lock.enter_count == 1  # Lock entered exactly once for finalization
 
 
+@pytest.mark.asyncio
+async def test_delete_session_cascade_calls_backend_delete():
+    client = FakeClient()
+    client.backend_config.api_base_url = "https://backend.example/api/v1"
+    client.session_bridge._session_mappings = {"session-1": object()}
+
+    response = AsyncMock()
+    response.status = 204
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+
+    http_session = SimpleNamespace(delete=MagicMock(return_value=response))
+    client._ensure_session = AsyncMock(return_value=http_session)
+
+    ops = SessionOperations(client)
+
+    result = await ops.delete_session("session-1", cascade=True)
+
+    assert result is True
+    client._ensure_session.assert_awaited_once()
+    http_session.delete.assert_called_once_with(
+        "https://backend.example/api/v1/sessions/session-1",
+        params={"cascade": "true"},
+    )
+    assert "session-1" not in client.session_bridge._session_mappings
+
+
+@pytest.mark.asyncio
+async def test_delete_session_cascade_success_returns_true_without_local_mapping():
+    client = FakeClient()
+    client.backend_config.api_base_url = "https://backend.example/api/v1"
+    client.session_bridge._session_mappings = {}
+    client.session_bridge.get_session_mapping = MagicMock(return_value=None)
+
+    response = AsyncMock()
+    response.status = 204
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+
+    http_session = SimpleNamespace(delete=MagicMock(return_value=response))
+    client._ensure_session = AsyncMock(return_value=http_session)
+
+    ops = SessionOperations(client)
+
+    result = await ops.delete_session("session-1", cascade=True)
+
+    assert result is True
+    client._ensure_session.assert_awaited_once()
+    http_session.delete.assert_called_once_with(
+        "https://backend.example/api/v1/sessions/session-1",
+        params={"cascade": "true"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_session_cascade_non_2xx_returns_false():
+    client = FakeClient()
+    client.backend_config.api_base_url = "https://backend.example/api/v1"
+
+    response = AsyncMock()
+    response.status = 500
+    response.text = AsyncMock(return_value="boom")
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+
+    http_session = SimpleNamespace(delete=MagicMock(return_value=response))
+    client._ensure_session = AsyncMock(return_value=http_session)
+
+    ops = SessionOperations(client)
+
+    result = await ops.delete_session("session-1", cascade=True)
+
+    assert result is False
+    client._ensure_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_session_non_cascade_does_not_call_backend_delete():
+    client = FakeClient()
+    client.session_bridge._session_mappings = {"session-1": object()}
+    client._ensure_session = AsyncMock(side_effect=AssertionError("no HTTP expected"))
+
+    ops = SessionOperations(client)
+
+    await ops.delete_session("session-1", cascade=False)
+
+    client._ensure_session.assert_not_awaited()
+    assert "session-1" in client.session_bridge._session_mappings
+
+
+@pytest.mark.asyncio
+async def test_delete_session_offline_cascade_pops_mapping_without_http(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "true")
+
+    client = FakeClient()
+    client.session_bridge._session_mappings = {"session-1": object()}
+    client._ensure_session = AsyncMock(side_effect=AssertionError("no HTTP expected"))
+
+    ops = SessionOperations(client)
+
+    await ops.delete_session("session-1", cascade=True)
+
+    client._ensure_session.assert_not_awaited()
+    assert "session-1" not in client.session_bridge._session_mappings
+
+
 def test_create_session_tracks_connected_session_locally(monkeypatch):
     client = FakeClient()
     ops = SessionOperations(client)
