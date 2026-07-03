@@ -207,7 +207,9 @@ def _dataset_root_description(dataset_root: Path) -> str:
     env_value = os.getenv(DATASET_ROOT_ENV)
     if env_value:
         return f"{DATASET_ROOT_ENV}={env_value!r} (resolved to {dataset_root})"
-    return f"the current working directory ({dataset_root}); {DATASET_ROOT_ENV} is not set"
+    return (
+        f"the current working directory ({dataset_root}); {DATASET_ROOT_ENV} is not set"
+    )
 
 
 def _dataset_not_found_message(
