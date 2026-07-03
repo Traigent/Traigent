@@ -111,13 +111,18 @@ jobs:
 
       - name: Analyze and enforce quality gate
         run: |
+          # release/hotfix sync PRs: analyze but do not block on new-code metrics (issue #217)
+          WAIT=true
+          case "${{ github.head_ref }}" in
+            release/*|hotfix/*) WAIT=false ;;
+          esac
           sonar-scanner \
             -Dsonar.host.url="${SONAR_HOST_URL}" \
             -Dsonar.token="${SONAR_TOKEN}" \
             -Dsonar.organization= \
             -Dsonar.projectKey=Traigent_Traigent \
             -Dsonar.projectName=Traigent \
-            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.wait="$WAIT" \
             -Dsonar.qualitygate.timeout=300
 
       - name: Scale SonarQube back to zero
