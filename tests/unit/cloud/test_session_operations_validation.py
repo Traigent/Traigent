@@ -155,14 +155,64 @@ async def test_delete_session_cascade_calls_backend_delete():
 
     ops = SessionOperations(client)
 
-    await ops.delete_session("session-1", cascade=True)
+    result = await ops.delete_session("session-1", cascade=True)
 
+    assert result is True
     client._ensure_session.assert_awaited_once()
     http_session.delete.assert_called_once_with(
         "https://backend.example/api/v1/sessions/session-1",
         params={"cascade": "true"},
     )
     assert "session-1" not in client.session_bridge._session_mappings
+
+
+@pytest.mark.asyncio
+async def test_delete_session_cascade_success_returns_true_without_local_mapping():
+    client = FakeClient()
+    client.backend_config.api_base_url = "https://backend.example/api/v1"
+    client.session_bridge._session_mappings = {}
+    client.session_bridge.get_session_mapping = MagicMock(return_value=None)
+
+    response = AsyncMock()
+    response.status = 204
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+
+    http_session = SimpleNamespace(delete=MagicMock(return_value=response))
+    client._ensure_session = AsyncMock(return_value=http_session)
+
+    ops = SessionOperations(client)
+
+    result = await ops.delete_session("session-1", cascade=True)
+
+    assert result is True
+    client._ensure_session.assert_awaited_once()
+    http_session.delete.assert_called_once_with(
+        "https://backend.example/api/v1/sessions/session-1",
+        params={"cascade": "true"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_session_cascade_non_2xx_returns_false():
+    client = FakeClient()
+    client.backend_config.api_base_url = "https://backend.example/api/v1"
+
+    response = AsyncMock()
+    response.status = 500
+    response.text = AsyncMock(return_value="boom")
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+
+    http_session = SimpleNamespace(delete=MagicMock(return_value=response))
+    client._ensure_session = AsyncMock(return_value=http_session)
+
+    ops = SessionOperations(client)
+
+    result = await ops.delete_session("session-1", cascade=True)
+
+    assert result is False
+    client._ensure_session.assert_awaited_once()
 
 
 @pytest.mark.asyncio
