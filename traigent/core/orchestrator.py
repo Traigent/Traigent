@@ -3093,7 +3093,8 @@ class OptimizationOrchestrator:
         * only fires for a genuinely empty run (``len(self._trials) == 0``);
         * only when the resolved policy is ``CLOUD_REQUIRED`` (a smart
           algorithm), never for local/hybrid/cloud-brain runs;
-        * leaves an explicit ``max_trials=0`` no-op run alone;
+        * leaves an explicit ``max_trials<=0`` no-op run alone (mirrors the
+          ``_try_cloud_execution`` guard for non-positive trial budgets);
         * defers to already-owned stop causes (timeout / user cancel / cost
           limit #1684 / vendor or network error) rather than relabeling them.
         """
@@ -3103,7 +3104,7 @@ class OptimizationOrchestrator:
         policy = policy_from_config(self.traigent_config)
         if not policy_is_cloud_required(policy):
             return
-        if self._max_trials == 0:
+        if self._max_trials is not None and self._max_trials <= 0:
             return
         if self._stop_reason in _EMPTY_SMART_RUN_OWNED_STOP_REASONS:
             return

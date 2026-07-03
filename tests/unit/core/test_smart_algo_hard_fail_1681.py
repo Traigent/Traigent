@@ -27,7 +27,9 @@ reasons such as cost_limit/#1684).
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -309,3 +311,110 @@ class TestDecoratorSmartAlgorithmSurface:
         result = await answer.optimize(algorithm="random", max_trials=2)
         assert result.status is OptimizationStatus.COMPLETED
         assert len(result.trials) == 2
+
+
+class TestDecorationTimeSmartAlgorithmRepro:
+    """The issue's LITERAL end-to-end repro: the smart algorithm is requested
+    at DECORATION time (``@traigent.optimize(algorithm="bayesian",
+    offline=False, ...)``), then a plain ``fn.optimize()`` — no runtime
+    override — reaches the managed cloud path, which comes back without a
+    single executed trial. Pre-fix this finalized as a silent COMPLETED with
+    0 trials and ``best_config=None``; it must raise the actionable error."""
+
+    @staticmethod
+    def _smart_wrapper(algorithm: str):
+        @traigent.optimize(
+            algorithm=algorithm,
+            offline=False,
+            eval_dataset=_dataset(),
+            objectives=["accuracy"],
+            configuration_space=_SPACE,
+            injection_mode="parameter",
+        )
+        def answer(text: str, config) -> str:
+            return "ok"
+
+        return answer
+
+    @staticmethod
+    def _fake_backend_client() -> Any:
+        """Minimal run-tracking backend stub (pattern from
+        tests/unit/core/test_execution_policy_execution.py): the tracking
+        session succeeds so the run reaches the managed optimization path."""
+        from traigent.core.session_types import SessionCreationResult
+
+        client = SimpleNamespace(
+            create_session=Mock(
+                return_value=SessionCreationResult.connected("sess-1681")
+            ),
+            get_session_mapping=Mock(
+                return_value=SimpleNamespace(
+                    experiment_id="exp-1681",
+                    experiment_run_id="run-1681",
+                )
+            ),
+            upload_example_features=Mock(return_value=True),
+            submit_result=Mock(),
+            request_trial_slot=AsyncMock(return_value="slot-unused"),
+            _submit_trial_result_via_session=AsyncMock(return_value=True),
+            update_trial_weighted_scores=AsyncMock(return_value=True),
+            finalize_session_sync=Mock(return_value={"status": "completed"}),
+            close=AsyncMock(),
+        )
+        client.auth_manager = SimpleNamespace(has_api_key=lambda: True)
+        client.auth = client.auth_manager
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("algorithm", ["bayesian", "nsga2"])
+    async def test_plain_optimize_raises_when_managed_run_is_empty(
+        self, algorithm: str, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        # Online + portal key: the issue's production condition (the suite's
+        # offline default would short-circuit before the managed path).
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+
+        answer = self._smart_wrapper(algorithm)
+        # Precondition: decoration-time smart algorithm resolves to the
+        # fallback-forbidden managed policy.
+        assert answer.execution_policy.intent is ExecutionIntent.CLOUD_REQUIRED
+        assert answer.execution_policy.algorithm == algorithm
+
+        def _empty_managed_optimizer(
+            config_space: dict[str, Any], objectives: list[str], **_kwargs: Any
+        ) -> MockOptimizer:
+            # The managed/cloud optimizer never suggests a trial — the exact
+            # "managed path is not a first-party service yet" emptiness the
+            # issue reproduces end-to-end.
+            optimizer = MockOptimizer(config_space, objectives)
+            optimizer.set_max_suggestions(0)
+            return optimizer
+
+        with (
+            patch(
+                "traigent.optimizers.interactive_optimizer.InteractiveOptimizer",
+                side_effect=_empty_managed_optimizer,
+            ) as MockInteractive,
+            patch("traigent.cloud.client.TraigentCloudClient"),
+            patch(
+                "traigent.core.backend_session_manager.BackendSessionManager"
+                ".create_backend_client",
+                return_value=self._fake_backend_client(),
+            ),
+        ):
+            with pytest.raises(OptimizationError) as excinfo:
+                await answer.optimize()
+
+        # The managed path WAS entered (this is the cloud-required route) …
+        MockInteractive.assert_called_once()
+        # … and its emptiness surfaced as the actionable hard fail, never as
+        # a 0-trial COMPLETED result.
+        message = str(excinfo.value)
+        assert f"'{algorithm}'" in message
+        assert "managed" in message
+        assert "without executing a single trial" in message
+        assert "'grid'" in message
+        assert "'random'" in message
+        assert "backend" in message
