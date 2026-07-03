@@ -4604,7 +4604,11 @@
 - Trial suggested/intermediate/completed timestamps
 - Trial status (completed, failed, pruned)
 - Trial duration
-- Trial configuration (parameter values being tested, with internal keys stripped)
+- Trial configuration. On the default portal-backed path, this includes tuned
+  config-space key/value pairs being tested, with internal keys stripped. If you
+  tune prompt variants or other free-text strings as configuration values, those
+  tuned values are sent on the default path so the portal can display winning
+  configs.
 - Trial metrics (accuracy, cost, latency, etc.)</p>
 <p><strong>Optimization Run Metadata</strong>:
 - Optimization run ID
@@ -4613,14 +4617,15 @@
 - Total optimization duration
 - Result source (<code>cloud_brain</code>, <code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>)
 - Stop conditions triggered
-- Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set <code>TRAIGENT_TVAR_OBSERVATION=off</code> to disable them, or use <code>TRAIGENT_TVAR_OBSERVATION=hashed</code> (default) to hash free-form string values. Only <code>off</code> and <code>hashed</code> are supported; unsupported values fall back to <code>hashed</code>.</p>
+- Content-free tuned-variable observations can include knob names, enum/scalar values, numeric metrics, and aggregate effectuation events for backend optimization. Set <code>TRAIGENT_TVAR_OBSERVATION=off</code> to disable the <code>tvar_observation_v1</code> metadata sub-field, or use <code>TRAIGENT_TVAR_OBSERVATION=hashed</code> (default) to hash free-form string values in that sub-field. Only <code>off</code> and <code>hashed</code> are supported; unsupported values fall back to <code>hashed</code>. This setting does not control the trial <code>config</code> field.</p>
 <p><strong>Performance Metrics</strong>:
 - LLM API response times
 - Token usage per trial
 - Cost per trial (when available)
 - Dataset size and evaluation metrics</p>
 <h3 id="what-is-not-collected">What is NOT Collected<a class="headerlink" href="#what-is-not-collected" title="Permanent link">&para;</a></h3>
-<p>Traigent does <strong>not</strong> collect:</p>
+<p>Outside tuned configuration values explicitly sent on the default portal-backed
+path, Traigent does <strong>not</strong> collect:</p>
 <ul>
 <li><strong>User prompts or inputs</strong></li>
 <li><strong>LLM responses or outputs</strong></li>
@@ -4630,10 +4635,23 @@
 <li><strong>Source code or function implementations</strong></li>
 </ul>
 <h3 id="data-boundary-and-no-egress-runs">Data Boundary and No-Egress Runs<a class="headerlink" href="#data-boundary-and-no-egress-runs" title="Permanent link">&para;</a></h3>
-<p>The default portal-backed path sends configuration identifiers and numeric metrics. It
-does not send dataset example inputs, expected outputs, prompts, responses, or
-example metadata. Use <code>offline=True</code> when your policy requires no Traigent
-backend egress at all:</p>
+<p>The default portal-backed path sends tuned config-space values and numeric
+metrics. This is deliberate: the portal uses those values to display and compare
+winning configs. If a prompt variant, persona instruction, model name, or other
+string is part of the tuned configuration space, the default path sends that
+string value. It does not send dataset example inputs, expected outputs, model
+responses, or example metadata unless you put that content into the tuned
+configuration itself.</p>
+<p>Use privacy-mode redaction when you need backend coordination without sending
+tuned string values. Privacy submissions preserve which keys were tuned, but
+redact sensitive-key values and all string/free-text config values. Numeric,
+boolean, and <code>None</code> config values still pass through. This redaction is gated by
+the run's effective <code>TraigentConfig.privacy_enabled</code> setting, including
+configuration loaded from <code>TRAIGENT_PRIVACY_MODE=true</code> for compatibility. Do not
+use <code>@traigent.optimize(..., privacy_enabled=True)</code> for new code; that decorator
+keyword is deprecated and emits a warning. Use <code>offline=True</code> instead when the
+requirement is no Traigent backend egress.</p>
+<p>Use <code>offline=True</code> when your policy requires no Traigent backend egress at all:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
     <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
@@ -4642,8 +4660,10 @@ backend egress at all:</p>
 </code></pre></div>
 <p>No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.</p>
-<p>Use <code>TRAIGENT_DISABLE_TELEMETRY=true</code> for telemetry opt-out and <code>offline=True</code>
-for zero Traigent backend egress.</p>
+<p>Use <code>TRAIGENT_DISABLE_TELEMETRY=true</code> for SDK telemetry opt-out, effective
+<code>TraigentConfig.privacy_enabled</code> privacy mode to redact tuned string config
+values on privacy-mode submissions, and <code>offline=True</code> for zero Traigent backend
+egress.</p>
 <h3 id="opentelemetry-tracing">OpenTelemetry Tracing<a class="headerlink" href="#opentelemetry-tracing" title="Permanent link">&para;</a></h3>
 <p>OpenTelemetry tracing is opt-in and uses a separate flag from telemetry
 opt-out:</p>
@@ -4693,7 +4713,7 @@ are dropped, and model identifiers are validated before emission.</p>
 - You control retention - delete files as needed
 - No data is sent to the Traigent backend</p>
 <p><strong>Portal-backed runs</strong>:
-- Configuration IDs/schema and numeric metrics can be sent to Traigent backend for optimization coordination
+- Tuned config-space values, configuration IDs/schema, and numeric metrics can be sent to Traigent backend for optimization coordination
 - Retention policies depend on your managed-service agreement
 - You can request data deletion at any time</p>
 <h2 id="opting-out-of-telemetry">Opting Out of Telemetry<a class="headerlink" href="#opting-out-of-telemetry" title="Permanent link">&para;</a></h2>
@@ -4782,7 +4802,10 @@ control and CI artifact collection in sensitive projects.</p>
 <h2 id="security-and-sensitive-data">Security and Sensitive Data<a class="headerlink" href="#security-and-sensitive-data" title="Permanent link">&para;</a></h2>
 <h3 id="data-sanitization">Data Sanitization<a class="headerlink" href="#data-sanitization" title="Permanent link">&para;</a></h3>
 <p>Configuration data is sanitized before telemetry. Private/internal keys
-(starting with <code>_</code>) are automatically removed.</p>
+(starting with <code>_</code>) are automatically removed. On default portal-backed
+submissions, tuned config values are otherwise sent unchanged so the portal can
+display winning configs. On privacy-mode submissions, sensitive-key values and
+all string/free-text config values are redacted while preserving the tuned keys.</p>
 <h3 id="error-handling">Error Handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h3>
 <p>Telemetry failures never crash your optimization:</p>
 <ul>
@@ -4833,9 +4856,10 @@ control and CI artifact collection in sensitive projects.</p>
 </ol>
 <h2 id="faq">FAQ<a class="headerlink" href="#faq" title="Permanent link">&para;</a></h2>
 <h3 id="q-is-telemetry-enabled-by-default">Q: Is telemetry enabled by default?<a class="headerlink" href="#q-is-telemetry-enabled-by-default" title="Permanent link">&para;</a></h3>
-<p><strong>A</strong>: Yes, for local optimization metadata. The default portal-backed path sends
-configuration IDs/schema and numeric metrics only; use <code>offline=True</code> for zero
-Traigent backend egress.</p>
+<p><strong>A</strong>: Yes, for local optimization metadata. The default portal-backed path can
+send tuned config-space values, configuration IDs/schema, and numeric metrics;
+use privacy-mode redaction when backend coordination is needed without tuned
+string values, or <code>offline=True</code> for zero Traigent backend egress.</p>
 <h3 id="q-how-do-i-verify-telemetry-is-disabled">Q: How do I verify telemetry is disabled?<a class="headerlink" href="#q-how-do-i-verify-telemetry-is-disabled" title="Permanent link">&para;</a></h3>
 <p><strong>A</strong>: Check the environment variable:
 <div class="highlight"><pre><span></span><code><span class="nb">echo</span><span class="w"> </span><span class="nv">$TRAIGENT_DISABLE_TELEMETRY</span>
