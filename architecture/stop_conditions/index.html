@@ -4118,8 +4118,10 @@ combined freely:</p>
 </tr>
 </tbody>
 </table>
-<p><code>budget_limit</code> remains as a deprecated alias for <code>metric_limit</code> for compatibility.
-New code should not use it.</p>
+<p><code>budget_limit</code>/<code>budget_metric</code>/<code>budget_include_pruned</code> were removed in 0.13.0.
+Passing any of them to <code>@traigent.optimize</code> or <code>.optimize(...)</code> now raises
+<code>TypeError</code>. Use <code>cost_limit</code> for money-spend control, or <code>metric_limit</code>/
+<code>metric_name</code> for other cumulative metrics.</p>
 <h2 id="cost-limit-vs-metric-limit">Cost limit vs metric limit<a class="headerlink" href="#cost-limit-vs-metric-limit" title="Permanent link">&para;</a></h2>
 <p>Use <code>cost_limit</code> for user-facing spend control. It reserves cost before each trial
 through <code>CostEnforcer</code>, works with parallel execution, and prevents launching new
@@ -4139,8 +4141,10 @@ running trials may finish after the limit is reached.</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p>Legacy migration:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Deprecated compatibility path. Emits a DeprecationWarning.</span>
+<p>Removed legacy API:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Raises TypeError: budget_limit/budget_metric/budget_include_pruned were</span>
+<span class="c1"># removed in 0.13.0. Use cost_limit=&lt;value&gt; and/or metric_limit=&lt;value&gt; with</span>
+<span class="c1"># metric_name=&lt;name&gt; instead.</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa.jsonl&quot;</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
@@ -4150,9 +4154,16 @@ running trials may finish after the limit is reached.</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p>If a legacy <code>budget_limit</code> call omits the metric name, Traigent defaults to
-<code>total_cost</code> for compatibility and warns that money spend control should use
-<code>cost_limit</code> instead.</p>
+<p>Migrate to:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
+    <span class="n">metric_limit</span><span class="o">=</span><span class="mi">50_000</span><span class="p">,</span>
+    <span class="n">metric_name</span><span class="o">=</span><span class="s2">&quot;total_tokens&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="o">...</span>
+</code></pre></div>
 <p>The orchestrator instantiates the conditions during construction via
 <code>_configure_stop_conditions()</code> and calls <code>reset()</code> for every run so state never leaks
 between optimizations. <code>_should_stop()</code> evaluates all configured conditions before

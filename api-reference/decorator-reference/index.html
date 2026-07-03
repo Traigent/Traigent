@@ -5030,8 +5030,9 @@ approve.</p>
     <span class="o">...</span>
 <span class="p">)</span>
 </code></pre></div>
-<p><code>budget_limit</code> / <code>budget_metric</code> / <code>budget_include_pruned</code> are deprecated aliases
-for compatibility. Use <code>cost_limit</code> for hard USD spend control.</p>
+<p><code>budget_limit</code> / <code>budget_metric</code> / <code>budget_include_pruned</code> were removed in
+0.13.0 and now raise <code>TypeError</code>. Use <code>cost_limit</code> for hard USD spend control,
+or <code>metric_limit</code> / <code>metric_name</code> for other cumulative metrics.</p>
 <p><strong>Stop Conditions</strong>:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">plateau_window</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>  <span class="c1"># trials</span>
