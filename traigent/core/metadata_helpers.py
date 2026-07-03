@@ -247,7 +247,7 @@ def _add_measures_to_metadata(
             _log_measures_debug(measures)
         else:
             trial_metadata.pop("measures", None)
-    elif privacy_on:
+    else:
         measures = _cap_measures(
             _build_measures_privacy(example_results, primary_objective, dataset_name),
             execution_mode,
@@ -260,8 +260,6 @@ def _add_measures_to_metadata(
             )
         else:
             trial_metadata.pop("measures", None)
-    else:
-        trial_metadata.pop("measures", None)
 
 
 def _log_measures_debug(measures: list[dict[str, Any]]) -> None:
