@@ -507,25 +507,58 @@ class ObjectiveSchema:
 
         return errors
 
-    def compute_weighted_score(self, metrics: dict[str, float]) -> float | None:
+    def has_meaningful_weights(self) -> bool:
+        """True when >1 objective carries non-uniform normalized weights.
+
+        Uniform weights — including the all-default ``weight=1.0`` case — are
+        indistinguishable from an unweighted schema after normalization, so
+        callers gating weighted selection on this predicate keep the legacy
+        primary-objective behavior for those schemas (issue #1682).
+        """
+        if len(self.objectives) <= 1:
+            return False
+        values = [
+            self.weights_normalized.get(obj.name, 0.0) for obj in self.objectives
+        ]
+        first = values[0]
+        return any(abs(value - first) > 1e-9 for value in values)
+
+    def compute_weighted_score(
+        self,
+        metrics: dict[str, float],
+        ranges: dict[str, tuple[float, float]] | None = None,
+    ) -> float | None:
         """Compute a single weighted score from multiple objectives.
 
         For maximize objectives, higher values contribute positively.
         For minimize objectives, lower values contribute positively (inverted).
 
+        This is the single source of truth for weighted scoring (issue #1682):
+        live selection (orchestrator incumbent tracking and
+        ``result_selection.select_best_configuration``) calls it without
+        ``ranges``; post-hoc analysis (``OptimizationResult`` scoring) passes
+        the observed min/max ``ranges`` for range-based normalization.
+
         Args:
             metrics: Dictionary of metric values
+            ranges: Optional observed (min, max) per objective. When provided,
+                values are normalized via :meth:`normalize_metrics` (min-max,
+                orientation-aware); when omitted, the range-free aggregation
+                normalization is used.
 
         Returns:
             Weighted score (higher is better), or None if required metrics missing
         """
-        return self.compute_aggregated_score(metrics, AggregationMode.WEIGHTED_SUM)
+        return self.compute_aggregated_score(
+            metrics, AggregationMode.WEIGHTED_SUM, ranges=ranges
+        )
 
     def compute_aggregated_score(
         self,
         metrics: dict[str, float],
         mode: AggregationMode = AggregationMode.WEIGHTED_SUM,
         reference_point: dict[str, float] | None = None,
+        ranges: dict[str, tuple[float, float]] | None = None,
     ) -> float | None:
         """Compute an aggregated score using the specified aggregation mode.
 
@@ -537,6 +570,11 @@ class ObjectiveSchema:
             mode: Aggregation mode (WEIGHTED_SUM, HARMONIC, or CHEBYSHEV)
             reference_point: Reference/ideal point for Chebyshev (optional).
                             If not provided, uses 1.0 for maximize, 0.0 for minimize.
+            ranges: Optional observed (min, max) per objective. When provided,
+                normalization uses :meth:`normalize_metrics` (min-max over the
+                observed range) instead of the range-free aggregation
+                normalization. Objectives absent from the normalized map are
+                skipped, matching post-hoc analysis semantics.
 
         Returns:
             Aggregated score (higher is better), or None if required metrics missing
@@ -562,25 +600,40 @@ class ObjectiveSchema:
         # (name, normalized_value (higher is better), weight)
         normalized_values: list[tuple[str, float, float]] = []
 
-        for obj in self.objectives:
-            if obj.name not in metrics:
-                continue
+        if ranges is not None:
+            # Range-based mode (post-hoc analysis parity): normalize exactly
+            # the way normalize_metrics does, so the weighted score matches
+            # the per-objective normalized map surfaced to users.
+            normalized_map = self.normalize_metrics(metrics, ranges)
+            for obj in self.objectives:
+                if obj.name not in normalized_map:
+                    continue
+                weight = self.weights_normalized.get(obj.name, 0.0)
+                if weight <= 0:
+                    continue
+                normalized_values.append(
+                    (obj.name, float(normalized_map[obj.name]), weight)
+                )
+        else:
+            for obj in self.objectives:
+                if obj.name not in metrics:
+                    continue
 
-            value = metrics[obj.name]
-            if value is None or not math.isfinite(value):
-                continue
+                value = metrics[obj.name]
+                if value is None or not math.isfinite(value):
+                    continue
 
-            weight = self.weights_normalized.get(obj.name, 0.0)
-            if weight <= 0:
-                continue
+                weight = self.weights_normalized.get(obj.name, 0.0)
+                if weight <= 0:
+                    continue
 
-            normalized = self._normalize_value_for_aggregation(
-                obj, value, reference_point
-            )
-            if normalized is None:
-                continue
+                normalized = self._normalize_value_for_aggregation(
+                    obj, value, reference_point
+                )
+                if normalized is None:
+                    continue
 
-            normalized_values.append((obj.name, normalized, weight))
+                normalized_values.append((obj.name, normalized, weight))
 
         if not normalized_values:
             return None

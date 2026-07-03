@@ -17,10 +17,14 @@ from traigent.tvl.promotion_gate import ObjectiveSpec, PromotionGate
 class _MockOptimizer(BaseOptimizer):
     """Mock optimizer for testing."""
 
-    def __init__(self, config_space: dict | None = None) -> None:
+    def __init__(
+        self,
+        config_space: dict | None = None,
+        objectives: list[str] | None = None,
+    ) -> None:
         super().__init__(
             config_space=config_space or {"x": [1, 2, 3]},
-            objectives=["accuracy"],
+            objectives=objectives or ["accuracy"],
         )
         self._suggestions = iter([{"x": 1}, {"x": 2}, {"x": 3}])
         self._trial_count = 0
@@ -430,3 +434,80 @@ class TestPromotionGateDecisionLogging:
             assert result is True
             # Check that info was logged for promotion
             mock_logger.info.assert_called()
+
+
+class TestWeightedIncumbentTracking:
+    """Live incumbent tracking honors ObjectiveSchema weights (issue #1682)."""
+
+    @staticmethod
+    def _schema(accuracy_weight: float, cost_weight: float):
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        return ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name="accuracy", orientation="maximize", weight=accuracy_weight
+                ),
+                ObjectiveDefinition(
+                    name="cost", orientation="minimize", weight=cost_weight
+                ),
+            ]
+        )
+
+    @staticmethod
+    def _trial(trial_id: str, accuracy: float, cost: float, x: int) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config={"x": x},
+            metrics={"accuracy": accuracy, "cost": cost},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+        )
+
+    def _orchestrator(self, schema) -> OptimizationOrchestrator:
+        return OptimizationOrchestrator(
+            optimizer=_MockOptimizer(objectives=["accuracy", "cost"]),
+            evaluator=_MockEvaluator(),
+            max_trials=3,
+            objective_schema=schema,
+        )
+
+    def test_cost_heavy_weights_promote_cheaper_candidate(self) -> None:
+        orchestrator = self._orchestrator(self._schema(0.1, 0.9))
+        incumbent = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
+        candidate = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
+
+        orchestrator._best_trial_cached = incumbent
+        # 0.1*0.75 + 0.9/(1.02) beats 0.1*0.95 + 0.9/(1.08).
+        assert orchestrator._simple_is_better(candidate) is True
+
+    def test_accuracy_heavy_weights_keep_accurate_incumbent(self) -> None:
+        orchestrator = self._orchestrator(self._schema(0.9, 0.1))
+        incumbent = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
+        candidate = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
+
+        orchestrator._best_trial_cached = incumbent
+        assert orchestrator._simple_is_better(candidate) is False
+
+    def test_uniform_weights_keep_legacy_primary_comparison(self) -> None:
+        """Equal weights (unweighted schema) rank by objectives[0] only."""
+        orchestrator = self._orchestrator(self._schema(1.0, 1.0))
+        incumbent = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
+        cheap_low_accuracy = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
+        better_accuracy = self._trial("better", accuracy=0.97, cost=0.20, x=3)
+
+        orchestrator._best_trial_cached = incumbent
+        assert orchestrator._simple_is_better(cheap_low_accuracy) is False
+        assert orchestrator._simple_is_better(better_accuracy) is True
+
+    def test_update_best_trial_cache_tracks_weighted_incumbent(self) -> None:
+        orchestrator = self._orchestrator(self._schema(0.1, 0.9))
+        first = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
+        second = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
+
+        orchestrator._update_best_trial_cache(first)
+        assert orchestrator._best_trial_cached is first
+
+        orchestrator._update_best_trial_cache(second)
+        assert orchestrator._best_trial_cached is second

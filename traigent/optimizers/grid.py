@@ -272,23 +272,10 @@ class GridSearchOptimizer(BaseOptimizer):
         """
         return self._grid_points.copy()
 
-    def _calculate_composite_score(self, metrics: dict[str, float]) -> float:
-        """Calculate composite score from multiple metrics using weighted scalarization."""
-        if not metrics:
-            return 0.0
-
-        # Use scalarize_objectives for weighted scoring, honoring objective
-        # orientation so minimize objectives (cost/latency/error) lower the
-        # composite instead of raising it (#1466).
-        from traigent.utils.multi_objective import scalarize_objectives
-
-        return float(
-            scalarize_objectives(
-                metrics,
-                self.objective_weights,
-                minimize_objectives=self._minimize_objectives,
-            )
-        )
+    # NOTE(#1682): the former _calculate_composite_score override was dead
+    # code — grid trial selection is owned by the orchestrator/result_selection
+    # layer, which ranks weighted schemas via the single shared scorer
+    # ObjectiveSchema.compute_weighted_score.
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate.

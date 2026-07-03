@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from traigent.api.types import TrialResult
 from traigent.utils.objectives import (
@@ -16,10 +16,14 @@ from traigent.utils.objectives import (
     is_minimization_objective,
 )
 
+if TYPE_CHECKING:
+    from traigent.core.objectives import ObjectiveSchema
+
 __all__ = [
     "SelectionResult",
     "select_best_configuration",
     "apply_tie_breaker",
+    "resolve_weighted_selection_schema",
 ]
 
 # Type alias matching TVL models.py
@@ -67,6 +71,73 @@ def _primary_scores_tied(score: float, best_score: float) -> bool:
         rel_tol=PRIMARY_SCORE_TIE_REL_TOL,
         abs_tol=PRIMARY_SCORE_TIE_ABS_TOL,
     )
+
+
+def resolve_weighted_selection_schema(
+    objective_schema: ObjectiveSchema | None,
+) -> ObjectiveSchema | None:
+    """Return the schema when weighted selection should govern ranking.
+
+    Weighted selection (issue #1682) activates only when the declared
+    ObjectiveSchema carries meaningful (non-uniform) weights over more than
+    one objective and no objective is banded. Single-objective, unweighted
+    (uniform-weight), and banded schemas return ``None`` so callers keep
+    the legacy primary-objective ranking bit-for-bit.
+
+    Shared by the orchestrator's live incumbent tracking and the terminal
+    ``select_best_configuration`` so both gates agree.
+    """
+    if objective_schema is None:
+        return None
+    objectives = getattr(objective_schema, "objectives", None) or []
+    if len(objectives) <= 1:
+        return None
+    if any(
+        getattr(obj, "orientation", "") == "band"
+        or getattr(obj, "band", None) is not None
+        for obj in objectives
+    ):
+        return None
+    has_meaningful = getattr(objective_schema, "has_meaningful_weights", None)
+    if has_meaningful is None or not has_meaningful():
+        return None
+    return objective_schema
+
+
+def _weighted_trial_score(
+    schema: ObjectiveSchema, metrics: dict[str, Any] | None
+) -> float | None:
+    """Weighted aggregate for a metrics dict via the shared objectives.py scorer."""
+    weighted = schema.compute_weighted_score(metrics or {})
+    if weighted is None or not math.isfinite(weighted):
+        return None
+    return float(weighted)
+
+
+def _populate_weighted_scores(
+    trials: Iterable[TrialResult], schema: ObjectiveSchema
+) -> None:
+    """Expose the basis of selection per trial as ``metrics["score"]`` (#1682)."""
+    for trial in trials:
+        weighted = _weighted_trial_score(schema, trial.metrics)
+        if weighted is None:
+            continue
+        if trial.metrics is None:
+            trial.metrics = {}
+        trial.metrics["score"] = weighted
+
+
+def _weighted_session_extras(
+    schema: ObjectiveSchema, best_weighted_score: float
+) -> dict[str, Any]:
+    return {
+        "weighted_selection": {
+            "enabled": True,
+            "aggregation": "weighted_sum",
+            "weights_normalized": dict(schema.weights_normalized),
+            "best_weighted_score": best_weighted_score,
+        }
+    }
 
 
 def _declared_secondary_objectives(
@@ -556,6 +627,152 @@ def _apply_aggregated_tie_breaker(
     return max(tied_entries, key=agg_secondary_score)
 
 
+def _sanitize_mean_metrics(best_metrics: dict[str, float]) -> dict[str, float]:
+    """Prefix non-allowlisted metric names for the session summary surface."""
+    allowed_unprefixed = {"accuracy", "latency", "cost", "custom_metric"}
+    return {
+        (name if name in allowed_unprefixed else f"run_{name}"): value
+        for name, value in best_metrics.items()
+    }
+
+
+def _select_best_weighted(
+    eligible_trials: list[TrialResult],
+    schema: ObjectiveSchema,
+    primary_objective: str,
+    tie_breakers: dict[str, TieBreaker],
+    ranking_summary: dict[str, Any],
+    objective_order: Iterable[str] | None,
+    *,
+    aggregate_configs: bool,
+    config_space_keys: set[str],
+) -> SelectionResult | None:
+    """Rank eligible trials by the schema's weighted aggregate (issue #1682).
+
+    Uses ``ObjectiveSchema.compute_weighted_score`` — the shared objectives.py
+    scoring function — so minimize objectives pull selection down exactly the
+    way that function normalizes them. ``best_score`` stays the winner's
+    primary-objective value for result-shape compatibility; the weighted basis
+    of selection is surfaced per-trial in ``metrics["score"]`` and in
+    ``session_summary["weighted_selection"]``.
+
+    Returns None when no eligible trial has a computable weighted score, in
+    which case the caller falls back to legacy primary-objective ranking.
+    """
+    if aggregate_configs:
+        return _select_best_weighted_aggregated(
+            eligible_trials,
+            schema,
+            primary_objective,
+            tie_breakers,
+            ranking_summary,
+            objective_order,
+            config_space_keys,
+        )
+
+    scored = [
+        (trial, weighted)
+        for trial in eligible_trials
+        if (weighted := _weighted_trial_score(schema, trial.metrics)) is not None
+    ]
+    if not scored:
+        return None
+
+    best_weighted = max(weighted for _, weighted in scored)
+    tied_trials = [
+        trial for trial, weighted in scored if _primary_scores_tied(weighted, best_weighted)
+    ]
+    if len(tied_trials) > 1:
+        best_trial = apply_tie_breaker(
+            tied_trials,
+            tie_breakers,
+            primary_objective,
+            band_target=None,
+            objective_order=objective_order,
+        )
+    else:
+        best_trial = tied_trials[0]
+
+    _populate_weighted_scores(eligible_trials, schema)
+
+    return SelectionResult(
+        best_config=best_trial.config or {},
+        best_score=coerce_finite_objective_score(
+            best_trial.get_metric(primary_objective)
+        ),
+        session_summary={
+            "ranking": ranking_summary,
+            **_weighted_session_extras(schema, best_weighted),
+        },
+        best_trial_id=best_trial.trial_id,
+    )
+
+
+def _select_best_weighted_aggregated(
+    eligible_trials: list[TrialResult],
+    schema: ObjectiveSchema,
+    primary_objective: str,
+    tie_breakers: dict[str, TieBreaker],
+    ranking_summary: dict[str, Any],
+    objective_order: Iterable[str] | None,
+    config_space_keys: set[str],
+) -> SelectionResult | None:
+    """Weighted ranking over config-aggregated mean metrics (issue #1682).
+
+    Aggregation runs BEFORE per-trial score population so config means stay
+    metric-pure; each config is then ranked by the weighted aggregate of its
+    mean metrics via the shared objectives.py scorer.
+    """
+    aggregated = _aggregate_trials(eligible_trials, config_space_keys)
+    entry_scores = [
+        (entry, weighted)
+        for entry in aggregated.values()
+        if (weighted := _weighted_trial_score(schema, _compute_mean_metrics(entry)))
+        is not None
+    ]
+    if not entry_scores:
+        return None
+
+    best_weighted = max(weighted for _, weighted in entry_scores)
+    tied_entries = [
+        entry
+        for entry, weighted in entry_scores
+        if _primary_scores_tied(weighted, best_weighted)
+    ]
+    if len(tied_entries) > 1:
+        best_entry = _apply_aggregated_tie_breaker(
+            tied_entries,
+            tie_breakers,
+            primary_objective,
+            None,
+            objective_order,
+        )
+    else:
+        best_entry = tied_entries[0]
+
+    _populate_weighted_scores(eligible_trials, schema)
+
+    best_metrics = _compute_mean_metrics(best_entry)
+    session_summary = {
+        "selection_mode": "aggregated_mean",
+        "primary_objective": primary_objective,
+        "samples_per_config": {
+            key: entry["count"] for key, entry in aggregated.items()
+        },
+        "metrics": _sanitize_mean_metrics(best_metrics),
+        "sanitized": True,
+        "ranking": ranking_summary,
+        **_weighted_session_extras(schema, best_weighted),
+    }
+
+    return SelectionResult(
+        best_config=best_entry["config"] or {},
+        best_score=coerce_finite_objective_score(best_metrics.get(primary_objective)),
+        session_summary=session_summary,
+        best_trial_id=(best_entry.get("trial_ids") or [None])[0],
+    )
+
+
 def _select_best_aggregated(
     aggregated: dict[str, dict[str, Any]],
     primary_objective: str,
@@ -644,14 +861,7 @@ def _select_best_aggregated(
         best_entry = tied_entries[0]
 
     best_metrics = _compute_mean_metrics(best_entry)
-
-    allowed_unprefixed = {"accuracy", "latency", "cost", "custom_metric"}
-    sanitized_metrics: dict[str, float] = {}
-    for metric_name, metric_value in best_metrics.items():
-        target_key = (
-            metric_name if metric_name in allowed_unprefixed else f"run_{metric_name}"
-        )
-        sanitized_metrics[target_key] = metric_value
+    sanitized_metrics = _sanitize_mean_metrics(best_metrics)
 
     session_summary = {
         "selection_mode": "aggregated_mean",
@@ -706,6 +916,7 @@ def select_best_configuration(
     certified_config: dict[str, Any] | None = None,
     certified_score: float | None = None,
     objective_orientations: dict[str, str] | None = None,
+    objective_schema: ObjectiveSchema | None = None,
 ) -> SelectionResult:
     """Return the configuration that best satisfies the primary objective.
 
@@ -733,6 +944,12 @@ def select_best_configuration(
             present, the declared orientation for the primary objective is used
             directly and name-pattern heuristics are bypassed.  Populated from
             ``ObjectiveSchema.objectives[*].orientation`` by the orchestrator.
+        objective_schema: Optional declared ObjectiveSchema. When it carries
+            meaningful (non-uniform) weights over >1 non-banded objectives,
+            ranking uses the schema's weighted aggregate
+            (``ObjectiveSchema.compute_weighted_score``) instead of the
+            primary objective alone (issue #1682). Single-objective,
+            uniform-weight, and banded schemas keep legacy behavior.
 
     Returns:
         SelectionResult with best configuration and score.
@@ -839,6 +1056,23 @@ def select_best_configuration(
         )
 
     tie_breakers = tie_breakers or {}
+
+    weighted_schema = resolve_weighted_selection_schema(objective_schema)
+    if weighted_schema is not None:
+        weighted_result = _select_best_weighted(
+            eligible_trials,
+            weighted_schema,
+            primary_objective,
+            tie_breakers,
+            ranking_summary,
+            objective_order,
+            aggregate_configs=aggregate_configs,
+            config_space_keys=set(config_space_keys),
+        )
+        if weighted_result is not None:
+            return weighted_result
+        # Defensive: no computable weighted score on any eligible trial —
+        # fall back to legacy primary-objective ranking below.
 
     if not aggregate_configs:
         return _select_best_single_trial(

@@ -1040,3 +1040,224 @@ class TestAggregatedTieBreaker:
         # Both have same accuracy, should return one of them
         assert result.best_config["model"] in ["A", "B"]
         assert result.best_score == pytest.approx(0.9)
+
+
+def _weighted_schema(accuracy_weight: float, cost_weight: float):
+    from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+    return ObjectiveSchema.from_objectives(
+        [
+            ObjectiveDefinition(
+                name="accuracy", orientation="maximize", weight=accuracy_weight
+            ),
+            ObjectiveDefinition(
+                name="cost", orientation="minimize", weight=cost_weight
+            ),
+        ]
+    )
+
+
+def _tradeoff_trials() -> list[FakeTrial]:
+    """Deterministic trade-off table from issue #1682's repro."""
+    return [
+        FakeTrial(
+            metrics={"accuracy": 0.95, "cost": 0.08},
+            config={"model": "gpt-4o-analog"},
+        ),
+        FakeTrial(
+            metrics={"accuracy": 0.85, "cost": 0.05},
+            config={"model": "mid-analog"},
+        ),
+        FakeTrial(
+            metrics={"accuracy": 0.75, "cost": 0.02},
+            config={"model": "cheap-analog"},
+        ),
+    ]
+
+
+class TestWeightedSelection:
+    """ObjectiveSchema weights govern best_config selection (issue #1682)."""
+
+    def _select(self, trials, schema, *, aggregate: bool = False):
+        return select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=aggregate,
+            objective_order=["accuracy", "cost"],
+            objective_schema=schema,
+        )
+
+    def test_accuracy_heavy_weights_select_accurate_config(self) -> None:
+        result = self._select(_tradeoff_trials(), _weighted_schema(0.9, 0.1))
+
+        assert result.best_config == {"model": "gpt-4o-analog"}
+        # best_score stays the winner's primary-objective value.
+        assert result.best_score == pytest.approx(0.95)
+        weighted = result.session_summary["weighted_selection"]
+        # 0.9 * 0.95 + 0.1 * (1 / (1 + 0.08)) — exact objectives.py semantics.
+        assert weighted["best_weighted_score"] == pytest.approx(
+            0.9 * 0.95 + 0.1 * (1.0 / 1.08)
+        )
+        assert weighted["weights_normalized"] == pytest.approx(
+            {"accuracy": 0.9, "cost": 0.1}
+        )
+
+    def test_cost_heavy_weights_flip_winner_to_cheap_config(self) -> None:
+        """Flipping 0.9/0.1 -> 0.1/0.9 changes best_config (the issue's repro)."""
+        result = self._select(_tradeoff_trials(), _weighted_schema(0.1, 0.9))
+
+        assert result.best_config == {"model": "cheap-analog"}
+        assert result.best_score == pytest.approx(0.75)
+        weighted = result.session_summary["weighted_selection"]
+        assert weighted["best_weighted_score"] == pytest.approx(
+            0.1 * 0.75 + 0.9 * (1.0 / 1.02)
+        )
+
+    def test_minimize_orientation_pulls_selection_down(self) -> None:
+        """A cost-heavy weighting must beat a higher-accuracy, costlier trial."""
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 0.92, "cost": 0.5}, config={"model": "pricey"}
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.90, "cost": 0.1}, config={"model": "frugal"}
+            ),
+        ]
+        legacy = select_best_configuration(
+            trials=[
+                FakeTrial(
+                    metrics={"accuracy": 0.92, "cost": 0.5}, config={"model": "pricey"}
+                ),
+                FakeTrial(
+                    metrics={"accuracy": 0.90, "cost": 0.1}, config={"model": "frugal"}
+                ),
+            ],
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+        )
+        assert legacy.best_config == {"model": "pricey"}  # primary-only ranking
+
+        result = self._select(trials, _weighted_schema(0.4, 0.6))
+        assert result.best_config == {"model": "frugal"}
+        # 0.4*0.90 + 0.6*(1/1.1) > 0.4*0.92 + 0.6*(1/1.5)
+        assert result.session_summary["weighted_selection"][
+            "best_weighted_score"
+        ] == pytest.approx(0.4 * 0.90 + 0.6 * (1.0 / 1.1))
+
+    def test_per_trial_weighted_score_populated(self) -> None:
+        """metrics['score'] carries the basis of selection and matches the
+        objectives.py computation exactly (issue #1682)."""
+        schema = _weighted_schema(0.9, 0.1)
+        trials = _tradeoff_trials()
+
+        self._select(trials, schema)
+
+        for trial in trials:
+            raw = {k: v for k, v in trial.metrics.items() if k != "score"}
+            expected = schema.compute_weighted_score(raw)
+            assert expected is not None
+            assert trial.metrics["score"] == pytest.approx(expected)
+
+    def test_single_objective_schema_keeps_legacy_result(self) -> None:
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        single = ObjectiveSchema.from_objectives(
+            [ObjectiveDefinition(name="accuracy", orientation="maximize", weight=2.0)]
+        )
+        trials_a = _tradeoff_trials()
+        trials_b = _tradeoff_trials()
+
+        legacy = select_best_configuration(
+            trials=trials_a,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+        )
+        with_schema = self._select(trials_b, single)
+
+        assert with_schema.best_config == legacy.best_config == {
+            "model": "gpt-4o-analog"
+        }
+        assert with_schema.best_score == legacy.best_score
+        assert with_schema.session_summary == legacy.session_summary
+        assert not any("score" in t.metrics for t in trials_b)
+
+    def test_uniform_weights_keep_legacy_result(self) -> None:
+        """Equal (default) weights are an unweighted schema — legacy behavior."""
+        trials_a = _tradeoff_trials()
+        trials_b = _tradeoff_trials()
+
+        legacy = select_best_configuration(
+            trials=trials_a,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+        )
+        uniform = self._select(trials_b, _weighted_schema(1.0, 1.0))
+
+        assert uniform.best_config == legacy.best_config
+        assert uniform.best_score == legacy.best_score
+        assert uniform.session_summary == legacy.session_summary
+        assert "weighted_selection" not in (uniform.session_summary or {})
+        assert not any("score" in t.metrics for t in trials_b)
+
+    def test_weighted_selection_aggregated_configs(self) -> None:
+        """Weighted ranking applies to config-aggregated mean metrics too."""
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 0.92, "cost": 0.5}, config={"model": "pricey"}
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.90, "cost": 0.5}, config={"model": "pricey"}
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.90, "cost": 0.1}, config={"model": "frugal"}
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.88, "cost": 0.1}, config={"model": "frugal"}
+            ),
+        ]
+
+        result = self._select(trials, _weighted_schema(0.4, 0.6), aggregate=True)
+
+        assert result.best_config == {"model": "frugal"}
+        # Mean metrics: accuracy 0.89, cost 0.1.
+        assert result.best_score == pytest.approx(0.89)
+        weighted = result.session_summary["weighted_selection"]
+        assert weighted["best_weighted_score"] == pytest.approx(
+            0.4 * 0.89 + 0.6 * (1.0 / 1.1)
+        )
+        assert result.session_summary["selection_mode"] == "aggregated_mean"
+        # Per-trial basis of selection is populated post-aggregation.
+        for trial in trials:
+            assert "score" in trial.metrics
+
+    def test_banded_schema_disables_weighted_selection(self) -> None:
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+        from traigent.core.result_selection import resolve_weighted_selection_schema
+        from traigent.tvl.models import BandTarget
+
+        banded = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name="accuracy",
+                    orientation="band",
+                    weight=0.8,
+                    band=BandTarget(low=0.8, high=0.9),
+                ),
+                ObjectiveDefinition(
+                    name="cost", orientation="minimize", weight=0.2
+                ),
+            ]
+        )
+        assert resolve_weighted_selection_schema(banded) is None
+        assert resolve_weighted_selection_schema(None) is None
+        assert (
+            resolve_weighted_selection_schema(_weighted_schema(0.7, 0.3)) is not None
+        )
+        assert resolve_weighted_selection_schema(_weighted_schema(1.0, 1.0)) is None

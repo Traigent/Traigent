@@ -9,7 +9,7 @@ This test suite covers:
 """
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from traigent.api.types import TrialResult
 from traigent.optimizers.batch_optimizers import MultiObjectiveBatchOptimizer
@@ -322,49 +322,129 @@ class TestGridSearchOptimizerWeights:
         configs = optimizer._generate_configurations()
         assert len(configs) == 4  # 2 * 2 combinations
 
-    def test_grid_search_best_configuration_selection(self):
-        """Test that GridSearchOptimizer selects best configuration using weighted scoring."""
-        config_space = {"param": [1, 2, 3]}
-        objectives = ["accuracy", "cost"]
-        objective_weights = {"accuracy": 0.9, "cost": 0.1}
+    def test_grid_search_has_no_private_composite_scorer(self):
+        """#1682: grid's dead _calculate_composite_score override is gone.
 
-        optimizer = GridSearchOptimizer(
-            config_space=config_space,
-            objectives=objectives,
-            objective_weights=objective_weights,
-        )
+        Selection is owned by the orchestrator/result_selection layer; no
+        second scorer may live on GridSearchOptimizer.
+        """
+        assert "_calculate_composite_score" not in GridSearchOptimizer.__dict__
 
-        # Create mock trials with different trade-offs
-        trials = []
-        for i, param_value in enumerate([1, 2, 3]):
-            trial = TrialResult(
-                trial_id=f"trial_{i}",
-                config={"param": param_value},
-                metrics={
-                    "accuracy": 0.7 + i * 0.1,  # 0.7, 0.8, 0.9
-                    "cost": 0.10 - i * 0.02,  # 0.10, 0.08, 0.06
-                },
+    def test_grid_trials_rank_through_shared_weighted_scorer(self):
+        """#1682: grid-produced trials are ranked by the shared weighted scorer.
+
+        Flipping ObjectiveSchema weights between accuracy-heavy and cost-heavy
+        must flip the selected configuration over a fixed trade-off table.
+        """
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+        from traigent.core.result_selection import select_best_configuration
+
+        def make_trials() -> list[TrialResult]:
+            table = [
+                (1, 0.95, 0.08),  # high accuracy, high cost
+                (2, 0.85, 0.05),
+                (3, 0.75, 0.02),  # low accuracy, low cost
+            ]
+            return [
+                TrialResult(
+                    trial_id=f"trial_{param}",
+                    config={"param": param},
+                    metrics={"accuracy": accuracy, "cost": cost},
+                    status="completed",
+                    duration=1.0,
+                    timestamp=datetime.now(),
+                    metadata={},
+                )
+                for param, accuracy, cost in table
+            ]
+
+        def schema(accuracy_weight: float, cost_weight: float) -> ObjectiveSchema:
+            return ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name="accuracy", orientation="maximize", weight=accuracy_weight
+                    ),
+                    ObjectiveDefinition(
+                        name="cost", orientation="minimize", weight=cost_weight
+                    ),
+                ]
+            )
+
+        def winner(accuracy_weight: float, cost_weight: float) -> dict:
+            result = select_best_configuration(
+                trials=make_trials(),
+                primary_objective="accuracy",
+                config_space_keys={"param"},
+                aggregate_configs=False,
+                objective_order=["accuracy", "cost"],
+                comparability_mode="legacy",
+                objective_schema=schema(accuracy_weight, cost_weight),
+            )
+            assert result.best_config is not None
+            return result.best_config
+
+        assert winner(0.9, 0.1) == {"param": 1}  # accuracy-heavy -> accurate config
+        assert winner(0.1, 0.9) == {"param": 3}  # cost-heavy -> cheap config
+
+    def test_post_hoc_weighted_scores_use_shared_scoring_function(self):
+        """#1682 reconciliation: OptimizationResult post-hoc weighted scores
+        equal ObjectiveSchema.compute_weighted_score(metrics, ranges=...) —
+        the same objectives.py function live selection uses (no second
+        implementation)."""
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        trials = [
+            TrialResult(
+                trial_id="expensive",
+                config={"model": "big"},
+                metrics={"accuracy": 0.95, "cost": 0.08},
                 status="completed",
                 duration=1.0,
                 timestamp=datetime.now(),
-                metadata={},
-            )
-            trials.append(trial)
+            ),
+            TrialResult(
+                trial_id="cheap",
+                config={"model": "small"},
+                metrics={"accuracy": 0.75, "cost": 0.02},
+                status="completed",
+                duration=1.0,
+                timestamp=datetime.now(),
+            ),
+        ]
+        result = OptimizationResult(
+            trials=trials,
+            best_config={"model": "big"},
+            best_score=0.95,
+            optimization_id="opt_1682",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="grid",
+            timestamp=datetime.now(),
+        )
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(name="accuracy", orientation="maximize", weight=0.3),
+                ObjectiveDefinition(name="cost", orientation="minimize", weight=0.7),
+            ]
+        )
 
-        # Mock the scalarize_objectives function to test scoring
-        with patch(
-            "traigent.utils.multi_objective.scalarize_objectives"
-        ) as mock_scalarize:
-            # Return scores that favor high accuracy (due to 0.9 weight)
-            mock_scalarize.side_effect = [0.73, 0.81, 0.89]  # Increasing scores
+        analysis = result.calculate_weighted_scores(objective_schema=schema)
+        ranges = analysis["normalization_ranges"]
+        assert ranges  # observed min/max were computed
 
-            best_trial = max(trials, key=optimizer._calculate_composite_score)
+        for trial, weighted in analysis["weighted_scores"]:
+            expected = schema.compute_weighted_score(trial.metrics, ranges=ranges)
+            assert expected is not None
+            assert weighted == expected
 
-            # Should select trial with param=3 (highest weighted score)
-            assert best_trial.config["param"] == 3
-
-            # Should have called scalarize_objectives for each trial
-            assert mock_scalarize.call_count == 3
+        per_trial = result.score_trials(objective_schema=schema)
+        by_id = {row["trial_id"]: row["weighted"] for row in per_trial}
+        for trial in trials:
+            expected = schema.compute_weighted_score(trial.metrics, ranges=ranges)
+            assert by_id[trial.trial_id] == expected
 
 
 class TestWeightedObjectivesIntegration:
