@@ -1479,11 +1479,13 @@ class SessionOperations:
             return None
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
-        """Delete optimization session and optionally related data.
+        """Delete optimization session state and optionally backend data.
 
         Args:
             session_id: Session ID to delete
-            cascade: If True, also delete related experiment data
+            cascade: If True, call the backend delete endpoint with
+                ``cascade=true`` before removing the local session mapping. If
+                backend offline mode is enabled, only local state is cleaned up.
 
         Returns:
             True if deletion successful
@@ -1499,15 +1501,75 @@ class SessionOperations:
         self.client._revoke_security_session(session_id)
 
         if cascade:
-            # Remove session mapping
+            if is_backend_offline():
+                logger.debug(
+                    "Offline mode enabled — skipping backend deletion for %s",
+                    session_id,
+                )
+            else:
+                backend_deleted = await self._delete_session_via_api(session_id)
+                if not backend_deleted:
+                    return False
+
             mapping = self.client.session_bridge.get_session_mapping(session_id)
             if mapping:
-                # Could optionally delete backend experiment data here
-                # For now just remove the mapping
                 self.client.session_bridge._session_mappings.pop(session_id, None)
                 logger.debug(f"Removed session mapping for {session_id}")
 
         return deleted
+
+    async def _delete_session_via_api(self, session_id: str) -> bool:
+        """Delete a session via the backend session endpoint."""
+        if not AIOHTTP_AVAILABLE:
+            logger.debug("aiohttp not available, skipping backend deletion")
+            return False
+
+        self._raise_if_backend_egress_disabled("delete session")
+        session = await self.client._ensure_session()
+
+        try:
+            api_base = (
+                self.client.backend_config.api_base_url
+                or BackendConfig.get_backend_api_url()
+            )
+            url = f"{api_base}/sessions/{session_id}"
+
+            async with session.delete(
+                url,
+                params={"cascade": "true"},
+            ) as response:
+                if response.status in {200, 202, 204}:
+                    return True
+                if response.status == 404:
+                    logger.info(
+                        "Session %s already absent when attempting cleanup", session_id
+                    )
+                    return False
+                if response.status == 403:
+                    error_text = await response.text()
+                    self._raise_ownership_error(
+                        session_id,
+                        "Deleting session via backend API",
+                        response.status,
+                        error_text,
+                    )
+                    raise AssertionError(
+                        "unreachable"
+                    )  # _raise_ownership_error never returns
+
+                error_text = await response.text()
+                logger.warning(
+                    "Failed to delete session %s: status=%s body=%s",
+                    session_id,
+                    response.status,
+                    error_text[:200],
+                )
+                return False
+
+        except aiohttp.ClientError as e:
+            await self._reset_client_session("delete_session network error")
+            logger.error(f"Network error deleting session: {e}")
+            raise CloudServiceError(f"Network error: {e}") from None
 
     def finalize_session_sync(
         self,
