@@ -205,6 +205,31 @@ def test_dataset_relative_path_error_names_resolution_rule_and_candidate(
     assert str((dataset_root / missing_relative).resolve()) in message
 
 
+def test_dataset_absolute_path_error_names_used_as_is_rule_and_candidate(
+    monkeypatch, tmp_path
+):
+    """A missing absolute dataset must state the used-as-is rule and the candidate.
+
+    Exercises the ``is_absolute_path=True`` branch of
+    ``_dataset_not_found_message``: no dataset root is prepended, and the
+    message must say so and name the exact absolute path that was tried.
+    """
+    dataset_root = tmp_path / "datasets"
+    dataset_root.mkdir()
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+
+    missing_absolute = dataset_root / "nowhere" / "math.jsonl"
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl(str(missing_absolute))
+
+    message = str(exc_info.value)
+    assert "absolute path, used as-is (no dataset root prepended)" in message
+    assert f"Tried: {missing_absolute}" in message
+
+
 def test_dataset_registry_missing_file_error_names_registry_resolution(
     monkeypatch, tmp_path
 ):

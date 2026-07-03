@@ -88,7 +88,8 @@ print(f"Logging to {LOG_FILE} at level {LOG_LEVEL}")
 
 # Mock mode runs fully local with zero Traigent backend egress. This is wired
 # through the `offline` option in _OPTIMIZE_KWARGS below — the modern
-# replacement for the removed `execution_mode="edge_analytics"` selector.
+# replacement for the deprecated `execution_mode="edge_analytics"` selector,
+# which is slated for hard-fail removal.
 
 
 # ==============================================================================
