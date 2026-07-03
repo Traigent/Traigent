@@ -636,9 +636,7 @@ class TestExperimentGroupTools:
 
         assert result["ok"] is True
         assert result["experiment_group"] == {"group_id": "group_123"}
-        reader.get_experiment_group.assert_awaited_once_with(
-            "group_123", "proj_abc"
-        )
+        reader.get_experiment_group.assert_awaited_once_with("group_123", "proj_abc")
 
     @pytest.mark.asyncio
     async def test_configuration_runs_tool_calls_client(self, monkeypatch) -> None:
