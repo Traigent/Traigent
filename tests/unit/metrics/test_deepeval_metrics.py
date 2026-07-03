@@ -92,6 +92,70 @@ def mock_deepeval():
 # ---------------------------------------------------------------------------
 
 
+class TestTelemetryGuard:
+    """Test DeepEval telemetry and OpenTelemetry side-effect guards."""
+
+    def test_sets_deepeval_telemetry_opt_out_env_when_absent(self, monkeypatch):
+        import traigent.metrics.deepeval_metrics as dm
+
+        for name in dm._DEEPEVAL_TELEMETRY_OPT_OUT_ENV:
+            monkeypatch.delenv(name, raising=False)
+
+        dm._set_deepeval_telemetry_opt_out_env()
+
+        for name, value in dm._DEEPEVAL_TELEMETRY_OPT_OUT_ENV.items():
+            assert dm.os.environ[name] == value
+
+    def test_does_not_overwrite_user_set_deepeval_env(self, monkeypatch):
+        import traigent.metrics.deepeval_metrics as dm
+
+        for name in dm._DEEPEVAL_TELEMETRY_OPT_OUT_ENV:
+            monkeypatch.setenv(name, f"user-{name.lower()}")
+
+        dm._set_deepeval_telemetry_opt_out_env()
+
+        for name in dm._DEEPEVAL_TELEMETRY_OPT_OUT_ENV:
+            assert dm.os.environ[name] == f"user-{name.lower()}"
+
+    def test_restores_hijacked_tracer_provider_and_once_guard(self, caplog):
+        import traigent.metrics.deepeval_metrics as dm
+
+        original_provider = object()
+        hijacked_provider = object()
+
+        class FakeOnce:
+            _done = False
+
+        class FakeTrace:
+            def __init__(self):
+                self._TRACER_PROVIDER = original_provider
+                self._TRACER_PROVIDER_SET_ONCE = FakeOnce()
+
+            def get_tracer_provider(self):
+                return self._TRACER_PROVIDER
+
+            def set_tracer_provider(self, provider):
+                self._TRACER_PROVIDER = provider
+                self._TRACER_PROVIDER_SET_ONCE._done = True
+
+        trace = FakeTrace()
+        snapshot = dm._TracerProviderSnapshot(
+            trace_module=trace,
+            provider=original_provider,
+            raw_provider=original_provider,
+            once_guard=trace._TRACER_PROVIDER_SET_ONCE,
+            once_done=False,
+        )
+        trace._TRACER_PROVIDER = hijacked_provider
+        trace._TRACER_PROVIDER_SET_ONCE._done = True
+
+        dm._restore_otel_tracer_provider(snapshot)
+
+        assert trace.get_tracer_provider() is original_provider
+        assert trace._TRACER_PROVIDER_SET_ONCE._done is False
+        assert "Restored host OpenTelemetry TracerProvider" in caplog.text
+
+
 class TestImportGuard:
     """Test behaviour when deepeval is not installed."""
 
