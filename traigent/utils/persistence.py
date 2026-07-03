@@ -31,6 +31,43 @@ TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
 TRIALS_SUMMARY_FILE = "trials_summary.json"
 
+_SAFE_PICKLE_GLOBALS = frozenset(
+    {
+        ("_codecs", "encode"),
+        ("__builtin__", "complex"),
+        ("__builtin__", "frozenset"),
+        ("__builtin__", "set"),
+        ("builtins", "complex"),
+        ("builtins", "frozenset"),
+        ("builtins", "set"),
+        ("datetime", "datetime"),
+        ("datetime", "timedelta"),
+        ("datetime", "timezone"),
+        ("traigent.api.types", "OptimizationStatus"),
+        ("traigent.api.types", "Trial"),
+        ("traigent.api.types", "TrialError"),
+        ("traigent.api.types", "TrialResult"),
+        ("traigent.api.types", "TrialStatus"),
+        ("traigent.core.types", "OptimizationStatus"),
+        ("traigent.core.types", "Trial"),
+        ("traigent.core.types", "TrialResult"),
+        ("traigent.core.types", "TrialStatus"),
+        ("traigent.optimizers.results", "OptimizationResult"),
+        ("traigent.optimizers.results", "Trial"),
+    }
+)
+
+
+class RestrictedUnpickler(pickle.Unpickler):
+    """Unpickler for legacy Traigent trial files with pinned safe globals."""
+
+    def find_class(self, module: str, name: str) -> Any:
+        if (module, name) not in _SAFE_PICKLE_GLOBALS:
+            raise pickle.UnpicklingError(
+                f"Attempted to unpickle unsafe global: {module}.{name}"
+            )
+        return super().find_class(module, name)
+
 
 def _safe_json_value(value: Any) -> Any:
     """Convert a value to a JSON-safe type, handling nested structures recursively.
@@ -393,26 +430,6 @@ class PersistenceManager:
                 result_dir / TRIALS_PKL_FILE, must_exist=True
             )
             with gzip.open(validated_pkl_file, "rb") as fp:
-                # Only load pickle from trusted sources with restricted imports
-                import pickle
-
-                class RestrictedUnpickler(pickle.Unpickler):
-                    def find_class(self, module, name):
-                        # Only allow safe classes
-                        ALLOWED_MODULES = {
-                            "traigent.core.types",
-                            "traigent.optimizers.results",
-                            "__builtin__",
-                            "builtins",
-                            "collections",
-                            "datetime",
-                        }
-                        if module not in ALLOWED_MODULES:
-                            raise pickle.UnpicklingError(
-                                f"Attempted to unpickle unsafe module: {module}"
-                            )
-                        return super().find_class(module, name)
-
                 trials = cast(list[TrialResult], RestrictedUnpickler(fp).load())
         else:
             raise ValueError(f"Trials file missing for result '{name}'")
