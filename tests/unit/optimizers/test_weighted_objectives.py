@@ -333,29 +333,30 @@ class TestGridSearchOptimizerWeights:
     def test_grid_trials_rank_through_shared_weighted_scorer(self):
         """#1682: grid-produced trials are ranked by the shared weighted scorer.
 
-        Flipping ObjectiveSchema weights between accuracy-heavy and cost-heavy
-        must flip the selected configuration over a fixed trade-off table.
+        Uses the issue's LITERAL trade-off table (realistic fraction-of-a-cent
+        costs): flipping ObjectiveSchema weights between accuracy-heavy and
+        cost-heavy must flip the selected configuration.
         """
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
         from traigent.core.result_selection import select_best_configuration
 
         def make_trials() -> list[TrialResult]:
             table = [
-                (1, 0.95, 0.08),  # high accuracy, high cost
-                (2, 0.85, 0.05),
-                (3, 0.75, 0.02),  # low accuracy, low cost
+                ("gpt-4o-analog", 0.92, 0.010),  # high accuracy, high cost
+                ("mid-analog", 0.82, 0.004),
+                ("nano-analog", 0.70, 0.001),  # low accuracy, low cost
             ]
             return [
                 TrialResult(
-                    trial_id=f"trial_{param}",
-                    config={"param": param},
+                    trial_id=f"trial_{model}",
+                    config={"model": model},
                     metrics={"accuracy": accuracy, "cost": cost},
                     status="completed",
                     duration=1.0,
                     timestamp=datetime.now(),
                     metadata={},
                 )
-                for param, accuracy, cost in table
+                for model, accuracy, cost in table
             ]
 
         def schema(accuracy_weight: float, cost_weight: float) -> ObjectiveSchema:
@@ -374,7 +375,7 @@ class TestGridSearchOptimizerWeights:
             result = select_best_configuration(
                 trials=make_trials(),
                 primary_objective="accuracy",
-                config_space_keys={"param"},
+                config_space_keys={"model"},
                 aggregate_configs=False,
                 objective_order=["accuracy", "cost"],
                 comparability_mode="legacy",
@@ -383,8 +384,8 @@ class TestGridSearchOptimizerWeights:
             assert result.best_config is not None
             return result.best_config
 
-        assert winner(0.9, 0.1) == {"param": 1}  # accuracy-heavy -> accurate config
-        assert winner(0.1, 0.9) == {"param": 3}  # cost-heavy -> cheap config
+        assert winner(0.9, 0.1) == {"model": "gpt-4o-analog"}
+        assert winner(0.1, 0.9) == {"model": "nano-analog"}
 
     def test_post_hoc_weighted_scores_use_shared_scoring_function(self):
         """#1682 reconciliation: OptimizationResult post-hoc weighted scores
@@ -445,6 +446,71 @@ class TestGridSearchOptimizerWeights:
         for trial in trials:
             expected = schema.compute_weighted_score(trial.metrics, ranges=ranges)
             assert by_id[trial.trial_id] == expected
+
+    def test_terminal_selection_agrees_with_post_hoc_weighted_ranking(self):
+        """#1682 (review advisory 3): best_config from terminal selection and
+        best_weighted_config from post-hoc calculate_weighted_scores use the
+        same observed-range weighted scoring and cannot disagree — verified
+        on the issue's literal table for both weight orders."""
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+        from traigent.core.result_selection import select_best_configuration
+
+        trials = [
+            TrialResult(
+                trial_id=f"trial_{model}",
+                config={"model": model},
+                metrics={"accuracy": accuracy, "cost": cost},
+                status="completed",
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+            for model, accuracy, cost in [
+                ("gpt-4o-analog", 0.92, 0.010),
+                ("mid-analog", 0.82, 0.004),
+                ("nano-analog", 0.70, 0.001),
+            ]
+        ]
+
+        for accuracy_weight, cost_weight, expected_model in [
+            (0.9, 0.1, "gpt-4o-analog"),
+            (0.1, 0.9, "nano-analog"),
+        ]:
+            schema = ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name="accuracy", orientation="maximize", weight=accuracy_weight
+                    ),
+                    ObjectiveDefinition(
+                        name="cost", orientation="minimize", weight=cost_weight
+                    ),
+                ]
+            )
+            terminal = select_best_configuration(
+                trials=trials,
+                primary_objective="accuracy",
+                config_space_keys={"model"},
+                aggregate_configs=False,
+                objective_order=["accuracy", "cost"],
+                comparability_mode="legacy",
+                objective_schema=schema,
+            )
+            result = OptimizationResult(
+                trials=trials,
+                best_config=terminal.best_config or {},
+                best_score=terminal.best_score,
+                optimization_id="opt_1682_agree",
+                duration=1.0,
+                convergence_info={},
+                status=OptimizationStatus.COMPLETED,
+                objectives=["accuracy", "cost"],
+                algorithm="grid",
+                timestamp=datetime.now(),
+            )
+            post_hoc = result.calculate_weighted_scores(objective_schema=schema)
+
+            assert terminal.best_config == {"model": expected_model}
+            assert post_hoc["best_weighted_config"] == terminal.best_config
 
 
 class TestWeightedObjectivesIntegration:

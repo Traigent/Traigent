@@ -1058,21 +1058,31 @@ def _weighted_schema(accuracy_weight: float, cost_weight: float):
 
 
 def _tradeoff_trials() -> list[FakeTrial]:
-    """Deterministic trade-off table from issue #1682's repro."""
+    """Issue #1682's LITERAL deterministic trade-off table.
+
+    Realistic per-trial LLM costs (fractions of a cent) — the review-verified
+    case where range-free 1/(1+cost) normalization can never flip the winner
+    (costs map to 0.999/0.996/0.990). Observed-range min-max normalization
+    must flip it.
+    """
     return [
         FakeTrial(
-            metrics={"accuracy": 0.95, "cost": 0.08},
+            metrics={"accuracy": 0.92, "cost": 0.010},
             config={"model": "gpt-4o-analog"},
         ),
         FakeTrial(
-            metrics={"accuracy": 0.85, "cost": 0.05},
+            metrics={"accuracy": 0.82, "cost": 0.004},
             config={"model": "mid-analog"},
         ),
         FakeTrial(
-            metrics={"accuracy": 0.75, "cost": 0.02},
-            config={"model": "cheap-analog"},
+            metrics={"accuracy": 0.70, "cost": 0.001},
+            config={"model": "nano-analog"},
         ),
     ]
+
+
+# Observed min-max ranges over the literal table.
+_TRADEOFF_RANGES = {"accuracy": (0.70, 0.92), "cost": (0.001, 0.010)}
 
 
 class TestWeightedSelection:
@@ -1093,26 +1103,29 @@ class TestWeightedSelection:
 
         assert result.best_config == {"model": "gpt-4o-analog"}
         # best_score stays the winner's primary-objective value.
-        assert result.best_score == pytest.approx(0.95)
+        assert result.best_score == pytest.approx(0.92)
         weighted = result.session_summary["weighted_selection"]
-        # 0.9 * 0.95 + 0.1 * (1 / (1 + 0.08)) — exact objectives.py semantics.
-        assert weighted["best_weighted_score"] == pytest.approx(
-            0.9 * 0.95 + 0.1 * (1.0 / 1.08)
-        )
+        # gpt-4o-analog is the observed-range extreme: accuracy normalized to
+        # 1.0, cost (worst observed) to 0.0 -> 0.9*1.0 + 0.1*0.0 = 0.9.
+        assert weighted["best_weighted_score"] == pytest.approx(0.9)
         assert weighted["weights_normalized"] == pytest.approx(
             {"accuracy": 0.9, "cost": 0.1}
         )
+        assert weighted["normalization_ranges"] == {
+            "accuracy": [0.70, 0.92],
+            "cost": [0.001, 0.010],
+        }
 
-    def test_cost_heavy_weights_flip_winner_to_cheap_config(self) -> None:
+    def test_cost_heavy_weights_flip_winner_to_nano_config(self) -> None:
         """Flipping 0.9/0.1 -> 0.1/0.9 changes best_config (the issue's repro)."""
         result = self._select(_tradeoff_trials(), _weighted_schema(0.1, 0.9))
 
-        assert result.best_config == {"model": "cheap-analog"}
-        assert result.best_score == pytest.approx(0.75)
+        assert result.best_config == {"model": "nano-analog"}
+        assert result.best_score == pytest.approx(0.70)
         weighted = result.session_summary["weighted_selection"]
-        assert weighted["best_weighted_score"] == pytest.approx(
-            0.1 * 0.75 + 0.9 * (1.0 / 1.02)
-        )
+        # nano-analog: accuracy normalized to 0.0, cost (best observed) to
+        # 1.0 -> 0.1*0.0 + 0.9*1.0 = 0.9.
+        assert weighted["best_weighted_score"] == pytest.approx(0.9)
 
     def test_minimize_orientation_pulls_selection_down(self) -> None:
         """A cost-heavy weighting must beat a higher-accuracy, costlier trial."""
@@ -1142,10 +1155,11 @@ class TestWeightedSelection:
 
         result = self._select(trials, _weighted_schema(0.4, 0.6))
         assert result.best_config == {"model": "frugal"}
-        # 0.4*0.90 + 0.6*(1/1.1) > 0.4*0.92 + 0.6*(1/1.5)
+        # Two-trial observed ranges: frugal takes accuracy_n=0, cost_n=1
+        # -> 0.4*0.0 + 0.6*1.0 = 0.6 (beats pricey's 0.4*1.0 + 0.6*0.0 = 0.4).
         assert result.session_summary["weighted_selection"][
             "best_weighted_score"
-        ] == pytest.approx(0.4 * 0.90 + 0.6 * (1.0 / 1.1))
+        ] == pytest.approx(0.6)
 
     def test_per_trial_weighted_score_populated(self) -> None:
         """metrics['score'] carries the basis of selection and matches the
@@ -1157,9 +1171,15 @@ class TestWeightedSelection:
 
         for trial in trials:
             raw = {k: v for k, v in trial.metrics.items() if k != "score"}
-            expected = schema.compute_weighted_score(raw)
+            expected = schema.compute_weighted_score(raw, ranges=_TRADEOFF_RANGES)
             assert expected is not None
             assert trial.metrics["score"] == pytest.approx(expected)
+        # Spot-check the mid config against hand-computed normalization:
+        # 0.9*((0.82-0.70)/0.22) + 0.1*((0.010-0.004)/0.009).
+        mid = next(t for t in trials if t.config == {"model": "mid-analog"})
+        assert mid.metrics["score"] == pytest.approx(
+            0.9 * (0.12 / 0.22) + 0.1 * (0.006 / 0.009)
+        )
 
     def test_single_objective_schema_keeps_legacy_result(self) -> None:
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
@@ -1229,8 +1249,10 @@ class TestWeightedSelection:
         # Mean metrics: accuracy 0.89, cost 0.1.
         assert result.best_score == pytest.approx(0.89)
         weighted = result.session_summary["weighted_selection"]
+        # Per-trial observed ranges: accuracy (0.88, 0.92), cost (0.1, 0.5).
+        # Frugal mean (0.89, 0.1): 0.4*((0.89-0.88)/0.04) + 0.6*1.0 = 0.7.
         assert weighted["best_weighted_score"] == pytest.approx(
-            0.4 * 0.89 + 0.6 * (1.0 / 1.1)
+            0.4 * (0.01 / 0.04) + 0.6 * 1.0
         )
         assert result.session_summary["selection_mode"] == "aggregated_mean"
         # Per-trial basis of selection is populated post-aggregation.

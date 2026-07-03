@@ -94,6 +94,7 @@ from traigent.core.result_selection import (
     TieBreaker,
     _primary_scores_tied,
     _secondary_metric_key,
+    observed_metric_ranges,
     resolve_weighted_selection_schema,
     select_best_configuration,
 )
@@ -1142,8 +1143,29 @@ class OptimizationOrchestrator:
     def _weighted_is_better(
         self, schema: ObjectiveSchema, trial_result: TrialResult
     ) -> bool:
-        """Compare candidate vs incumbent by the schema's weighted aggregate."""
-        new_weighted = schema.compute_weighted_score(trial_result.metrics or {})
+        """Compare candidate vs incumbent by the schema's weighted aggregate.
+
+        Normalization uses the min-max ranges observed SO FAR (successful
+        trials seen to date plus the incumbent and the candidate), matching
+        terminal selection's observed-range normalization (issue #1682).
+        Ranges evolve as trials arrive, so the incumbent comparison is
+        recomputed under current ranges each time; live tracking is therefore
+        an online approximation — the authoritative ``best_config`` comes
+        from terminal selection over the full trial set.
+        """
+        observed: list[TrialResult] = [
+            trial for trial in self._trials if trial.is_successful
+        ]
+        observed.append(trial_result)
+        if self._best_trial_cached is not None:
+            observed.append(self._best_trial_cached)
+        ranges = observed_metric_ranges(
+            observed, (obj.name for obj in schema.objectives)
+        )
+
+        new_weighted = schema.compute_weighted_score(
+            trial_result.metrics or {}, ranges=ranges
+        )
         if new_weighted is None or not math.isfinite(new_weighted):
             return False
 
@@ -1151,7 +1173,7 @@ class OptimizationOrchestrator:
             return True
 
         current_weighted = schema.compute_weighted_score(
-            self._best_trial_cached.metrics or {}
+            self._best_trial_cached.metrics or {}, ranges=ranges
         )
         if current_weighted is None or not math.isfinite(current_weighted):
             return True

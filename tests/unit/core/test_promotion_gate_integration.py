@@ -475,17 +475,19 @@ class TestWeightedIncumbentTracking:
 
     def test_cost_heavy_weights_promote_cheaper_candidate(self) -> None:
         orchestrator = self._orchestrator(self._schema(0.1, 0.9))
-        incumbent = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
-        candidate = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
+        incumbent = self._trial("expensive", accuracy=0.92, cost=0.010, x=1)
+        candidate = self._trial("cheap", accuracy=0.70, cost=0.001, x=2)
 
         orchestrator._best_trial_cached = incumbent
-        # 0.1*0.75 + 0.9/(1.02) beats 0.1*0.95 + 0.9/(1.08).
+        # Observed-range normalization over {incumbent, candidate}: the cheap
+        # candidate takes cost_n=1.0/accuracy_n=0.0 -> 0.9 beats the expensive
+        # incumbent's 0.1, even with realistic fraction-of-a-cent costs.
         assert orchestrator._simple_is_better(candidate) is True
 
     def test_accuracy_heavy_weights_keep_accurate_incumbent(self) -> None:
         orchestrator = self._orchestrator(self._schema(0.9, 0.1))
-        incumbent = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
-        candidate = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
+        incumbent = self._trial("expensive", accuracy=0.92, cost=0.010, x=1)
+        candidate = self._trial("cheap", accuracy=0.70, cost=0.001, x=2)
 
         orchestrator._best_trial_cached = incumbent
         assert orchestrator._simple_is_better(candidate) is False
@@ -493,9 +495,9 @@ class TestWeightedIncumbentTracking:
     def test_uniform_weights_keep_legacy_primary_comparison(self) -> None:
         """Equal weights (unweighted schema) rank by objectives[0] only."""
         orchestrator = self._orchestrator(self._schema(1.0, 1.0))
-        incumbent = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
-        cheap_low_accuracy = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
-        better_accuracy = self._trial("better", accuracy=0.97, cost=0.20, x=3)
+        incumbent = self._trial("expensive", accuracy=0.92, cost=0.010, x=1)
+        cheap_low_accuracy = self._trial("cheap", accuracy=0.70, cost=0.001, x=2)
+        better_accuracy = self._trial("better", accuracy=0.97, cost=0.020, x=3)
 
         orchestrator._best_trial_cached = incumbent
         assert orchestrator._simple_is_better(cheap_low_accuracy) is False
@@ -503,8 +505,8 @@ class TestWeightedIncumbentTracking:
 
     def test_update_best_trial_cache_tracks_weighted_incumbent(self) -> None:
         orchestrator = self._orchestrator(self._schema(0.1, 0.9))
-        first = self._trial("expensive", accuracy=0.95, cost=0.08, x=1)
-        second = self._trial("cheap", accuracy=0.75, cost=0.02, x=2)
+        first = self._trial("expensive", accuracy=0.92, cost=0.010, x=1)
+        second = self._trial("cheap", accuracy=0.70, cost=0.001, x=2)
 
         orchestrator._update_best_trial_cache(first)
         assert orchestrator._best_trial_cached is first

@@ -104,22 +104,64 @@ def resolve_weighted_selection_schema(
     return objective_schema
 
 
+def observed_metric_ranges(
+    trials: Iterable[TrialResult],
+    objective_names: Iterable[str],
+) -> dict[str, tuple[float, float]]:
+    """Observed (min, max) per objective across trials' finite metric values.
+
+    These ranges feed ``ObjectiveSchema.compute_weighted_score(..., ranges=...)``
+    so weighted selection normalizes each objective over the values actually
+    observed in the run — scale-independent, matching the post-hoc
+    ``calculate_weighted_scores`` normalization. Without this, small-magnitude
+    minimize objectives (e.g. per-trial cost in fractions of a cent) could
+    never influence the winner (issue #1682 review finding).
+    """
+    names = list(objective_names)
+    ranges: dict[str, tuple[float, float]] = {}
+    for trial in trials:
+        metrics = getattr(trial, "metrics", None) or {}
+        for name in names:
+            value = metrics.get(name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                continue
+            low, high = ranges.get(name, (numeric, numeric))
+            ranges[name] = (min(low, numeric), max(high, numeric))
+    return ranges
+
+
 def _weighted_trial_score(
-    schema: ObjectiveSchema, metrics: dict[str, Any] | None
+    schema: ObjectiveSchema,
+    metrics: dict[str, Any] | None,
+    ranges: dict[str, tuple[float, float]],
 ) -> float | None:
     """Weighted aggregate for a metrics dict via the shared objectives.py scorer."""
-    weighted = schema.compute_weighted_score(metrics or {})
+    weighted = schema.compute_weighted_score(metrics or {}, ranges=ranges)
     if weighted is None or not math.isfinite(weighted):
         return None
     return float(weighted)
 
 
 def _populate_weighted_scores(
-    trials: Iterable[TrialResult], schema: ObjectiveSchema
+    trials: Iterable[TrialResult],
+    schema: ObjectiveSchema,
+    ranges: dict[str, tuple[float, float]],
 ) -> None:
-    """Expose the basis of selection per trial as ``metrics["score"]`` (#1682)."""
+    """Expose the basis of selection per trial as ``metrics["score"]`` (#1682).
+
+    NOTE (mutation blast radius): this writes into the SAME TrialResult
+    objects that land in ``OptimizationResult.trials`` — that is the delivery
+    mechanism the issue asks for. It runs only at terminal selection time
+    (never mid-run), so live surfaces that alias ``"score"`` (stop
+    conditions, trial-lifecycle fallbacks, client progress reporting) are
+    unaffected; in weighted runs it overwrites any evaluator-provided
+    ``"score"`` value on ranking-eligible trials.
+    """
     for trial in trials:
-        weighted = _weighted_trial_score(schema, trial.metrics)
+        weighted = _weighted_trial_score(schema, trial.metrics, ranges)
         if weighted is None:
             continue
         if trial.metrics is None:
@@ -128,12 +170,18 @@ def _populate_weighted_scores(
 
 
 def _weighted_session_extras(
-    schema: ObjectiveSchema, best_weighted_score: float
+    schema: ObjectiveSchema,
+    best_weighted_score: float,
+    ranges: dict[str, tuple[float, float]],
 ) -> dict[str, Any]:
     return {
         "weighted_selection": {
             "enabled": True,
             "aggregation": "weighted_sum",
+            "normalization": "observed_range_min_max",
+            "normalization_ranges": {
+                name: [low, high] for name, (low, high) in ranges.items()
+            },
             "weights_normalized": dict(schema.weights_normalized),
             "best_weighted_score": best_weighted_score,
         }
@@ -649,16 +697,24 @@ def _select_best_weighted(
 ) -> SelectionResult | None:
     """Rank eligible trials by the schema's weighted aggregate (issue #1682).
 
-    Uses ``ObjectiveSchema.compute_weighted_score`` — the shared objectives.py
-    scoring function — so minimize objectives pull selection down exactly the
-    way that function normalizes them. ``best_score`` stays the winner's
-    primary-objective value for result-shape compatibility; the weighted basis
-    of selection is surfaced per-trial in ``metrics["score"]`` and in
+    Uses ``ObjectiveSchema.compute_weighted_score`` with observed min-max
+    ``ranges`` — the shared objectives.py scoring function, normalized over
+    the values actually observed across eligible trials, exactly like the
+    post-hoc ``calculate_weighted_scores`` path. This makes selection
+    scale-independent (a cost objective in fractions of a cent weighs the
+    same as one in dollars) and keeps ``best_config`` consistent with the
+    post-hoc weighted ranking. ``best_score`` stays the winner's
+    primary-objective value for result-shape compatibility; the weighted
+    basis of selection is surfaced per-trial in ``metrics["score"]`` and in
     ``session_summary["weighted_selection"]``.
 
     Returns None when no eligible trial has a computable weighted score, in
     which case the caller falls back to legacy primary-objective ranking.
     """
+    ranges = observed_metric_ranges(
+        eligible_trials, (obj.name for obj in schema.objectives)
+    )
+
     if aggregate_configs:
         return _select_best_weighted_aggregated(
             eligible_trials,
@@ -668,19 +724,23 @@ def _select_best_weighted(
             ranking_summary,
             objective_order,
             config_space_keys,
+            ranges,
         )
 
     scored = [
         (trial, weighted)
         for trial in eligible_trials
-        if (weighted := _weighted_trial_score(schema, trial.metrics)) is not None
+        if (weighted := _weighted_trial_score(schema, trial.metrics, ranges))
+        is not None
     ]
     if not scored:
         return None
 
     best_weighted = max(weighted for _, weighted in scored)
     tied_trials = [
-        trial for trial, weighted in scored if _primary_scores_tied(weighted, best_weighted)
+        trial
+        for trial, weighted in scored
+        if _primary_scores_tied(weighted, best_weighted)
     ]
     if len(tied_trials) > 1:
         best_trial = apply_tie_breaker(
@@ -693,7 +753,7 @@ def _select_best_weighted(
     else:
         best_trial = tied_trials[0]
 
-    _populate_weighted_scores(eligible_trials, schema)
+    _populate_weighted_scores(eligible_trials, schema, ranges)
 
     return SelectionResult(
         best_config=best_trial.config or {},
@@ -702,7 +762,7 @@ def _select_best_weighted(
         ),
         session_summary={
             "ranking": ranking_summary,
-            **_weighted_session_extras(schema, best_weighted),
+            **_weighted_session_extras(schema, best_weighted, ranges),
         },
         best_trial_id=best_trial.trial_id,
     )
@@ -716,18 +776,26 @@ def _select_best_weighted_aggregated(
     ranking_summary: dict[str, Any],
     objective_order: Iterable[str] | None,
     config_space_keys: set[str],
+    ranges: dict[str, tuple[float, float]],
 ) -> SelectionResult | None:
     """Weighted ranking over config-aggregated mean metrics (issue #1682).
 
     Aggregation runs BEFORE per-trial score population so config means stay
     metric-pure; each config is then ranked by the weighted aggregate of its
-    mean metrics via the shared objectives.py scorer.
+    mean metrics via the shared objectives.py scorer. ``ranges`` are the
+    per-trial observed min-max ranges (one definition shared with the
+    non-aggregated path and post-hoc analysis); config means always lie
+    within them.
     """
     aggregated = _aggregate_trials(eligible_trials, config_space_keys)
     entry_scores = [
         (entry, weighted)
         for entry in aggregated.values()
-        if (weighted := _weighted_trial_score(schema, _compute_mean_metrics(entry)))
+        if (
+            weighted := _weighted_trial_score(
+                schema, _compute_mean_metrics(entry), ranges
+            )
+        )
         is not None
     ]
     if not entry_scores:
@@ -750,7 +818,7 @@ def _select_best_weighted_aggregated(
     else:
         best_entry = tied_entries[0]
 
-    _populate_weighted_scores(eligible_trials, schema)
+    _populate_weighted_scores(eligible_trials, schema, ranges)
 
     best_metrics = _compute_mean_metrics(best_entry)
     session_summary = {
@@ -762,7 +830,7 @@ def _select_best_weighted_aggregated(
         "metrics": _sanitize_mean_metrics(best_metrics),
         "sanitized": True,
         "ranking": ranking_summary,
-        **_weighted_session_extras(schema, best_weighted),
+        **_weighted_session_extras(schema, best_weighted, ranges),
     }
 
     return SelectionResult(
