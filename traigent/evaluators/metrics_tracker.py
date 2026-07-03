@@ -1433,7 +1433,7 @@ def _calculate_cost_for_metrics(
 
         # Log when cost ends up at zero despite having tokens — this is the
         # most actionable diagnostic for the "$0 cost" issue (#325).
-        if metrics.cost.total_cost == 0.0 and (
+        if math.isclose(metrics.cost.total_cost, 0.0, abs_tol=1e-12) and (
             metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
         ):
             logger.warning(
