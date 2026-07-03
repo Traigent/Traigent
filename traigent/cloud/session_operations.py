@@ -1506,6 +1506,7 @@ class SessionOperations:
                     "Offline mode enabled — skipping backend deletion for %s",
                     session_id,
                 )
+                backend_deleted = False
             else:
                 backend_deleted = await self._delete_session_via_api(session_id)
                 if not backend_deleted:
@@ -1515,6 +1516,9 @@ class SessionOperations:
             if mapping:
                 self.client.session_bridge._session_mappings.pop(session_id, None)
                 logger.debug(f"Removed session mapping for {session_id}")
+
+            if backend_deleted:
+                return True
 
         return deleted
 
