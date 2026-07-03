@@ -146,6 +146,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`langgraph-checkpoint` 3.x → 4.x:** the 4.0 release drops default deserialization of payloads serialized with the legacy `"json"` serde mode. Users running `langgraph` with a persistent checkpoint saver (SQLite, Postgres, Redis, etc.) whose stored state contains JSON-format blobs will see deserialization failures unless they configure `serde` with an explicit `allowed_json_modules` list. Traigent does not bind `langgraph-checkpoint` directly — it arrives transitively through the `langgraph` dependency — so this only affects projects that also use `langgraph` checkpointers in their own code. See [CVE-2026-27794](https://github.com/langchain-ai/langgraph/security/advisories) for the underlying RCE that motivated removing the default.
 
 ### Changed
+- **CI approval gate:** running `optimize()` in local/offline mode within a CI
+  environment now requires explicit approval via `TRAIGENT_RUN_APPROVED=1`.
+  `TRAIGENT_MOCK_LLM` no longer bypasses this gate — mock and offline runs in
+  CI are intentionally included (a purpose-built approval signal replaces an
+  env-var bypass of a security control). Cloud-mode runs are unaffected.
+  Migration: set `TRAIGENT_RUN_APPROVED=1` in CI for legitimately-approved
+  runs.
 - **Strict evidence modes now fail closed in promotion** (#1103,
   FR-SDK-FAIL-CLOSED-PROMOTION-V1). When a TVL promotion policy declares a strict
   evidence mode — `require_calibration.enabled: true` or `chance_constraints` —

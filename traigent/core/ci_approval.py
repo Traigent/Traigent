@@ -177,6 +177,9 @@ def check_ci_approval(traigent_config: TraigentConfig) -> None:
     # NOTE: ``TRAIGENT_MOCK_LLM`` no longer bypasses the CI approval gate
     # (S2-B retirement). Bypassing a security control based on an env var
     # was unsafe in production deployments where the variable could leak in.
+    # Owner-affirmed on 2026-07-03: mock/offline runs are intentionally
+    # included under a uniform CI-approval rule; do not re-add a mock-shaped
+    # exemption.
     # CI runs that legitimately need to skip approval should use
     # ``TRAIGENT_RUN_APPROVED=1`` (signed token) explicitly.
 
@@ -200,6 +203,7 @@ def check_ci_approval(traigent_config: TraigentConfig) -> None:
 CI/CD Approval Required
 
 This optimization was triggered in a CI environment and requires approval.
+Mock and offline runs in CI are also covered; TRAIGENT_RUN_APPROVED=1 is the intended explicit approval signal.
 
 To approve, use one of these methods:
 
