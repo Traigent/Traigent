@@ -20,6 +20,7 @@ from traigent.playbook.staleness import compute_staleness
 from traigent.playbook.validator import validate_playbook
 
 console = Console()
+_PLAYBOOK_SUFFIXES = {".yaml", ".yml"}
 
 
 @click.group()
@@ -48,16 +49,21 @@ def init_playbook(
     path: Path,
 ) -> None:
     """Create an initial agent build playbook."""
-    if path.exists():
-        raise click.ClickException(f"agent build playbook already exists: {path}")
-    if path.parent and not path.parent.exists():
-        raise click.ClickException(f"parent directory does not exist: {path.parent}")
+    resolved_path = _resolve_playbook_path(path, must_exist=False)
+    if resolved_path.exists():
+        raise click.ClickException(
+            f"agent build playbook already exists: {resolved_path}"
+        )
+    if resolved_path.parent and not resolved_path.parent.exists():
+        raise click.ClickException(
+            f"parent directory does not exist: {resolved_path.parent}"
+        )
 
-    path.write_text(
+    resolved_path.write_text(
         scaffold_playbook(name=name, agent_type=agent_type, entrypoint=entrypoint),
         encoding="utf-8",
     )
-    click.echo(f"created agent build playbook: {path}")
+    click.echo(f"created agent build playbook: {resolved_path}")
 
 
 @playbook.command("validate")
@@ -71,8 +77,9 @@ def init_playbook(
 )
 def validate_playbook_command(path: Path) -> None:
     """Validate an agent build playbook."""
+    resolved_path = _resolve_playbook_path(path, must_exist=True)
     try:
-        payload = _load_yaml_mapping(path)
+        payload = _load_yaml_mapping(resolved_path)
     except (FileNotFoundError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -96,8 +103,9 @@ def validate_playbook_command(path: Path) -> None:
 )
 def playbook_status(path: Path) -> None:
     """Show agent build playbook stage status."""
+    resolved_path = _resolve_playbook_path(path, must_exist=True)
     try:
-        loaded = load_playbook(path)
+        loaded = load_playbook(resolved_path)
     except (FileNotFoundError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -124,6 +132,22 @@ def _stage_status(stage: Stage | None) -> str:
     if stage is None:
         return "missing"
     return stage.status.value
+
+
+def _resolve_playbook_path(path: Path, *, must_exist: bool) -> Path:
+    """Resolve an explicit playbook file path and validate basic file semantics."""
+    resolved_path = path.expanduser().resolve()
+    if resolved_path.suffix.lower() not in _PLAYBOOK_SUFFIXES:
+        raise click.ClickException(
+            "agent build playbook path must end with .yaml or .yml"
+        )
+    if must_exist and not resolved_path.exists():
+        raise click.ClickException(f"agent build playbook not found: {resolved_path}")
+    if resolved_path.exists() and not resolved_path.is_file():
+        raise click.ClickException(
+            f"agent build playbook path is not a file: {resolved_path}"
+        )
+    return resolved_path
 
 
 def _stale_label(stage: Stage | None, stale: bool) -> str:
