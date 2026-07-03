@@ -586,6 +586,143 @@ class TestWave2AnalyticsTools:
             assert "secret-host" not in result["message"]
 
 
+class TestExperimentGroupTools:
+    def test_experiment_group_tools_are_registered(self) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        assert tools_mod.ANALYTICS_TOOL_NAMES[-3:] == (
+            "analytics_list_experiment_groups",
+            "analytics_get_experiment_group",
+            "analytics_list_experiment_group_configuration_runs",
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_experiment_groups_calls_client_with_filters(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp.tools import analytics_list_experiment_groups_tool
+
+        class _Payload:
+            def to_dict(self) -> dict[str, object]:
+                return {"items": []}
+
+        reader = AsyncMock()
+        reader.list_experiment_groups.return_value = _Payload()
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_list_experiment_groups_tool(
+            "proj_abc",
+            agent_id="agent_123",
+            dataset_id="dataset_456",
+        )
+
+        assert result["ok"] is True
+        assert result["experiment_groups"] == {"items": []}
+        reader.list_experiment_groups.assert_awaited_once_with(
+            "proj_abc",
+            agent_id="agent_123",
+            dataset_id="dataset_456",
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_experiment_group_calls_client(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import analytics_get_experiment_group_tool
+
+        reader = AsyncMock()
+        reader.get_experiment_group.return_value = {"group_id": "group_123"}
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_get_experiment_group_tool("proj_abc", "group_123")
+
+        assert result["ok"] is True
+        assert result["experiment_group"] == {"group_id": "group_123"}
+        reader.get_experiment_group.assert_awaited_once_with(
+            "group_123", "proj_abc"
+        )
+
+    @pytest.mark.asyncio
+    async def test_configuration_runs_tool_calls_client(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import (
+            analytics_list_experiment_group_configuration_runs_tool,
+        )
+
+        reader = AsyncMock()
+        reader.list_experiment_group_configuration_runs.return_value = {
+            "items": [{"configuration_run_id": "cfg_run_123"}]
+        }
+        _install_fake_client(monkeypatch, reader)
+
+        result = await analytics_list_experiment_group_configuration_runs_tool(
+            "proj_abc", "group_123"
+        )
+
+        assert result["ok"] is True
+        assert result["experiment_group_configuration_runs"] == {
+            "items": [{"configuration_run_id": "cfg_run_123"}]
+        }
+        reader.list_experiment_group_configuration_runs.assert_awaited_once_with(
+            "group_123", "proj_abc"
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_required_ids_rejected_without_call(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+        calls = [
+            tools_mod.analytics_list_experiment_groups_tool(""),
+            tools_mod.analytics_get_experiment_group_tool("proj_abc", ""),
+            tools_mod.analytics_list_experiment_group_configuration_runs_tool(
+                "", "group_123"
+            ),
+            tools_mod.analytics_list_experiment_group_configuration_runs_tool(
+                "proj_abc", ""
+            ),
+        ]
+
+        for call in calls:
+            result = await call
+            assert result["ok"] is False
+            assert "required" in result["message"]
+
+        reader.list_experiment_groups.assert_not_called()
+        reader.get_experiment_group.assert_not_called()
+        reader.list_experiment_group_configuration_runs.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_backend_failures_are_structured(self, monkeypatch) -> None:
+        from traigent.analytics_mcp import tools as tools_mod
+
+        reader = AsyncMock()
+        reader.list_experiment_groups.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
+        reader.get_experiment_group.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
+        reader.list_experiment_group_configuration_runs.side_effect = RuntimeError(
+            "https://secret-host/internal leaked"
+        )
+        _install_fake_client(monkeypatch, reader)
+
+        calls = [
+            tools_mod.analytics_list_experiment_groups_tool("proj_abc"),
+            tools_mod.analytics_get_experiment_group_tool("proj_abc", "group_123"),
+            tools_mod.analytics_list_experiment_group_configuration_runs_tool(
+                "proj_abc", "group_123"
+            ),
+        ]
+
+        for call in calls:
+            result = await call
+            assert result["ok"] is False
+            assert result["code"] == "backend_unavailable"
+            assert "secret-host" not in result["message"]
+
+
 class TestRenderChartTool:
     def test_renders_and_returns_path(self, tmp_path) -> None:
         from traigent.analytics_mcp.tools import analytics_render_chart_tool
@@ -843,6 +980,9 @@ class TestNoTenantArgument:
             tools_mod.analytics_get_parameter_insights_tool,
             tools_mod.analytics_get_example_insights_tool,
             tools_mod.analytics_render_chart_tool,
+            tools_mod.analytics_list_experiment_groups_tool,
+            tools_mod.analytics_get_experiment_group_tool,
+            tools_mod.analytics_list_experiment_group_configuration_runs_tool,
         ]
         for fn in tool_callables:
             params = set(inspect.signature(fn).parameters)
@@ -1021,3 +1161,22 @@ class TestExampleInsightsAggregateProjection:
         assert "__canary__" not in result["cohorts"][0]
         assert "__canary__" not in result["recommendations"][0]
         assert "__canary__" not in result["redactions"]
+
+
+class TestServerToolParity:
+    """Every name in ANALYTICS_TOOL_NAMES must be registered on the server.
+
+    Guards against defining a *_tool function and forgetting the
+    @server.tool() wrapper in server.py (a silently dead tool).
+    """
+
+    @pytest.mark.asyncio
+    async def test_analytics_tool_names_all_registered_on_server(self) -> None:
+        pytest.importorskip("mcp")
+        from traigent.analytics_mcp.server import create_server
+        from traigent.analytics_mcp.tools import ANALYTICS_TOOL_NAMES
+
+        server = create_server()
+        registered = {tool.name for tool in await server.list_tools()}
+        missing = set(ANALYTICS_TOOL_NAMES) - registered
+        assert not missing, f"tools declared but not registered: {sorted(missing)}"

@@ -33,8 +33,12 @@ console = Console(width=120)
 @click.option(
     "--backend-url",
     default=DEFAULT_LOCAL_URL,
+    envvar=["TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL"],
     show_default=True,
-    help=("Backend API base URL. Requires a backend with the next-steps endpoint."),
+    help=(
+        "Backend API base URL. Requires a backend with the next-steps endpoint. "
+        "(env: TRAIGENT_BACKEND_URL / TRAIGENT_API_URL)"
+    ),
 )
 def next_steps(
     experiment_run_id: str,

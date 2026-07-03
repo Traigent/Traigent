@@ -28,12 +28,15 @@ from traigent.analytics_mcp.tools import (
     analytics_compare_runs_tool,
     analytics_get_correlation_matrix_tool,
     analytics_get_example_insights_tool,
+    analytics_get_experiment_group_tool,
     analytics_get_parameter_insights_tool,
     analytics_get_project_overview_tool,
     analytics_get_run_decision_brief_tool,
     analytics_get_run_leaderboard_tool,
     analytics_get_run_report_tool,
     analytics_get_single_run_pareto_tool,
+    analytics_list_experiment_group_configuration_runs_tool,
+    analytics_list_experiment_groups_tool,
     analytics_render_chart_tool,
     auth_status_tool,
     health_check_tool,
@@ -258,6 +261,59 @@ def create_server() -> Any:
         output_path: str | None = None,
     ) -> dict[str, Any]:
         return analytics_render_chart_tool(payload, kind, output_path)
+
+    @server.tool(
+        description=(
+            "List experiment-group cohorts for a project — source-preserving "
+            "groups of optimization runs keyed by (agent_id + dataset_id). A "
+            "group is a browsing/aggregation view over source runs, never a "
+            "merged analytics run. Optional agent_id/dataset_id filters. "
+            "Backend auth required."
+        )
+    )
+    async def analytics_list_experiment_groups(
+        project_id: str,
+        agent_id: str | None = None,
+        dataset_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await analytics_list_experiment_groups_tool(
+            project_id,
+            agent_id,
+            dataset_id,
+        )
+
+    @server.tool(
+        description=(
+            "Fetch one experiment group's summary (counts, status rollup, and "
+            "source experiments) by group_id. The group is a source-preserving "
+            "cohort keyed by (agent_id + dataset_id); join on source ids, "
+            "never on config hash. Backend auth required."
+        )
+    )
+    async def analytics_get_experiment_group(
+        project_id: str,
+        group_id: str,
+    ) -> dict[str, Any]:
+        return await analytics_get_experiment_group_tool(project_id, group_id)
+
+    @server.tool(
+        description=(
+            "Fetch the group's aggregated multi-run results table: one row per "
+            "configuration-run across the cohort's runs, each carrying "
+            "configuration, measures, status, trial_number, and the source "
+            "ids (experiment_run_id, configuration_run_id, experiment_id). "
+            "Rows remain individual source runs — grouped, not merged or "
+            "deduped by config hash. Backend auth required."
+        )
+    )
+    async def analytics_list_experiment_group_configuration_runs(
+        project_id: str,
+        group_id: str,
+    ) -> dict[str, Any]:
+        return await analytics_list_experiment_group_configuration_runs_tool(
+            project_id,
+            group_id,
+        )
 
     return server
 
