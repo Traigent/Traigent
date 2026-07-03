@@ -1045,10 +1045,86 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         return cast(Callable[..., Any], application.wrapped_callable)
 
+    # Decorator-only parameters that MUST NOT be accepted as call-time
+    # ``.optimize(**algorithm_kwargs)`` keys. Before this guard they were
+    # silently absorbed into ``BaseOptimizer.algorithm_config`` with zero
+    # effect (issue #1683, Bug A: ``warm_start_from`` passed at call time was
+    # structurally dead but raised no error — no-silent-legacy policy).
+    #
+    # Keys listed here are the ``_OPTIMIZE_DEFAULTS`` decorator options that
+    # are (a) not explicit ``optimize()`` signature parameters and (b) never
+    # consumed from ``algorithm_kwargs`` anywhere downstream. Keys that ARE
+    # legitimately consumed downstream (``parallel_config``,
+    # ``max_total_examples``, ``samples_include_pruned``, ``max_examples``,
+    # ``plateau_window``, ``plateau_epsilon``, ``semantic_saturation``,
+    # ``cache_policy``, ``cost_limit``, ``cost_approved``, ``metric_*``,
+    # ``tie_breakers``, ``tvl_parameter_agents``, ``invocations_per_example``,
+    # algorithm-specific options like ``seed``/``parameter_order``) must stay
+    # OFF this list. General allowlist validation of every unknown kwarg is a
+    # tracked follow-up (see issue #1683).
+    _DECORATOR_ONLY_OPTIMIZE_PARAMS: frozenset[str] = frozenset(
+        {
+            "warm_start_from",
+            "eval_dataset",
+            "experiment_name",
+            "default_config",
+            "constraints",
+            "safety_constraints",
+            "injection_mode",
+            "config_param",
+            "agents",
+            "agent_prefixes",
+            "agent_measures",
+            "global_measures",
+            "auto_load_best",
+            "load_from",
+            "config_id",
+            "best_config_source",
+            "best_config_strict",
+            "best_config_cache_dir",
+            "best_config_cache_ttl_seconds",
+            "best_config_stale_ok_ttl_seconds",
+            "enable_auto_load_dev_logs",
+            "smart_pruning",
+            "mock_mode_config",
+            "evaluator",
+            "local_storage_path",
+            "minimal_logging",
+            "scoring_function",
+            "metric_functions",
+            "evaluation",
+            "injection",
+            "execution",
+            "mock",
+            "offline",
+            "framework_targets",
+            "auto_override_frameworks",
+            "effectuation",
+            "auto_detect_tvars",
+            "auto_detect_tvars_mode",
+            "auto_detect_tvars_min_confidence",
+            "auto_detect_tvars_include",
+            "auto_detect_tvars_exclude",
+        }
+    )
+
     def _prepare_algorithm_kwargs(
         self, algorithm_kwargs: dict[str, Any]
     ) -> dict[str, Any]:
         """Merge decorator overrides into algorithm kwargs and validate."""
+        # Hard-fail on decorator-only params passed at call time (issue #1683
+        # Bug A). Previously these were silently swallowed into the
+        # optimizer's algorithm_config and had no effect.
+        rejected = self._DECORATOR_ONLY_OPTIMIZE_PARAMS.intersection(algorithm_kwargs)
+        if rejected:
+            rejected_names = ", ".join(sorted(rejected))
+            raise TypeError(
+                f"{rejected_names} is a @traigent.optimize decorator argument "
+                "and is not accepted by .optimize() at call time; move it to "
+                f"the decorator: @traigent.optimize({sorted(rejected)[0]}=...). "
+                "Previously this was silently ignored (issue #1683)."
+            )
+
         decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})
         if decorator_overrides:
             merged = {**decorator_overrides, **algorithm_kwargs}
