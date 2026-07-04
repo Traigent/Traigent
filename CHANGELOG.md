@@ -6,6 +6,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-07-04
+
+Multi-run analytics release: agents can now read the experiment-group
+cohort — one aggregated, source-preserving table of results across runs
+for the same agent + dataset.
+
+### Added
+- Three analytics MCP tools exposing the experiment-group cohort
+  endpoints: `analytics_list_experiment_groups`,
+  `analytics_get_experiment_group`, and
+  `analytics_list_experiment_group_configuration_runs` (one row per
+  configuration-run across the cohort's runs, carrying `configuration`,
+  `measures`, status, `trial_number`, and source ids). Rows remain
+  individual source runs — grouped, never merged or deduped by config
+  hash. (#1707)
+- Server/tool parity guard: every `ANALYTICS_TOOL_NAMES` entry must be
+  registered on the FastMCP server, so a defined-but-unregistered tool
+  can no longer ship silently. (#1707)
+
+### Fixed
+- `traigent next-steps` now honors `TRAIGENT_BACKEND_URL` /
+  `TRAIGENT_API_URL` — the `--backend-url` option previously ignored the
+  documented environment variable and silently fell back to
+  `http://localhost:5000`. Wiring and help text now match
+  `traigent plan`. (#1707)
+
 ## [0.19.1] - 2026-07-03
 
 No-silent-legacy hardening release: five classes of silent failure now either
