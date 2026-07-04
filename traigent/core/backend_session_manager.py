@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 import threading
+import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -32,6 +34,7 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_LOCAL_FALLBACK,
     SOURCE_OFFLINE,
     backend_egress_disabled,
+    exception_status,
     fallback_reason_from_session_result,
     mark_local_fallback,
     policy_allows_cloud_fallback,
@@ -61,6 +64,84 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _WARNING_RULE = "=" * 72
+_FINALIZE_MAX_ATTEMPTS = 3
+_FINALIZE_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
+_FINALIZE_RETRYABLE_STATUSES = frozenset({403, 429, 500, 502, 503, 504})
+_FINALIZE_CONNECTION_ERROR_NAMES = (
+    "ClientConnectorError",
+    "ClientConnectionError",
+    "ConnectionError",
+    "ConnectError",
+    "ReadTimeout",
+    "Timeout",
+)
+
+
+class _BackendFinalizeNotAcknowledgedError(RuntimeError):
+    """Backend finalize returned without confirming remote finalization."""
+
+
+def _status_from_exception(exc: BaseException) -> int | None:
+    status = exception_status(exc)
+    if status is not None:
+        return status
+    match = re.search(
+        r"\b(?:http|status(?:_code)?|code)[=:\s-]*(\d{3})\b",
+        str(exc),
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _is_transient_finalize_error(exc: BaseException) -> bool:
+    if isinstance(exc, _BackendFinalizeNotAcknowledgedError):
+        return True
+
+    status = _status_from_exception(exc)
+    if status is not None:
+        return status in _FINALIZE_RETRYABLE_STATUSES
+
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+
+    exc_name = type(exc).__name__
+    if any(name in exc_name for name in _FINALIZE_CONNECTION_ERROR_NAMES):
+        return True
+
+    text = str(exc).lower()
+    return any(
+        pattern in text
+        for pattern in (
+            "connection refused",
+            "connection reset",
+            "network error",
+            "timed out",
+            "timeout",
+            "temporary failure",
+            "temporarily unavailable",
+            "too many requests",
+            "rate limit",
+            "service unavailable",
+        )
+    )
+
+
+def _finalize_acknowledged(result: Any) -> bool:
+    if result is None:
+        return False
+
+    metadata = None
+    if isinstance(result, dict):
+        metadata = result.get("metadata")
+    else:
+        metadata = getattr(result, "metadata", None)
+
+    if isinstance(metadata, dict) and metadata.get("finalized_via_api") is False:
+        return False
+
+    return True
 
 
 def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
@@ -1694,20 +1775,56 @@ class BackendSessionManager:
         # failed run must never carry a certified winner.
         report = certified_selection if final_status == "completed" else None
 
-        if hasattr(self._backend_client, "finalize_session_sync"):
-            result: dict[str, Any] | None = self._backend_client.finalize_session_sync(  # type: ignore[assignment]
-                session_id,
-                final_status == "completed",
-                certified_selection=report,
-            )
-            return result
+        last_error: BaseException | None = None
+        for attempt in range(1, _FINALIZE_MAX_ATTEMPTS + 1):
+            try:
+                if hasattr(self._backend_client, "finalize_session_sync"):
+                    result: dict[str, Any] | None = (
+                        self._backend_client.finalize_session_sync(  # type: ignore[assignment]
+                            session_id,
+                            final_status == "completed",
+                            certified_selection=report,
+                        )
+                    )
+                else:
+                    result = self._backend_client.finalize_session(  # type: ignore[assignment]
+                        session_id,
+                        final_status == "completed",
+                        certified_selection=report,
+                    )
 
-        result = self._backend_client.finalize_session(  # type: ignore[assignment]
-            session_id,
-            final_status == "completed",
-            certified_selection=report,
+                if _finalize_acknowledged(result):
+                    return result
+                raise _BackendFinalizeNotAcknowledgedError(
+                    "backend did not acknowledge session finalization"
+                )
+            except Exception as exc:
+                last_error = exc
+                if (
+                    attempt >= _FINALIZE_MAX_ATTEMPTS
+                    or not _is_transient_finalize_error(exc)
+                ):
+                    raise
+
+                delay = _FINALIZE_BACKOFF_SECONDS[
+                    min(attempt - 1, len(_FINALIZE_BACKOFF_SECONDS) - 1)
+                ]
+                logger.warning(
+                    "Backend session finalize failed transiently for session %s "
+                    "(attempt %s/%s); retrying in %.1fs: %s",
+                    session_id,
+                    attempt,
+                    _FINALIZE_MAX_ATTEMPTS,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+
+        if last_error is not None:
+            raise last_error
+        raise _BackendFinalizeNotAcknowledgedError(
+            "backend did not acknowledge session finalization"
         )
-        return result
 
     def attach_session_metadata(
         self,
