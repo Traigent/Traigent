@@ -771,6 +771,14 @@ class OptimizationResult:
         return [trial for trial in self.trials if trial.status == TrialStatus.FAILED]
 
     @property
+    def persistence_failed(self) -> bool:
+        """Whether backend persistence/finalization failed after the run completed."""
+        return bool(
+            isinstance(self.metadata, dict)
+            and self.metadata.get("persistence_status") == "failed"
+        )
+
+    @property
     def success_rate(self) -> float:
         """Calculate trial success rate."""
         if not self.trials:

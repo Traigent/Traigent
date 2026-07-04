@@ -3113,10 +3113,13 @@ class OptimizationOrchestrator:
             except Exception as exc:
                 persistence_status = "failed"
                 result.metadata["persistence_error"] = str(exc)
-                logger.warning(
-                    "Backend persistence failed after optimization; keeping result "
-                    "source=%s and marking persistence_status=failed: %s",
+                logger.error(
+                    "Backend persistence failed after optimization; backend session "
+                    "left RUNNING. Run `traigent local sync` or check portal to "
+                    "finalize or repair the session. Keeping result source=%s, "
+                    "session_id=%s, and marking persistence_status=failed: %s",
                     result.source,
+                    session_id,
                     exc,
                 )
 
