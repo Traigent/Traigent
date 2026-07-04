@@ -15,9 +15,34 @@ from rich.console import Console
 from rich.table import Table
 
 from traigent.analytics.optimization_plan import OptimizationPlanClient
-from traigent.config.backend_config import DEFAULT_LOCAL_URL
+from traigent.config.backend_config import DEFAULT_LOCAL_URL, BackendConfig
 
 console = Console(width=120)
+
+
+def _resolve_backend_url(explicit: str | None) -> tuple[str, bool]:
+    """Resolve the backend URL.
+
+    Precedence: explicit flag/env value, then env-var / stored-CLI-credential
+    configuration (previously ignored; Traigent#1721), then the local default.
+    We fall back to ``DEFAULT_LOCAL_URL`` rather than the prod cloud so an
+    unconfigured local-dev user keeps hitting localhost as before.
+
+    Returns (resolved_url, used_explicit_source).
+    """
+    if explicit:
+        return explicit, True
+    configured = BackendConfig.get_configured_backend_url()
+    return (configured or DEFAULT_LOCAL_URL), False
+
+
+def _resolve_api_key(explicit: str | None) -> str | None:
+    """Resolve the API key the same way other authenticated commands do:
+    ``TRAIGENT_API_KEY`` env var, then stored CLI credentials from
+    ``traigent auth login`` (Traigent#1721)."""
+    if explicit:
+        return explicit
+    return BackendConfig.get_api_key()
 
 
 @click.command("plan")
@@ -72,13 +97,19 @@ console = Console(width=120)
 )
 @click.option(
     "--backend-url",
-    default=DEFAULT_LOCAL_URL,
-    show_default=True,
+    default=None,
     envvar=["TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL"],
     help=(
-        "Backend API base URL (env: TRAIGENT_BACKEND_URL / TRAIGENT_API_URL). "
-        "Requires the optimization plan endpoint."
+        "Backend API base URL. Requires the optimization plan endpoint. "
+        "Defaults to the backend URL stored by `traigent auth login`, then "
+        "the local default backend. "
+        "(env: TRAIGENT_BACKEND_URL / TRAIGENT_API_URL)"
     ),
+)
+@click.option(
+    "--api-key",
+    default=None,
+    help="API key (else TRAIGENT_API_KEY env var, then stored CLI credentials).",
 )
 def plan(
     task_description: str,
@@ -89,9 +120,19 @@ def plan(
     cost_limit_usd: float,
     task_type: str | None,
     output_json: bool,
-    backend_url: str,
+    backend_url: str | None,
+    api_key: str | None,
 ) -> None:
     """Show a backend-provided pre-run optimization plan."""
+    resolved_backend_url, backend_url_explicit = _resolve_backend_url(backend_url)
+    resolved_api_key = _resolve_api_key(api_key)
+
+    if not output_json and not backend_url_explicit:
+        console.print(
+            f"[dim]Using backend URL from stored CLI credentials/default: "
+            f"{resolved_backend_url}[/dim]"
+        )
+
     try:
         payload = asyncio.run(
             _fetch_optimization_plan(
@@ -102,7 +143,8 @@ def plan(
                 max_trials=max_trials,
                 cost_limit_usd=cost_limit_usd,
                 task_type=task_type,
-                backend_url=backend_url,
+                backend_url=resolved_backend_url,
+                api_key=resolved_api_key,
             )
         )
     except Exception as exc:
@@ -125,8 +167,11 @@ async def _fetch_optimization_plan(
     cost_limit_usd: float,
     task_type: str | None,
     backend_url: str,
+    api_key: str | None,
 ) -> dict[str, Any]:
-    async with OptimizationPlanClient(backend_url=backend_url) as client:
+    async with OptimizationPlanClient(
+        backend_url=backend_url, api_key=api_key
+    ) as client:
         return await client.get_optimization_plan(
             task_description=task_description,
             dataset_size=dataset_size,
