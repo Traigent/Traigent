@@ -426,3 +426,114 @@ class TestEnterpriseGatedFeatures(DecoratorTestBase):
         message = str(exc.value)
         assert "reps_per_trial" in message
         assert "Traigent Enterprise" in message
+
+
+class TestExecutionOptionsRejectsUnknownKeys(DecoratorTestBase):
+    """Traigent#1723 (g1:F1): ExecutionOptions used ``extra="allow"`` and
+    silently swallowed misspelled option keys into ``__pydantic_extra__``
+    where nothing ever read them (a typo like ``algorithmn="grid"`` or
+    ``offlne=True`` degraded the run to defaults with no error). It is now
+    ``extra="forbid"`` with the still-supported legacy keys split out before
+    the forbid check runs, so unknown keys raise and legacy keys keep working.
+    """
+
+    @pytest.mark.parametrize(
+        ("kwargs", "bad_key"),
+        [
+            ({"algorithmn": "grid"}, "algorithmn"),
+            ({"offlne": True}, "offlne"),
+            ({"minimal_loging": False}, "minimal_loging"),
+            ({"totally_made_up": 1}, "totally_made_up"),
+        ],
+    )
+    def test_unknown_key_raises_naming_the_key(self, kwargs, bad_key):
+        """A genuinely unknown/misspelled key raises ValidationError naming it."""
+        with pytest.raises(PydanticValidationError) as exc:
+            ExecutionOptions(**kwargs)
+
+        message = str(exc.value)
+        assert bad_key in message
+        assert "extra" in message.lower() or "not permitted" in message.lower()
+
+    def test_unknown_key_via_execution_dict_raises_at_decoration(self):
+        """The same rejection fires through @optimize(execution={...})."""
+        with pytest.raises(PydanticValidationError) as exc:
+
+            @optimize(
+                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+                execution={"algorithmn": "grid"},
+            )
+            def test_func(text: str) -> str:
+                return text
+
+        assert "algorithmn" in str(exc.value)
+
+    @pytest.mark.parametrize(
+        ("legacy_key", "value"),
+        [
+            ("execution_mode", "hybrid_api"),
+            ("privacy_enabled", True),
+            ("cloud_fallback_policy", "auto"),
+        ],
+    )
+    def test_legacy_scalar_keys_round_trip_to_stash(self, legacy_key, value):
+        """Tolerated legacy keys are captured verbatim, not rejected."""
+        options = ExecutionOptions(**{legacy_key: value})
+
+        assert options.legacy_option_values.get(legacy_key) == value
+        # Legacy keys must NOT leak into the model as real fields.
+        assert legacy_key not in ExecutionOptions.model_fields
+
+    def test_legacy_hybrid_api_key_round_trips_to_stash(self):
+        """A flat hybrid_api_* key is tolerated and stashed, not rejected."""
+        transport = object()
+        options = ExecutionOptions(hybrid_api_transport=transport)
+
+        assert options.legacy_option_values.get("hybrid_api_transport") is transport
+
+    def test_multiple_legacy_keys_round_trip_together(self):
+        """Several legacy keys survive together with public fields intact."""
+        transport = object()
+        options = ExecutionOptions(
+            algorithm="grid",
+            execution_mode="hybrid_api",
+            privacy_enabled=True,
+            cloud_fallback_policy="auto",
+            hybrid_api_transport=transport,
+        )
+
+        assert options.algorithm == "grid"
+        assert options.legacy_option_values == {
+            "execution_mode": "hybrid_api",
+            "privacy_enabled": True,
+            "cloud_fallback_policy": "auto",
+            "hybrid_api_transport": transport,
+        }
+
+    def test_legacy_stash_survives_unrelated_field_assignment(self):
+        """Finding 1a: validate_assignment=True re-runs the wrap validator on
+        every field set with a non-Mapping input; the legacy stash captured at
+        construction must be carried forward, not silently cleared to {}."""
+        transport = object()
+        options = ExecutionOptions(
+            execution_mode="hybrid_api",
+            privacy_enabled=True,
+            cloud_fallback_policy="auto",
+            hybrid_api_transport=transport,
+        )
+
+        # Assign an unrelated PUBLIC field (goes through validate_assignment).
+        options.minimal_logging = False
+
+        assert options.minimal_logging is False
+        assert options.legacy_option_values == {
+            "execution_mode": "hybrid_api",
+            "privacy_enabled": True,
+            "cloud_fallback_policy": "auto",
+            "hybrid_api_transport": transport,
+        }
+
+    def test_no_legacy_keys_yields_empty_stash(self):
+        """A clean bundle has an empty legacy stash (byte-identical happy path)."""
+        assert ExecutionOptions().legacy_option_values == {}
+        assert ExecutionOptions(algorithm="grid").legacy_option_values == {}

@@ -54,7 +54,14 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -252,16 +259,22 @@ class ExecutionOptions(BaseModel):
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
-        extra="allow",
+        extra="forbid",
         validate_assignment=True,
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_removed_js_bridge_fields(cls, data: Any) -> Any:
-        if isinstance(data, Mapping):
-            _reject_removed_js_bridge_options(data)
-        return data
+    #: Legacy execution option values (``execution_mode``, ``privacy_enabled``,
+    #: ``cloud_fallback_policy``, ``hybrid_api_*``) captured by
+    #: ``_split_legacy_execution_options`` before the ``extra="forbid"`` check
+    #: runs, so they keep working without reopening the door to silently
+    #: swallowing genuinely misspelled/unknown keys. Populated only via that
+    #: validator; not a public constructor argument.
+    _legacy_options: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    @property
+    def legacy_option_values(self) -> dict[str, Any]:
+        """Read-only view of the captured legacy execution option values."""
+        return dict(self._legacy_options)
 
     algorithm: str = "auto"
     offline: bool = False
@@ -275,10 +288,38 @@ class ExecutionOptions(BaseModel):
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
 
-    @model_validator(mode="before")
+    @model_validator(mode="wrap")
     @classmethod
-    def _warn_legacy_execution_fields(cls, data: Any) -> Any:
-        if isinstance(data, Mapping):
+    def _split_legacy_execution_options(
+        cls, data: Any, handler: Any
+    ) -> ExecutionOptions:
+        """Pop tolerated legacy keys before pydantic's ``extra="forbid"`` check.
+
+        ``execution_mode``, ``privacy_enabled``, ``cloud_fallback_policy``, and
+        the flat ``hybrid_api_*`` keys are deprecated-but-supported spellings
+        that are handled by dedicated resolution logic elsewhere (see
+        ``_resolve_execution_bundle_options`` /
+        ``_resolve_execution_policy_from_options``). They are removed from the
+        payload here — and stashed on ``_legacy_options`` — so that they never
+        reach the model's normal field validation. Any other unrecognized key
+        is left in place so ``extra="forbid"`` raises a clear
+        ``pydantic.ValidationError`` naming the bad key instead of silently
+        discarding it.
+
+        Only a Mapping input carries legacy keys (initial construction /
+        ``model_validate``). With ``validate_assignment=True`` this wrap
+        validator also re-runs on every field assignment with a non-Mapping
+        ``data`` (the model instance) — in that case there is nothing new to
+        split out, so the existing stash is carried forward instead of being
+        clobbered to ``{}`` (which would silently drop the tolerated legacy
+        keys the caller already supplied).
+        """
+        carried_stash: dict[str, Any] | None = getattr(data, "_legacy_options", None)
+        legacy_options: dict[str, Any] = {}
+        is_mapping_input = isinstance(data, Mapping)
+        if is_mapping_input:
+            data = dict(data)
+            _reject_removed_js_bridge_options(data)
             _warn_for_legacy_execution_options(set(data))
             if isinstance(data.get("evaluator"), HybridAPIOptions):
                 import warnings
@@ -289,10 +330,9 @@ class ExecutionOptions(BaseModel):
                     DeprecationWarning,
                     stacklevel=4,
                 )
-                data = {
-                    **data,
-                    "evaluator": ExternalServiceEvaluator(hybrid_api=data["evaluator"]),
-                }
+                data["evaluator"] = ExternalServiceEvaluator(
+                    hybrid_api=data["evaluator"]
+                )
             legacy_hybrid_values = {
                 option_key: data[legacy_key]
                 for legacy_key, option_key in _LEGACY_HYBRID_API_OPTION_MAP.items()
@@ -300,7 +340,17 @@ class ExecutionOptions(BaseModel):
             }
             if legacy_hybrid_values:
                 HybridAPIOptions.model_validate(legacy_hybrid_values)
-        return data
+            for key in _LEGACY_EXECUTION_OPTION_KEYS:
+                if key in data:
+                    legacy_options[key] = data.pop(key)
+        model = handler(data)
+        if is_mapping_input:
+            model._legacy_options = legacy_options
+        elif carried_stash:
+            # Field-assignment path (validate_assignment=True): preserve the
+            # legacy keys captured at construction time.
+            model._legacy_options = dict(carried_stash)
+        return model
 
     @field_validator("reps_per_trial")
     @classmethod
@@ -1374,7 +1424,7 @@ def _resolve_execution_bundle_options(
             "Contact sales@traigent.ai for more information."
         )
 
-    extra = getattr(execution_bundle, "__pydantic_extra__", None) or {}
+    extra = execution_bundle.legacy_option_values
     legacy_options = {**base_options.legacy_options}
     for key in _LEGACY_EXECUTION_OPTION_KEYS:
         if key in extra:

@@ -700,6 +700,8 @@ class ApiOperations:
             payload["tvl_governance"] = wire_governance
         if getattr(session_request, "budget", None):
             payload["budget"] = session_request.budget
+        if getattr(session_request, "default_config", None):
+            payload["default_config"] = session_request.default_config
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
         smart_pruning = getattr(session_request, "smart_pruning", None)
@@ -750,6 +752,8 @@ class ApiOperations:
         # BE may not consume it yet; the SDK must still forward it.
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
+        if getattr(session_request, "default_config", None):
+            payload["default_config"] = session_request.default_config
         smart_pruning = getattr(session_request, "smart_pruning", None)
         wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
         if wire_smart_pruning:

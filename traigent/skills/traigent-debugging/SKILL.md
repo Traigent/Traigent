@@ -162,7 +162,20 @@ Has `current_state` and `expected_states` attributes for diagnostics.
 
 ### ProviderValidationError
 
-**When raised**: API key validation fails before optimization starts. Extends ConfigurationError.
+**When raised**: `@traigent.optimize` never raises this automatically -- there
+is no `validate_providers=` decorator parameter. It is only raised if your
+own code calls the standalone `traigent.providers.validate_providers()`
+helper as a pre-run check and chooses to raise on a failed result:
+
+```python
+from traigent.providers import get_failed_providers, validate_providers
+from traigent.utils.exceptions import ProviderValidationError
+
+results = validate_providers(["gpt-4o-mini", "claude-3-haiku-20240307"])
+failed = get_failed_providers(results)
+if failed:
+    raise ProviderValidationError(f"Provider validation failed: {failed}", failed_providers=failed)
+```
 
 ```
 traigent.utils.exceptions.ProviderValidationError: Provider validation failed:
@@ -178,15 +191,11 @@ export OPENAI_API_KEY="sk-..."  # pragma: allowlist secret
 export ANTHROPIC_API_KEY="sk-ant-..."  # pragma: allowlist secret
 ```
 
-```python
-# Skip validation (if you know keys are valid but validation is failing)
-@traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini"]},
-    validate_providers=False,
-)
-```
-
-Or set the environment variable: `TRAIGENT_SKIP_PROVIDER_VALIDATION=true`
+If your own pre-run check should be skippable, gate it on
+`traigent.utils.env_config.skip_provider_validation()` (true when
+`TRAIGENT_SKIP_PROVIDER_VALIDATION=true` or mock mode is on) rather than
+building a bespoke skip flag -- `@traigent.optimize` itself has no
+provider-validation skip parameter.
 
 The `failed_providers` attribute contains a list of `(provider, error_type)` tuples.
 

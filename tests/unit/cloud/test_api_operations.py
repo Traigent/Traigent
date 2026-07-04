@@ -560,6 +560,70 @@ class TestBuildSessionPayload:
 
         json.dumps(payload)
 
+    def test_default_config_present_on_typed_payload(self):
+        """Traigent#1723 (g1:F2): a declared default_config crosses the typed
+        session-create wire instead of being dropped (backend warm-start seed
+        projection needs it)."""
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"model": ["fast", "accurate"]},
+            dataset_metadata={"size": 3},
+            objectives=["accuracy"],
+            default_config={"model": "fast", "temperature": 0.2},
+            max_trials=10,
+        )
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["default_config"] == {"model": "fast", "temperature": 0.2}
+        json.dumps(payload)
+
+    def test_default_config_absent_when_none_on_typed_payload(self):
+        """Backward compatible: omit the key entirely rather than sending null
+        when no default_config was declared."""
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"model": ["fast", "accurate"]},
+            dataset_metadata={"size": 3},
+            objectives=["accuracy"],
+            max_trials=10,
+        )
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert "default_config" not in payload
+
+    def test_default_config_present_on_legacy_payload(self, monkeypatch):
+        """The legacy contract shape must also forward default_config rather
+        than silently dropping it (parity with warm_start_from/smart_pruning)."""
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"model": ["fast", "accurate"]},
+            dataset_metadata={"size": 3},
+            objectives=["maximize"],
+            default_config={"model": "fast"},
+            max_trials=10,
+        )
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["default_config"] == {"model": "fast"}
+
+    def test_default_config_absent_when_none_on_legacy_payload(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"model": ["fast", "accurate"]},
+            dataset_metadata={"size": 3},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert "default_config" not in payload
+
 
 class TestBuildConnector:
     """Test _build_connector method."""
@@ -1793,3 +1857,59 @@ class TestOrchestratorObjectivesPayload:
     def test_no_schema_falls_back_to_bare_names(self):
         orch = self._orchestrator_with(None, ["accuracy", "cost"])
         assert orch._build_session_objectives_payload() == ["accuracy", "cost"]
+
+
+class TestOrchestratorDefaultConfigPayload:
+    """Pin the fix site for Traigent#1723 (g1:F2): @optimize(default_config=...)
+    is materialized locally (_init_default_config) but was never placed on the
+    session-create wire. A builder-only test would pass even if the
+    orchestrator never called the new payload method, so this pins
+    _build_session_default_config_payload directly."""
+
+    def _orchestrator_with(self, default_config):
+        from traigent.core.orchestrator import OptimizationOrchestrator
+
+        orch = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orch._default_config = default_config
+        return orch
+
+    def test_declared_default_config_is_projected(self):
+        orch = self._orchestrator_with({"model": "fast", "temperature": 0.2})
+        payload = orch._build_session_default_config_payload()
+        assert payload == {"model": "fast", "temperature": 0.2}
+
+    def test_declared_default_config_is_a_copy_not_the_live_object(self):
+        """The wire payload must not alias the orchestrator's live state."""
+        live = {"model": "fast"}
+        orch = self._orchestrator_with(live)
+        payload = orch._build_session_default_config_payload()
+        payload["model"] = "mutated"
+        assert live["model"] == "fast"
+
+    def test_no_default_config_returns_none(self):
+        orch = self._orchestrator_with(None)
+        assert orch._build_session_default_config_payload() is None
+
+    def test_empty_default_config_returns_none(self):
+        orch = self._orchestrator_with({})
+        assert orch._build_session_default_config_payload() is None
+
+    def test_peeking_does_not_consume_the_baseline_trial_seed(self):
+        """Projecting onto the wire must not interfere with the SEPARATE
+        local consumption path that seeds the actual baseline trial
+        (_consume_default_config) — it must still fire exactly once."""
+        from unittest.mock import MagicMock
+
+        orch = self._orchestrator_with({"model": "fast"})
+        orch._default_config_used = False
+        orch.optimizer = MagicMock(spec=[])
+
+        # Peek for the wire payload (as the session-create call site does).
+        wire_payload = orch._build_session_default_config_payload()
+        assert wire_payload == {"model": "fast"}
+
+        # The baseline-trial consumer must still see it as available.
+        consumed = orch._consume_default_config()
+        assert consumed == {"model": "fast"}
+        # And consumption remains one-shot.
+        assert orch._consume_default_config() is None

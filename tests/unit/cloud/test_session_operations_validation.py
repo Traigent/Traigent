@@ -104,6 +104,49 @@ def test_create_session_validates_function_name():
         ops.create_session("", {"param": [1, 2]})
 
 
+def test_create_session_threads_default_config_onto_request():
+    """Traigent#1723 (g1:F2): @optimize(default_config=...) must reach the
+    SessionCreationRequest built for the session-create wire call instead of
+    being dropped between SessionOperations.create_session and the request
+    object."""
+    captured: dict[str, Any] = {}
+
+    class CapturingClient(FakeClient):
+        async def _create_traigent_session_via_api(self, request):
+            captured["request"] = request
+            return ("session-1", "experiment-1", "run-1")
+
+    client = CapturingClient()
+    ops = SessionOperations(client)
+
+    result = ops.create_session(
+        "demo_func",
+        {"param": [1, 2]},
+        default_config={"param": 1},
+    )
+
+    assert result.session_id == "session-1"
+    assert captured["request"].default_config == {"param": 1}
+
+
+def test_create_session_omits_default_config_when_none():
+    """Backward compatible: no default_config declared means the request
+    field stays None (and downstream payload builders omit the key)."""
+    captured: dict[str, Any] = {}
+
+    class CapturingClient(FakeClient):
+        async def _create_traigent_session_via_api(self, request):
+            captured["request"] = request
+            return ("session-1", "experiment-1", "run-1")
+
+    client = CapturingClient()
+    ops = SessionOperations(client)
+
+    ops.create_session("demo_func", {"param": [1, 2]})
+
+    assert captured["request"].default_config is None
+
+
 @pytest.mark.asyncio
 async def test_create_hybrid_session_validates_problem_statement():
     client = FakeClient()

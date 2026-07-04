@@ -496,6 +496,7 @@ class SessionOperations:
         optimization_goal: str = "maximize",
         metadata: dict[str, Any] | None = None,
         objectives: list[Any] | None = None,
+        default_config: dict[str, Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         warm_start_from: str | None = None,
@@ -514,6 +515,8 @@ class SessionOperations:
             search_space: Configuration search space (metadata only)
             optimization_goal: Optimization goal (minimize/maximize)
             metadata: Additional metadata
+            default_config: Optional user-declared baseline configuration to
+                project onto the session-create wire (omitted when None).
 
         Returns:
             SessionCreationResult with session_id and backend status
@@ -642,6 +645,7 @@ class SessionOperations:
                 # fallback when the caller supplied none (legacy shape keeps
                 # reading objectives[0] as its optimization_goal).
                 objectives=list(objectives) if objectives else [optimization_goal],
+                default_config=dict(default_config) if default_config else None,
                 warm_start_from=warm_start_from or None,
                 smart_pruning=normalized_smart_pruning,
                 dataset_metadata={
