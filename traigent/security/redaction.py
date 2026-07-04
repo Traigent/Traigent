@@ -18,6 +18,49 @@ _BEARER_TOKEN_PATTERN = re.compile(
 )
 _COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}$")
 
+# Canonical, single source of truth for key-*name*-based redaction.
+#
+# This is the union of three keyword lists that were previously maintained
+# independently and had drifted out of sync (traigent.cloud.dataset_converter,
+# traigent.observability.decorators, traigent.observability.agent_spans): a
+# key redacted by one path could pass through unredacted on another. All
+# three now call `is_sensitive_key_name` below. Extend this set - do not
+# fork a local copy - when a new sensitive key pattern is identified.
+SENSITIVE_KEY_FRAGMENTS: frozenset[str] = frozenset(
+    {
+        # Credential / secret fragments
+        "api_key",
+        "apikey",
+        "auth",  # also matches "authorization"
+        "credential",
+        "credit_card",
+        "creditcard",
+        "password",
+        "private_key",
+        "secret",
+        "token",
+        # Free-form content fragments (may carry prompt/response text)
+        "actual",
+        "completion",
+        "expected",
+        "output",
+        "prompt",
+        "response",
+    }
+)
+
+
+def is_sensitive_key_name(key: str) -> bool:
+    """Return True when a metadata/config key name looks sensitive.
+
+    "Sensitive" covers both credential-like key names (e.g. `api_key`,
+    `auth_token`) and free-form content fields (e.g. `prompt`, `response`)
+    that may carry PII or secrets. This is the canonical check backing all
+    SDK sanitizers that redact-by-key-name; see `SENSITIVE_KEY_FRAGMENTS`.
+    """
+    normalized = key.strip().lower().replace("-", "_").replace(".", "_")
+    return any(fragment in normalized for fragment in SENSITIVE_KEY_FRAGMENTS)
+
 
 def _passes_luhn(digits: str) -> bool:
     """Return True iff the digit string is a valid Luhn checksum (PAN check)."""

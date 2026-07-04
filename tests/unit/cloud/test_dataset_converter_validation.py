@@ -2,7 +2,7 @@
 
 import pytest
 
-from traigent.cloud.dataset_converter import DatasetConverter
+from traigent.cloud.dataset_converter import DatasetConverter, is_sensitive_metadata_key
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 
 
@@ -128,3 +128,33 @@ class TestDatasetConverterSecurePath:
         assert len(result) > 0
         assert "Test" in result
         assert "Response" in result
+
+
+class TestSensitiveMetadataKeyUnion:
+    """Regression coverage for issue #1649: dataset_converter's redaction
+    keyword list used to be a hand-rolled regex, independent from the
+    observability sanitizers' lists. It now delegates to the canonical
+    union set in `traigent.security.redaction`."""
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            # Still covered by the module's old regex.
+            "password",
+            "api_key",
+            "authorization",
+            # Formerly missing here: only present in observability.decorators'
+            # old fragment list.
+            "credential",
+            "private_key",
+            # Formerly missing here: only present in agent_spans' old
+            # content-field list.
+            "prompt",
+            "response",
+        ],
+    )
+    def test_union_keyword_is_sensitive(self, key: str) -> None:
+        assert is_sensitive_metadata_key(key) is True
+
+    def test_ordinary_key_is_not_sensitive(self) -> None:
+        assert is_sensitive_metadata_key("model_name") is False

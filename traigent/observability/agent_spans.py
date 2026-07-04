@@ -15,19 +15,12 @@ from traigent.integrations.observability.workflow_traces import (
     SpanStatus,
     SpanType,
 )
+from traigent.security.redaction import is_sensitive_key_name
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 _MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:/@+-]{1,128}$")
-_SENSITIVE_METADATA_MARKERS = (
-    "actual",
-    "completion",
-    "expected",
-    "output",
-    "prompt",
-    "response",
-)
 _SPAN_TYPE_ALIASES = {
     "agent": SpanType.NODE.value,
 }
@@ -94,8 +87,8 @@ def _normalize_span_type(span_type: str) -> str:
 
 
 def _is_sensitive_metadata_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_").replace(".", "_")
-    return any(marker in normalized for marker in _SENSITIVE_METADATA_MARKERS)
+    """Delegates to the canonical `traigent.security.redaction` keyword set."""
+    return is_sensitive_key_name(key)
 
 
 def _sanitize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, float | int]:

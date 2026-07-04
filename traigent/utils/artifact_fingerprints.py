@@ -10,6 +10,10 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from traigent.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 FP_ALGORITHM = "fp1"
 FP_PREFIX = f"{FP_ALGORITHM}:"
 FP_WIRE_RE = re.compile(r"^fp1:[0-9a-f]{64}$")
@@ -267,40 +271,40 @@ def build_artifact_fingerprints(
     metric_functions: Mapping[str, Callable[..., Any]] | None = None,
     external: Any = None,
     configuration_space: Any = None,
+    strict: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Build the additive session-create fingerprint payload."""
+    """Build the additive session-create fingerprint payload.
+
+    Each individual fingerprint computation (`_compute_dataset_fingerprint_and_count`,
+    `_compute_agent_fingerprint_and_source`, `compute_evaluator_fingerprint`,
+    `compute_config_space_fingerprint`) already fails open to `None`
+    internally, so one bad artifact never blocks session creation. The guard
+    here only trips on a genuinely unexpected error assembling the payload.
+
+    fail-open(intentional): mirrors `traigent.core.best_config_runtime`'s
+    strict convention. Non-strict callers (the default) get a degraded
+    payload explicitly marked ``fingerprint_meta["is_fallback"] = True``;
+    strict callers re-raise instead of silently receiving a synthetic
+    all-``None`` payload that is indistinguishable from a legitimate empty
+    result.
+    """
 
     try:
         dataset_source = dataset if dataset is not None else examples
         dataset_fingerprint, dataset_example_count = (
             _compute_dataset_fingerprint_and_count(dataset_source)
         )
-    except Exception:
-        dataset_fingerprint, dataset_example_count = None, 0
-
-    try:
         agent_fingerprint, source_available = _compute_agent_fingerprint_and_source(
             func or agent
         )
-    except Exception:
-        agent_fingerprint, source_available = None, False
-
-    try:
         evaluator_fingerprint = compute_evaluator_fingerprint(
             custom_evaluator=custom_evaluator,
             scoring_function=scoring_function,
             metric_functions=metric_functions,
             external=external,
         )
-    except Exception:
-        evaluator_fingerprint = None
-
-    try:
         config_space_fingerprint = compute_config_space_fingerprint(configuration_space)
-    except Exception:
-        config_space_fingerprint = None
 
-    try:
         return {
             "artifact_fingerprints": {
                 "dataset": dataset_fingerprint,
@@ -314,7 +318,12 @@ def build_artifact_fingerprints(
                 "source_available": source_available,
             },
         }
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise
+        logger.warning(
+            "Falling back to degraded artifact fingerprints after error: %s", exc
+        )
         return {
             "artifact_fingerprints": {
                 "dataset": None,
@@ -326,6 +335,7 @@ def build_artifact_fingerprints(
                 "algorithm": FP_ALGORITHM,
                 "dataset_example_count": 0,
                 "source_available": False,
+                "is_fallback": True,
             },
         }
 

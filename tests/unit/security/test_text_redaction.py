@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
+from traigent.security.redaction import (
+    SENSITIVE_KEY_FRAGMENTS,
+    is_sensitive_key_name,
+    redact_sensitive_data,
+    redact_sensitive_text,
+)
 
 
 class TestCreditCardRedaction:
@@ -59,6 +64,42 @@ class TestOtherPatternsStillWork:
         assert "[REDACTED:api_key]" in redact_sensitive_text(
             "X-Api-Key: sk-abcd1234abcd1234"
         )
+
+
+class TestCanonicalSensitiveKeyName:
+    """`is_sensitive_key_name` is the single source of truth consumed by the
+    three formerly-divergent SDK sanitizers (dataset_converter, observability
+    decorators, agent_spans). See issue #1649."""
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            # Union member from traigent.cloud.dataset_converter's old regex
+            "authorization",
+            "credit_card",
+            "creditcard",
+            # Union member from traigent.observability.decorators' old list
+            "credential",
+            "private_key",
+            "apikey",
+            # Union member from traigent.observability.agent_spans' old list
+            "prompt",
+            "response",
+            "actual_output",
+            "expected",
+            "completion",
+        ],
+    )
+    def test_union_member_flagged_sensitive(self, key: str) -> None:
+        assert is_sensitive_key_name(key) is True
+
+    def test_ordinary_key_not_flagged(self) -> None:
+        assert is_sensitive_key_name("model_name") is False
+        assert is_sensitive_key_name("safe_score") is False
+
+    def test_fragment_set_is_frozen_and_nonempty(self) -> None:
+        assert isinstance(SENSITIVE_KEY_FRAGMENTS, frozenset)
+        assert SENSITIVE_KEY_FRAGMENTS
 
 
 class TestNestedRedaction:

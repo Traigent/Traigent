@@ -4,6 +4,8 @@ import hashlib
 import inspect
 import json
 
+import pytest
+
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils import artifact_fingerprints as af
 
@@ -99,15 +101,12 @@ def test_evaluator_fingerprint_variants() -> None:
     assert metric_fp == _fp_text(
         inspect.getsource(metric_a) + inspect.getsource(metric_b)
     )
-    assert (
-        af.compute_evaluator_fingerprint(
-            external={
-                "kind": "hybrid_api",
-                "endpoint": "https://user:secret@example.test:8443/evaluate?token=x#frag",  # pragma: allowlist secret
-            }
-        )
-        == _fp_text("hybrid_api:https://example.test:8443/evaluate")
-    )
+    assert af.compute_evaluator_fingerprint(
+        external={
+            "kind": "hybrid_api",
+            "endpoint": "https://user:secret@example.test:8443/evaluate?token=x#frag",  # pragma: allowlist secret
+        }
+    ) == _fp_text("hybrid_api:https://example.test:8443/evaluate")
     assert af.compute_evaluator_fingerprint() == _fp_text("none")
 
 
@@ -228,3 +227,66 @@ def test_build_payload_returns_none_for_hostile_user_objects() -> None:
     assert payload["artifact_fingerprints"]["agent"] is None
     assert payload["artifact_fingerprints"]["config_space"] is None
     assert payload["fingerprint_meta"]["dataset_example_count"] == 0
+
+
+def test_build_payload_happy_path_has_no_fallback_marker() -> None:
+    """Regression guard for issue #1650: a real, successful payload must not
+    carry an `is_fallback` marker (the happy path is unchanged)."""
+
+    def sample_agent(prompt: str) -> str:
+        return prompt
+
+    payload = af.build_artifact_fingerprints(
+        dataset=[_example({"question": "a"}, "answer-a")],
+        func=sample_agent,
+        configuration_space={"temperature": [0.1]},
+    )
+
+    assert "is_fallback" not in payload["fingerprint_meta"]
+
+
+def test_build_payload_non_strict_marks_fallback_on_unexpected_error(
+    monkeypatch,
+) -> None:
+    """Regression for issue #1650: unlike its sibling
+    `traigent.core.best_config_runtime` (which fail-opens through an
+    explicit, commented `strict` parameter), `build_artifact_fingerprints`
+    used to swallow an unexpected assembly error and return a fully
+    synthetic all-None payload with no way to tell it apart from a
+    legitimate empty result. It must now mark the degraded payload."""
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("unexpected assembly failure")
+
+    monkeypatch.setattr(af, "compute_config_space_fingerprint", _boom)
+
+    payload = af.build_artifact_fingerprints(
+        dataset=[_example({"question": "a"}, "answer-a")],
+        configuration_space={"temperature": [0.1]},
+    )
+
+    assert payload["artifact_fingerprints"] == {
+        "dataset": None,
+        "agent": None,
+        "evaluator": None,
+        "config_space": None,
+    }
+    assert payload["fingerprint_meta"]["is_fallback"] is True
+
+
+def test_build_payload_strict_reraises_instead_of_silent_fallback(
+    monkeypatch,
+) -> None:
+    """Strict callers must see the real error, not a synthetic payload."""
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("unexpected assembly failure")
+
+    monkeypatch.setattr(af, "compute_config_space_fingerprint", _boom)
+
+    with pytest.raises(RuntimeError, match="unexpected assembly failure"):
+        af.build_artifact_fingerprints(
+            dataset=[_example({"question": "a"}, "answer-a")],
+            configuration_space={"temperature": [0.1]},
+            strict=True,
+        )
