@@ -95,7 +95,7 @@ def test_onboard_non_tty_emits_human_and_json_plan(
     assert command_by_id["device_login"]["command"] == "traigent onboard --login"
     assert (
         command_by_id["install_agent_skills"]["command"]
-        == "npx skills add Traigent/agents-skills"
+        == "npx skills add Traigent/traigent-skills"
     )
     assert command_by_id["verify_quickstart"]["command"] == "traigent quickstart"
     assert (
