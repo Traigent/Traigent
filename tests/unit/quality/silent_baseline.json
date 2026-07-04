@@ -1,0 +1,634 @@
+[
+  {
+    "path": "traigent/cli/auth_commands.py",
+    "qualname": "_retry_after_seconds",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "41db6d02eb70",
+    "lineno": 158,
+    "snippet": "except ValueError: return None"
+  },
+  {
+    "path": "traigent/cli/auth_commands.py",
+    "qualname": "TraigentAuthCLI._load_secure_credentials",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "818946f195c6",
+    "lineno": 323,
+    "snippet": "except SecurityError as exc: logger.debug(\"Secure credential store unavailable: %s\", exc) return None"
+  },
+  {
+    "path": "traigent/cli/auth_commands.py",
+    "qualname": "TraigentAuthCLI._load_secure_credentials",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "775fb52e04d3",
+    "lineno": 332,
+    "snippet": "except (TypeError, ValueError) as exc: logger.warning(\"Secure CLI credential payload is invalid JSON: %s\", exc) return None"
+  },
+  {
+    "path": "traigent/cli/auth_commands.py",
+    "qualname": "TraigentAuthCLI._save_credentials",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "57f63c864f03",
+    "lineno": 361,
+    "snippet": "except OSError as e: logger.error( \"Failed to save credentials securely: %s. Set \" \"TRAIGENT_MASTER_PASSWORD before running auth commands.\", e, ) return None"
+  },
+  {
+    "path": "traigent/cli/auth_commands.py",
+    "qualname": "TraigentAuthCLI._validate_api_key",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "4e9a7d755b46",
+    "lineno": 521,
+    "snippet": "except ValueError: # ValueError covers JSONDecodeError (its subclass) return None"
+  },
+  {
+    "path": "traigent/cli/auth_commands.py",
+    "qualname": "auth",
+    "category": "bare_except_pass",
+    "snippet_hash": "33876543b905",
+    "lineno": 1715,
+    "snippet": "except ImportError: pass"
+  },
+  {
+    "path": "traigent/cli/function_discovery.py",
+    "qualname": "discover_optimized_functions",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "0a34cb32a6a1",
+    "lineno": 116,
+    "snippet": "except Exception as e: logger.warning(f\"Failed to extract info from function {name}: {e}\") continue"
+  },
+  {
+    "path": "traigent/cli/function_discovery.py",
+    "qualname": "_extract_default_parameters",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "0d39821b77b4",
+    "lineno": 207,
+    "snippet": "except Exception as e: logger.warning(f\"Failed to extract default parameters from {func}: {e}\") return {}"
+  },
+  {
+    "path": "traigent/cli/main.py",
+    "qualname": "_parse_weights",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "41db6d02eb70",
+    "lineno": 1598,
+    "snippet": "except ValueError: return None"
+  },
+  {
+    "path": "traigent/cli/onboard_commands.py",
+    "qualname": "_mcp_help_succeeds",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "1317a6072bda",
+    "lineno": 104,
+    "snippet": "except (OSError, subprocess.TimeoutExpired): return False"
+  },
+  {
+    "path": "traigent/cloud/api_key_manager.py",
+    "qualname": "APIKeyManager.get_key_for_internal_use",
+    "category": "bare_except_pass",
+    "snippet_hash": "15937c18dc38",
+    "lineno": 264,
+    "snippet": "except TokenExpiredError: pass"
+  },
+  {
+    "path": "traigent/cloud/api_operations.py",
+    "qualname": "ApiOperations.update_config_run_status",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "52bc3acb5b72",
+    "lineno": 1031,
+    "snippet": "except Exception as e: logger.debug(f\"Error updating config run status: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/api_operations.py",
+    "qualname": "ApiOperations.update_config_run_measures",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "f6133bbe942b",
+    "lineno": 1068,
+    "snippet": "except MetricExtractionError as e: logger.error( f\"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}\", extra={ \"hint\": \"Ensure your evaluation function returns numeric values for 'accuracy'. \" \"Check that the value is not None, NaN, or Inf.\", \"config_run_id\": config_run_id, \"field\": \"accuracy\", \"value\": metrics[\"accuracy\"], }, ) return False"
+  },
+  {
+    "path": "traigent/cloud/api_operations.py",
+    "qualname": "ApiOperations.update_config_run_measures",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "cc1a623c103e",
+    "lineno": 1088,
+    "snippet": "except MetricExtractionError as e: logger.error( f\"Invalid 'score' metric for config run {config_run_id}: {e.message}\", extra={ \"hint\": \"Ensure your evaluation function returns numeric values for 'score'. \" \"Check that the value is not None, NaN, or Inf.\", \"config_run_id\": config_run_id, \"field\": \"score\", \"value\": metrics[\"score\"], }, ) return False"
+  },
+  {
+    "path": "traigent/cloud/api_operations.py",
+    "qualname": "ApiOperations.update_config_run_measures",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "52f17e1dfeb8",
+    "lineno": 1121,
+    "snippet": "except MetricExtractionError as e: logger.error( f\"Invalid '{key}' metric for config run {config_run_id}: {e.message}\", extra={ \"hint\": f\"Ensure your evaluation function returns numeric values for '{key}'. \" \"Check that the value is not None, NaN, or Inf.\", \"config_run_id\": config_run_id, \"field\": key, \"value\": metrics[key], }, ) return False"
+  },
+  {
+    "path": "traigent/cloud/api_operations.py",
+    "qualname": "ApiOperations.update_config_run_measures",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "205dba4db71c",
+    "lineno": 1143,
+    "snippet": "except MetricExtractionError as e: logger.error( f\"Invalid '{key}' metric for config run {config_run_id}: {e.message}\", extra={ \"hint\": f\"Ensure your evaluation function returns numeric values for '{key}'. \" \"Check that the value is not None, NaN, or Inf. \" \"Custom metrics must be numeric types (int, float).\", \"config_run_id\": config_run_id, \"field\": key, \"value\": value, }, ) return False"
+  },
+  {
+    "path": "traigent/cloud/api_operations.py",
+    "qualname": "ApiOperations.update_config_run_measures",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "a1d7d11f9257",
+    "lineno": 1210,
+    "snippet": "except Exception as e: logger.debug(f\"Error updating config run measures: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/auth.py",
+    "qualname": "AuthManager.logout",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "d02efad569e4",
+    "lineno": 1100,
+    "snippet": "except Exception as e: logger.error(f\"Logout failed: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "_parse_retry_after",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "d73f84e31968",
+    "lineno": 205,
+    "snippet": "except AttributeError: return None"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "_parse_retry_after",
+    "category": "bare_except_pass",
+    "snippet_hash": "c307ba5c3c40",
+    "lineno": 212,
+    "snippet": "except (TypeError, ValueError): pass"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "_parse_retry_after",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "f8269b6d56e2",
+    "lineno": 217,
+    "snippet": "except (TypeError, ValueError, IndexError, OverflowError): return None"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "BackendIntegratedClient.validate_session_token",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "4ccfe165017e",
+    "lineno": 1206,
+    "snippet": "except Exception as exc: logger.debug( \"Security session validation failed for %s: %s\", session_id, exc ) return False"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "BackendIntegratedClient.upload_example_features",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "c6fa0543d9f3",
+    "lineno": 1909,
+    "snippet": "except ImportError: # pragma: no cover - requests is a required dependency logger.debug( \"Skipping example feature upload because requests is unavailable\" ) return False"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "BackendIntegratedClient.upload_example_features",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "1ea54030c8a6",
+    "lineno": 1922,
+    "snippet": "except AuthenticationError as exc: logger.debug( \"Skipping example feature upload for run %s: auth rejected (%s)\", experiment_run_id, exc, ) return False"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "BackendIntegratedClient.upload_example_features",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "06e944e4f6da",
+    "lineno": 1929,
+    "snippet": "except CloudServiceError as exc: logger.debug( \"Skipping example feature upload for run %s: header build failed (%s)\", experiment_run_id, exc, ) return False"
+  },
+  {
+    "path": "traigent/cloud/backend_client.py",
+    "qualname": "BackendIntegratedClient.upload_example_features",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "e7358f70111f",
+    "lineno": 1966,
+    "snippet": "except Exception as exc: logger.debug( \"Example feature upload failed for run %s: %s\", experiment_run_id, exc, ) return False"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_close_awaitable",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 149,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_schedule_aiohttp_session_close",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "dbeef7aef819",
+    "lineno": 188,
+    "snippet": "except Exception as exc: # pragma: no cover - defensive finalizer path logger.debug(\"Error scheduling %s aiohttp session close: %s\", owner, exc) return False"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_close_transport_sync",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 272,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_close_protocol_sync",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 311,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_cancel_connector_handle",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 323,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_clear_connector_waiters",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 342,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_clear_connector_collection",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 358,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_close_connector_transports_sync",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 384,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_close_aiohttp_session_transports_sync",
+    "category": "bare_except_pass",
+    "snippet_hash": "a2ad58d9f50d",
+    "lineno": 398,
+    "snippet": "except Exception: pass"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_coerce_enum",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "1ee9d3e830e3",
+    "lineno": 465,
+    "snippet": "except (ValueError, KeyError): continue"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "_get_retry_delay",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "8469a00d5f10",
+    "lineno": 722,
+    "snippet": "except (TypeError, ValueError): return 0.0"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "TraigentCloudClient._safe_owner_fingerprint",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "4a3aad9041c2",
+    "lineno": 991,
+    "snippet": "except Exception as exc: # pragma: no cover - defensive safety logger.debug(\"Owner fingerprint retrieval failed: %s\", exc) return {}"
+  },
+  {
+    "path": "traigent/cloud/client.py",
+    "qualname": "TraigentCloudClient._fallback_optimization._as_metrics",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "380164df904a",
+    "lineno": 1237,
+    "snippet": "except (TypeError, ValueError): continue"
+  },
+  {
+    "path": "traigent/cloud/credential_manager.py",
+    "qualname": "CredentialManager._load_secure_cli_credentials",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "54c4125bcddf",
+    "lineno": 200,
+    "snippet": "except SecurityError as e: logger.debug(\"Secure CLI credential store unavailable: %s\", e) return None"
+  },
+  {
+    "path": "traigent/cloud/credential_manager.py",
+    "qualname": "CredentialManager._load_secure_cli_credentials",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "b549e01a1571",
+    "lineno": 209,
+    "snippet": "except (TypeError, ValueError) as e: logger.warning(\"Secure CLI credential payload is invalid JSON: %s\", e) return None"
+  },
+  {
+    "path": "traigent/cloud/credential_resolver.py",
+    "qualname": "CredentialResolver.load_cached",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "1755be4ef544",
+    "lineno": 179,
+    "snippet": "except FileNotFoundError: # File not found is expected for first run return None"
+  },
+  {
+    "path": "traigent/cloud/credential_resolver.py",
+    "qualname": "CredentialResolver.load_cached",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "3bee78ef3c67",
+    "lineno": 182,
+    "snippet": "except (json.JSONDecodeError, KeyError, PermissionError, OSError) as e: logger.warning(f\"Failed to load cached credentials: {e}\") return None"
+  },
+  {
+    "path": "traigent/cloud/credential_resolver.py",
+    "qualname": "CredentialResolver.load_from_env",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "f7357c011fa9",
+    "lineno": 293,
+    "snippet": "except (ImportError, AttributeError, KeyError, TypeError) as e: logger.warning(f\"Failed to load environment credentials: {e}\") return None"
+  },
+  {
+    "path": "traigent/cloud/governance.py",
+    "qualname": "build_tvl_governance",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "acc08bb13371",
+    "lineno": 130,
+    "snippet": "except ImportError: # pragma: no cover - knobs is a hard dep of ConfigSpace # fail-open(intentional): knobs optional dep absent; TVL governance omitted from session logger.warning(\"knobs bindings unavailable; omitting tvl_governance\") return None"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.initialize",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "99d4cdd7ec00",
+    "lineno": 170,
+    "snippet": "except Exception as e: logger.error(f\"Failed to initialize integration manager: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.get_next_trial",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "beee52ddafb4",
+    "lineno": 526,
+    "snippet": "except ValidationException as exc: logger.error(f\"Invalid session_id provided: {exc}\") return None"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.get_next_trial",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "783a4853fa6e",
+    "lineno": 569,
+    "snippet": "except Exception as e: logger.error(f\"Failed to get next trial for session {session_id}: {e}\") return None"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.submit_trial_results",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "e15650ce0318",
+    "lineno": 605,
+    "snippet": "except ValidationException as exc: logger.error(f\"Invalid identifier provided: {exc}\") return False"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.submit_trial_results",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "241e771e1eba",
+    "lineno": 647,
+    "snippet": "except Exception as e: logger.error(f\"Failed to submit trial results: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.finalize_session",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "9319b3f1ec8f",
+    "lineno": 672,
+    "snippet": "except ValidationException as exc: logger.error(f\"Invalid session_id provided: {exc}\") return False"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.finalize_session",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "8391c60dedde",
+    "lineno": 696,
+    "snippet": "except Exception as e: logger.error(f\"Failed to finalize session {session_id}: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.cancel_session",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "9319b3f1ec8f",
+    "lineno": 716,
+    "snippet": "except ValidationException as exc: logger.error(f\"Invalid session_id provided: {exc}\") return False"
+  },
+  {
+    "path": "traigent/cloud/integration_manager.py",
+    "qualname": "IntegrationManager.cancel_session",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "8331a28b1009",
+    "lineno": 757,
+    "snippet": "except Exception as e: logger.error(f\"Failed to cancel session {session_id}: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/password_auth_handler.py",
+    "qualname": "PasswordAuthHandler._is_dev_mode_enabled",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "32ae9e889e34",
+    "lineno": 205,
+    "snippet": "except Exception as e: # pragma: no cover - defensive guard logger.debug(f\"Could not resolve production env: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/password_auth_handler.py",
+    "qualname": "PasswordAuthHandler._perform_authentication",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "01d803149133",
+    "lineno": 268,
+    "snippet": "except ValueError as exc: logger.warning( \"Rejected unsafe password authentication backend_url: %s\", exc ) return None"
+  },
+  {
+    "path": "traigent/cloud/privacy_operations.py",
+    "qualname": "PrivacyOperations.get_next_privacy_trial",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "3f375bbd89e0",
+    "lineno": 272,
+    "snippet": "except Exception as e: # Genuinely unexpected error: log and return None as the legacy # \"no suggestion\" sentinel. Anything that should be visible at # the public boundary should have a typed CloudServiceError # subclass and propagate via the branches above. logger.error(f\"Failed to get next trial for session {session_id}: {e}\") return None"
+  },
+  {
+    "path": "traigent/cloud/privacy_operations.py",
+    "qualname": "PrivacyOperations.submit_privacy_trial_results",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "3d25f0939c29",
+    "lineno": 330,
+    "snippet": "except CloudServiceError as e: logger.warning(f\"Rate limit exceeded: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/privacy_operations.py",
+    "qualname": "PrivacyOperations.submit_privacy_trial_results",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "241e771e1eba",
+    "lineno": 371,
+    "snippet": "except Exception as e: logger.error(f\"Failed to submit trial results: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/session_operations.py",
+    "qualname": "SessionOperations._finalize_session_via_api",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "7a64a680829e",
+    "lineno": 1500,
+    "snippet": "except Exception: # Backend returned 2xx but body wasn't JSON or # was empty \u2014 finalize succeeded but no summary # payload to preserve. return {}"
+  },
+  {
+    "path": "traigent/cloud/session_operations.py",
+    "qualname": "SessionOperations._finalize_session_via_api",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "4d7a216b142c",
+    "lineno": 1522,
+    "snippet": "except Exception as e: logger.debug(f\"Error calling backend finalization API: {e}\") return None"
+  },
+  {
+    "path": "traigent/cloud/session_operations.py",
+    "qualname": "SessionOperations.finalize_session_sync",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "0a67676db48f",
+    "lineno": 1667,
+    "snippet": "except Exception as e: logger.warning(f\"Failed to finalize session synchronously: {e}\") return None"
+  },
+  {
+    "path": "traigent/cloud/session_operations.py",
+    "qualname": "SessionOperations.delete_session_sync",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "47d000987c5f",
+    "lineno": 1710,
+    "snippet": "except Exception as e: logger.warning(f\"Failed to delete session synchronously: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/sessions.py",
+    "qualname": "SessionState.update_session_status",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "d756f871a1d6",
+    "lineno": 200,
+    "snippet": "except Exception as e: logger.error(f\"Failed to update session status: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/sessions.py",
+    "qualname": "SessionState.update_best_results",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "99a08a3b15fe",
+    "lineno": 245,
+    "snippet": "except Exception as e: logger.error(f\"Failed to update best results: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/sync_manager.py",
+    "qualname": "SyncManager._resolve_request_timeout",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "88aef680d49e",
+    "lineno": 164,
+    "snippet": "except (TypeError, ValueError): logger.warning( \"Invalid %s value for sync HTTP timeout: %r. \" \"Falling back to default %s seconds.\", source_name, raw_value, default_timeout, ) continue"
+  },
+  {
+    "path": "traigent/cloud/sync_manager.py",
+    "qualname": "SyncManager._response_json",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "41db6d02eb70",
+    "lineno": 1353,
+    "snippet": "except ValueError: return None"
+  },
+  {
+    "path": "traigent/cloud/trial_operations.py",
+    "qualname": "TrialOperations.register_trial_start_sync",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "07cdcbebbbcc",
+    "lineno": 468,
+    "snippet": "except Exception: logger.exception( \"Failed to register trial start synchronously for session %s trial %s (%s)\", session_id, trial_id, self._describe_backend(), ) return False"
+  },
+  {
+    "path": "traigent/cloud/trial_operations.py",
+    "qualname": "TrialOperations._is_session_not_found_400",
+    "category": "bare_except_pass",
+    "snippet_hash": "f02ddcff8475",
+    "lineno": 765,
+    "snippet": "except (ValueError, KeyError): pass"
+  },
+  {
+    "path": "traigent/cloud/trial_operations.py",
+    "qualname": "TrialOperations._handle_trial_error_response",
+    "category": "bare_except_pass",
+    "snippet_hash": "f02ddcff8475",
+    "lineno": 812,
+    "snippet": "except (ValueError, KeyError): pass"
+  },
+  {
+    "path": "traigent/cloud/trial_operations.py",
+    "qualname": "TrialOperations.submit_trial_result_via_session",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "49a2fb6ef7be",
+    "lineno": 948,
+    "snippet": "except ValueError as e: logger.error(f\"Invalid configuration run submission: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/trial_operations.py",
+    "qualname": "TrialOperations.submit_summary_stats",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "54782285b8d2",
+    "lineno": 1103,
+    "snippet": "except ValueError as e: logger.error(f\"Invalid summary stats submission: {e}\") return False"
+  },
+  {
+    "path": "traigent/cloud/trial_operations.py",
+    "qualname": "TrialOperations.update_trial_weighted_scores",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "3927d38d7a93",
+    "lineno": 1294,
+    "snippet": "except Exception: logger.exception( \"Error updating trial weighted scores for %s (%s)\", trial_id, self._describe_backend(), ) return False"
+  },
+  {
+    "path": "traigent/cloud/url_security.py",
+    "qualname": "_parse_ip_literal",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "41db6d02eb70",
+    "lineno": 79,
+    "snippet": "except ValueError: return None"
+  },
+  {
+    "path": "traigent/cloud/url_security.py",
+    "qualname": "_reject_unsafe_hostname",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "79b0d0f270e6",
+    "lineno": 133,
+    "snippet": "except ValueError: continue"
+  },
+  {
+    "path": "traigent/core/cost_enforcement.py",
+    "qualname": "CostEnforcer._request_user_approval",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "ccb39467c8b1",
+    "lineno": 664,
+    "snippet": "except (EOFError, KeyboardInterrupt): print(\"\\nAborted.\", file=sys.stderr) logger.info(\"User aborted via EOF/interrupt\") return False"
+  },
+  {
+    "path": "traigent/core/cost_estimator.py",
+    "qualname": "CostEstimator.extract_trial_cost",
+    "category": "bare_except_pass",
+    "snippet_hash": "c307ba5c3c40",
+    "lineno": 312,
+    "snippet": "except (TypeError, ValueError): pass"
+  },
+  {
+    "path": "traigent/utils/cost_calculator.py",
+    "qualname": "_try_litellm_cost",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "af10980773d7",
+    "lineno": 1072,
+    "snippet": "except Exception: continue"
+  },
+  {
+    "path": "traigent/utils/cost_calculator.py",
+    "qualname": "model_has_nonzero_price_coverage",
+    "category": "swallow_and_substitute",
+    "snippet_hash": "ac3268ca8b0f",
+    "lineno": 1175,
+    "snippet": "except (RuntimeError, UnknownModelError): return False"
+  }
+]
