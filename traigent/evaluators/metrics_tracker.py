@@ -342,6 +342,14 @@ class CostMetrics:
     input_cost: float = 0.0
     output_cost: float = 0.0
     total_cost: float = 0.0
+    # True when non-strict cost accounting could not price the model at all
+    # (litellm + custom pricing + Traigent's builtin fallback all missed) and
+    # ``total_cost`` was recorded as 0.0 despite non-zero token usage (#1597).
+    # This is distinct from a model that is legitimately free/self-hosted —
+    # those resolve to a real (known) 0.0 price and never set this flag.
+    # Consumers (trial/result aggregation) must treat this as "unknown spend",
+    # not "verified free".
+    unpriced: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative costs and handle None
@@ -1611,6 +1619,10 @@ def _compute_cost(
             from traigent.utils.cost_calculator import record_unpriced_runtime_model
 
             record_unpriced_runtime_model(model_name)
+            # Mark this example's cost as "unknown", not "verified free", so
+            # trial/result-level aggregation (#1597) does not silently treat
+            # the unpriced usage as zero-cost when reporting total spend.
+            metrics.cost.unpriced = True
     else:
         logger.debug(
             "No token usage extracted for model %s; "

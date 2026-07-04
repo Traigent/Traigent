@@ -1,4 +1,5 @@
-"""Regression tests for cost-metric wiring (#1423) and runtime cost-coverage (#1407).
+"""Regression tests for cost-metric wiring (#1423), runtime cost-coverage (#1407),
+and unpriced-response-id honesty (#1597).
 
 #1423: the per-config ``cost`` metric / objective and the input_cost/output_cost
 breakdown must be wired to the SDK's already-correct ``total_cost`` (non-zero,
@@ -8,6 +9,16 @@ normalized id, and ``cost_efficiency`` must not divide by zero.
 #1407: a model HARD-CODED in the optimized function body that no pricing table
 covers must surface to the USER and the result object at runtime (non-strict) and
 must fail closed under strict accounting.
+
+#1597: OpenRouter (or any provider) can return a response-model id litellm
+genuinely cannot price (e.g. a model released after litellm's bundled pricing
+snapshot, like a future-dated ``anthropic/claude-*`` id). The candidate-ladder
+normalization from #1423 already prices every *known* id via the underlying
+litellm entry; for the residual genuinely-unknown case, cost must never be
+silently indistinguishable from verified-free: ``ExampleMetrics.cost.unpriced``
+marks the example, the runtime registry counts occurrences per model (not just
+membership), and the result-level warning is quantified and states the $0 is
+UNKNOWN spend rather than free usage.
 
 These tests assert externally-observable behavior on a real (mocked-LLM) pipeline;
 they never assert ``== 0`` or trivially-true conditions.
@@ -336,3 +347,96 @@ def test_unpriced_runtime_model_recorded_at_evaluator_level():
     )
     asyncio.run(evaluator.evaluate(fn, {"temperature": 0.1}, dataset))
     assert cost_calculator.get_unpriced_runtime_models() == ["acme/private-llm-v9"]
+
+
+# --------------------------------------------------------------------------- #
+# #1597: OpenRouter/future-dated unpriced response-model ids — never silently  #
+# indistinguishable from verified-free; per-example marker + quantified       #
+# runtime warning that aggregation cannot mistake for $0-because-free.        #
+# --------------------------------------------------------------------------- #
+def test_example_metrics_cost_marked_unpriced_for_unmapped_model():
+    """A genuinely-unmapped response-model id (e.g. a future OpenRouter release
+    not yet in litellm's bundled pricing map) marks ``cost.unpriced`` True
+    instead of looking identical to a verified-free ($0) call.
+    """
+    metrics = extract_llm_metrics(
+        _LLMResponse("A", "anthropic/claude-4.8-opus-20260528", 700, 300),
+        model_name="anthropic/claude-4.8-opus-20260528",
+    )
+    assert metrics.cost.total_cost == 0.0
+    assert metrics.cost.unpriced is True
+
+
+def test_example_metrics_cost_not_marked_unpriced_for_priced_model():
+    """A model litellm can price (via the OpenRouter-prefix candidate ladder,
+    #1423) is NOT marked unpriced — the priced case is unchanged by #1597.
+    """
+    metrics = extract_llm_metrics(
+        _LLMResponse("A", "openrouter/openai/gpt-4o-mini", 700, 300),
+        model_name="openrouter/openai/gpt-4o-mini",
+    )
+    assert metrics.cost.total_cost > 0.0
+    assert metrics.cost.unpriced is False
+
+
+def test_unpriced_runtime_occurrences_counts_calls_per_model():
+    """The runtime registry counts occurrences per model (#1597), not just
+    set membership, so a systematic per-trial pattern is distinguishable from
+    a single unlucky call.
+    """
+    cost_calculator.record_unpriced_runtime_model("acme/private-llm-v9")
+    cost_calculator.record_unpriced_runtime_model("acme/private-llm-v9")
+    cost_calculator.record_unpriced_runtime_model("acme/other-v2")
+
+    assert cost_calculator.get_unpriced_runtime_models() == [
+        "acme/other-v2",
+        "acme/private-llm-v9",
+    ]
+    assert cost_calculator.get_unpriced_runtime_occurrences() == {
+        "acme/other-v2": 1,
+        "acme/private-llm-v9": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_unpriced_runtime_warning_is_quantified_and_not_treated_as_free(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The result-level warning states call counts and that $0 means UNKNOWN
+    spend — never silently equating it with verified-free usage (#1597).
+
+    This is the "aggregation consuming per-trial cost" requirement made
+    concrete: the OptimizationResult surface a user inspects after a run must
+    be quantitative (how many calls were affected), not just a bare model-id
+    mention, and must say the reported cost is a lower bound.
+    """
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")  # no interactive prompt
+    dataset = [
+        {"input": {"question": "q1"}, "expected_output": "A"},
+        {"input": {"question": "q2"}, "expected_output": "A"},
+    ]
+
+    @optimize(
+        eval_dataset=dataset,
+        objectives=["accuracy", "cost"],
+        configuration_space={"temperature": [0.1]},
+        offline=True,
+    )
+    def fn(question: str = "", temperature: float = 0.1, **_cfg):
+        # Hard-coded, genuinely-unmapped response model id (future OpenRouter
+        # release) — discoverable on the response object, invisible to the
+        # config-space preflight.
+        return _LLMResponse("A", "anthropic/claude-4.8-opus-20260528", 700, 300)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = await fn.optimize(progress_bar=False)
+
+    counts = result.metadata.get("unpriced_models_runtime_call_counts", {})
+    assert counts.get("anthropic/claude-4.8-opus-20260528") == 2
+
+    warning_text = " ".join(result.warnings)
+    assert "anthropic/claude-4.8-opus-20260528" in warning_text
+    assert "2 call" in warning_text  # quantified, not just a bare model-id mention
+    assert "UNKNOWN" in warning_text
+    assert "lower bound" in warning_text
