@@ -2354,6 +2354,90 @@ class TestCreateOptimizationWorkflow:
                         assert run_id == "run_123"
 
     @pytest.mark.asyncio
+    async def test_create_optimization_workflow_missing_agent_id(self):
+        """Regression test for Traigent#1726: create_optimization_workflow must
+        raise if agent creation succeeds but returns no agent_id, instead of
+        silently continuing with an empty agent_id."""
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=Dataset(name="test", examples=[example]),
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=AgentSpecification(name="test", agent_type="opt"),
+            metadata={},
+        )
+
+        with patch.object(
+            self.client, "create_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
+            mock_create_agent.return_value = MCPResponse(success=True, data={})
+
+            with pytest.raises(RuntimeError, match="Agent ID not returned"):
+                await self.client.create_optimization_workflow(request)
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_missing_experiment_run_id(self):
+        """Regression test for Traigent#1726: create_optimization_workflow must
+        raise if start_experiment_run succeeds but returns no
+        experiment_run_id, instead of silently returning an empty run id to
+        the caller."""
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=Dataset(name="test", examples=[example]),
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=AgentSpecification(name="test", agent_type="opt"),
+            metadata={},
+        )
+
+        with patch.object(
+            self.client, "create_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
+            mock_create_agent.return_value = MCPResponse(
+                success=True, data={"agent_id": "agent_123"}
+            )
+
+            with patch.object(
+                self.client, "upload_dataset", new_callable=AsyncMock
+            ) as mock_upload:
+                mock_upload.return_value = MCPResponse(
+                    success=True, data={"example_set_id": "set_123"}
+                )
+
+                with patch.object(
+                    self.client, "create_experiment", new_callable=AsyncMock
+                ) as mock_create_exp:
+                    mock_create_exp.return_value = MCPResponse(
+                        success=True, data={"experiment_id": "exp_123"}
+                    )
+
+                    with patch.object(
+                        self.client, "start_experiment_run", new_callable=AsyncMock
+                    ) as mock_start_run:
+                        mock_start_run.return_value = MCPResponse(success=True, data={})
+
+                        with pytest.raises(
+                            RuntimeError, match="Experiment run ID not returned"
+                        ):
+                            await self.client.create_optimization_workflow(request)
+
+    @pytest.mark.asyncio
     async def test_create_optimization_workflow_threads_real_ids_to_create_experiment(
         self,
     ):
