@@ -509,6 +509,48 @@ class TestOptimizeDecorator:
         assert ai_function.kwargs["metric_limit"] == 50_000
         assert ai_function.kwargs["metric_name"] == "total_tokens"
 
+    def test_decorator_accepts_plateau_runtime_override(self):
+        """Regression test for #1692: plateau_window/plateau_epsilon set only
+        on the decorator must reach OptimizedFunction.kwargs (and therefore
+        _decorator_runtime_overrides) exactly like the sibling metric_limit
+        override above -- not get diverted to the dead combined_settings
+        bucket by _DIRECT_OPTION_KEYS routing."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            plateau_window=3,
+            plateau_epsilon=0.01,
+        )
+        def ai_function(prompt: str) -> str:
+            return prompt
+
+        assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.kwargs["plateau_window"] == 3
+        assert ai_function.kwargs["plateau_epsilon"] == 0.01
+        assert ai_function._decorator_runtime_overrides["plateau_window"] == 3
+        assert ai_function._decorator_runtime_overrides["plateau_epsilon"] == 0.01
+
+    def test_decorator_accepts_semantic_saturation_runtime_override(self):
+        """Regression test for #1692: semantic_saturation set only on the
+        decorator must reach OptimizedFunction.kwargs /
+        _decorator_runtime_overrides, not the dead combined_settings bucket."""
+
+        semantic_saturation_config = {"window": 4, "min_trials": 4}
+
+        @optimize(
+            configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            semantic_saturation=semantic_saturation_config,
+        )
+        def ai_function(prompt: str) -> str:
+            return prompt
+
+        assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.kwargs["semantic_saturation"] == semantic_saturation_config
+        assert (
+            ai_function._decorator_runtime_overrides["semantic_saturation"]
+            == semantic_saturation_config
+        )
+
     def test_decorator_with_auto_optimize(self):
         """Test decorator with auto optimization enabled."""
 

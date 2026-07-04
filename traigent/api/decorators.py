@@ -701,10 +701,16 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "execution": None,
     "mock": None,
     "max_trials": DEFAULT_MAX_TRIALS,
-    # Early stopping parameters
-    "plateau_window": None,  # Stop if no improvement for N trials
-    "plateau_epsilon": None,  # Improvement threshold for plateau detection
-    "semantic_saturation": None,  # Opt-in semantic saturation stop condition config
+    # NOTE: plateau_window / plateau_epsilon / semantic_saturation are
+    # intentionally NOT listed here (issue #1692). They are early-stop
+    # runtime-override keys (see _ALLOWED_RUNTIME_OVERRIDE_KEYS) that must
+    # flow through `combined_runtime_overrides` -> `_decorator_runtime_overrides`
+    # -> the orchestrator's stop-condition config, both at decoration time and
+    # at call time. Adding them to _OPTIMIZE_DEFAULTS pulls them into
+    # _DIRECT_OPTION_KEYS, which reroutes decorator-time values into the dead
+    # `combined_settings` bucket (nothing ever reads combined_settings[...]
+    # for these keys) instead of `combined_runtime_overrides`, silently
+    # no-op'ing early stopping when configured on the decorator.
     # Multi-agent configuration
     "agents": None,  # Explicit agent definitions
     "agent_prefixes": None,  # Prefix-based agent inference
