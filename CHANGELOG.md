@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-07-04
+
+Hotfix: user-declared objective weights now reach the backend.
+
+### Fixed
+- `ObjectiveSchema` / ACL weights are now serialized to the backend at
+  session creation as `{name, orientation, weight}` objective dicts.
+  Previously only bare metric names crossed the wire, so backend-routed
+  optimization silently equal-weighted all objectives and the portal
+  showed "0 weights / optimization objective: not reported" with a
+  0/80/20 display fallback. Pre-existing in all prior releases; the
+  backend counterpart mirrors the declared objectives into the run
+  metadata the portal reads. (#1715, #1716; TraigentBackend#1987)
+
 ## [0.19.2] - 2026-07-04
 
 Multi-run analytics release: agents can now read the experiment-group
