@@ -6,6 +6,48 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-05
+
+Fail-closed hardening release. A systematic silent-failure audit of the
+SDK↔backend integration (25 findings) closed the classes of error that were
+being suppressed or silently degraded without telling the user, and added
+reusable enforcement so they cannot silently recur.
+
+### Fixed
+- Metric/scoring-function exceptions no longer silently score an objective
+  0.0: a failing objective metric now fails the trial (excluded from
+  best-config selection) instead of fabricating a score; informational-metric
+  failures are recorded as structured `metric_errors`. (#1722)
+- CLI commands now return honest exit codes — `optimize`/`validate`/`check`
+  exit non-zero on real failure (was always exit 0); `auth login`/`refresh`
+  fail when credential persistence fails; `plan`/`next-steps` use stored
+  credentials and fall back to localhost, not the prod cloud. (#1721)
+- Decorator/session contract: `ExecutionOptions` now rejects misspelled option
+  keys (was `extra="allow"`, silently swallowed); `@optimize(default_config=)`
+  is now sent on the session-create wire (was materialized locally only);
+  `validate_providers` docs corrected to the real standalone function. (#1723)
+- Trial/result persistence made honest: failed-trial error messages now use the
+  wire key the backend reads (`error_message`), so they are no longer dropped;
+  a session rollup that was never transmitted is reported `persistence_status=
+  "degraded"` instead of `"succeeded"`; measures-contract violations fail closed
+  instead of submitting unvalidated metrics; weighted-score partial failures
+  now record attempted/failed counts. (#1724)
+- Warm-start visibility: seed drops are surfaced (drop-reason histogram +
+  candidate count) instead of debug-logged and discarded; the seed cap keeps
+  the most recent (not oldest) configs and signals truncation; a classic-REST
+  seed-build error reports `degraded` instead of silently omitting warm-start.
+  (#1725)
+- `create_optimization_workflow` now raises on a missing `agent_id` /
+  `experiment_run_id` (previously only `experiment_id` was checked). (#1726)
+- Backend session finalization is retried before reporting failure. (#1730)
+
+### Added
+- Reusable silent-failure checkers (Phase D): a report-only, ratcheted
+  AST lint that flags new swallowed/silently-substituted wire and cost
+  failures in `traigent/cloud`, `traigent/cli`, and the pricing modules, plus
+  unknown-parameter rejection tests pinning that public entrypoints reject
+  unknown kwargs. (#1727)
+
 ## [0.19.3] - 2026-07-04
 
 Hotfix: user-declared objective weights now reach the backend.
