@@ -222,6 +222,73 @@ class TestMeasuresDictValidationInSubmission:
         mock_client._normalize_execution_mode.assert_called_once_with("hybrid")
 
     @pytest.mark.asyncio
+    async def test_failed_trial_error_message_wire_key_is_error_message(self) -> None:
+        """Traigent#1724: a failed trial's error must ride under "error_message".
+
+        The backend route and TraigentCloudClient both read "error_message";
+        a wire key of "error" is silently dropped, so every failed-trial
+        message was lost before this fix.
+        """
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = (
+            "https://api.example.com"  # pragma: allowlist secret
+        )
+        mock_client.backend_config.api_base_url = "https://api.example.com/api/v1"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="FAILED")
+        mock_client._normalize_execution_mode = Mock(return_value="local")
+        mock_client._sanitize_error_message = Mock(
+            return_value="evaluation raised ValueError"
+        )
+
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+
+        mock_response = Mock()
+        mock_response.status = 201
+
+        mock_post_ctx = AsyncMock()
+        mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_post_ctx)
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                metrics={},
+                status="failed",
+                error_message="evaluation raised ValueError",
+            )
+
+        assert result is True
+        posted_payload = mock_session.post.call_args.kwargs["json"]
+        assert posted_payload["error_message"] == "evaluation raised ValueError"
+        assert "error" not in posted_payload
+
+    @pytest.mark.asyncio
     async def test_invalid_configuration_run_submission_does_not_post(self) -> None:
         """Schema validation failure must stop trial result network submission."""
         mock_client = Mock()
@@ -261,10 +328,16 @@ class TestMeasuresDictValidationInSubmission:
         mock_aiohttp.ClientSession.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_invalid_metric_key_logs_warning_and_submits_unvalidated(
+    async def test_invalid_metric_key_rejects_submission(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Invalid metric keys trigger MeasuresDict warning but submission continues."""
+        """Traigent#1724: invalid metric keys hard-fail the submission.
+
+        MeasuresDict is a hard contract mirroring the schema validation a few
+        lines below it — a trial whose measures violate the contract must be
+        rejected, not silently submitted with unvalidated numeric metrics
+        (the previous fail-open behavior).
+        """
         mock_client = Mock()
         mock_client.backend_config = Mock()
         mock_client.backend_config.backend_base_url = (
@@ -283,23 +356,6 @@ class TestMeasuresDictValidationInSubmission:
         # Use a metric key with a hyphen — MeasuresDict rejects non-identifier keys
         invalid_metrics = {"invalid-key": 0.95}
 
-        # Build nested async context manager mocks for aiohttp
-        mock_response = Mock()
-        mock_response.status = 200
-
-        # post() returns an async context manager yielding mock_response
-        mock_post_ctx = AsyncMock()
-        mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.post = Mock(return_value=mock_post_ctx)
-
-        # ClientSession() returns an async context manager yielding mock_session
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
         with (
             patch(
                 "traigent.cloud.trial_operations.is_backend_offline",
@@ -309,16 +365,10 @@ class TestMeasuresDictValidationInSubmission:
                 "traigent.cloud.trial_operations.AIOHTTP_AVAILABLE",
                 True,
             ),
-            patch(
-                "traigent.cloud.trial_operations.validate_configuration_run_submission",
-            ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
-            mock_aiohttp.ClientTimeout = Mock()
-
             with caplog.at_level(
-                logging.WARNING, logger="traigent.cloud.trial_operations"
+                logging.ERROR, logger="traigent.cloud.trial_operations"
             ):
                 result = await ops.submit_trial_result_via_session(
                     session_id="test-session",
@@ -328,10 +378,11 @@ class TestMeasuresDictValidationInSubmission:
                     status="completed",
                 )
 
-            # The warning should have been logged
-            assert any("Metrics validation warning" in msg for msg in caplog.messages)
-            # Submission should still proceed (True = success)
-            assert result is True
+            # Rejected outright — no silent fallback to unvalidated metrics.
+            assert result is False
+            assert any("Invalid trial metrics" in msg for msg in caplog.messages)
+            # Validation failure happens before any network call is attempted.
+            mock_aiohttp.ClientSession.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_transport_fields_do_not_trigger_measuresdict_warnings(
@@ -1001,6 +1052,79 @@ class TestMeasuresLogging:
         assert not any(
             "No measures found for trial trial_xyz" in msg for msg in caplog.messages
         )
+
+
+class TestMeasuresUpdateFailureVisibility:
+    """Traigent#1724: a failed measures backfill must not look like ordinary success."""
+
+    @pytest.mark.asyncio
+    async def test_measures_update_failure_is_surfaced_not_swallowed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """_update_config_run_measures returning False is logged and recorded.
+
+        The overall trial submission still reports success (the POST to
+        /sessions/{id}/results already succeeded with 2xx), but the failed
+        measures backfill must be visible: a WARNING log distinguishable
+        from the ordinary "Submitted trial result" debug line, and a marker
+        on the result metadata.
+        """
+        mock_client = Mock()
+        mock_client._update_config_run_status = AsyncMock(return_value=True)
+        mock_client._update_config_run_measures = AsyncMock(return_value=False)
+
+        ops = TrialOperations(mock_client)
+
+        mock_response = AsyncMock()
+        mock_response.json = AsyncMock(return_value={"continue_optimization": True})
+
+        result_data: dict = {"metadata": {}}
+        clean_metrics = {"accuracy": 0.9}
+
+        with caplog.at_level(logging.WARNING, logger="traigent.cloud.trial_operations"):
+            result = await ops._handle_trial_success_response(
+                response=mock_response,
+                session_id="session_123",
+                trial_id="trial_001",
+                backend_status="COMPLETED",
+                result_data=result_data,
+                clean_metrics=clean_metrics,
+            )
+
+        # Trial submission itself still succeeded.
+        assert result is True
+        mock_client._update_config_run_measures.assert_awaited_once_with(
+            "trial_001", clean_metrics, None
+        )
+        # But the degraded measures backfill is not swallowed silently.
+        assert result_data["metadata"]["measures_update_degraded"] is True
+        assert any("Measures backfill failed" in msg for msg in caplog.messages)
+
+    @pytest.mark.asyncio
+    async def test_measures_update_success_leaves_no_degraded_marker(self) -> None:
+        """Happy path stays byte-identical: no marker when the update succeeds."""
+        mock_client = Mock()
+        mock_client._update_config_run_status = AsyncMock(return_value=True)
+        mock_client._update_config_run_measures = AsyncMock(return_value=True)
+
+        ops = TrialOperations(mock_client)
+
+        mock_response = AsyncMock()
+        mock_response.json = AsyncMock(return_value={"continue_optimization": True})
+
+        result_data: dict = {"metadata": {}}
+
+        result = await ops._handle_trial_success_response(
+            response=mock_response,
+            session_id="session_123",
+            trial_id="trial_001",
+            backend_status="COMPLETED",
+            result_data=result_data,
+            clean_metrics={"accuracy": 0.9},
+        )
+
+        assert result is True
+        assert "measures_update_degraded" not in result_data["metadata"]
 
 
 def _mk_slot_client():

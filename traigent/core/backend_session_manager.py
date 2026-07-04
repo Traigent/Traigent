@@ -1540,7 +1540,10 @@ class BackendSessionManager:
                             "best_weighted_score"
                         ),
                         "objective_weights": objective_weights,
+                        "trials_attempted": 0,
                         "trials_updated": 0,
+                        "trials_failed": 0,
+                        "failed_trial_ids": [],
                     }
                 return 0
 
@@ -1613,6 +1616,17 @@ class BackendSessionManager:
                 )
             )
             update_count = sum(1 for result_flag in update_results if result_flag)
+            # Traigent#1724: a partial failure previously vanished — only
+            # trials_updated was ever persisted, so e.g. 3/10 successes and
+            # 7/10 silent drops looked identical to "nothing attempted".
+            # Persist attempted count and the specific failed trial ids too.
+            failed_trial_ids = [
+                getattr(trial, "trial_id", "unknown")
+                for (trial, _score), result_flag in zip(
+                    weighted_updates, update_results, strict=True
+                )
+                if not result_flag
+            ]
 
             logger.info(
                 "Updated %s/%s trials with weighted scores (concurrency=%s)",
@@ -1630,7 +1644,10 @@ class BackendSessionManager:
                     ),
                     "best_weighted_score": weighted_results.get("best_weighted_score"),
                     "objective_weights": objective_weights,
+                    "trials_attempted": attempted_updates,
                     "trials_updated": update_count,
+                    "trials_failed": len(failed_trial_ids),
+                    "failed_trial_ids": failed_trial_ids,
                 }
 
             return update_count
@@ -1641,12 +1658,21 @@ class BackendSessionManager:
 
     def submit_session_aggregation(
         self, result: OptimizationResult, session_id: str | None
-    ) -> None:
+    ) -> bool | None:
         """Submit aggregated summary for non-edge modes.
 
         Args:
             result: Final optimization result
             session_id: Backend session identifier
+
+        Returns:
+            ``True`` if the session-level rollup was actually transmitted to
+            the backend; ``False`` if a rollup payload was built but only
+            reached the local-only ``BackendIntegratedClient.submit_result``
+            shim (Traigent#1724 — this never leaves the process today, so
+            callers must not treat it as persisted); ``None`` if aggregation
+            was skipped entirely (offline/local mode, no session, or no
+            session summary to submit).
         """
         if (
             self._egress_disabled()
@@ -1655,7 +1681,7 @@ class BackendSessionManager:
             or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
         ):
-            return
+            return None
 
         if (
             not self._backend_client
@@ -1663,7 +1689,7 @@ class BackendSessionManager:
             or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
         ):
-            return
+            return None
 
         session_summary = (
             result.metadata.get("session_summary")
@@ -1672,7 +1698,7 @@ class BackendSessionManager:
         )
 
         if not session_summary:
-            return
+            return None
 
         aggregated_trial_id = f"{session_id}_AGG_SUMMARY"
 
@@ -1724,6 +1750,16 @@ class BackendSessionManager:
                 self._strategy_preset_metadata
             )
 
+        # NOTE (Traigent#1724): BackendIntegratedClient.submit_result is a
+        # local-only compatibility shim (writes local_storage + bumps an
+        # in-memory counter) — it never makes a network call. This rollup is
+        # therefore built but NOT transmitted to the backend today. Return
+        # False so the caller (orchestrator._finalize_optimization) does not
+        # report persistence_status="succeeded" for a submission that never
+        # left the process. Folding this rollup into the existing
+        # POST /sessions/{id}/finalize payload (session_operations.py
+        # finalize_body) is the real fix and is tracked separately; it needs
+        # backend-side schema support this SDK change cannot verify alone.
         self._backend_client.submit_result(
             session_id=session_id,
             config=cast(dict[str, Any], result.best_config),
@@ -1734,6 +1770,13 @@ class BackendSessionManager:
             "Submitted session aggregation with overlay metrics: %s",
             list(overlay_metrics.keys()),
         )
+        logger.info(
+            "Session aggregation rollup for session_id=%s was built locally but "
+            "not transmitted to the backend (local-only submission path); "
+            "trial-level results and session finalize are unaffected.",
+            session_id,
+        )
+        return False
 
     def finalize_session(
         self,

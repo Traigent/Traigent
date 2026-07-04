@@ -3097,8 +3097,10 @@ class OptimizationOrchestrator:
                 await self.backend_session_manager.update_weighted_scores(
                     result, session_id
                 )
-                self.backend_session_manager.submit_session_aggregation(
-                    result, session_id
+                aggregation_persisted = (
+                    self.backend_session_manager.submit_session_aggregation(
+                        result, session_id
+                    )
                 )
 
                 session_summary = self.backend_session_manager.finalize_session(
@@ -3109,7 +3111,28 @@ class OptimizationOrchestrator:
                 self.backend_session_manager.attach_session_metadata(
                     result, session_id, session_summary
                 )
-                persistence_status = "succeeded"
+                if aggregation_persisted is False:
+                    # Traigent#1724: the session-level AGG_SUMMARY rollup was
+                    # built but only reached a local-only shim — it never left
+                    # the process. Trial-level results and session finalize
+                    # above did succeed, so this is not a full failure; but
+                    # 'succeeded' must not be reported for data that was
+                    # never transmitted.
+                    persistence_status = "degraded"
+                    result.metadata["persistence_degraded_reason"] = (
+                        "session aggregation rollup was not transmitted to the "
+                        "backend (local-only submission path); trial-level "
+                        "results and session finalize were persisted normally."
+                    )
+                    logger.warning(
+                        "Session aggregation rollup for session_id=%s was not "
+                        "transmitted to the backend; marking "
+                        "persistence_status=degraded (trial results and "
+                        "finalize succeeded).",
+                        session_id,
+                    )
+                else:
+                    persistence_status = "succeeded"
             except Exception as exc:
                 persistence_status = "failed"
                 result.metadata["persistence_error"] = str(exc)
