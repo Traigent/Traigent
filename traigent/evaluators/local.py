@@ -576,6 +576,8 @@ class LocalEvaluator(BaseEvaluator):
         example_obj: Any,
         config: dict[str, Any],
         example_index: int,
+        *,
+        metric_errors: list[dict[str, Any]] | None = None,
     ) -> None:
         """Apply user-defined metric functions for a single example.
 
@@ -587,6 +589,10 @@ class LocalEvaluator(BaseEvaluator):
             example_obj: Dataset example object
             config: Configuration parameters
             example_index: Current example index
+            metric_errors: Optional accumulator for structured degradation
+                records from non-objective metric failures; forwarded to
+                ``_invoke_metric_function``. An objective failure instead
+                raises ``EvaluationError`` and propagates out of this call.
         """
         llm_payload = {
             "total_tokens": example_metric.tokens.total_tokens,
@@ -607,6 +613,7 @@ class LocalEvaluator(BaseEvaluator):
                 config,
                 llm_payload,
                 example_index,
+                metric_errors=metric_errors,
             )
             if isinstance(value, Mapping):
                 for result_name, result_value in value.items():
@@ -673,6 +680,8 @@ class LocalEvaluator(BaseEvaluator):
         config: dict[str, Any],
         llm_payload: dict[str, Any],
         example_index: int,
+        *,
+        metric_errors: list[dict[str, Any]] | None = None,
     ) -> float:
         """Invoke a single metric function with appropriate arguments.
 
@@ -684,9 +693,26 @@ class LocalEvaluator(BaseEvaluator):
             config: Configuration parameters
             llm_payload: LLM metrics payload
             example_index: Current example index
+            metric_errors: Optional accumulator for structured degradation
+                records (``{metric_name, example_id, example_index,
+                error_type, error_message, is_objective}``) for
+                NON-objective metric failures. Callers that don't need to
+                surface these (e.g. the best-effort progress-preview lane
+                in ``BaseEvaluator``) may omit it; the failure is still
+                logged either way.
 
         Returns:
-            Metric value or 0.0 on failure
+            Metric value on success, or ``0.0`` for a failed *informational*
+            metric -- never a bare, indistinguishable 0.0. A structured
+            error record is appended to ``metric_errors`` (when provided)
+            so a caller can tell a real 0.0 apart from a degraded one.
+
+        Raises:
+            EvaluationError: If ``metric_name`` is one of this evaluator's
+                configured objectives (``self.metrics``) and the metric
+                function raises. Substituting a fabricated 0.0 for an
+                optimization objective would silently corrupt the search,
+                so the trial fails closed instead.
         """
         try:
             signature = inspect.signature(metric_func)
@@ -739,6 +765,34 @@ class LocalEvaluator(BaseEvaluator):
                 example_id,
                 exc,
             )
+            # ``self.metrics`` is this evaluator's configured objective/metric
+            # list (every real construction path -- optimization_pipeline's
+            # _create_local_evaluator, cloud/client.py, cli/optimization_validator
+            # -- builds it directly from the optimization's ``objectives``).
+            # A metric named here is an optimization objective; a fabricated
+            # 0.0 for it would silently pin/corrupt the search, so fail the
+            # trial closed instead of scoring it.
+            is_objective = metric_name in self.metrics
+            error_record: dict[str, Any] = {
+                "metric_name": metric_name,
+                "example_id": example_id,
+                "example_index": example_index,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "is_objective": is_objective,
+            }
+            if is_objective:
+                raise EvaluationError(
+                    f"Objective metric '{metric_name}' raised "
+                    f"{type(exc).__name__} for example {example_id}: {exc}. "
+                    "Refusing to substitute a fabricated 0.0 score for an "
+                    "optimization objective.",
+                    config=config,
+                    original_error=exc,
+                    details=error_record,
+                ) from exc
+            if metric_errors is not None:
+                metric_errors.append(error_record)
             return 0.0
 
     def _build_local_progress_payload(
@@ -1061,6 +1115,8 @@ class LocalEvaluator(BaseEvaluator):
         example_results: list[Any] | None,
         all_captured_responses: list[Any],
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        *,
+        metric_errors: list[dict[str, Any]] | None = None,
     ) -> ExampleMetrics:
         """Process metrics for a single output.
 
@@ -1073,6 +1129,9 @@ class LocalEvaluator(BaseEvaluator):
             example_results: List of example results (may be None)
             all_captured_responses: Captured responses
             progress_callback: Optional progress callback
+            metric_errors: Optional accumulator for structured degradation
+                records from non-objective custom metric failures for this
+                evaluation run; forwarded to ``_apply_custom_metric_functions``.
 
         Returns:
             ExampleMetrics for this output
@@ -1152,7 +1211,12 @@ class LocalEvaluator(BaseEvaluator):
         if self.metric_functions and index < len(dataset.examples):
             example_obj = dataset.examples[index]
             self._apply_custom_metric_functions(
-                example_metric, output, example_obj, config, index
+                example_metric,
+                output,
+                example_obj,
+                config,
+                index,
+                metric_errors=metric_errors,
             )
 
             # Transfer custom metrics to example_results if in detailed mode
@@ -1410,6 +1474,14 @@ class LocalEvaluator(BaseEvaluator):
         # Clear captured responses now that we have them
         clear_captured_responses()
 
+        # Structured degradation records for non-objective metric failures,
+        # accumulated across this evaluate() call and surfaced on the
+        # returned EvaluationResult (never silently coalesced into 0.0).
+        # Kept as a local rather than instance state: LocalEvaluator instances
+        # are shared across concurrent trials (parallel_trials), so instance
+        # state here would race between trials.
+        metric_errors: list[dict[str, Any]] = []
+
         # Track metrics for each example output using helper method
         for i, output in enumerate(outputs):
             example_metric = self._process_single_output(
@@ -1421,6 +1493,7 @@ class LocalEvaluator(BaseEvaluator):
                 example_results=example_results,
                 all_captured_responses=all_captured_responses,
                 progress_callback=progress_callback,
+                metric_errors=metric_errors,
             )
             metrics_tracker.add_example_metrics(example_metric)
 
@@ -1447,6 +1520,7 @@ class LocalEvaluator(BaseEvaluator):
                     example_results=example_results,
                     example_metrics=metrics_tracker.example_metrics,
                     metrics_override=base_metric_names,
+                    metric_errors=metric_errors,
                 )
             else:
                 aggregated_metrics = {}
@@ -1458,6 +1532,7 @@ class LocalEvaluator(BaseEvaluator):
                 dataset=dataset,
                 example_results=example_results,
                 example_metrics=metrics_tracker.example_metrics,
+                metric_errors=metric_errors,
             )
 
         if "accuracy" in self.metrics:
@@ -1531,6 +1606,7 @@ class LocalEvaluator(BaseEvaluator):
             metrics=aggregated_metrics,
             outputs=outputs,
             errors=errors,
+            metric_errors=metric_errors,
         )
 
         # Attach summary_stats if generated

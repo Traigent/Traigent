@@ -794,6 +794,15 @@ class EvaluationResult:
     outputs: list[Any] | None = None
     errors: list[str | None] | None = None
 
+    # Structured degradation records for metric functions that raised and
+    # were NOT optimization objectives (objective failures instead raise
+    # EvaluationError -- see BaseEvaluator.compute_metrics /
+    # LocalEvaluator._invoke_metric_function -- so they never reach here as
+    # a fabricated value). Each record is
+    # ``{metric_name, example_id, example_index, error_type, error_message,
+    # is_objective}``. Empty when every metric computed cleanly.
+    metric_errors: list[dict[str, Any]] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -843,6 +852,7 @@ class EvaluationResult:
             "errors": self.errors,
             "success_rate": self.success_rate,
             "has_errors": self.has_errors,
+            "metric_errors": _safe_json_value(self.metric_errors),
         }
 
     @classmethod
@@ -871,6 +881,7 @@ class EvaluationResult:
             metrics=data.get("metrics"),
             outputs=data.get("outputs"),
             errors=data.get("errors"),
+            metric_errors=data.get("metric_errors") or [],
         )
 
 
@@ -1013,6 +1024,59 @@ class BaseEvaluator(ABC):
         names.update(getattr(self, "metric_functions", None) or {})
         return frozenset(names)
 
+    def _fail_or_record_metric_batch_error(
+        self,
+        exc: Exception,
+        metric_names: list[str],
+        metric_errors: list[dict[str, Any]] | None,
+        *,
+        log_message: str,
+    ) -> dict[str, float]:
+        """Handle a batch metric failure (e.g. one RAGAS call covering several
+        metric names) without fabricating a score for an objective.
+
+        A single exception here can affect several metric names at once. If
+        any affected name is one of this evaluator's configured objectives
+        (``self.metrics`` -- populated with the optimization's objectives at
+        every real construction site), fail the trial closed by raising
+        instead of substituting 0.0 for an objective. Purely informational
+        names still get a 0.0 sentinel, but always paired with a structured
+        degradation record so a caller can tell it apart from a real 0.0.
+        """
+        objective_names = [name for name in metric_names if name in self.metrics]
+        if objective_names:
+            error_record: dict[str, Any] = {
+                "metric_name": ", ".join(objective_names),
+                "affected_metrics": objective_names,
+                "example_id": None,
+                "example_index": None,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "is_objective": True,
+            }
+            raise EvaluationError(
+                f"Objective metric(s) {objective_names} failed: "
+                f"{type(exc).__name__}: {exc}. Refusing to substitute a "
+                "fabricated 0.0 score for an optimization objective.",
+                original_error=exc,
+                details=error_record,
+            ) from exc
+
+        logger.warning(log_message, exc)
+        if metric_errors is not None:
+            for name in metric_names:
+                metric_errors.append(
+                    {
+                        "metric_name": name,
+                        "example_id": None,
+                        "example_index": None,
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        "is_objective": False,
+                    }
+                )
+        return dict.fromkeys(metric_names, 0.0)
+
     def compute_metrics(
         self,
         outputs: list[Any],
@@ -1030,12 +1094,29 @@ class BaseEvaluator(ABC):
                 metrics_override: Optional list of metric names to compute
                     instead of self.metrics. Avoids mutating shared state
                     for thread-safety.
+                metric_errors: Optional accumulator (list of dicts) for
+                    structured degradation records from NON-objective metric
+                    failures. Every name processed here comes from
+                    ``self.metrics`` (or a metrics_override subset of it),
+                    which IS this evaluator's configured objective list at
+                    every real construction site, so a failure for any of
+                    these names normally fails closed (raises
+                    EvaluationError) rather than substituting 0.0; this
+                    accumulator only fills in for the defensive case of a
+                    metrics_override name outside self.metrics.
 
         Returns:
             Dictionary of metric name to value
+
+        Raises:
+            EvaluationError: If a metric that is one of this evaluator's
+                configured objectives (``self.metrics``) raises. A
+                fabricated 0.0 for an optimization objective would silently
+                corrupt the search, so the trial fails closed instead.
         """
         metrics: dict[str, float] = {}
         metric_names = context.pop("metrics_override", None) or self.metrics
+        metric_errors: list[dict[str, Any]] | None = context.pop("metric_errors", None)
 
         ragas_metric_names = [
             name for name in metric_names if name in self._ragas_metric_names
@@ -1060,11 +1141,19 @@ class BaseEvaluator(ABC):
                     config=self._get_ragas_config(),
                 )
             except RagasConfigurationError as exc:
-                logger.warning("RAGAS metrics unavailable: %s", exc)
-                ragas_results = dict.fromkeys(ragas_metric_names, 0.0)
+                ragas_results = self._fail_or_record_metric_batch_error(
+                    exc,
+                    ragas_metric_names,
+                    metric_errors,
+                    log_message="RAGAS metrics unavailable: %s",
+                )
             except Exception as exc:  # pragma: no cover - defensive guard
-                logger.warning("Failed to compute ragas metrics: %s", exc)
-                ragas_results = dict.fromkeys(ragas_metric_names, 0.0)
+                ragas_results = self._fail_or_record_metric_batch_error(
+                    exc,
+                    ragas_metric_names,
+                    metric_errors,
+                    log_message="Failed to compute ragas metrics: %s",
+                )
 
         for metric_name in metric_names:
             if metric_name in ragas_results:
@@ -1079,7 +1168,27 @@ class BaseEvaluator(ABC):
                         outputs, expected_outputs, errors, **context
                     )
                 except Exception as e:
+                    is_objective = metric_name in self.metrics
+                    error_record = {
+                        "metric_name": metric_name,
+                        "example_id": None,
+                        "example_index": None,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                        "is_objective": is_objective,
+                    }
+                    if is_objective:
+                        raise EvaluationError(
+                            f"Objective metric '{metric_name}' raised "
+                            f"{type(e).__name__}: {e}. Refusing to "
+                            "substitute a fabricated 0.0 score for an "
+                            "optimization objective.",
+                            original_error=e,
+                            details=error_record,
+                        ) from e
                     logger.warning(f"Failed to compute metric {metric_name}: {e}")
+                    if metric_errors is not None:
+                        metric_errors.append(error_record)
                     metrics[metric_name] = 0.0
             else:
                 logger.warning(f"Unknown metric: {metric_name}")
