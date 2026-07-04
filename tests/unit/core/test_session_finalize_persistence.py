@@ -131,6 +131,46 @@ async def test_finalize_retries_transient_failures_then_marks_persistence_succee
     assert result.persistence_failed is False
 
 
+@pytest.mark.asyncio
+async def test_finalize_marks_persistence_degraded_when_aggregation_not_transmitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Traigent#1724: never report 'succeeded' for an AGG_SUMMARY rollup that
+    never left the process.
+
+    submit_session_aggregation builds a session-level rollup payload but
+    hands it to BackendIntegratedClient.submit_result, a local-only shim
+    that never makes a network call. Trial-level results and session
+    finalize succeed normally, but persistence_status must be "degraded"
+    (not "succeeded") to be honest that the rollup itself was never
+    transmitted.
+    """
+
+    def finalize(*args, **kwargs):
+        return {"status": "completed", "metadata": {"finalized_via_api": True}}
+
+    config = _config(monkeypatch)
+    config.execution_mode = "hybrid"
+    client = _backend_client(finalize)
+    manager = _manager(config, client)
+    orchestrator = _orchestrator(config, manager)
+
+    result = _result()
+    result.metadata["session_summary"] = {
+        "metrics": {"accuracy": 0.9},
+        "samples_per_config": {"test": 1},
+    }
+
+    await OptimizationOrchestrator._finalize_optimization(
+        orchestrator, result, "session-finalize", None
+    )
+
+    client.submit_result.assert_called_once()
+    assert result.metadata["persistence_status"] == "degraded"
+    assert "persistence_degraded_reason" in result.metadata
+    assert result.persistence_failed is False
+
+
 def test_finalize_does_not_retry_validation_4xx(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

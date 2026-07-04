@@ -731,9 +731,28 @@ class TrialOperations:
                 "duration"
             )
             if "measures" not in result_data:
-                await self.client._update_config_run_measures(
+                measures_updated = await self.client._update_config_run_measures(
                     trial_id, clean_metrics, execution_time
                 )
+                if not measures_updated:
+                    # Trial-result submission itself succeeded (HTTP 2xx above),
+                    # so this stays a `True` overall result — but the measures
+                    # backfill silently failing (e.g. MetricExtractionError,
+                    # api_operations.update_config_run_measures returning False)
+                    # must not look identical to ordinary success. Surface it
+                    # loudly and record it on the local result metadata so a
+                    # degraded trial is distinguishable from a clean one
+                    # (Traigent#1724 — was previously swallowed).
+                    result_data.setdefault("metadata", {})[
+                        "measures_update_degraded"
+                    ] = True
+                    logger.warning(
+                        "⚠️ Measures backfill failed for trial %s after status "
+                        "update succeeded; trial result was persisted but "
+                        "per-trial measures were not backfilled to the backend "
+                        "(degraded, not a full submission failure).",
+                        trial_id,
+                    )
 
         return True
 
@@ -909,18 +928,21 @@ class TrialOperations:
                 self._extract_measures_from_metrics(metrics)
             )
 
-            # Validate key naming and cardinality for numeric metrics while
-            # preserving backward compatibility with existing payload shapes.
-            validated_metrics: dict[str, Any] = clean_metrics
+            # Validate key naming and cardinality for numeric metrics. This is
+            # a hard contract (mirrors the schema validation below): a trial
+            # whose measures violate the MeasuresDict contract must not be
+            # submitted with unvalidated numeric metrics silently substituted
+            # in (Traigent#1724 — was fail-open, log-only).
             try:
-                validated_metrics = dict(MeasuresDict(clean_metrics))
+                validated_metrics: dict[str, Any] = dict(MeasuresDict(clean_metrics))
             except (TypeError, ValueError) as validation_error:
-                logger.warning(
-                    "Metrics validation warning for trial %s: %s. "
-                    "Submitting unvalidated numeric metrics for backward compatibility.",
+                logger.error(
+                    "Invalid trial metrics for trial %s: %s. Rejecting submission "
+                    "(measures contract violation).",
                     trial_id,
                     validation_error,
                 )
+                return False
 
             # Build result data
             result_data = self._build_trial_result_data(
@@ -950,7 +972,12 @@ class TrialOperations:
                 return False
 
             if error_message:
-                result_data["error"] = self.client._sanitize_error_message(
+                # Wire key MUST be "error_message" — the backend route
+                # (traigent_session_routes.py) and TraigentCloudClient both
+                # read "error_message"; a key of "error" was silently
+                # dropped, so every failed-trial message was lost
+                # (Traigent#1724).
+                result_data["error_message"] = self.client._sanitize_error_message(
                     error_message
                 )
 
