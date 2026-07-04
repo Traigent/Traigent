@@ -763,6 +763,7 @@ class BackendSessionManager:
         max_total_examples: int | None = None,
         agent_configuration: AgentConfiguration | None = None,
         objectives: list[Any] | None = None,
+        default_config: dict[str, Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
@@ -782,6 +783,10 @@ class BackendSessionManager:
             start_time: Optimization start timestamp
             max_total_examples: Maximum total examples across all trials
             agent_configuration: Multi-agent configuration for parameter grouping
+            default_config: Optional user-declared baseline configuration
+                (``@optimize(default_config=...)``), projected onto the
+                session-create wire so backend warm-start seed projection
+                sees it. Omitted from the request entirely when None/empty.
 
         Returns:
             SessionContext with session_id (or None if backend disabled)
@@ -894,6 +899,7 @@ class BackendSessionManager:
                 optimization_goal="maximize",
                 metadata=session_metadata,
                 objectives=objectives,
+                default_config=default_config,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
                 warm_start_from=warm_start_from,

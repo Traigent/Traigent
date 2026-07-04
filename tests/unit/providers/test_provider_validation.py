@@ -1324,3 +1324,49 @@ class TestProvidersInitImports:
         assert callable(print_provider_status)
         assert callable(validate_model_names)
         assert callable(validate_providers)
+
+
+@pytest.mark.unit
+class TestValidateProvidersDocContractMatchesReality:
+    """Traigent#1723 (g4): validate_providers behavior must match its docs.
+
+    The SDK previously documented an automatic, decorator-level
+    ``validate_providers=`` pre-run check ("fail fast to avoid wasted API
+    costs") that never existed -- ``@traigent.optimize`` has no such
+    parameter and nothing in the SDK calls provider validation
+    automatically or raises ProviderValidationError on its own. The fix
+    corrected the docs; these tests pin the actual (documented) contract so
+    a future doc/behavior drift is caught:
+    - ``validate_providers()`` reports failures via the returned status
+      dict, it does not raise.
+    - ``@traigent.optimize(validate_providers=...)`` is rejected loudly
+      (never silently absorbed/ignored) so a user who tries the old,
+      false decorator-kwarg claim gets a clear signal instead of silently
+      getting no validation.
+    """
+
+    def test_validate_providers_reports_missing_key_without_raising(self, monkeypatch):
+        """A missing API key is reported in the results, not raised."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        results = validate_providers(["gpt-4o-mini"])
+
+        assert "openai" in results
+        assert results["openai"].valid is False
+        assert results["openai"].error_type == "MissingKey"
+
+    def test_optimize_rejects_validate_providers_kwarg(self):
+        """@traigent.optimize has no validate_providers= parameter: passing
+        one must raise immediately (never silently ignored), so a user
+        following the (now-corrected) docs cannot end up with no
+        validation and no signal that anything is wrong."""
+        from traigent.api.decorators import optimize
+
+        with pytest.raises(TypeError, match="validate_providers"):
+
+            @optimize(
+                configuration_space={"model": ["gpt-4o-mini"]},
+                validate_providers=False,
+            )
+            def sample(model: str) -> str:
+                return model

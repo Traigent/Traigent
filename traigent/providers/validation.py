@@ -1,13 +1,22 @@
 """Provider validation for Traigent SDK.
 
-This module provides provider key validation to ensure API keys are valid
-before starting potentially long and expensive optimization runs.
+This module provides an opt-in, standalone provider key validation helper
+(:func:`validate_providers`) callers can use to check API keys are valid
+before starting potentially long and expensive optimization runs. It is NOT
+wired into ``@traigent.optimize`` automatically -- there is no
+``validate_providers=`` decorator parameter, and nothing in this module
+raises :class:`~traigent.utils.exceptions.ProviderValidationError` on its
+own. Call :func:`validate_providers`, inspect the returned
+``dict[str, ProviderStatus]`` (or use :func:`get_failed_providers`), and
+raise :class:`~traigent.utils.exceptions.ProviderValidationError` yourself
+if you want a hard failure.
 
-Validation behavior:
+Validation behavior (as reported in the returned ``ProviderStatus``, not by
+raising):
 - **Known providers** (OpenAI, Anthropic, Google, Mistral, Cohere):
-  - Auth errors (401, InvalidAPIKey) → fail-fast with ProviderValidationError
-  - Transient errors (rate limit, timeout, network) → warn, allow to proceed
-    (key may be valid; service temporarily unavailable)
+  - Auth errors (401, InvalidAPIKey) → ``valid=False``
+  - Transient errors (rate limit, timeout, network) → ``valid=True`` with a
+    warning (key may be valid; service temporarily unavailable)
 - **Unknown models**: warn only, do not block (cannot validate without SDK)
 
 Transient errors are intentionally allowed because a momentary rate limit or
@@ -320,14 +329,18 @@ class ProviderStatus:
 
 @dataclass
 class ProviderValidator:
-    """Validates provider API keys before optimization runs.
+    """Validates provider API keys, on demand, before optimization runs.
 
     This validator performs lightweight API calls to verify that provider
     keys are valid before starting potentially expensive optimization runs.
+    It is a standalone, opt-in check -- nothing calls it automatically, and
+    it never raises ``ProviderValidationError`` itself; it only reports
+    status. Callers decide whether/when to raise based on the results (see
+    :func:`validate_providers` and :func:`get_failed_providers`).
 
     Validation behavior:
     - Known providers (OpenAI, Anthropic, Google, Mistral, Cohere):
-      - Auth errors → valid=False, raise ProviderValidationError
+      - Auth errors → valid=False (caller may raise ProviderValidationError)
       - Transient errors (rate limit, timeout) → valid=True with warning
         (key may be valid; actual call will retry as needed)
     - Unknown models: Warn only, do not block (cannot validate without SDK).

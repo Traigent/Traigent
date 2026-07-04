@@ -955,6 +955,23 @@ class OptimizationOrchestrator:
             ]
         return list(self.optimizer.objectives or [])
 
+    def _build_session_default_config_payload(self) -> dict[str, Any] | None:
+        """``default_config`` for the session-create wire payload.
+
+        ``@optimize(default_config=...)`` is materialized locally (see
+        ``_init_default_config`` / ``_consume_default_config``) but was never
+        placed on the session-create payload, so backend warm-start seed
+        projection never saw the user's declared baseline and the
+        persisted/returned ``default_config`` was always empty. Peek at the
+        stored value (do not consume it — consumption is reserved for
+        seeding the actual baseline trial) and project it read-only, exactly
+        as declared, omitting it entirely when unset so the payload stays
+        byte-identical for runs without a default_config.
+        """
+        if not self._default_config:
+            return None
+        return copy.deepcopy(self._default_config)
+
     def _build_wire_governance(
         self,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -2411,6 +2428,7 @@ class OptimizationOrchestrator:
         # cvar summary from DECLARED bindings — never values or evidence.
         wire_policy, wire_governance = self._build_wire_governance()
         objectives_payload = self._build_session_objectives_payload()
+        default_config_payload = self._build_session_default_config_payload()
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -2420,6 +2438,7 @@ class OptimizationOrchestrator:
             start_time=self._start_time or time.time(),
             agent_configuration=self._agent_configuration,
             objectives=objectives_payload,
+            default_config=default_config_payload,
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
