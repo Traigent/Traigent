@@ -792,6 +792,8 @@ class ProductionMCPClient:
                 else (_agent_raw or {})
             )
             agent_id = (agent_data or {}).get("agent_id")
+            if not agent_id:
+                raise RuntimeError("Agent ID not returned from creation response")
 
             # Step 2: Upload dataset
             dataset_response = await self.upload_dataset(
@@ -850,6 +852,10 @@ class ProductionMCPClient:
                 json.loads(_run_raw) if isinstance(_run_raw, str) else (_run_raw or {})  # type: ignore[arg-type]
             )
             experiment_run_id = (run_data or {}).get("experiment_run_id")
+            if not experiment_run_id:
+                raise RuntimeError(
+                    "Experiment run ID not returned from start-run response"
+                )
 
             logger.info(
                 f"Created optimization workflow: {agent_id} -> {experiment_id} -> {experiment_run_id}"
