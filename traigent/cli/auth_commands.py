@@ -59,6 +59,19 @@ TRAIGENT_CONFIG_DIR = Path.home() / ".traigent"
 CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
 BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
 
+
+def _secure_credential_store_path() -> Path:
+    """Return the on-disk path of the encrypted secure credential store.
+
+    Mirrors ``EnhancedCredentialStore``'s default storage location so logout
+    can distinguish "no secure credential exists" from "the secure store
+    cannot be opened" without constructing the store — construction raises
+    ``SecurityError`` whenever no master secret is configured, even when no
+    encrypted credential file exists (Traigent#1721).
+    """
+    return Path.home() / ".traigent" / "secure_credentials.enc"
+
+
 # Storage location identifier
 STORAGE_FILE = "file"
 STORAGE_SECURE = "secure"
@@ -939,13 +952,39 @@ class TraigentAuthCLI:
                 logger.error(f"Failed to delete credentials file: {e}")
                 success = False
 
+        secure_delete_failed = False
         try:
             store = get_secure_credential_store()
             deleted = store.delete_secure(SECURE_CLI_CREDENTIAL_NAME)
             if deleted:
                 logger.debug("Cleared secure CLI credentials")
         except SecurityError as e:
-            logger.debug("Secure credential store unavailable during logout: %s", e)
+            # The secure store could not be opened (typically because no
+            # master secret is configured). Treat this as a real logout
+            # failure ONLY when an encrypted credential actually exists on
+            # disk that we would now be leaving behind; a store that is simply
+            # not configured has nothing to delete (Traigent#1721). This
+            # mirrors how _load_secure_credentials treats an unopenable store
+            # as "unavailable" rather than an error.
+            if _secure_credential_store_path().exists():
+                logger.error("Could not confirm secure CLI credential deletion: %s", e)
+                secure_delete_failed = True
+            else:
+                logger.debug(
+                    "Secure credential store not configured during logout: %s", e
+                )
+        except OSError as e:
+            # The store opened but deletion failed at the filesystem level.
+            logger.error("Could not confirm secure CLI credential deletion: %s", e)
+            secure_delete_failed = True
+
+        if secure_delete_failed:
+            console.print(
+                "[yellow]⚠️  Could not confirm secure-storage credential "
+                "deletion; it may still be present. Set "
+                "TRAIGENT_MASTER_PASSWORD and try again if this persists.[/yellow]"
+            )
+            success = False
 
         return success
 
@@ -1333,6 +1372,15 @@ class TraigentAuthCLI:
             storage_location = self._save_credentials(credentials)
             self._display_login_success(credentials, email, storage_location)
 
+            if storage_location is None:
+                # Authentication succeeded but nothing was persisted: the user
+                # is not actually logged in for future commands. Report this
+                # as a failure rather than a clean success (Traigent#1721).
+                console.print(
+                    "\n[red]❌ Login failed: credentials could not be saved.[/red]"
+                )
+                return False
+
             console.print(
                 "\nYou can now use Traigent SDK with backend tracking enabled.\n"
             )
@@ -1522,7 +1570,20 @@ class TraigentAuthCLI:
         # Extract and store new JWT token
         jwt_token = auth_headers["Authorization"].replace("Bearer ", "")
         creds["jwt_token"] = jwt_token
-        self._save_credentials(creds)
+        storage_location = self._save_credentials(creds)
+        if storage_location is None:
+            # Refreshed token but could not persist it: the on-disk/secure
+            # credentials are now stale. Report failure instead of a clean
+            # success (Traigent#1721).
+            console.print(
+                "[red]❌ Refresh failed: refreshed credentials could not be "
+                "saved.[/red]"
+            )
+            console.print(
+                "Set TRAIGENT_MASTER_PASSWORD and rerun, or run "
+                "[cyan]traigent auth login[/cyan] again.\n"
+            )
+            return False
 
         console.print("[green]✅ Authentication refreshed successfully[/green]\n")
         return True

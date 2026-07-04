@@ -1107,12 +1107,12 @@ def optimize(
     try:
         module = _load_user_module(file_path_obj)
         if module is None:
-            return
+            sys.exit(1)
 
         optimizable_functions = _find_optimizable_functions(module, function)
         if not optimizable_functions:
             _handle_no_optimizable_functions(function)
-            return
+            sys.exit(1)
 
         console.print(
             f"\n[green]Found {len(optimizable_functions)} optimizable function(s)[/green]"
@@ -1130,8 +1130,9 @@ def optimize(
         )
         persistence = PersistenceManager(str(output_dir_resolved))
 
-        async def run_optimizations() -> list[tuple[str, Any]]:
+        async def run_optimizations() -> tuple[list[tuple[str, Any]], list[str]]:
             results: list[tuple[str, Any]] = []
+            failed_functions: list[str] = []
             for func_name, func in optimizable_functions:
                 console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
                 try:
@@ -1144,15 +1145,23 @@ def optimize(
                     console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
                     if verbose:
                         console.print(traceback.format_exc())
-            return results
+                    failed_functions.append(func_name)
+            return results, failed_functions
 
-        results = asyncio.run(run_optimizations())
+        results, failed_functions = asyncio.run(run_optimizations())
         _display_optimization_summary(results, output_dir_resolved)
+        if failed_functions:
+            console.print(
+                f"\n[red]❌ {len(failed_functions)} function(s) failed to "
+                f"optimize: {', '.join(failed_functions)}[/red]"
+            )
+            sys.exit(1)
 
     except Exception as e:
         console.print(f"[red]Error loading file: {e}[/red]")
         if verbose:
             console.print(traceback.format_exc())
+        sys.exit(1)
     finally:
         if str(parent_dir) in sys.path:
             sys.path.remove(str(parent_dir))
@@ -1170,7 +1179,10 @@ def optimize(
 @click.option(
     "--strict",
     is_flag=True,
-    help="Exit nonzero when dataset or objective validation fails",
+    help=(
+        "Deprecated no-op. Validation failures always exit nonzero now "
+        "(Traigent#1721); kept only so existing --strict invocations keep working."
+    ),
 )
 def validate(
     dataset_path: str,
@@ -1178,7 +1190,15 @@ def validate(
     verbose: bool,
     strict: bool,
 ) -> None:
-    """Validate dataset format and optimization configuration."""
+    """Validate dataset format and optimization configuration.
+
+    Exits nonzero whenever dataset or objective validation fails.
+    """
+    if strict:
+        console.print(
+            "[yellow]--strict is deprecated and has no effect; validation "
+            "failures always exit nonzero.[/yellow]"
+        )
     console.print(f"\n[bold blue]Validating Dataset: {dataset_path}[/bold blue]\n")
 
     from traigent.evaluators.base import _resolve_dataset_source
@@ -1199,9 +1219,7 @@ def validate(
             "\n[yellow]Hint:[/yellow] Dataset paths must reside under the current "
             "working directory or the path specified by TRAIGENT_DATASET_ROOT."
         )
-        if strict:
-            raise click.ClickException("Dataset validation failed") from e
-        return
+        raise click.ClickException("Dataset validation failed") from e
 
     # Step 2: Validate dataset content format
     path_result = Validators.validate_dataset(dataset_path)
@@ -1227,7 +1245,7 @@ def validate(
             console.print(obj_result.get_feedback())
             has_failure = True
 
-    if strict and has_failure:
+    if has_failure:
         raise click.ClickException("Dataset validation failed")
 
 
@@ -2609,8 +2627,22 @@ if __name__ == "__main__":
     is_flag=True,
     help="Show what would be checked without running optimization",
 )
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    default=False,
+    help=(
+        "Exit 0 when no optimizable functions are discovered (or none match "
+        "the filters), instead of the default nonzero exit."
+    ),
+)
 def check(
-    module_path: str, functions: str, threshold: int, objectives: str, dry_run: bool
+    module_path: str,
+    functions: str,
+    threshold: int,
+    objectives: str,
+    dry_run: bool,
+    allow_empty: bool,
 ) -> None:
     """Validate Traigent optimization improves over default parameters.
 
@@ -2626,8 +2658,10 @@ def check(
         traigent check my_module.py --functions="func1,func2"  # Check specific functions
         traigent check my_module.py --threshold=15     # Require 15% improvement
         traigent check my_module.py --dry-run          # Preview what would be checked
+        traigent check my_module.py --allow-empty      # Zero functions is OK (exit 0)
     """
     import asyncio
+    import sys
 
     from traigent.cli.function_discovery import (
         discover_optimized_functions,
@@ -2658,7 +2692,9 @@ def check(
             console.print(
                 "Make sure your functions are decorated with @traigent.optimize"
             )
-            return
+            if allow_empty:
+                return
+            sys.exit(1)
 
         if objectives_filter:
             discovered_functions = _filter_functions_by_objectives(
@@ -2668,7 +2704,9 @@ def check(
                 console.print(
                     f"\n[red]❌ No functions found with objectives: {objectives_filter}[/red]"
                 )
-                return
+                if allow_empty:
+                    return
+                sys.exit(1)
 
         if dry_run:
             console.print(

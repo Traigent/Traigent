@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from click.testing import CliRunner
@@ -52,18 +53,23 @@ def test_cli_passes_sample_limit_options():
     try:
         sys.modules.pop("user_module", None)
         runner = CliRunner()
-        result = runner.invoke(
-            cli,
-            [
-                "optimize",
-                str(module_path),
-                "--max-total-examples",
-                "4",
-                "--samples-exclude-pruned",
-            ],
-        )
+        # Persistence is not under test here; DummyResult intentionally omits
+        # the metadata/algorithm/objectives surface PersistenceManager.save_result
+        # needs, so stub it out to isolate the sample-limit kwargs assertions.
+        with patch("traigent.cli.main.PersistenceManager") as mock_persistence_class:
+            mock_persistence_class.return_value = Mock()
+            result = runner.invoke(
+                cli,
+                [
+                    "optimize",
+                    str(module_path),
+                    "--max-total-examples",
+                    "4",
+                    "--samples-exclude-pruned",
+                ],
+            )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert "Sample budget" in result.output
 
         user_module = sys.modules.get("user_module")

@@ -68,3 +68,75 @@ def test_validate_strict_exits_zero_for_valid_dataset(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Dataset content validation passed" in result.output
+
+
+def test_validate_default_exits_nonzero_for_invalid_dataset(tmp_path: Path) -> None:
+    """Traigent#1721: plain `validate` (no --strict) must fail hard now."""
+    dataset_path = tmp_path / "invalid.jsonl"
+    dataset_path.write_text(json.dumps({"output": "missing input"}) + "\n")
+
+    result = CliRunner().invoke(
+        cli,
+        ["validate", str(dataset_path)],
+        env={"TRAIGENT_DATASET_ROOT": str(tmp_path)},
+    )
+
+    assert result.exit_code != 0
+    assert "Dataset content validation failed" in result.output
+
+
+def test_validate_default_exits_zero_for_valid_dataset(tmp_path: Path) -> None:
+    """Regression guard: the happy path stays exit 0 without --strict."""
+    dataset_path = tmp_path / "valid.jsonl"
+    dataset_path.write_text(json.dumps({"input": "hello", "output": "world"}) + "\n")
+
+    result = CliRunner().invoke(
+        cli,
+        ["validate", str(dataset_path)],
+        env={"TRAIGENT_DATASET_ROOT": str(tmp_path)},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Dataset content validation passed" in result.output
+
+
+def test_validate_strict_is_now_a_no_op_alias(tmp_path: Path) -> None:
+    """--strict no longer changes behavior; both invocations fail the same way."""
+    dataset_path = tmp_path / "invalid.jsonl"
+    dataset_path.write_text(json.dumps({"output": "missing input"}) + "\n")
+
+    without_strict = CliRunner().invoke(
+        cli,
+        ["validate", str(dataset_path)],
+        env={"TRAIGENT_DATASET_ROOT": str(tmp_path)},
+    )
+    with_strict = CliRunner().invoke(
+        cli,
+        ["validate", str(dataset_path), "--strict"],
+        env={"TRAIGENT_DATASET_ROOT": str(tmp_path)},
+    )
+
+    assert without_strict.exit_code == with_strict.exit_code != 0
+
+
+def test_validate_strict_prints_deprecation_notice_only_when_passed(
+    tmp_path: Path,
+) -> None:
+    """--strict must emit a one-line deprecation notice when passed, and stay
+    silent when omitted (no-silent-legacy convention)."""
+    dataset_path = tmp_path / "valid.jsonl"
+    dataset_path.write_text(json.dumps({"input": "hello", "output": "world"}) + "\n")
+
+    with_strict = CliRunner().invoke(
+        cli,
+        ["validate", str(dataset_path), "--strict"],
+        env={"TRAIGENT_DATASET_ROOT": str(tmp_path)},
+    )
+    without_strict = CliRunner().invoke(
+        cli,
+        ["validate", str(dataset_path)],
+        env={"TRAIGENT_DATASET_ROOT": str(tmp_path)},
+    )
+
+    assert "--strict is deprecated" in with_strict.output
+    assert "--strict is deprecated" not in without_strict.output
