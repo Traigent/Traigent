@@ -68,16 +68,25 @@ ALL_CATEGORIES = frozenset(
     }
 )
 
-LOG_ATTR_NAMES = {
+# "Quiet" logging does not reach the user/caller — a body that only quietly
+# logs and then substitutes a default is the silent-failure pattern.
+QUIET_LOG_ATTR_NAMES = {
     "debug",
     "info",
     "warning",
     "warn",
+    "log",
+}
+# "Loud" logging surfaces the failure at error severity (monitoring/alerting).
+# This IS the audit's own fail-closed remediation idiom (e.g. `logger.error(...)
+# ; return False` to REJECT a bad submission), so a body containing a loud log
+# is a communicated failure, not a silent swallow — it is not flagged.
+LOUD_LOG_ATTR_NAMES = {
     "error",
     "exception",
     "critical",
-    "log",
 }
+LOG_ATTR_NAMES = QUIET_LOG_ATTR_NAMES | LOUD_LOG_ATTR_NAMES
 SILENT_OK_RE = re.compile(r"#\s*silent-ok:\s*(\S.*)")
 
 
@@ -134,6 +143,15 @@ def _is_log_or_print_call(node: ast.AST) -> bool:
     return False
 
 
+def _is_loud_log_call(node: ast.AST) -> bool:
+    """True for a logger error/exception/critical call (a surfaced failure)."""
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return False
+    if node.func.attr not in LOUD_LOG_ATTR_NAMES:
+        return False
+    return "log" in _attr_chain(node.func.value).lower()
+
+
 def _is_default_substitute_value(node: ast.AST | None) -> bool:
     """True if ``node`` is a "give up quietly" default (bare return counts)."""
     if node is None:
@@ -184,6 +202,12 @@ def _classify_except_body(body: list[ast.stmt]) -> str | None:
         return CATEGORY_BARE_EXCEPT_PASS
 
     *prefix, terminal = stmts
+    # A loud (error/exception/critical) log surfaces the failure — that is the
+    # fail-closed idiom, not a silent swallow — so its presence exempts the body.
+    if any(
+        isinstance(stmt, ast.Expr) and _is_loud_log_call(stmt.value) for stmt in prefix
+    ):
+        return None
     if _is_swallow_terminal_stmt(terminal) and all(
         isinstance(stmt, ast.Expr) and _is_log_or_print_call(stmt.value)
         for stmt in prefix
@@ -557,3 +581,42 @@ def test_silent_ok_escape_hatch_on_line_above_also_exempts() -> None:
     )
 
     assert violations == []
+
+
+def test_loud_error_log_rejection_is_not_flagged() -> None:
+    """An except body that logs at ERROR and returns a rejection signal is the
+    audit's own fail-closed idiom (e.g. measures-contract rejection), not a
+    silent swallow — it must NOT be flagged (regression guard for the loud-log
+    exemption)."""
+    source = """
+    def submit(payload):
+        try:
+            validate(payload)
+        except (TypeError, ValueError) as err:
+            logger.error("Invalid payload: %s. Rejecting submission.", err)
+            return False
+        return True
+    """
+    violations = _analyze_source(source, SCOPE_DIRS[0] / "loud_reject.py")
+    assert violations == [], (
+        "logger.error + return False (a surfaced fail-closed rejection) was "
+        f"wrongly flagged as a silent failure: {violations}"
+    )
+
+
+def test_quiet_warning_swallow_is_still_flagged() -> None:
+    """Guard the other side: a QUIET (warning) log + default return is still a
+    silent swallow and must remain flagged, so the loud-log exemption did not
+    over-broaden."""
+    source = """
+    def fetch(resp):
+        try:
+            return resp["value"]
+        except KeyError:
+            logger.warning("missing value")
+            return None
+    """
+    violations = _analyze_source(source, SCOPE_DIRS[0] / "quiet_swallow.py")
+    assert any(v.category == CATEGORY_SWALLOW_SUBSTITUTE for v in violations), (
+        f"quiet log + default return should still be flagged: {violations}"
+    )
