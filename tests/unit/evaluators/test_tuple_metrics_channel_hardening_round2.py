@@ -39,6 +39,7 @@ from traigent.evaluators.metrics_tracker import (
     aggregate_user_custom_metrics,
 )
 from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
+from traigent.utils.exceptions import EvaluationError
 
 
 def _two_example_dataset() -> Dataset:
@@ -170,21 +171,29 @@ async def test_user_cannot_overwrite_evaluator_computable_ragas_name() -> None:
 
     Pre-fix: ``context_precision`` is absent from RESERVED_METRIC_KEYS and the
     local merge overwrites it with the user's 0.9, so the user value wins.
-    Fixed: the evaluator's metric-registry/RAGAS name is reserved, so the user
-    value is skipped and the evaluator-computed value wins.
+    Fixed: the evaluator's metric-registry/RAGAS name is reserved, so the
+    user's tuple value is never merged in as the objective's score.
+
+    Traigent#1722: RAGAS is unavailable in unit tests, and
+    ``context_precision`` is declared as an optimization objective here
+    (``metrics=[..., "context_precision"]``), so the evaluator must fail the
+    trial closed (raise ``EvaluationError``) instead of silently reporting a
+    fabricated 0.0 that would pin/corrupt the search. It must NOT fall back
+    to the user's 0.9 either -- that's the exact silent-corruption shape G3
+    was written to catch.
     """
 
     async def func(text: str) -> tuple[str, dict[str, float]]:
         return "YES", {"context_precision": 0.9}
 
     evaluator = _local_evaluator(metrics=["accuracy", "context_precision"])
-    result = await evaluator.evaluate(func, {}, _two_example_dataset())
 
-    # The user's 0.9 must NOT win: context_precision is evaluator-computable.
-    # RAGAS is unavailable in unit tests, so the evaluator computes 0.0 (the
-    # fail-closed default); the key must exist and must not be the user's 0.9.
-    assert "context_precision" in result.metrics
-    assert result.metrics["context_precision"] != pytest.approx(0.9)
+    with pytest.raises(EvaluationError) as exc_info:
+        await evaluator.evaluate(func, {}, _two_example_dataset())
+
+    # Fails closed on the real RAGAS error, never silently on the user's 0.9.
+    assert "0.9" not in str(exc_info.value)
+    assert exc_info.value.details.get("is_objective") is True
 
 
 def test_shared_aggregator_honors_extra_reserved_keys() -> None:

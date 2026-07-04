@@ -64,6 +64,12 @@ class MetricsComputer:
             metrics: List of metric names to compute
         """
         self.metrics = metrics or ["accuracy", "success_rate"]
+        # Structured degradation records for custom metric functions that
+        # raised, reset at the start of each compute_metrics() call and
+        # surfaced via MetricsEvaluationResult.metadata["metric_errors"].
+        # Never silently coalesced into a bare 0.0 -- see
+        # compute_custom_metrics().
+        self.metric_errors: list[dict[str, Any]] = []
         logger.debug(f"MetricsComputer initialized with metrics: {self.metrics}")
 
     def compute_metrics(
@@ -79,6 +85,10 @@ class MetricsComputer:
             EvaluationResult with computed metrics
         """
         start_time = time.time()
+
+        # Reset per-batch degradation accumulator (this instance may be
+        # reused for more than one compute_metrics() call).
+        self.metric_errors = []
 
         if len(invocation_results) != len(expected_outputs):
             raise ValueError(
@@ -172,6 +182,10 @@ class MetricsComputer:
             "evaluation_end_time": end_time,
             "successful_pairs": len(successful_pairs),
             "failed_invocations": total_invocations - successful_invocations,
+            # Structured degradation records (never a bare, indistinguishable
+            # 0.0) for any custom metric function that raised. Empty when
+            # every custom metric computed cleanly.
+            "metric_errors": list(self.metric_errors),
         }
 
         logger.debug(
@@ -242,7 +256,27 @@ class MetricsComputer:
                 value = compute_func(successful_outputs, valid_expected)
                 custom_metrics[metric_name] = float(value)
             except Exception as e:
+                # NOTE: MetricsComputer is a standalone metrics utility -- it
+                # is not constructed anywhere in the live optimization
+                # pipeline (LocalEvaluator/HybridAPIEvaluator wire
+                # ``objectives`` straight into their own metric registry
+                # instead), so there is no reachable "is this an
+                # optimization objective" distinction or trial to fail
+                # closed here. We still refuse to let this be a *bare*,
+                # indistinguishable 0.0: every failure gets a structured
+                # degradation record on ``self.metric_errors``, surfaced via
+                # ``MetricsEvaluationResult.metadata["metric_errors"]``.
                 logger.warning(f"Custom metric {metric_name} computation failed: {e}")
+                self.metric_errors.append(
+                    {
+                        "metric_name": metric_name,
+                        "example_id": None,
+                        "example_index": None,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                        "is_objective": False,
+                    }
+                )
                 custom_metrics[metric_name] = 0.0
 
         return custom_metrics
