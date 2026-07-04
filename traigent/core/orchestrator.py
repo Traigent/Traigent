@@ -936,6 +936,25 @@ class OptimizationOrchestrator:
             return True
         return bool(getattr(policy, "chance_constraints", None))
 
+    def _build_session_objectives_payload(self) -> list[Any]:
+        """Objectives for the session-create wire payload.
+
+        With a declared ``ObjectiveSchema``, emit weighted objective dicts
+        (``{"name", "orientation", "weight"}``) so the backend receives the
+        user's weights (Traigent#1715); otherwise fall back to the bare
+        metric-name list exactly as before.
+        """
+        if self.objective_schema is not None and self.objective_schema.objectives:
+            return [
+                {
+                    "name": objective.name,
+                    "orientation": objective.orientation,
+                    "weight": objective.weight,
+                }
+                for objective in self.objective_schema.objectives
+            ]
+        return list(self.optimizer.objectives or [])
+
     def _build_wire_governance(
         self,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -2391,6 +2410,7 @@ class OptimizationOrchestrator:
         # content-free (Phase 8): the declared promotion policy and the
         # cvar summary from DECLARED bindings — never values or evidence.
         wire_policy, wire_governance = self._build_wire_governance()
+        objectives_payload = self._build_session_objectives_payload()
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -2399,7 +2419,7 @@ class OptimizationOrchestrator:
             max_total_examples=self.max_total_examples,
             start_time=self._start_time or time.time(),
             agent_configuration=self._agent_configuration,
-            objectives=list(self.optimizer.objectives or []),
+            objectives=objectives_payload,
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,

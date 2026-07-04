@@ -1,5 +1,6 @@
 """Unit tests for API operations module."""
 
+import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -504,6 +505,60 @@ class TestBuildSessionPayload:
         payload = self.ops._build_session_payload(request, 10)
 
         assert payload["optimization_config"]["optimization_goal"] == "maximize"
+
+    def test_weighted_objective_schema_payload_preserves_dict_objectives(self):
+        """ObjectiveSchema-derived objectives keep weights on the typed wire path."""
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"model": ["fast", "accurate"]},
+            dataset_metadata={"size": 3},
+            objectives=[
+                {"name": "accuracy", "orientation": "maximize", "weight": 0.7},
+                {"name": "cost", "orientation": "minimize", "weight": 0.2},
+                {"name": "latency", "orientation": "minimize", "weight": 0.1},
+            ],
+            max_trials=10,
+        )
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize", "weight": 0.7},
+            {"name": "cost", "orientation": "minimize", "weight": 0.2},
+            {"name": "latency", "orientation": "minimize", "weight": 0.1},
+        ]
+
+    def test_plain_string_objective_payload_remains_bare_names(self):
+        """Plain objective lists remain backward-compatible bare strings."""
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"model": ["fast", "accurate"]},
+            dataset_metadata={"size": 3},
+            objectives=["accuracy", "cost", "latency"],
+            max_trials=10,
+        )
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["objectives"] == ["accuracy", "cost", "latency"]
+
+    def test_weighted_objective_schema_payload_is_json_serializable(self):
+        """ObjectiveSchema-derived weighted objective payloads encode as JSON."""
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"model": ["fast", "accurate"]},
+            dataset_metadata={"size": 3},
+            objectives=[
+                {"name": "accuracy", "orientation": "maximize", "weight": 0.7},
+                {"name": "cost", "orientation": "minimize", "weight": 0.2},
+                {"name": "latency", "orientation": "minimize", "weight": 0.1},
+            ],
+            max_trials=10,
+        )
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        json.dumps(payload)
 
 
 class TestBuildConnector:
@@ -1697,3 +1752,44 @@ class TestTypedConfigurationSpace:
         # partial range dict — type can't be int if one bound is missing/float
         result = _typed_configuration_space({"x": {"high": 1.5}})
         assert result["x"]["type"] == "float"
+
+
+class TestOrchestratorObjectivesPayload:
+    """Pin the fix site for Traigent#1715: the orchestrator must emit weighted
+    objective dicts when an ObjectiveSchema is declared (a passthrough-only
+    builder test would pass even if the orchestrator reverted to bare names)."""
+
+    def _orchestrator_with(self, schema, optimizer_objectives):
+        from unittest.mock import MagicMock
+
+        from traigent.core.orchestrator import OptimizationOrchestrator
+
+        orch = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orch.objective_schema = schema
+        orch.optimizer = MagicMock()
+        orch.optimizer.objectives = optimizer_objectives
+        return orch
+
+    def test_schema_weights_emitted_as_dicts(self):
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name="accuracy", orientation="maximize", weight=0.7
+                ),
+                ObjectiveDefinition(name="cost", orientation="minimize", weight=0.2),
+                ObjectiveDefinition(name="latency", orientation="minimize", weight=0.1),
+            ]
+        )
+        orch = self._orchestrator_with(schema, ["accuracy", "cost", "latency"])
+        payload = orch._build_session_objectives_payload()
+        assert payload == [
+            {"name": "accuracy", "orientation": "maximize", "weight": 0.7},
+            {"name": "cost", "orientation": "minimize", "weight": 0.2},
+            {"name": "latency", "orientation": "minimize", "weight": 0.1},
+        ]
+
+    def test_no_schema_falls_back_to_bare_names(self):
+        orch = self._orchestrator_with(None, ["accuracy", "cost"])
+        assert orch._build_session_objectives_payload() == ["accuracy", "cost"]
