@@ -101,12 +101,15 @@ def test_evaluator_fingerprint_variants() -> None:
     assert metric_fp == _fp_text(
         inspect.getsource(metric_a) + inspect.getsource(metric_b)
     )
-    assert af.compute_evaluator_fingerprint(
-        external={
-            "kind": "hybrid_api",
-            "endpoint": "https://user:secret@example.test:8443/evaluate?token=x#frag",  # pragma: allowlist secret
-        }
-    ) == _fp_text("hybrid_api:https://example.test:8443/evaluate")
+    assert (
+        af.compute_evaluator_fingerprint(
+            external={
+                "kind": "hybrid_api",
+                "endpoint": "https://user:secret@example.test:8443/evaluate?token=x#frag",  # pragma: allowlist secret
+            }
+        )
+        == _fp_text("hybrid_api:https://example.test:8443/evaluate")
+    )
     assert af.compute_evaluator_fingerprint() == _fp_text("none")
 
 
