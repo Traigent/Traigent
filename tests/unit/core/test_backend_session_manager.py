@@ -854,6 +854,58 @@ class TestBackendSessionManagerWeightedScores:
         assert result.metadata["weighted_results"]["trials_updated"] == 1
 
     @pytest.mark.asyncio
+    async def test_update_weighted_scores_partial_failure_counts_are_persisted(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """Traigent#1724: a partial weighted-score failure must be countable.
+
+        Previously only trials_updated was recorded, so 1/2 succeeding was
+        indistinguishable from "nothing was ever attempted". Attempted count
+        and the specific failed trial id must also land in
+        result.metadata['weighted_results'].
+        """
+        good_trial = Mock(spec=TrialResult)
+        good_trial.trial_id = "trial-good"
+        good_trial.config = {"param": "good"}
+        good_trial.metrics = {"accuracy": 0.9}
+        good_trial.is_successful = True
+
+        bad_trial = Mock(spec=TrialResult)
+        bad_trial.trial_id = "trial-bad"
+        bad_trial.config = {"param": "bad"}
+        bad_trial.metrics = {"accuracy": 0.4}
+        bad_trial.is_successful = True
+
+        mock_backend_client.update_trial_weighted_scores = AsyncMock(
+            side_effect=[True, False]
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = [good_trial, bad_trial]
+        result.successful_trials = [good_trial, bad_trial]
+        result.calculate_weighted_scores = Mock(
+            return_value={
+                "weighted_scores": [(good_trial, 0.9), (bad_trial, 0.4)],
+                "normalization_ranges": {},
+                "best_weighted_config": good_trial.config,
+                "best_weighted_score": 0.9,
+            }
+        )
+        result.metadata = {}
+
+        update_count = await backend_session_manager.update_weighted_scores(
+            result=result,
+            session_id="test-session-id",
+        )
+
+        assert update_count == 1
+        weighted_results = result.metadata["weighted_results"]
+        assert weighted_results["trials_attempted"] == 2
+        assert weighted_results["trials_updated"] == 1
+        assert weighted_results["trials_failed"] == 1
+        assert weighted_results["failed_trial_ids"] == ["trial-bad"]
+
+    @pytest.mark.asyncio
     async def test_update_weighted_scores_single_objective(
         self, mock_backend_client, traigent_config, mock_optimizer
     ):
@@ -1429,6 +1481,74 @@ class TestStatisticalSignificanceWiring:
         summary_stats = payload_metadata.get("summary_stats", {})
         inner_metadata = summary_stats.get("metadata", {})
         assert "statistical_significance" not in inner_metadata
+
+    def test_aggregation_reports_not_persisted_when_transmitted(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Traigent#1724: the AGG_SUMMARY rollup must self-report as not persisted.
+
+        BackendIntegratedClient.submit_result is a local-only compatibility
+        shim (writes local_storage, bumps a counter) — it never reaches the
+        backend. submit_session_aggregation must return False (not None) so
+        callers cannot mistake a local-only no-op for a successful remote
+        submission.
+        """
+        config = TraigentConfig()
+        config.execution_mode = "hybrid"
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-agg-not-persisted",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+        }
+
+        persisted = manager.submit_session_aggregation(result, "test-session-id")
+
+        mock_backend_client.submit_result.assert_called_once()
+        assert persisted is False
+
+    def test_aggregation_skipped_returns_none(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """No session_summary => aggregation is a legitimate skip, not degraded."""
+        config = TraigentConfig()
+        config.execution_mode = "hybrid"
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-agg-skipped",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.metadata = {}
+
+        persisted = manager.submit_session_aggregation(result, "test-session-id")
+
+        mock_backend_client.submit_result.assert_not_called()
+        assert persisted is None
 
 
 class TestHandleSessionCreationResult:
