@@ -1968,7 +1968,7 @@ class OptimizedFunction(Generic[_P, _R]):
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
         artifact_fingerprint_payload: dict[str, dict[str, Any]],
-        requested_algorithm: str | None,
+        requested_algorithm: str | None = None,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
