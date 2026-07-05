@@ -643,6 +643,12 @@ class ApiOperations:
         """
         contract = self._session_contract()
         if contract == "legacy":
+            if getattr(session_request, "optimization_strategy", None):
+                raise SessionContractError(
+                    "Named smart optimization requires the typed session contract; "
+                    "TRAIGENT_SESSION_CONTRACT=legacy cannot carry "
+                    "optimization_strategy."
+                )
             if self._is_governed_request(session_request):
                 raise SessionContractError(
                     "strict/governed sessions require the typed session "
@@ -702,6 +708,10 @@ class ApiOperations:
             payload["budget"] = session_request.budget
         if getattr(session_request, "default_config", None):
             payload["default_config"] = session_request.default_config
+        if getattr(session_request, "optimization_strategy", None):
+            payload["optimization_strategy"] = dict(
+                session_request.optimization_strategy or {}
+            )
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
         smart_pruning = getattr(session_request, "smart_pruning", None)

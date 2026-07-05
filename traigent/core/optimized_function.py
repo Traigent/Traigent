@@ -65,6 +65,7 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_LOCAL_FALLBACK,
     SOURCE_OFFLINE,
     CloudBrainUnavailableError,
+    backend_optimization_strategy_for_algorithm,
     backend_egress_disabled,
     exception_is_connectivity,
     initial_result_source,
@@ -75,6 +76,7 @@ from traigent.core.execution_policy_runtime import (
     policy_is_cloud_brain,
     policy_is_cloud_required,
     policy_requires_cloud,
+    unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.objectives import (
     ObjectiveSchema,
@@ -2197,6 +2199,16 @@ class OptimizedFunction(Generic[_P, _R]):
         if max_trials is not None and max_trials <= 0:
             return None
 
+        backend_optimization_strategy = None
+        if policy_is_cloud_required(policy):
+            backend_optimization_strategy = backend_optimization_strategy_for_algorithm(
+                policy.algorithm
+            )
+            if backend_optimization_strategy is None:
+                raise ConfigurationError(
+                    unsupported_backend_smart_algorithm_message(policy.algorithm)
+                )
+
         try:
             from traigent.cloud.client import TraigentCloudClient
             from traigent.cloud.remote_guidance import (
@@ -2226,7 +2238,8 @@ class OptimizedFunction(Generic[_P, _R]):
                     "size": len(dataset),
                     "name": getattr(dataset, "name", "dataset"),
                 },
-                optimization_strategy={
+                optimization_strategy=backend_optimization_strategy
+                or {
                     "algorithm": policy.algorithm,
                     "source": SOURCE_CLOUD_BRAIN,
                 },

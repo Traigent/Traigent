@@ -63,11 +63,13 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
     CloudBrainUnavailableError,
+    backend_optimization_strategy_for_algorithm,
     backend_egress_disabled,
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
     policy_is_cloud_required,
+    unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
@@ -115,7 +117,11 @@ from traigent.utils.callbacks import CallbackManager, OptimizationCallback, Prog
 from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
 )
-from traigent.utils.exceptions import OptimizationError, VendorPauseError
+from traigent.utils.exceptions import (
+    ConfigurationError,
+    OptimizationError,
+    VendorPauseError,
+)
 from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
@@ -707,12 +713,26 @@ class OptimizationOrchestrator:
     def _is_cloud_brain_run(self) -> bool:
         """Whether this orchestrator is running cloud-brain guidance."""
 
+        policy = policy_from_config(self.traigent_config)
         return bool(
-            policy_is_cloud_brain(policy_from_config(self.traigent_config))
+            (policy_is_cloud_brain(policy) or policy_is_cloud_required(policy))
             and getattr(self.traigent_config, "result_source", None)
             == SOURCE_CLOUD_BRAIN
             and not backend_egress_disabled(self.traigent_config)
         )
+
+    def _backend_optimization_strategy_for_run(self) -> dict[str, str] | None:
+        """Return the backend strategy for named managed algorithms."""
+
+        policy = policy_from_config(self.traigent_config)
+        if not policy_is_cloud_required(policy):
+            return None
+        strategy = backend_optimization_strategy_for_algorithm(policy.algorithm)
+        if strategy is None:
+            raise ConfigurationError(
+                unsupported_backend_smart_algorithm_message(policy.algorithm)
+            )
+        return strategy
 
     def _optimizer_uses_remote_guidance(self) -> bool:
         """Whether the active optimizer would call remote next-trial guidance."""
@@ -2429,6 +2449,7 @@ class OptimizationOrchestrator:
         wire_policy, wire_governance = self._build_wire_governance()
         objectives_payload = self._build_session_objectives_payload()
         default_config_payload = self._build_session_default_config_payload()
+        optimization_strategy_payload = self._backend_optimization_strategy_for_run()
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -2447,6 +2468,7 @@ class OptimizationOrchestrator:
             artifact_fingerprints=self.artifact_fingerprints,
             fingerprint_meta=self.fingerprint_meta,
             cost_limit=self.config.get("cost_limit"),
+            optimization_strategy=optimization_strategy_payload,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -3269,11 +3291,11 @@ class OptimizationOrchestrator:
         raise OptimizationError(
             f"Smart optimization ('{algorithm}') requires the Traigent managed "
             "cloud service, but the run finished without executing a single "
-            "trial (0 trials, no best configuration). This algorithm is not "
-            "available as a first-party service on this backend yet, and a "
-            "cloud-required run must not silently report success. The local "
-            "SDK runs only 'grid' and 'random'; connect to a Traigent backend "
-            "that provides smart optimization, or call "
+            "trial (0 trials, no best configuration). The managed backend "
+            "path returned no trial guidance, and a cloud-required run must "
+            "not silently report success. The local SDK runs only 'grid' and "
+            "'random'; connect to a Traigent backend that provides smart "
+            "optimization, or call "
             "optimize(algorithm='grid') / optimize(algorithm='random') to run "
             "locally."
         )

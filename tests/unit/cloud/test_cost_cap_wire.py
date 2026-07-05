@@ -66,6 +66,27 @@ class TestBuildTypedSessionPayloadBudget:
         assert "max_trials" in payload
 
 
+class TestBuildTypedSessionPayloadOptimizationStrategy:
+    """_build_typed_session_payload forwards backend smart strategy."""
+
+    def test_optimization_strategy_included_when_set(self):
+        ops = _make_api_ops()
+        request = _typed_request(
+            optimization_strategy={"algorithm": "optuna", "sampler": "tpe"}
+        )
+        payload = ops._build_typed_session_payload(request, max_trials=5)
+        assert payload["optimization_strategy"] == {
+            "algorithm": "optuna",
+            "sampler": "tpe",
+        }
+
+    def test_optimization_strategy_omitted_when_none(self):
+        ops = _make_api_ops()
+        request = _typed_request(optimization_strategy=None)
+        payload = ops._build_typed_session_payload(request, max_trials=5)
+        assert "optimization_strategy" not in payload
+
+
 # ---------------------------------------------------------------------------
 # Tests: SessionOperations.create_session threads cost_limit -> budget.max_cost_usd
 # ---------------------------------------------------------------------------
@@ -195,3 +216,20 @@ class TestSessionOperationsCostLimitThreading:
         api_ops = _make_api_ops()
         payload = api_ops._build_typed_session_payload(request, max_trials=5)
         assert payload["budget"] == {"max_cost_usd": 2.5}
+
+    def test_optimization_strategy_end_to_end_reaches_typed_wire_payload(self):
+        """Full path: SessionOperations.create_session -> typed payload."""
+        ops, client = self._make_ops()
+        strategy = {"algorithm": "optuna", "sampler": "tpe"}
+        ops.create_session(
+            "my_func",
+            {"model": ["a", "b"]},
+            metadata={"max_trials": 5, "dataset_size": 10, "evaluation_set": "test"},
+            optimization_strategy=strategy,
+        )
+        request = client.captured_session_request
+        assert request is not None
+        assert request.optimization_strategy == strategy
+        api_ops = _make_api_ops()
+        payload = api_ops._build_typed_session_payload(request, max_trials=5)
+        assert payload["optimization_strategy"] == strategy
