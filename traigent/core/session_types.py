@@ -24,7 +24,11 @@ class SessionCreationFailureClassification(Enum):
     """User-facing classification for a failed backend session creation."""
 
     MISSING_PERMISSION = "missing-permission"
+    INSUFFICIENT_SCOPE = "insufficient-scope"
     INVALID_OR_REVOKED_KEY = "invalid-or-revoked-key"
+    EXPIRED_KEY = "expired-key"
+    EDGE_BLOCKED = "edge-blocked"
+    NETWORK = "network"
     KEY_NOT_FOUND = "key-not-found"
     BACKEND_UNREACHABLE = "backend-unreachable"
     UNKNOWN = "unknown"
@@ -39,10 +43,15 @@ class SessionCreationFailureDetail:
     message: str | None = None
     missing_permissions: tuple[str, ...] = ()
     raw_body: str | None = None
+    backend_url: str | None = None
 
     @classmethod
     def from_http_response(
-        cls, status_code: int, raw_body: str | None
+        cls,
+        status_code: int,
+        raw_body: str | None,
+        *,
+        backend_url: str | None = None,
     ) -> SessionCreationFailureDetail:
         """Parse the backend's structured session-creation error response."""
 
@@ -74,6 +83,7 @@ class SessionCreationFailureDetail:
             message=str(message) if message else None,
             missing_permissions=missing_permissions,
             raw_body=raw_body,
+            backend_url=backend_url,
         )
 
     def one_line_summary(self) -> str:
