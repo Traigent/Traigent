@@ -15,7 +15,6 @@ from rich.table import Table
 
 from traigent import get_version_info
 from traigent.api.functions import (
-    get_available_strategies,
     list_recommendation_agent_types,
     recommend_configuration_space,
 )
@@ -32,6 +31,7 @@ from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
 from traigent.cli.sync_commands import register_sync_command
+from traigent.config.types import accepted_algorithm_values
 from traigent.evaluators import (
     list_eval_recommendation_task_types,
     recommend_evaluator,
@@ -508,34 +508,33 @@ def info() -> None:
 
 @cli.command()
 def algorithms() -> None:
-    """List available optimization algorithms."""
-    strategies = get_available_strategies()
+    """List public optimization algorithms accepted by SDK validation."""
 
     console.print("\n[bold blue]Available Optimization Algorithms[/bold blue]\n")
 
-    for name, info in strategies.items():
-        console.print(f"[bold green]{info['name']}[/bold green] ([cyan]{name}[/cyan])")
-        console.print(f"  {info['description']}")
-        console.print(f"  Best for: {info['best_for']}")
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Algorithm", style="cyan")
+    table.add_column("Availability")
+    table.add_column("Notes")
 
-        # Capabilities
-        capabilities = []
-        if info["supports_continuous"]:
-            capabilities.append("continuous")
-        if info["supports_categorical"]:
-            capabilities.append("categorical")
-        if info["deterministic"]:
-            capabilities.append("deterministic")
+    for name in accepted_algorithm_values():
+        if name == "auto":
+            availability = "[green]connected[/green]"
+            notes = "Default cloud smart optimizer/TPE path when authenticated."
+        elif name in {"grid", "random"}:
+            availability = "[green]local[/green]"
+            notes = "Runs in-process; can sync results when authenticated."
+        else:
+            availability = "[yellow]connected[/yellow]"
+            notes = "Accepted public smart name; routed through Traigent cloud."
 
-        console.print(f"  Supports: {', '.join(capabilities)}")
+        table.add_row(name, availability, notes)
 
-        # Parameters
-        if info["parameters"]:
-            console.print("  Parameters:")
-            for param, desc in info["parameters"].items():
-                console.print(f"    • {param}: {desc}")
-
-        console.print()
+    console.print(table)
+    console.print(
+        "\n[dim]Runtime-only registry names are intentionally omitted here because "
+        "they are not accepted by public SDK validation.[/dim]"
+    )
 
 
 @cli.command("recommend")

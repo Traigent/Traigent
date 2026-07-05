@@ -1332,22 +1332,41 @@ def prompt_cost(
 # same remediation surface as the preflight. (Strict accounting still RAISES via
 # ``cost_from_tokens(strict=True)`` — fail-closed — so the registry only carries
 # the non-strict, warn-and-continue case.)
-_unpriced_runtime_models: set[str] = set()
+#
+# Keyed by model id -> occurrence count (#1597: OpenRouter response-model ids
+# litellm cannot price, e.g. a newly-released model not yet in litellm's bundled
+# pricing map). The count distinguishes "one unlucky call" from a systematic
+# per-trial pattern, and lets callers report how many $0.0 entries are actually
+# *unknown* spend rather than verified-free, instead of only naming the model.
+_unpriced_runtime_models: dict[str, int] = {}
 _unpriced_runtime_lock = threading.Lock()
 
 
 def record_unpriced_runtime_model(model: str) -> None:
-    """Record a model id that priced to $0 at runtime despite non-zero tokens."""
+    """Record an occurrence of a model id that priced to $0 at runtime despite non-zero tokens."""
     if not model or not str(model).strip():
         return
+    key = str(model).strip()
     with _unpriced_runtime_lock:
-        _unpriced_runtime_models.add(str(model).strip())
+        _unpriced_runtime_models[key] = _unpriced_runtime_models.get(key, 0) + 1
 
 
 def get_unpriced_runtime_models() -> list[str]:
     """Return a snapshot of model ids that priced to $0 at runtime (sorted)."""
     with _unpriced_runtime_lock:
         return sorted(_unpriced_runtime_models)
+
+
+def get_unpriced_runtime_occurrences() -> dict[str, int]:
+    """Return a snapshot of ``{model_id: occurrence_count}`` for unpriced runtime calls.
+
+    Complements :func:`get_unpriced_runtime_models` with quantitative detail
+    (#1597) so a caller can tell "one $0 call for this model" apart from "every
+    call for this model priced to $0" and report the recorded ``total_cost`` as
+    a lower bound rather than verified spend.
+    """
+    with _unpriced_runtime_lock:
+        return dict(sorted(_unpriced_runtime_models.items()))
 
 
 def reset_unpriced_runtime_models() -> None:

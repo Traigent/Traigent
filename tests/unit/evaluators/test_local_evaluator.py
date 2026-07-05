@@ -1,5 +1,6 @@
 """Unit tests for LocalEvaluator with focus on token estimation and metrics flow."""
 
+import json
 from contextlib import contextmanager
 
 import pytest
@@ -385,6 +386,49 @@ class TestLocalEvaluatorIntegration:
                 example_result.metrics["output_tokens"] >= 1
             )  # At least 1 token output
             assert example_result.success
+
+    @pytest.mark.asyncio
+    async def test_top_level_metadata_param_default_warning(
+        self, monkeypatch, tmp_path
+    ):
+        """Warn when a top-level row field shadows a defaulted function parameter."""
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+        dataset_path = tmp_path / "metadata_param_shadow.jsonl"
+        dataset_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "input": {
+                                "question": "q-one",
+                                "schema": "CREATE TABLE t1(a)",
+                            },
+                            "output": "ok",
+                            "db_path": "db/one.sqlite",
+                        }
+                    )
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        dataset = Dataset.from_jsonl("metadata_param_shadow.jsonl")
+        assert dataset.examples[0].metadata["db_path"] == "db/one.sqlite"
+
+        received_db_paths: list[str] = []
+
+        def agent(question: str, schema: str = "", db_path: str = "") -> str:
+            del question, schema
+            received_db_paths.append(db_path)
+            return "ok"
+
+        evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
+
+        with pytest.warns(UserWarning, match="db_path.*signature default"):
+            result = await evaluator.evaluate(agent, {}, dataset)
+
+        assert received_db_paths == [""]
+        assert result.errors == [None]
 
 
 class TestPromptTemplateFallbackLength:

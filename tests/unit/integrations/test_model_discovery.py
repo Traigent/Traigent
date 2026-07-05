@@ -286,6 +286,10 @@ class TestAnthropicDiscovery:
         discovery = AnthropicDiscovery()
 
         valid_models = [
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
             "claude-3-opus-20240229",
             "claude-3-5-sonnet-20241022",
             "claude-2.1",
@@ -295,6 +299,23 @@ class TestAnthropicDiscovery:
         for model in valid_models:
             assert discovery.is_valid_model(model), f"Model {model} should be valid"
 
+    def test_pattern_validation_invalid_models(self) -> None:
+        """Invalid Anthropic-like model names should fail pattern validation."""
+        discovery = AnthropicDiscovery()
+
+        invalid_models = [
+            "not-claude-sonnet-4-6",
+            "claude-unknown-4-6",
+            "claude-fable-5",
+            "claude-sonnet-5",
+            "claude-mythos-5",
+            "claude-mythos-preview",
+            "claude-",
+        ]
+
+        for model in invalid_models:
+            assert not discovery.is_valid_model(model), f"Model {model} should fail"
+
     def test_known_models_included(self) -> None:
         """Known models should be included in list."""
         discovery = AnthropicDiscovery()
@@ -302,6 +323,21 @@ class TestAnthropicDiscovery:
 
         for model in KNOWN_ANTHROPIC_MODELS:
             assert model in models, f"Known model {model} should be in list"
+
+    def test_unsourced_claude_5_guesses_not_in_shipped_snapshot(self) -> None:
+        """Claude 5 IDs need a source-cited snapshot update before listing."""
+        speculative_models = {
+            "claude-fable-5",
+            "claude-sonnet-5",
+            "claude-mythos-5",
+            "claude-mythos-preview",
+        }
+
+        discovery = AnthropicDiscovery()
+        models = set(discovery.list_models())
+
+        assert speculative_models.isdisjoint(KNOWN_ANTHROPIC_MODELS)
+        assert speculative_models.isdisjoint(models)
 
     def test_sdk_discovery_returns_empty(self) -> None:
         """Anthropic SDK discovery should return empty (no API)."""

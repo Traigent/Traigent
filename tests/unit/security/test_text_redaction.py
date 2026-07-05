@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
+from traigent.security.redaction import (
+    CONTENT_KEY_FRAGMENTS,
+    CREDENTIAL_KEY_FRAGMENTS,
+    is_content_key_name,
+    is_credential_key_name,
+    redact_sensitive_data,
+    redact_sensitive_text,
+)
 
 
 class TestCreditCardRedaction:
@@ -59,6 +66,61 @@ class TestOtherPatternsStillWork:
         assert "[REDACTED:api_key]" in redact_sensitive_text(
             "X-Api-Key: sk-abcd1234abcd1234"
         )
+
+
+class TestCanonicalKeyNameSets:
+    """The two canonical key-name sets consumed by the three
+    formerly-divergent SDK sanitizers (dataset_converter, observability
+    decorators, agent_spans). See issue #1649.
+
+    Deliberately two tiers: the credential set applies on every sanitizer
+    path; the content-marker set only where content-shaped fields must be
+    dropped entirely (agent_spans) — NOT on tuned-config surfaces, where a
+    key literally named "prompt" is a variant label the portal must show.
+    """
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            # Union member from traigent.cloud.dataset_converter's old regex
+            "authorization",
+            "credit_card",
+            "creditcard",
+            # Union member from traigent.observability.decorators' old list
+            "credential",
+            "private_key",
+            "apikey",
+            "auth_header",
+            "password",
+            "secret",
+            "token",
+        ],
+    )
+    def test_credential_union_member_flagged(self, key: str) -> None:
+        assert is_credential_key_name(key) is True
+
+    @pytest.mark.parametrize(
+        "key",
+        ["prompt", "response", "actual_output", "expected", "completion", "output"],
+    )
+    def test_content_marker_flagged_as_content_not_credential(self, key: str) -> None:
+        assert is_content_key_name(key) is True
+        # Content markers must NOT be treated as credentials — tuned config
+        # variables are routinely named "prompt"/"response_format" etc.
+        assert is_credential_key_name(key) is False
+
+    def test_ordinary_key_not_flagged(self) -> None:
+        assert is_credential_key_name("model_name") is False
+        assert is_content_key_name("model_name") is False
+        assert is_credential_key_name("safe_score") is False
+        assert is_content_key_name("safe_score") is False
+
+    def test_fragment_sets_are_frozen_nonempty_and_disjoint(self) -> None:
+        assert isinstance(CREDENTIAL_KEY_FRAGMENTS, frozenset)
+        assert isinstance(CONTENT_KEY_FRAGMENTS, frozenset)
+        assert CREDENTIAL_KEY_FRAGMENTS
+        assert CONTENT_KEY_FRAGMENTS
+        assert not (CREDENTIAL_KEY_FRAGMENTS & CONTENT_KEY_FRAGMENTS)
 
 
 class TestNestedRedaction:

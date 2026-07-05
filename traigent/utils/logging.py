@@ -69,9 +69,10 @@ def setup_logging(
         root_logger.removeHandler(handler)
 
     # Configure logging level
-    numeric_level = getattr(logging, level.upper(), None)
+    resolved_level = _resolve_logging_level(level)
+    numeric_level = getattr(logging, resolved_level, None)
     if not isinstance(numeric_level, int):
-        raise ValueError(f"Invalid log level: {level}")
+        raise ValueError(f"Invalid log level: {resolved_level}")
 
     # Use standard handler (rich disabled for basic testing)
     handler = logging.StreamHandler()
@@ -83,7 +84,7 @@ def setup_logging(
     # Set specific levels for third-party libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    configure_litellm_logging(level)
+    configure_litellm_logging(resolved_level)
 
 
 def get_logger(name: str) -> logging.Logger:

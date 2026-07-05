@@ -642,7 +642,14 @@ class ApiOperations:
         non-governed compatibility only.
         """
         contract = self._session_contract()
+        optimization_strategy = self._session_optimization_strategy(session_request)
         if contract == "legacy":
+            if optimization_strategy:
+                raise SessionContractError(
+                    "Named smart optimization requires the typed session contract; "
+                    "TRAIGENT_SESSION_CONTRACT=legacy cannot carry "
+                    "optimization_strategy."
+                )
             if self._is_governed_request(session_request):
                 raise SessionContractError(
                     "strict/governed sessions require the typed session "
@@ -658,6 +665,15 @@ class ApiOperations:
             )
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
+
+    @staticmethod
+    def _session_optimization_strategy(
+        session_request: SessionCreationRequest,
+    ) -> dict[str, Any] | None:
+        """Return a real optimization_strategy mapping, ignoring Mock sentinels."""
+
+        strategy = getattr(session_request, "optimization_strategy", None)
+        return dict(strategy) if isinstance(strategy, dict) and strategy else None
 
     def _build_typed_session_payload(
         self, session_request: SessionCreationRequest, max_trials: int
@@ -702,6 +718,9 @@ class ApiOperations:
             payload["budget"] = session_request.budget
         if getattr(session_request, "default_config", None):
             payload["default_config"] = session_request.default_config
+        optimization_strategy = self._session_optimization_strategy(session_request)
+        if optimization_strategy:
+            payload["optimization_strategy"] = optimization_strategy
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
         smart_pruning = getattr(session_request, "smart_pruning", None)
@@ -972,7 +991,12 @@ class ApiOperations:
         logger.debug("Unexpected error creating session: %s", error)
         raise CloudServiceError(f"Session creation failed: {error}") from error
 
-    async def update_config_run_status(self, config_run_id: str, status: str) -> bool:
+    async def update_config_run_status(
+        self,
+        config_run_id: str,
+        status: str,
+        error_message: str | None = None,
+    ) -> bool:
         """Update configuration run status in the backend.
 
         Args:
@@ -982,6 +1006,18 @@ class ApiOperations:
                 normalized to the configuration-run wire vocab before sending so
                 the backend never receives a session-lifecycle value
                 (issue #1302).
+            error_message: Optional failure reason to persist alongside a
+                terminal status (e.g. ``failed``/``pruned``). Before this,
+                this status-only PUT never sent a failure reason at all, so
+                run failures reported through it were lost client-side
+                before the wire (Traigent#1885, companion to
+                TraigentBackend#2002). Sent as ``error_message`` — the
+                canonical key the backend reads; the backend also accepts a
+                legacy ``error`` alias for old senders, but new SDK code
+                must always use the canonical key. Sanitized/length-capped
+                the same way as the session-results path
+                (``sanitize_error_message``), so this is safe to call with
+                a raw, unsanitized string.
 
         Returns:
             True if successful, False otherwise
@@ -1007,7 +1043,10 @@ class ApiOperations:
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/configuration-runs/{config_run_id}/status"
-                status_data = {"status": backend_status}
+                status_data: dict[str, Any] = {"status": backend_status}
+                sanitized_error_message = self.sanitize_error_message(error_message)
+                if sanitized_error_message:
+                    status_data["error_message"] = sanitized_error_message
 
                 async with session.put(
                     url,

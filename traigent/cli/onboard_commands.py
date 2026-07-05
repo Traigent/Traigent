@@ -33,7 +33,7 @@ FIRST_PROMPT_TOOL_LINE: dict[AgentName, str] = {
 }
 PLAN_JSON_BEGIN = "BEGIN_TRAIGENT_ONBOARD_PLAN_JSON"
 PLAN_JSON_END = "END_TRAIGENT_ONBOARD_PLAN_JSON"
-SKILLS_COMMAND = ["npx", "skills", "add", "Traigent/agents-skills"]
+SKILLS_COMMAND = ["npx", "skills", "add", "Traigent/traigent-skills"]
 AUTH_STATUS_COMMAND = ["traigent", "auth", "status"]
 
 

@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.agent_inference import (
@@ -63,11 +64,13 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
     CloudBrainUnavailableError,
+    backend_optimization_strategy_for_algorithm,
     backend_egress_disabled,
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
     policy_is_cloud_required,
+    unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
@@ -93,6 +96,7 @@ from traigent.core.parallel_execution_manager import (
 )
 from traigent.core.progress_manager import ProgressManager
 from traigent.core.result_selection import (
+    NO_RANKING_ELIGIBLE_TRIALS,
     TieBreaker,
     _primary_scores_tied,
     _secondary_metric_key,
@@ -115,7 +119,11 @@ from traigent.utils.callbacks import CallbackManager, OptimizationCallback, Prog
 from traigent.utils.env_config import (  # noqa: F401
     is_backend_offline as is_backend_offline,
 )
-from traigent.utils.exceptions import OptimizationError, VendorPauseError
+from traigent.utils.exceptions import (
+    ConfigurationError,
+    OptimizationError,
+    VendorPauseError,
+)
 from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
@@ -149,6 +157,54 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
         "error",
     }
 )
+_OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
+
+
+def _successful_trial_metric_names(trials: Sequence[TrialResult]) -> list[str]:
+    metric_names: set[str] = set()
+    for trial in trials:
+        if not trial.is_successful:
+            continue
+        metrics = trial.metrics or {}
+        metric_names.update(str(name) for name in metrics)
+    return sorted(metric_names)
+
+
+def _objective_metric_never_measured(
+    trials: Sequence[TrialResult],
+    objective: str,
+) -> bool:
+    saw_any_metric = False
+    for trial in trials:
+        if not trial.is_successful:
+            continue
+        metrics = trial.metrics or {}
+        if metrics:
+            saw_any_metric = True
+        if objective in metrics:
+            return False
+    return saw_any_metric
+
+
+def _format_unmatched_objective_warning(
+    objective: str,
+    available_metric_names: Sequence[str],
+) -> tuple[str, str | None]:
+    suggestion = None
+    matches = get_close_matches(
+        objective, list(available_metric_names), n=1, cutoff=0.6
+    )
+    if matches:
+        suggestion = matches[0]
+
+    available = ", ".join(available_metric_names) if available_metric_names else "none"
+    suggestion_text = f" Did you mean '{suggestion}'?" if suggestion else ""
+    return (
+        f"No winner: objective metric '{objective}' was never measured in any "
+        "successful trial; best_config is None. "
+        f"Available metrics: {available}.{suggestion_text}",
+        suggestion,
+    )
 
 
 class OptimizationOrchestrator:
@@ -707,12 +763,26 @@ class OptimizationOrchestrator:
     def _is_cloud_brain_run(self) -> bool:
         """Whether this orchestrator is running cloud-brain guidance."""
 
+        policy = policy_from_config(self.traigent_config)
         return bool(
-            policy_is_cloud_brain(policy_from_config(self.traigent_config))
+            (policy_is_cloud_brain(policy) or policy_is_cloud_required(policy))
             and getattr(self.traigent_config, "result_source", None)
             == SOURCE_CLOUD_BRAIN
             and not backend_egress_disabled(self.traigent_config)
         )
+
+    def _backend_optimization_strategy_for_run(self) -> dict[str, str] | None:
+        """Return the backend strategy for named managed algorithms."""
+
+        policy = policy_from_config(self.traigent_config)
+        if not policy_is_cloud_required(policy):
+            return None
+        strategy = backend_optimization_strategy_for_algorithm(policy.algorithm)
+        if strategy is None:
+            raise ConfigurationError(
+                unsupported_backend_smart_algorithm_message(policy.algorithm)
+            )
+        return strategy
 
     def _optimizer_uses_remote_guidance(self) -> bool:
         """Whether the active optimizer would call remote next-trial guidance."""
@@ -1566,11 +1636,7 @@ class OptimizationOrchestrator:
         self._logger_facade.attach(self._logger)
 
         self._logger_facade.log_session_start(
-            config=(
-                self.traigent_config.to_dict()
-                if hasattr(self.traigent_config, "to_dict")
-                else {}
-            ),
+            config=self._build_logger_run_config(),
             objectives=(
                 self.objective_schema
                 if self.objective_schema
@@ -1582,6 +1648,44 @@ class OptimizationOrchestrator:
                 "name": getattr(dataset, "name", "unknown"),
             },
         )
+
+    def _build_logger_run_config(self) -> dict[str, Any]:
+        resolved_algorithm = self.optimizer.__class__.__name__
+        requested_algorithm = self.config.get("requested_algorithm")
+        algorithm_config = getattr(self.optimizer, "algorithm_config", {}) or {}
+        traigent_config = (
+            self.traigent_config.to_dict()
+            if hasattr(self.traigent_config, "to_dict")
+            else {}
+        )
+
+        return {
+            "schema_version": "2",
+            "algorithm": requested_algorithm or resolved_algorithm,
+            "requested_algorithm": requested_algorithm,
+            "resolved_algorithm": resolved_algorithm,
+            "max_trials": self.max_trials,
+            "max_total_examples": self._max_total_examples,
+            "configuration_space": getattr(self.optimizer, "config_space", {}) or {},
+            "objectives": list(getattr(self.optimizer, "objectives", []) or []),
+            "parallel_trials": self.parallel_trials,
+            "timeout": self.timeout,
+            "budget": {
+                "cost_limit": self.config.get("cost_limit"),
+                "metric_limit": self.config.get("metric_limit"),
+                "metric_name": self.config.get("metric_name"),
+                "max_total_examples": self._max_total_examples,
+                "samples_include_pruned": self.samples_include_pruned,
+            },
+            "execution": {
+                "mode": self.traigent_config.execution_mode,
+                "result_source": getattr(self.traigent_config, "result_source", None),
+                "no_egress": getattr(self.traigent_config, "no_egress", None),
+                "privacy_enabled": self.traigent_config.privacy_enabled,
+            },
+            "optimizer_config": dict(algorithm_config),
+            "traigent_config": traigent_config,
+        }
 
     async def _handle_trial_result(
         self,
@@ -2429,6 +2533,7 @@ class OptimizationOrchestrator:
         wire_policy, wire_governance = self._build_wire_governance()
         objectives_payload = self._build_session_objectives_payload()
         default_config_payload = self._build_session_default_config_payload()
+        optimization_strategy_payload = self._backend_optimization_strategy_for_run()
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -2447,6 +2552,7 @@ class OptimizationOrchestrator:
             artifact_fingerprints=self.artifact_fingerprints,
             fingerprint_meta=self.fingerprint_meta,
             cost_limit=self.config.get("cost_limit"),
+            optimization_strategy=optimization_strategy_payload,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -3269,11 +3375,11 @@ class OptimizationOrchestrator:
         raise OptimizationError(
             f"Smart optimization ('{algorithm}') requires the Traigent managed "
             "cloud service, but the run finished without executing a single "
-            "trial (0 trials, no best configuration). This algorithm is not "
-            "available as a first-party service on this backend yet, and a "
-            "cloud-required run must not silently report success. The local "
-            "SDK runs only 'grid' and 'random'; connect to a Traigent backend "
-            "that provides smart optimization, or call "
+            "trial (0 trials, no best configuration). The managed backend "
+            "path returned no trial guidance, and a cloud-required run must "
+            "not silently report success. The local SDK runs only 'grid' and "
+            "'random'; connect to a Traigent backend that provides smart "
+            "optimization, or call "
             "optimize(algorithm='grid') / optimize(algorithm='random') to run "
             "locally."
         )
@@ -3735,6 +3841,9 @@ class OptimizationOrchestrator:
                 obj.name: str(obj.orientation)
                 for obj in self.objective_schema.objectives
             }
+        primary_objective = (
+            self.optimizer.objectives[0] if self.optimizer.objectives else None
+        )
         selection = select_best_configuration(
             trials=self._trials,
             # Objectives-free runs are supported (weighted scoring disabled,
@@ -3742,9 +3851,7 @@ class OptimizationOrchestrator:
             # module guards this and the terminal selection must too (#1108
             # review NB). None ⇒ the selector's honest no-eligible shape;
             # strict mode is certificate-driven and never reads it.
-            primary_objective=(
-                self.optimizer.objectives[0] if self.optimizer.objectives else None
-            ),
+            primary_objective=primary_objective,
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_local_mode(),
             tie_breakers=self._tie_breakers or None,
@@ -3762,6 +3869,34 @@ class OptimizationOrchestrator:
         best_config = selection.best_config
         best_score = selection.best_score
         session_summary = selection.session_summary
+        result_status = self._status
+        result_warnings: list[str] = []
+        result_warning_codes: list[str] = []
+        if (
+            primary_objective
+            and selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+            and _objective_metric_never_measured(self._trials, primary_objective)
+        ):
+            available_metric_names = _successful_trial_metric_names(self._trials)
+            warning, suggestion = _format_unmatched_objective_warning(
+                primary_objective,
+                available_metric_names,
+            )
+            result_warnings.append(warning)
+            result_warning_codes.append(_OBJECTIVE_UNMATCHED_WARNING_CODE)
+            if session_summary is None:
+                session_summary = {}
+            else:
+                session_summary = dict(session_summary)
+            session_summary["reason"] = warning
+            session_summary["reason_code"] = selection.reason_code
+            session_summary["unmatched_objective"] = primary_objective
+            session_summary["available_metrics"] = list(available_metric_names)
+            if suggestion:
+                session_summary["did_you_mean"] = suggestion
+            if result_status == OptimizationStatus.COMPLETED:
+                result_status = OptimizationStatus.FAILED
+                self._status = result_status
         preset_selection = (
             select_strategy_preset(self.strategy_preset, self._trials)
             if self.strategy_preset is not None
@@ -3782,12 +3917,15 @@ class OptimizationOrchestrator:
 
         # Create convergence info
         successful_trials = [t for t in self._trials if t.is_successful]
+        success_rate = (
+            0.0
+            if _OBJECTIVE_UNMATCHED_WARNING_CODE in result_warning_codes
+            else (len(successful_trials) / len(self._trials) if self._trials else 0.0)
+        )
         convergence_info = {
             "total_trials": len(self._trials),
             "successful_trials": len(successful_trials),
-            "success_rate": (
-                len(successful_trials) / len(self._trials) if self._trials else 0.0
-            ),
+            "success_rate": success_rate,
             "algorithm": self.optimizer.__class__.__name__,
         }
 
@@ -3857,7 +3995,7 @@ class OptimizationOrchestrator:
             optimization_id=self._optimization_id,
             duration=duration,
             convergence_info=convergence_info,
-            status=self._status,
+            status=result_status,
             objectives=self.optimizer.objectives,
             algorithm=self.optimizer.__class__.__name__,
             timestamp=now,
@@ -3867,7 +4005,10 @@ class OptimizationOrchestrator:
             metadata=result_metadata,
             preset_selection=preset_selection,
             stop_reason=self._stop_reason,
+            reason_code=selection.reason_code,
             run_label=run_label,
+            warnings=result_warnings,
+            warning_codes=result_warning_codes,
             source=source,
         )
 

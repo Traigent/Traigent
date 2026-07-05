@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.20.0"
+version = "0.20.1"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -177,7 +177,9 @@ dev = [
     "types-requests>=2.31.0",
     "types-bleach>=6.0.0",
     "pre-commit>=3.0.0",
-    "ruff>=0.1.0",
+    "ruff==0.15.12",  # Exact pin (issue #1550): CI preflight installs this exact
+    # version so an unrelated ruff release can't retroactively fail PRs on
+    # pre-existing lint debt. Bump deliberately, in the same PR as any fix-up.
     "bandit>=1.7.0",
     "hypothesis>=6.100.0",  # Property-based testing for validation logic
 ]

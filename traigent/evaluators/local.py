@@ -1411,6 +1411,8 @@ class LocalEvaluator(BaseEvaluator):
         if not dataset.examples:
             raise EvaluationError("Dataset cannot be empty")
 
+        self._warn_context_mode_metadata_defaulted_params(func, dataset)
+
         logger.info(
             f"Starting {'detailed ' if self.detailed else ''}evaluation with {len(dataset.examples)} examples, "
             f"config: {config}"

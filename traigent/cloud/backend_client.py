@@ -1502,6 +1502,7 @@ class BackendIntegratedClient:
         fingerprint_meta: dict[str, Any] | None = None,
         smart_pruning: dict[str, Any] | None = None,
         cost_limit: float | None = None,
+        optimization_strategy: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1521,6 +1522,7 @@ class BackendIntegratedClient:
             fingerprint_meta=fingerprint_meta,
             smart_pruning=smart_pruning,
             cost_limit=cost_limit,
+            optimization_strategy=optimization_strategy,
         )
 
     async def create_hybrid_session(
@@ -2208,12 +2210,19 @@ class BackendIntegratedClient:
             await self._api_ops.create_traigent_session_via_api(session_request),
         )
 
-    async def _update_config_run_status(self, config_run_id: str, status: str) -> bool:
+    async def _update_config_run_status(
+        self,
+        config_run_id: str,
+        status: str,
+        error_message: str | None = None,
+    ) -> bool:
         """Update configuration run status in the backend.
         Delegates to api_operations module."""
         return cast(
             bool,
-            await self._api_ops.update_config_run_status(config_run_id, status),
+            await self._api_ops.update_config_run_status(
+                config_run_id, status, error_message=error_message
+            ),
         )
 
     async def _report_intermediate_progress(

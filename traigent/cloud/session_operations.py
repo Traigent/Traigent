@@ -504,6 +504,7 @@ class SessionOperations:
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
         cost_limit: float | None = None,
+        optimization_strategy: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -659,7 +660,9 @@ class SessionOperations:
                 budget=budget,
                 promotion_policy=promotion_policy,
                 tvl_governance=tvl_governance,
-                optimization_strategy={"mode": "local_execution"},
+                optimization_strategy=(
+                    dict(optimization_strategy) if optimization_strategy else None
+                ),
                 user_id=None,  # Privacy preserving
                 billing_tier="privacy",
                 metadata=metadata or {},

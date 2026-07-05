@@ -18,7 +18,7 @@ isort>=5.10.0
 flake8>=5.0.0
 mypy>=1.0.0
 pre-commit>=3.0.0
-ruff>=0.1.0
+ruff==0.15.12
 
 # Visualization
 matplotlib>=3.5.0

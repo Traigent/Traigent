@@ -1306,6 +1306,108 @@ class TestUpdateConfigRunStatusSuccess:
             result = await self.ops.update_config_run_status("config_123", "COMPLETED")
             assert result is False
 
+    @pytest.mark.asyncio
+    async def test_failure_status_sends_error_message_on_wire(self):
+        """Traigent#1885 (companion to TraigentBackend#2002): a failed config
+        run's failure reason must actually be sent, using the canonical
+        ``error_message`` key the backend reads (not the legacy ``error``
+        alias, which only exists for old senders)."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.text = AsyncMock(return_value="OK")
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_status(
+                "config_123", "FAILED", error_message="evaluator raised ValueError"
+            )
+            assert result is True
+
+        _, kwargs = mock_session.put.call_args
+        assert kwargs["json"]["error_message"] == "evaluator raised ValueError"
+        assert "error" not in kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_success_status_sends_no_error_message(self):
+        """The happy path must stay byte-identical: no error_message key at all
+        when none was supplied."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.text = AsyncMock(return_value="OK")
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_status("config_123", "COMPLETED")
+            assert result is True
+
+        _, kwargs = mock_session.put.call_args
+        assert "error_message" not in kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_error_message_is_length_capped_below_backend_limit(self):
+        """The backend caps error_message at MAX_TRIAL_ERROR_MESSAGE_LENGTH
+        (2000 chars per TraigentBackend PR #2002). The SDK must never send a
+        message longer than that; it reuses the same sanitize_error_message()
+        truncation (to 1000 chars) already applied on the session-results
+        path, which is stricter than the backend's cap."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.text = AsyncMock(return_value="OK")
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        oversized_message = "x" * 5000
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_status(
+                "config_123", "FAILED", error_message=oversized_message
+            )
+            assert result is True
+
+        _, kwargs = mock_session.put.call_args
+        sent_error_message = kwargs["json"]["error_message"]
+        assert len(sent_error_message) <= 2000  # backend MAX_TRIAL_ERROR_MESSAGE_LENGTH
+
 
 class TestUpdateConfigRunMeasuresSuccess:
     """Test update_config_run_measures with various metric mappings."""

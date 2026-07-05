@@ -127,6 +127,8 @@ _RUN_EXAMPLE_INSIGHTS_REQUIRED_KEYS = frozenset(
     }
 )
 _EXAMPLE_INSIGHT_REF_PATTERN = re.compile(r"^exref_[0-9a-f]{16}$")
+_EXAMPLE_INSIGHT_MAX_SAFE_EXAMPLE_REFS = 50
+_EXAMPLE_INSIGHTS_DATASET_QUALITIES = frozenset({"low", "medium", "high"})
 _EXAMPLE_INSIGHT_REVIEW_PRIORITIES = frozenset({"critical", "high", "medium", "low"})
 _EXAMPLE_INSIGHT_DIFFICULTY_BUCKETS = frozenset({"low", "medium", "high", "unknown"})
 _EXAMPLE_INSIGHT_SUSPICIOUS_FLAGS = frozenset(
@@ -277,13 +279,94 @@ def _project_aggregate(data: Any, keys: frozenset[str], *, what: str) -> dict[st
     Unknown nested keys can carry proprietary signals or raw backend state.
     This function is the nested-aggregate counterpart of the per-row construction
     in :func:`_project_example_insight_row`: both rebuild output by allowlist so
-    nothing unknown can pass through regardless of what the backend sends.
+    nothing unknown can pass through regardless of what the backend sends. Note
+    that this allowlists by *key* only — callers whose values carry a specific
+    contract (e.g. ``summary.dataset_quality``, ``cohorts[].safe_example_refs``)
+    must additionally validate those values themselves (see
+    :func:`_project_example_insights_summary` and
+    :func:`_project_example_insights_cohort`); an unvalidated value allowlisted
+    by key alone could still smuggle raw/proprietary content through.
     """
     if not isinstance(data, dict):
         raise AnalyticsClientError(
             f"Malformed example insights response: {what} must be an object."
         )
     return {k: v for k, v in data.items() if k in keys}
+
+
+def _assert_allowed_string(value: Any, allowed: frozenset[str], *, what: str) -> str:
+    """Validate that ``value`` is one of a fixed set of enum strings.
+
+    Mirrors the JS SDK's ``assertAllowedString`` (traigent-js analytics-client.ts)
+    used to close the same value-validation gap for cross-SDK parity.
+    """
+    if not isinstance(value, str) or value not in allowed:
+        raise AnalyticsClientError(
+            f"Malformed example insights response: {what} must be one of: "
+            f"{', '.join(sorted(allowed))}."
+        )
+    return value
+
+
+def _assert_safe_example_refs(value: Any, *, what: str) -> list[str]:
+    """Validate a cohort's ``safe_example_refs`` list.
+
+    Each element must be an opaque ``exref_`` reference matching the backend
+    contract (``run_analytics_service._safe_example_refs``), and the list must
+    not exceed the backend's cap. Mirrors the JS SDK's
+    ``assertSafeExampleRefs`` for cross-SDK parity (Traigent#1662).
+    """
+    if not isinstance(value, list):
+        raise AnalyticsClientError(
+            f"Malformed example insights response: {what} must be a list."
+        )
+    if len(value) > _EXAMPLE_INSIGHT_MAX_SAFE_EXAMPLE_REFS:
+        raise AnalyticsClientError(
+            f"Malformed example insights response: {what} must contain at most "
+            f"{_EXAMPLE_INSIGHT_MAX_SAFE_EXAMPLE_REFS} refs."
+        )
+    for ref in value:
+        if not isinstance(ref, str) or not _EXAMPLE_INSIGHT_REF_PATTERN.match(ref):
+            raise AnalyticsClientError(
+                f"Malformed example insights response: {what} must only contain "
+                "refs matching ^exref_[0-9a-f]{16}$."
+            )
+    return list(value)
+
+
+def _project_example_insights_summary(data: Any) -> dict[str, Any]:
+    """Project + value-validate the ``summary`` aggregate.
+
+    ``dataset_quality`` is required and must be one of the backend's frozen
+    ``Literal["low", "medium", "high"]`` enum values; a backend regression
+    emitting a raw/unexpected value must fail closed rather than pass through.
+    """
+    summary = _project_aggregate(data, _EXAMPLE_INSIGHTS_SUMMARY_KEYS, what="summary")
+    summary["dataset_quality"] = _assert_allowed_string(
+        summary.get("dataset_quality"),
+        _EXAMPLE_INSIGHTS_DATASET_QUALITIES,
+        what="summary.dataset_quality",
+    )
+    return summary
+
+
+def _project_example_insights_cohort(cohort: Any, *, index: int) -> dict[str, Any]:
+    """Project + value-validate one ``cohorts[]`` aggregate.
+
+    ``safe_example_refs`` is optional per cohort, but when present each element
+    must be a well-formed opaque ref within the backend's cap — a backend
+    regression placing raw prompt text/emails in this list must not pass
+    through the SDK.
+    """
+    projected = _project_aggregate(
+        cohort, _EXAMPLE_INSIGHTS_COHORT_KEYS, what=f"cohorts[{index}]"
+    )
+    if "safe_example_refs" in projected:
+        projected["safe_example_refs"] = _assert_safe_example_refs(
+            projected["safe_example_refs"],
+            what=f"cohorts[{index}].safe_example_refs",
+        )
+    return projected
 
 
 def _quote_segment(value: str, *, field: str) -> str:
@@ -687,9 +770,13 @@ class BackendAnalyticsClient:
         from projected safe fields so raw signals cannot pass through even on a
         backend regression. ``summary``, ``cohorts``, ``recommendations``, and
         ``redactions`` are backend-redacted, templated, canary-enforced safe
-        aggregate guidance and are forwarded as-is. This reader deliberately
-        allowlists by construction, unlike the other thin pass-through readers in
-        this module, because it is the IP-sensitive per-example endpoint.
+        aggregate guidance, projected by key allowlist. ``summary.dataset_quality``
+        and ``cohorts[].safe_example_refs`` additionally get per-value shape
+        validation (enum / opaque-ref-pattern + length cap): a backend regression
+        placing raw content in those two value families must fail closed rather
+        than pass through (Traigent#1662). This reader deliberately allowlists by
+        construction, unlike the other thin pass-through readers in this module,
+        because it is the IP-sensitive per-example endpoint.
         """
         path = (
             "/api/v1/analytics/runs/"
@@ -729,21 +816,13 @@ class BackendAnalyticsClient:
         return {
             "run_id": payload["run_id"],
             "privacy_mode": payload["privacy_mode"],
-            "summary": _project_aggregate(
-                payload["summary"],
-                _EXAMPLE_INSIGHTS_SUMMARY_KEYS,
-                what="summary",
-            ),
+            "summary": _project_example_insights_summary(payload["summary"]),
             "example_rows": [
                 _project_example_insight_row(row, index=index)
                 for index, row in enumerate(rows)
             ],
             "cohorts": [
-                _project_aggregate(
-                    cohort,
-                    _EXAMPLE_INSIGHTS_COHORT_KEYS,
-                    what=f"cohorts[{i}]",
-                )
+                _project_example_insights_cohort(cohort, index=i)
                 for i, cohort in enumerate(cohorts_raw)
             ],
             "recommendations": [

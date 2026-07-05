@@ -151,7 +151,59 @@ def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
 def _classify_session_creation_failure(
     reason: SessionCreationFailureReason,
     detail: SessionCreationFailureDetail | None,
+    *,
+    failure_detail: str | None = None,
 ) -> SessionCreationFailureClassification:
+    text = " ".join(
+        part
+        for part in (
+            failure_detail,
+            detail.error_code if detail else None,
+            detail.message if detail else None,
+            detail.raw_body if detail else None,
+            detail.backend_url if detail else None,
+        )
+        if part
+    ).lower()
+
+    if _contains_any(
+        text,
+        (
+            "edge_blocked",
+            "edge blocked",
+            "cloudflare",
+            "cf-ray",
+            "cf-mitigated",
+            "error code: 1010",
+            "browser_signature_banned",
+            "waf",
+        ),
+    ):
+        return SessionCreationFailureClassification.EDGE_BLOCKED
+
+    key_validation_text = _contains_any(
+        text,
+        (
+            "api key validation",
+            "/keys/validate",
+            "keys/validate",
+        ),
+    )
+    if key_validation_text and _contains_any(
+        text,
+        (
+            "timed out",
+            "timeout",
+            "transport error",
+            "network",
+            "connection",
+            "rate limited",
+            "temporarily unavailable",
+            "service unavailable",
+        ),
+    ):
+        return SessionCreationFailureClassification.NETWORK
+
     if reason == SessionCreationFailureReason.SESSION_FAILED:
         if detail and detail.status_code and 400 <= detail.status_code < 500:
             return SessionCreationFailureClassification.UNKNOWN
@@ -163,24 +215,27 @@ def _classify_session_creation_failure(
     if detail and detail.missing_permissions:
         return SessionCreationFailureClassification.MISSING_PERMISSION
 
-    text = " ".join(
-        part
-        for part in (
-            detail.error_code if detail else None,
-            detail.message if detail else None,
-            detail.raw_body if detail else None,
-        )
-        if part
-    ).lower()
-
     if _contains_any(text, ("key_not_found", "api_key_not_found", "key not found")):
         return SessionCreationFailureClassification.KEY_NOT_FOUND
+    if _contains_any(text, ("expired", "expiration", "key_expired")):
+        return SessionCreationFailureClassification.EXPIRED_KEY
+    if _contains_any(
+        text,
+        (
+            "insufficient",
+            "missing required scope",
+            "missing scope",
+            "permission denied",
+            "forbidden",
+            "scope",
+        ),
+    ):
+        return SessionCreationFailureClassification.INSUFFICIENT_SCOPE
     if _contains_any(
         text,
         (
             "invalid",
             "revoked",
-            "expired",
             "rejected",
             "unauthorized",
             "authentication",
@@ -189,6 +244,8 @@ def _classify_session_creation_failure(
         return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
     if detail and detail.status_code == 401:
         return SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
+    if detail and detail.status_code == 403:
+        return SessionCreationFailureClassification.INSUFFICIENT_SCOPE
 
     return SessionCreationFailureClassification.UNKNOWN
 
@@ -252,6 +309,8 @@ def _format_untracked_warning_block(
 
     if detail and detail.status_code is not None:
         lines.append(f"HTTP status: {detail.status_code}")
+    if detail and detail.backend_url:
+        lines.append(f"Backend URL: {detail.backend_url}")
     if detail and detail.error_code:
         lines.append(f"Backend error_code: {detail.error_code}")
     if detail and detail.message:
@@ -269,6 +328,27 @@ def _format_untracked_warning_block(
             "Remedy: grant the missing permission(s) to the API key, or if the "
             "key should already have them, verify the backend deployment and "
             "permission middleware that returned this structured response."
+        )
+    elif classification == SessionCreationFailureClassification.INSUFFICIENT_SCOPE:
+        lines.append(
+            "Remedy: grant the required API key scope or permission in the "
+            "Traigent portal, then retry with that updated key."
+        )
+    elif classification == SessionCreationFailureClassification.EXPIRED_KEY:
+        lines.append(
+            "Remedy: create a new Traigent API key and set TRAIGENT_API_KEY to "
+            "that active key."
+        )
+    elif classification == SessionCreationFailureClassification.EDGE_BLOCKED:
+        lines.append(
+            "Remedy: the validation request appears blocked by an edge/WAF "
+            "layer. Allowlist the Traigent SDK User-Agent or retry from an "
+            "unblocked network."
+        )
+    elif classification == SessionCreationFailureClassification.NETWORK:
+        lines.append(
+            "Remedy: check TRAIGENT_BACKEND_URL and network connectivity; retry "
+            "with TRAIGENT_LOG_LEVEL=DEBUG for request diagnostics."
         )
     elif classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY:
         raw = (result.failure_detail or "").lower()
@@ -499,7 +579,9 @@ class BackendSessionManager:
                 # message was already emitted on the first disable; stay silent.
                 if reason == SessionCreationFailureReason.AUTH:
                     classification = _classify_session_creation_failure(
-                        reason, result.failure_response
+                        reason,
+                        result.failure_response,
+                        failure_detail=result.failure_detail,
                     )
                     logger.warning(
                         "%s",
@@ -542,7 +624,9 @@ class BackendSessionManager:
                 )
 
             classification = _classify_session_creation_failure(
-                reason, result.failure_response
+                reason,
+                result.failure_response,
+                failure_detail=result.failure_detail,
             )
             if reason == SessionCreationFailureReason.AUTH:
                 allow_untracked = is_untracked_fallback_allowed()
@@ -772,6 +856,7 @@ class BackendSessionManager:
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
         cost_limit: float | None = None,
+        optimization_strategy: dict[str, Any] | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -907,6 +992,7 @@ class BackendSessionManager:
                 artifact_fingerprints=artifact_fingerprints,
                 fingerprint_meta=fingerprint_meta,
                 cost_limit=cost_limit,
+                optimization_strategy=optimization_strategy,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(
