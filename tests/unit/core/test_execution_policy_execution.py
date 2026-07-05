@@ -241,6 +241,70 @@ async def test_cloud_brain_default_uses_next_trial_when_backend_available(
     assert result.metadata["source"] == "cloud_brain"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("algorithm", ["bayesian", "tpe"])
+async def test_named_smart_algorithms_bind_and_send_backend_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    algorithm: str,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    agent = _make_agent(algorithm=algorithm)
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ),
+        patch(
+            "traigent.cloud.client.TraigentCloudClient.get_next_trial",
+            new=AsyncMock(return_value=_next_trial_response()),
+        ) as next_trial,
+    ):
+        result = await agent.optimize(max_trials=1)
+
+    backend.create_session.assert_called_once()
+    assert backend.create_session.call_args.kwargs["optimization_strategy"] == {
+        "algorithm": "optuna",
+        "sampler": "tpe",
+    }
+    assert next_trial.await_count == 1
+    backend.request_trial_slot.assert_not_called()
+    backend._submit_trial_result_via_session.assert_awaited_once()
+    assert result.source == "cloud_brain"
+    assert result.metadata["source"] == "cloud_brain"
+
+
+@pytest.mark.asyncio
+async def test_unsupported_named_smart_algorithm_fails_before_session_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    agent = _make_agent(algorithm="nsga2")
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ) as create_backend_client,
+        patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
+    ):
+        with pytest.raises(
+            ConfigurationError,
+            match="not available as a first-party Traigent backend strategy yet",
+        ):
+            await agent.optimize(max_trials=1)
+
+    create_backend_client.assert_not_called()
+    backend.create_session.assert_not_called()
+    next_trial.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("failure_reason", "detail", "has_api_key"),
     [

@@ -642,7 +642,14 @@ class ApiOperations:
         non-governed compatibility only.
         """
         contract = self._session_contract()
+        optimization_strategy = self._session_optimization_strategy(session_request)
         if contract == "legacy":
+            if optimization_strategy:
+                raise SessionContractError(
+                    "Named smart optimization requires the typed session contract; "
+                    "TRAIGENT_SESSION_CONTRACT=legacy cannot carry "
+                    "optimization_strategy."
+                )
             if self._is_governed_request(session_request):
                 raise SessionContractError(
                     "strict/governed sessions require the typed session "
@@ -658,6 +665,15 @@ class ApiOperations:
             )
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
+
+    @staticmethod
+    def _session_optimization_strategy(
+        session_request: SessionCreationRequest,
+    ) -> dict[str, Any] | None:
+        """Return a real optimization_strategy mapping, ignoring Mock sentinels."""
+
+        strategy = getattr(session_request, "optimization_strategy", None)
+        return dict(strategy) if isinstance(strategy, dict) and strategy else None
 
     def _build_typed_session_payload(
         self, session_request: SessionCreationRequest, max_trials: int
@@ -702,6 +718,9 @@ class ApiOperations:
             payload["budget"] = session_request.budget
         if getattr(session_request, "default_config", None):
             payload["default_config"] = session_request.default_config
+        optimization_strategy = self._session_optimization_strategy(session_request)
+        if optimization_strategy:
+            payload["optimization_strategy"] = optimization_strategy
         if getattr(session_request, "warm_start_from", None):
             payload["warm_start_from"] = session_request.warm_start_from
         smart_pruning = getattr(session_request, "smart_pruning", None)

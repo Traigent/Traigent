@@ -10,6 +10,7 @@ from traigent.config.types import (
     ExecutionIntent,
     ResolvedExecutionPolicy,
     TraigentConfig,
+    normalize_algorithm_name,
 )
 from traigent.core.session_types import (
     SessionCreationFailureReason,
@@ -31,6 +32,14 @@ RESULT_SOURCES = frozenset(
         SOURCE_OFFLINE,
     }
 )
+
+_BACKEND_OPTIMIZATION_STRATEGIES: dict[str, dict[str, str]] = {
+    "bayesian": {"algorithm": "optuna", "sampler": "tpe"},
+    "tpe": {"algorithm": "optuna", "sampler": "tpe"},
+    "optuna": {"algorithm": "optuna", "sampler": "tpe"},
+    "optuna_tpe": {"algorithm": "optuna", "sampler": "tpe"},
+    "optuna_random": {"algorithm": "optuna", "sampler": "random"},
+}
 
 CONNECTIVITY_STATUSES = frozenset({500, 502, 503, 504})
 HARD_FAILURE_STATUSES = frozenset({400, 401, 402, 403, 404, 405, 409, 415, 422, 429})
@@ -97,6 +106,34 @@ class CloudBrainUnavailableError(OptimizationError):
         self.stage = stage
         self.reason = reason
         self.original = original
+
+
+def backend_optimization_strategy_for_algorithm(
+    algorithm: str | None,
+) -> dict[str, str] | None:
+    """Return the typed backend strategy for SDK-dispatched smart algorithms."""
+
+    strategy = _BACKEND_OPTIMIZATION_STRATEGIES.get(normalize_algorithm_name(algorithm))
+    return dict(strategy) if strategy is not None else None
+
+
+def backend_supported_smart_algorithms() -> tuple[str, ...]:
+    """Return smart algorithm names the SDK can dispatch to the backend today."""
+
+    return tuple(sorted(_BACKEND_OPTIMIZATION_STRATEGIES))
+
+
+def unsupported_backend_smart_algorithm_message(algorithm: str | None) -> str:
+    """Explain why a known smart algorithm is rejected before session create."""
+
+    requested = normalize_algorithm_name(algorithm)
+    supported = ", ".join(f"'{name}'" for name in backend_supported_smart_algorithms())
+    return (
+        f"Smart optimization ('{requested}') is not available as a first-party "
+        "Traigent backend strategy yet. The SDK did not create a backend "
+        f"session. Use one of the backend-guided smart algorithms ({supported}), "
+        "or use algorithm='grid' / algorithm='random' for local optimization."
+    )
 
 
 def env_requires_cloud() -> bool:
