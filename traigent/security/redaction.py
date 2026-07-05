@@ -18,6 +18,78 @@ _BEARER_TOKEN_PATTERN = re.compile(
 )
 _COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}$")
 
+# Canonical, single source of truth for key-*name*-based redaction.
+#
+# Three sanitizers previously maintained independent keyword lists that had
+# drifted out of sync (traigent.cloud.dataset_converter,
+# traigent.observability.decorators, traigent.observability.agent_spans): a
+# key redacted by one path could pass through unredacted on another. All
+# three now consume the sets below. Extend these sets - do not fork a local
+# copy - when a new sensitive key pattern is identified.
+#
+# Two DISTINCT tiers, deliberately not merged into one flat set:
+#
+# - CREDENTIAL_KEY_FRAGMENTS: key names that denote secrets/credentials
+#   (api_key, auth_token, ...). Safe to apply on EVERY sanitizer path — a
+#   value stored under such a key is never legitimate telemetry.
+# - CONTENT_KEY_FRAGMENTS: key names that denote free-form content fields
+#   (prompt, response, output, ...). Only for call sites that must never
+#   carry content-shaped fields at all (e.g. agent_spans, which additionally
+#   restricts values to numerics). They must NOT be applied to
+#   tuned-configuration surfaces: config spaces routinely tune a variable
+#   literally named "prompt" (a variant label, not content), and redacting
+#   it would blank legitimate portal/trace display of the chosen config.
+CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "auth",  # also matches "authorization"
+        "credential",
+        "credit_card",
+        "creditcard",
+        "password",
+        "private_key",
+        "secret",
+        "token",
+    }
+)
+
+CONTENT_KEY_FRAGMENTS: frozenset[str] = frozenset(
+    {
+        "actual",
+        "completion",
+        "expected",
+        "output",
+        "prompt",
+        "response",
+    }
+)
+
+
+def _normalize_key_name(key: str) -> str:
+    return key.strip().lower().replace("-", "_").replace(".", "_")
+
+
+def is_credential_key_name(key: str) -> bool:
+    """Return True when a key name looks credential/secret-like.
+
+    Canonical check backing ALL SDK sanitizers that redact-by-key-name;
+    see `CREDENTIAL_KEY_FRAGMENTS`.
+    """
+    normalized = _normalize_key_name(key)
+    return any(fragment in normalized for fragment in CREDENTIAL_KEY_FRAGMENTS)
+
+
+def is_content_key_name(key: str) -> bool:
+    """Return True when a key name looks like a free-form content field.
+
+    Only for sanitizer paths that must drop content-shaped fields entirely
+    (see `CONTENT_KEY_FRAGMENTS` above for why this must not be applied to
+    tuned-configuration metadata).
+    """
+    normalized = _normalize_key_name(key)
+    return any(fragment in normalized for fragment in CONTENT_KEY_FRAGMENTS)
+
 
 def _passes_luhn(digits: str) -> bool:
     """Return True iff the digit string is a valid Luhn checksum (PAN check)."""

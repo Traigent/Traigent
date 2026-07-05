@@ -174,6 +174,29 @@ def test_add_agent_span_drops_text_metadata() -> None:
     assert "do not ship" not in payload_text
 
 
+def test_add_agent_span_drops_credential_like_metadata_keys() -> None:
+    """Regression for issue #1649: agent_spans' own metadata-key filter used
+    to only recognize free-form content markers (prompt/response/etc.), so a
+    numeric-valued credential-shaped key such as `auth_token_count` would
+    have passed through untouched. It now shares the canonical union set
+    with the other two sanitizers and drops it too."""
+    manager = _manager()
+
+    with _active_trial(manager):
+        add_agent_span(
+            "privacy_node",
+            metadata={
+                "auth_token_count": 5,
+                "api_key_rotations": 2,
+                "safe_score": 0.91,
+            },
+        )
+
+    span = manager._group_spans_by_config_run()["config-run-1"][0]
+
+    assert span.metadata == {"safe_score": 0.91}
+
+
 def test_declared_agents_and_agent_prefixes_register_graph_nodes(
     monkeypatch: Any,
 ) -> None:

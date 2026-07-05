@@ -10,6 +10,10 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from traigent.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 FP_ALGORITHM = "fp1"
 FP_PREFIX = f"{FP_ALGORITHM}:"
 FP_WIRE_RE = re.compile(r"^fp1:[0-9a-f]{64}$")
@@ -267,22 +271,56 @@ def build_artifact_fingerprints(
     metric_functions: Mapping[str, Callable[..., Any]] | None = None,
     external: Any = None,
     configuration_space: Any = None,
+    strict: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Build the additive session-create fingerprint payload."""
+    """Build the additive session-create fingerprint payload.
+
+    Each individual fingerprint computation (`_compute_dataset_fingerprint_and_count`,
+    `_compute_agent_fingerprint_and_source`, `compute_evaluator_fingerprint`,
+    `compute_config_space_fingerprint`) already fails open to `None`
+    internally, so one bad artifact never blocks session creation. The
+    per-stage guards below only trip on a genuinely unexpected error that
+    bypasses those inner catches, and each stage degrades independently so
+    one failing stage never blanks the other three fingerprints.
+
+    fail-open(intentional): mirrors `traigent.core.best_config_runtime`'s
+    strict convention. Non-strict callers (the default) get a degraded
+    payload explicitly marked ``fingerprint_meta["is_fallback"] = True``;
+    strict callers re-raise instead of silently receiving a synthetic
+    payload with unexplained ``None`` fields indistinguishable from a
+    legitimate empty result.
+    """
+
+    is_fallback = False
+
+    def _stage_failed(stage: str, exc: Exception) -> None:
+        nonlocal is_fallback
+        is_fallback = True
+        logger.warning(
+            "Falling back to degraded %s artifact fingerprint after error: %s",
+            stage,
+            exc,
+        )
 
     try:
         dataset_source = dataset if dataset is not None else examples
         dataset_fingerprint, dataset_example_count = (
             _compute_dataset_fingerprint_and_count(dataset_source)
         )
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise
+        _stage_failed("dataset", exc)
         dataset_fingerprint, dataset_example_count = None, 0
 
     try:
         agent_fingerprint, source_available = _compute_agent_fingerprint_and_source(
             func or agent
         )
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise
+        _stage_failed("agent", exc)
         agent_fingerprint, source_available = None, False
 
     try:
@@ -292,42 +330,37 @@ def build_artifact_fingerprints(
             metric_functions=metric_functions,
             external=external,
         )
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise
+        _stage_failed("evaluator", exc)
         evaluator_fingerprint = None
 
     try:
         config_space_fingerprint = compute_config_space_fingerprint(configuration_space)
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise
+        _stage_failed("config_space", exc)
         config_space_fingerprint = None
 
-    try:
-        return {
-            "artifact_fingerprints": {
-                "dataset": dataset_fingerprint,
-                "agent": agent_fingerprint,
-                "evaluator": evaluator_fingerprint,
-                "config_space": config_space_fingerprint,
-            },
-            "fingerprint_meta": {
-                "algorithm": FP_ALGORITHM,
-                "dataset_example_count": dataset_example_count,
-                "source_available": source_available,
-            },
-        }
-    except Exception:
-        return {
-            "artifact_fingerprints": {
-                "dataset": None,
-                "agent": None,
-                "evaluator": None,
-                "config_space": None,
-            },
-            "fingerprint_meta": {
-                "algorithm": FP_ALGORITHM,
-                "dataset_example_count": 0,
-                "source_available": False,
-            },
-        }
+    fingerprint_meta: dict[str, Any] = {
+        "algorithm": FP_ALGORITHM,
+        "dataset_example_count": dataset_example_count,
+        "source_available": source_available,
+    }
+    if is_fallback:
+        fingerprint_meta["is_fallback"] = True
+
+    return {
+        "artifact_fingerprints": {
+            "dataset": dataset_fingerprint,
+            "agent": agent_fingerprint,
+            "evaluator": evaluator_fingerprint,
+            "config_space": config_space_fingerprint,
+        },
+        "fingerprint_meta": fingerprint_meta,
+    }
 
 
 def _fingerprint_value_to_wire(value: Any) -> str | None:

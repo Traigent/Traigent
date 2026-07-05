@@ -2,7 +2,7 @@
 
 import pytest
 
-from traigent.cloud.dataset_converter import DatasetConverter
+from traigent.cloud.dataset_converter import DatasetConverter, is_sensitive_metadata_key
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 
 
@@ -128,3 +128,38 @@ class TestDatasetConverterSecurePath:
         assert len(result) > 0
         assert "Test" in result
         assert "Response" in result
+
+
+class TestSensitiveMetadataKeyUnion:
+    """Regression coverage for issue #1649: dataset_converter's redaction
+    keyword list used to be a hand-rolled regex, independent from the
+    observability sanitizers' lists. It now delegates to the canonical
+    CREDENTIAL union set in `traigent.security.redaction`."""
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            # Still covered by the module's old regex.
+            "password",
+            "api_key",
+            "authorization",
+            "credit_card",
+            "secret",
+            "token",
+            # Formerly missing here: only present in observability.decorators'
+            # old fragment list.
+            "credential",
+            "private_key",
+            "apikey",
+        ],
+    )
+    def test_credential_union_keyword_is_sensitive(self, key: str) -> None:
+        assert is_sensitive_metadata_key(key) is True
+
+    @pytest.mark.parametrize("key", ["model_name", "prompt_version", "output_format"])
+    def test_non_credential_key_is_not_sensitive(self, key: str) -> None:
+        """Content-marker fragments (prompt/response/output/...) must NOT be
+        applied here: this module never redacted them pre-unification, and
+        keys like `prompt_version` are legitimate backend tags. The invariant
+        from review: no path gains content-marker redaction it didn't have."""
+        assert is_sensitive_metadata_key(key) is False

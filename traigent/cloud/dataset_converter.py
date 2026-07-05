@@ -38,6 +38,7 @@ except ImportError:
 
 
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.security.redaction import is_credential_key_name
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
 
@@ -46,19 +47,20 @@ logger = get_logger(__name__)
 _SECURE_RANDOM = SystemRandom()
 
 _EXAMPLE_SET_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}$")
-_SENSITIVE_METADATA_KEY_PATTERN = re.compile(
-    r"(password|secret|token|api[_-]?key|credit[_-]?card|authorization)",
-    re.IGNORECASE,
-)
 _TAG_KEY_SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 _TAG_CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f]+")
 _METADATA_TAG_VALUE_TYPES = (str, int, float, bool)
 
 
 def is_sensitive_metadata_key(key: str) -> bool:
-    """Return True when metadata should not be exposed to backend surfaces."""
-    normalized = key.strip().lower()
-    return bool(_SENSITIVE_METADATA_KEY_PATTERN.search(normalized))
+    """Return True when metadata should not be exposed to backend surfaces.
+
+    Delegates to the canonical `traigent.security.redaction` credential set
+    so this sanitizer stays in lockstep with the observability sanitizers.
+    Credential-only by design: metadata keys like "prompt_version" are
+    legitimate backend tags, matching this module's pre-unification scope.
+    """
+    return is_credential_key_name(key)
 
 
 def sanitize_metadata_key(key: str) -> str:
