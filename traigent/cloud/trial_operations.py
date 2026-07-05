@@ -723,8 +723,14 @@ class TrialOperations:
                 f"✅ Submitted trial result for session {session_id}, trial {trial_id}"
             )
 
+        # result_data already carries a sanitized "error_message" when the
+        # caller supplied one (see the sanitize_error_message() call above
+        # this function is invoked from) — forward it so a failed/pruned
+        # config run's failure reason actually reaches the backend instead
+        # of being dropped on this status-only PUT (Traigent#1885,
+        # companion to TraigentBackend#2002).
         config_run_updated = await self.client._update_config_run_status(
-            trial_id, backend_status
+            trial_id, backend_status, error_message=result_data.get("error_message")
         )
         if config_run_updated:
             execution_time = result_data.get("execution_time") or result_data.get(

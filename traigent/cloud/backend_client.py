@@ -2208,12 +2208,19 @@ class BackendIntegratedClient:
             await self._api_ops.create_traigent_session_via_api(session_request),
         )
 
-    async def _update_config_run_status(self, config_run_id: str, status: str) -> bool:
+    async def _update_config_run_status(
+        self,
+        config_run_id: str,
+        status: str,
+        error_message: str | None = None,
+    ) -> bool:
         """Update configuration run status in the backend.
         Delegates to api_operations module."""
         return cast(
             bool,
-            await self._api_ops.update_config_run_status(config_run_id, status),
+            await self._api_ops.update_config_run_status(
+                config_run_id, status, error_message=error_message
+            ),
         )
 
     async def _report_intermediate_progress(
