@@ -25,6 +25,8 @@ from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import (
     BackendSessionManager,
     BackendTrialSubmissionOutcome,
+    _classify_session_creation_failure,
+    _format_untracked_warning_block,
 )
 from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -1810,6 +1812,112 @@ class TestHandleSessionCreationResult:
         assert any(
             "Bad request from session endpoint" in msg for msg in caplog.messages
         )
+
+    def test_key_validation_invalid_warning_has_status_url_and_classification(self):
+        """Invalid /keys/validate failures should not render as unknown."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        validate_url = "https://backend.example.test/api/v1/keys/validate"
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail=(
+                "API key validation failed: invalid API key "
+                f'(HTTP 401 from POST {validate_url}: {{"error":"Invalid API key"}})'
+            ),
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                401,
+                '{"error":"Invalid API key"}',
+                backend_url=validate_url,
+            ),
+        )
+
+        classification = _classify_session_creation_failure(
+            result.failure_reason,
+            result.failure_response,
+            failure_detail=result.failure_detail,
+        )
+        warning = _format_untracked_warning_block(
+            result,
+            classification,
+            aborting=True,
+        )
+
+        assert "Classification: invalid-or-revoked-key" in warning
+        assert "Classification: unknown" not in warning
+        assert "HTTP status: 401" in warning
+        assert f"Backend URL: {validate_url}" in warning
+        assert "Invalid API key" in warning
+
+    def test_key_validation_edge_blocked_warning_has_waf_remedy(self):
+        """Edge-blocked validation responses should get a WAF-specific remedy."""
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail=(
+                "API key validation failed: edge blocked "
+                "(HTTP 403 from POST https://backend.example.test/api/v1/keys/validate)"
+            ),
+            failure_response=SessionCreationFailureDetail(
+                status_code=403,
+                error_code="edge_blocked",
+                message="Cloudflare blocked the request",
+                raw_body="Error code: 1010 browser_signature_banned Cloudflare",
+                backend_url="https://backend.example.test/api/v1/keys/validate",
+            ),
+        )
+
+        classification = _classify_session_creation_failure(
+            result.failure_reason,
+            result.failure_response,
+            failure_detail=result.failure_detail,
+        )
+        warning = _format_untracked_warning_block(
+            result,
+            classification,
+            aborting=False,
+        )
+
+        assert "Classification: edge-blocked" in warning
+        assert "Classification: invalid-or-revoked-key" not in warning
+        assert "WAF" in warning
+        assert "User-Agent" in warning
+        assert "allowlist" in warning.lower()
+
+    @pytest.mark.parametrize(
+        ("raw_reason", "expected_classification"),
+        [
+            (
+                "API key validation failed: unauthorized",
+                "invalid-or-revoked-key",
+            ),
+            (
+                "API key validation failed: backend validation timed out",
+                "network",
+            ),
+        ],
+    )
+    def test_classifier_uses_key_validation_failure_detail_without_structured_body(
+        self, raw_reason: str, expected_classification: str
+    ):
+        """A bare key-validation reason must not collapse to unknown."""
+        classification = _classify_session_creation_failure(
+            SessionCreationFailureReason.AUTH,
+            None,
+            failure_detail=raw_reason,
+        )
+
+        assert classification.value == expected_classification
 
     def test_cloud_brain_session_create_400_warns_and_marks_local_fallback(
         self, traigent_config, objective_schema, mock_optimizer, caplog

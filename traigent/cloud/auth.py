@@ -16,6 +16,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -28,8 +29,10 @@ from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
+from traigent.cloud.session_types import SessionCreationFailureDetail
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
+from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 from traigent.utils.url_security import UnsafeUrlError
@@ -42,6 +45,72 @@ MAX_TOKEN_AGE = 86400  # Maximum token age in seconds (24 hours)
 MIN_TOKEN_LENGTH = 20  # Minimum acceptable token length
 API_KEY_TOKEN_TTL = 31536000  # 365 days
 SAFE_CREDENTIAL_METADATA_KEYS = {"mode", "auth_source", "expires_at", "scopes"}
+_VALIDATION_BODY_EXCERPT_CHARS = 200
+_TRAIGENT_KEY_PATTERN = re.compile(r"\b(?:uk|tg)_[A-Za-z0-9._-]{16,}\b")
+
+
+class _BackendKeyValidationFailure(str):
+    """String-compatible failure reason carrying structured backend detail."""
+
+    session_creation_failure: SessionCreationFailureDetail | None
+
+    def __new__(
+        cls,
+        reason: str,
+        *,
+        session_creation_failure: SessionCreationFailureDetail | None = None,
+    ) -> _BackendKeyValidationFailure:
+        obj = str.__new__(cls, reason)
+        obj.session_creation_failure = session_creation_failure
+        return obj
+
+
+def _redact_validation_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    redacted = redact_sensitive_data(value)
+    if not isinstance(redacted, str):
+        redacted = str(redacted)
+    return _TRAIGENT_KEY_PATTERN.sub("[REDACTED:api_key]", redacted)
+
+
+def _validation_body_excerpt(raw_body: str | None) -> str | None:
+    redacted = _redact_validation_text(raw_body)
+    if redacted is None:
+        return None
+    return redacted.replace("\r", "\\r").replace("\n", "\\n")[
+        :_VALIDATION_BODY_EXCERPT_CHARS
+    ]
+
+
+def _headers_to_lower_dict(headers: Any | None) -> dict[str, str]:
+    if not headers:
+        return {}
+    items = getattr(headers, "items", None)
+    if not callable(items):
+        return {}
+    return {str(key).lower(): str(value).lower() for key, value in items()}
+
+
+def _parse_validation_payload(data: Any | None, raw_body: str | None) -> dict[str, Any]:
+    if isinstance(data, dict):
+        return data
+    if raw_body:
+        try:
+            parsed = json.loads(raw_body)
+        except ValueError:  # silent-ok: raw body retained
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _payload_message(payload: dict[str, Any]) -> str | None:
+    for key in ("message", "error", "detail", "error_description"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return None
 
 
 def _build_api_key_auth_headers(api_key_value: str | None) -> dict[str, str]:
@@ -167,6 +236,7 @@ class AuthResult:
     error_message: str | None = None
     expires_in: int | None = None
     retry_after: float | None = None
+    session_creation_failure: SessionCreationFailureDetail | None = None
 
     def __bool__(self) -> bool:  # legacy convenience
         return self.success
@@ -932,10 +1002,13 @@ class AuthManager:
                 # Fail closed: never emit headers built from an unverified or
                 # backend-rejected API key. Doing so would defeat backend
                 # validation by allowing the SDK to send the raw key anyway.
-                raise InvalidCredentialsError(
+                exc = InvalidCredentialsError(
                     auth_result.error_message
                     or "Authentication failed; refusing to emit auth headers."
                 )
+                if auth_result.session_creation_failure is not None:
+                    exc.session_creation_failure = auth_result.session_creation_failure
+                raise exc
 
         if not self._credentials:
             self._authenticated = False
@@ -1143,6 +1216,11 @@ class AuthManager:
         # well-formatted string authenticate.
         validation_error = await self._validate_api_key_with_backend(api_key_value)
         if validation_error is not None:
+            session_creation_failure = getattr(
+                validation_error, "session_creation_failure", None
+            )
+            if not isinstance(session_creation_failure, SessionCreationFailureDetail):
+                session_creation_failure = None
             logger.warning(
                 "auth.api_key.validate_failed",
                 extra={
@@ -1154,6 +1232,7 @@ class AuthManager:
                 success=False,
                 status=AuthStatus.INVALID,
                 error_message=f"API key validation failed: {validation_error}",
+                session_creation_failure=session_creation_failure,
             )
 
         self._clear_secure_tokens()
@@ -1453,6 +1532,7 @@ class AuthManager:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": get_sdk_user_agent(),
             "X-API-Key": api_key,
         }
 
@@ -1486,6 +1566,11 @@ class AuthManager:
                     json=validation_payload,
                     allow_redirects=False,
                 ) as response:
+                    logger.debug(
+                        "auth.api_key.validate_response method=POST url=%s status=%s",
+                        url,
+                        response.status,
+                    )
                     if response.status == 200:
                         try:
                             data = await response.json(content_type=None)
@@ -1494,10 +1579,18 @@ class AuthManager:
                         return self._interpret_backend_key_validation_response(
                             response.status,
                             data,
+                            url=url,
                         )
+                    try:
+                        raw_body = await response.text()
+                    except Exception:
+                        raw_body = None
                     return self._interpret_backend_key_validation_response(
                         response.status,
                         None,
+                        raw_body=raw_body,
+                        headers=response.headers,
+                        url=url,
                     )
         except TimeoutError:
             return "backend validation timed out"
@@ -1513,16 +1606,88 @@ class AuthManager:
     def _interpret_backend_key_validation_response(
         status: int,
         data: Any | None,
+        *,
+        raw_body: str | None = None,
+        headers: Any | None = None,
+        url: str | None = None,
     ) -> str | None:
         if status == 200:
             if isinstance(data, dict) and data.get("valid") is True:
                 return None
-            return "backend reported key invalid"
-        if status in (401, 403):
-            return "unauthorized"
-        if status == 429:
-            return "rate limited"
-        return f"backend returned status {status}"
+            return _BackendKeyValidationFailure("backend reported key invalid")
+
+        payload = _parse_validation_payload(data, raw_body)
+        message = _payload_message(payload)
+        code = payload.get("error_code") or payload.get("code")
+        body_text = " ".join(
+            part for part in (str(code) if code else None, message, raw_body) if part
+        ).lower()
+        lower_headers = _headers_to_lower_dict(headers)
+        redacted_body = _redact_validation_text(raw_body)
+        detail = SessionCreationFailureDetail.from_http_response(
+            status,
+            redacted_body,
+            backend_url=url,
+        )
+
+        edge_blocked = status == 403 and (
+            "cf-ray" in lower_headers
+            or "cf-mitigated" in lower_headers
+            or lower_headers.get("server") == "cloudflare"
+            or any(
+                marker in body_text
+                for marker in (
+                    "cloudflare",
+                    "error code: 1010",
+                    "browser_signature_banned",
+                    "cf-ray",
+                    "cf-mitigated",
+                    "waf",
+                )
+            )
+        )
+
+        if edge_blocked:
+            category = "edge blocked"
+        elif "expired" in body_text or "expiration" in body_text:
+            category = "expired API key"
+        elif status == 403 or any(
+            marker in body_text
+            for marker in (
+                "insufficient",
+                "permission",
+                "forbidden",
+                "scope",
+            )
+        ):
+            category = "insufficient scope"
+        elif status == 401 or any(
+            marker in body_text
+            for marker in (
+                "invalid",
+                "revoked",
+                "unauthorized",
+                "rejected",
+                "authentication",
+            )
+        ):
+            category = "invalid API key"
+        elif status == 429:
+            category = "rate limited"
+        else:
+            category = "backend validation failed"
+
+        body_excerpt = _validation_body_excerpt(raw_body)
+        status_context = f"HTTP {status}"
+        if url:
+            status_context = f"{status_context} from POST {url}"
+        if body_excerpt:
+            status_context = f"{status_context}: {body_excerpt}"
+        reason = f"{category} ({status_context})"
+        return _BackendKeyValidationFailure(
+            reason,
+            session_creation_failure=detail,
+        )
 
     def _validate_api_key_with_backend_sync(
         self,
@@ -1559,13 +1724,28 @@ class AuthManager:
             return f"transport error: {exc.__class__.__name__}"
 
         status = int(response.status_code)
+        logger.debug(
+            "auth.api_key.validate_response method=POST url=%s status=%s",
+            url,
+            status,
+        )
         if status == 200:
             try:
                 data = response.json()
             except Exception:
                 return "backend returned non-JSON success body"
-            return self._interpret_backend_key_validation_response(status, data)
-        return self._interpret_backend_key_validation_response(status, None)
+            return self._interpret_backend_key_validation_response(
+                status,
+                data,
+                url=url,
+            )
+        return self._interpret_backend_key_validation_response(
+            status,
+            None,
+            raw_body=getattr(response, "text", None),
+            headers=getattr(response, "headers", None),
+            url=url,
+        )
 
     # Helper Methods
 

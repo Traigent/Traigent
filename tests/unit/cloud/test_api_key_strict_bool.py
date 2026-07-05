@@ -19,11 +19,17 @@ non-empty string ``"false"`` is truthy in Python. The fix tightens this to
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from traigent.cloud.auth import AuthManager
+from traigent.core.backend_session_manager import _classify_session_creation_failure
+from traigent.core.session_types import (
+    SessionCreationFailureClassification,
+    SessionCreationFailureReason,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -44,9 +50,18 @@ def _enable_backend_validation(monkeypatch):
 class _FakeResponse:
     """Minimal aiohttp response stub for the success-status path."""
 
-    def __init__(self, payload):
-        self.status = 200
+    def __init__(
+        self,
+        payload,
+        *,
+        status: int = 200,
+        raw_body: str | None = None,
+        headers: dict[str, str] | None = None,
+    ):
+        self.status = status
         self._payload = payload
+        self._raw_body = raw_body
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self
@@ -57,14 +72,29 @@ class _FakeResponse:
     async def json(self, content_type=None):  # noqa: ARG002
         return self._payload
 
+    async def text(self):
+        if self._raw_body is not None:
+            return self._raw_body
+        return json.dumps(self._payload)
+
 
 class _FakeSession:
     """Stub aiohttp.ClientSession returning a configurable JSON payload."""
 
     last_post_kwargs = None
 
-    def __init__(self, payload):
+    def __init__(
+        self,
+        payload,
+        *,
+        status: int = 200,
+        raw_body: str | None = None,
+        response_headers: dict[str, str] | None = None,
+    ):
         self._payload = payload
+        self._status = status
+        self._raw_body = raw_body
+        self._response_headers = response_headers
 
     async def __aenter__(self):
         return self
@@ -78,14 +108,32 @@ class _FakeSession:
             "headers": headers,
             **kwargs,
         }
-        return _FakeResponse(self._payload)
+        return _FakeResponse(
+            self._payload,
+            status=self._status,
+            raw_body=self._raw_body,
+            headers=self._response_headers,
+        )
 
 
-def _patch_aiohttp(payload):
+def _patch_aiohttp(
+    payload,
+    *,
+    status: int = 200,
+    raw_body: str | None = None,
+    response_headers: dict[str, str] | None = None,
+):
     """Patch the aiohttp surface used by ``_validate_api_key_with_backend``."""
     _FakeSession.last_post_kwargs = None
     fake_aiohttp = MagicMock()
-    fake_aiohttp.ClientSession = MagicMock(return_value=_FakeSession(payload))
+    fake_aiohttp.ClientSession = MagicMock(
+        return_value=_FakeSession(
+            payload,
+            status=status,
+            raw_body=raw_body,
+            response_headers=response_headers,
+        )
+    )
     fake_aiohttp.ClientTimeout = MagicMock()
     return patch("traigent.cloud.auth.aiohttp", fake_aiohttp)
 
@@ -93,9 +141,11 @@ def _patch_aiohttp(payload):
 class _RequestsResponse:
     """Minimal requests response stub for the no-aiohttp fallback path."""
 
-    def __init__(self, status: int, body: bytes):
+    def __init__(self, status: int, body: bytes, headers: dict[str, str] | None = None):
         self.status_code = status
         self._body = body
+        self.headers = headers or {}
+        self.text = body.decode("utf-8")
 
     def json(self):
         return json.loads(self._body.decode("utf-8"))
@@ -214,6 +264,152 @@ async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
     assert post.call_args.kwargs["json"] == {"api_key": api_key}
     assert post.call_args.kwargs["headers"]["Content-Type"] == "application/json"
     assert post.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected_fragment"),
+    [
+        (401, '{"error":"Invalid API key"}', "invalid API key"),
+        (403, '{"error":"Insufficient scope: experiment.write"}', "insufficient scope"),
+    ],
+)
+def test_backend_validation_http_auth_failures_keep_status_and_body(
+    status: int, body: str, expected_fragment: str
+):
+    """401 and 403 validation failures must stay distinct and keep diagnostics."""
+    reason = AuthManager._interpret_backend_key_validation_response(
+        status,
+        None,
+        raw_body=body,
+        url="https://backend.example.test/api/v1/keys/validate",
+    )
+
+    assert reason is not None
+    assert "unauthorized" != reason
+    assert f"HTTP {status}" in reason
+    assert "https://backend.example.test/api/v1/keys/validate" in reason
+    assert body in reason
+    assert expected_fragment.lower() in reason.lower()
+    assert len(body) <= 200
+
+
+def test_backend_validation_body_excerpt_is_capped():
+    """Non-200 validation reasons include at most a 200-char body excerpt."""
+    body = "x" * 250
+
+    reason = AuthManager._interpret_backend_key_validation_response(
+        401,
+        None,
+        raw_body=body,
+        url="https://backend.example.test/api/v1/keys/validate",
+    )
+
+    assert reason is not None
+    assert "x" * 200 in reason
+    assert "x" * 201 not in reason
+
+
+def test_cloudflare_1010_validation_failure_classifies_as_edge_blocked():
+    """Cloudflare/WAF markers must not be reported as a bad credential."""
+    reason = AuthManager._interpret_backend_key_validation_response(
+        403,
+        None,
+        raw_body="<html>Error code: 1010 browser_signature_banned Cloudflare</html>",
+        headers={"cf-ray": "abc123"},
+        url="https://backend.example.test/api/v1/keys/validate",
+    )
+
+    assert reason is not None
+    detail = reason.session_creation_failure
+    classification = _classify_session_creation_failure(
+        SessionCreationFailureReason.AUTH,
+        detail,
+        failure_detail=f"API key validation failed: {reason}",
+    )
+
+    assert classification == SessionCreationFailureClassification.EDGE_BLOCKED
+    assert "edge blocked" in reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected_classification"),
+    [
+        (
+            401,
+            '{"error":"API key expired"}',
+            SessionCreationFailureClassification.EXPIRED_KEY,
+        ),
+        (
+            403,
+            '{"error":"Missing required scope experiment.write"}',
+            SessionCreationFailureClassification.INSUFFICIENT_SCOPE,
+        ),
+        (
+            401,
+            '{"error":"Invalid API key"}',
+            SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY,
+        ),
+    ],
+)
+def test_backend_validation_failure_classes_map_to_banner_classification(
+    status: int,
+    body: str,
+    expected_classification: SessionCreationFailureClassification,
+):
+    reason = AuthManager._interpret_backend_key_validation_response(
+        status,
+        None,
+        raw_body=body,
+        url="https://backend.example.test/api/v1/keys/validate",
+    )
+
+    assert reason is not None
+    assert (
+        _classify_session_creation_failure(
+            SessionCreationFailureReason.AUTH,
+            reason.session_creation_failure,
+            failure_detail=f"API key validation failed: {reason}",
+        )
+        == expected_classification
+    )
+
+
+@pytest.mark.asyncio
+async def test_validate_uses_sdk_user_agent_and_debug_logs_without_key(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """TRAIGENT_LOG_LEVEL=DEBUG should expose method, URL, and status only."""
+    manager = _auth_manager_with_public_backend()
+    api_key = "tg_" + "x" * 61  # pragma: allowlist secret
+    url = "https://backend.example.test/api/v1/keys/validate"
+    monkeypatch.setenv("TRAIGENT_LOG_LEVEL", "DEBUG")
+
+    with (
+        _patch_aiohttp(
+            None,
+            status=401,
+            raw_body='{"error":"Invalid API key"}',
+        ),
+        caplog.at_level(logging.DEBUG, logger="traigent.cloud.auth"),
+    ):
+        reason = await manager._validate_api_key_with_backend(api_key)
+
+    assert reason is not None
+    assert _FakeSession.last_post_kwargs is not None
+    assert _FakeSession.last_post_kwargs["headers"]["User-Agent"].startswith(
+        "traigent-sdk/"
+    )
+
+    debug_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.DEBUG
+    ]
+    assert any(
+        "method=POST" in message and url in message and "status=401" in message
+        for message in debug_messages
+    )
+    assert all(api_key not in message for message in debug_messages)
 
 
 @pytest.mark.asyncio
