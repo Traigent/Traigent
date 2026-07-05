@@ -1566,11 +1566,7 @@ class OptimizationOrchestrator:
         self._logger_facade.attach(self._logger)
 
         self._logger_facade.log_session_start(
-            config=(
-                self.traigent_config.to_dict()
-                if hasattr(self.traigent_config, "to_dict")
-                else {}
-            ),
+            config=self._build_logger_run_config(),
             objectives=(
                 self.objective_schema
                 if self.objective_schema
@@ -1582,6 +1578,44 @@ class OptimizationOrchestrator:
                 "name": getattr(dataset, "name", "unknown"),
             },
         )
+
+    def _build_logger_run_config(self) -> dict[str, Any]:
+        resolved_algorithm = self.optimizer.__class__.__name__
+        requested_algorithm = self.config.get("requested_algorithm")
+        algorithm_config = getattr(self.optimizer, "algorithm_config", {}) or {}
+        traigent_config = (
+            self.traigent_config.to_dict()
+            if hasattr(self.traigent_config, "to_dict")
+            else {}
+        )
+
+        return {
+            "schema_version": "2",
+            "algorithm": requested_algorithm or resolved_algorithm,
+            "requested_algorithm": requested_algorithm,
+            "resolved_algorithm": resolved_algorithm,
+            "max_trials": self.max_trials,
+            "max_total_examples": self._max_total_examples,
+            "configuration_space": getattr(self.optimizer, "config_space", {}) or {},
+            "objectives": list(getattr(self.optimizer, "objectives", []) or []),
+            "parallel_trials": self.parallel_trials,
+            "timeout": self.timeout,
+            "budget": {
+                "cost_limit": self.config.get("cost_limit"),
+                "metric_limit": self.config.get("metric_limit"),
+                "metric_name": self.config.get("metric_name"),
+                "max_total_examples": self._max_total_examples,
+                "samples_include_pruned": self.samples_include_pruned,
+            },
+            "execution": {
+                "mode": self.traigent_config.execution_mode,
+                "result_source": getattr(self.traigent_config, "result_source", None),
+                "no_egress": getattr(self.traigent_config, "no_egress", None),
+                "privacy_enabled": self.traigent_config.privacy_enabled,
+            },
+            "optimizer_config": dict(algorithm_config),
+            "traigent_config": traigent_config,
+        }
 
     async def _handle_trial_result(
         self,

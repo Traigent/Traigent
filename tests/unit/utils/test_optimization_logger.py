@@ -191,9 +191,20 @@ class TestLooksLikeSecret:
         assert _looks_like_secret(pem) is True
 
     def test_long_token_like(self) -> None:
-        # >=32 chars, no spaces, has digits
-        token = "a" * 30 + "12"  # 32 chars total
+        token = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_=-XYZ"
         assert _looks_like_secret(token) is True
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "0434" + ("a" * 56) + "df42",
+            "414f40c1-3c3f-4c98-8129-a400273fa66c",
+            "2026-07-05T12:34:56.123456+00:00",
+            "enhanced_spider_lite_text2sql_experiment_run_v2",
+        ],
+    )
+    def test_structural_values_do_not_look_like_secrets(self, value: str) -> None:
+        assert _looks_like_secret(value) is False
 
     def test_normal_text(self) -> None:
         assert _looks_like_secret("Hello world") is False
@@ -257,6 +268,34 @@ class TestSanitizeForLogging:
             "sk-abc123def456ghi789"
         )  # pragma: allowlist secret
         assert "***" in result or "..." in result
+
+    def test_structural_run_metadata_survives_while_secret_is_masked(self) -> None:
+        sha256 = "0434" + ("a" * 56) + "df42"
+        session_id = "414f40c1-3c3f-4c98-8129-a400273fa66c"
+        timestamp = "2026-07-05T12:34:56.123456+00:00"
+        experiment_name = "enhanced_spider_lite_text2sql_experiment_run_v2"
+        api_key = (
+            "sk-test1234567890abcdefghijklmnopqrstuvwxyz"  # pragma: allowlist secret
+        )
+        payload = {
+            "manifest": {
+                "session_id": session_id,
+                "created_at": timestamp,
+                "files": [{"path": "meta/session_v2.json", "sha256": sha256}],
+            },
+            "run_id": "20260705_123456_414f40c1",
+            "experiment_name": experiment_name,
+            "api_key": api_key,
+        }
+
+        result = sanitize_for_logging(payload)
+
+        assert result["manifest"]["session_id"] == session_id
+        assert result["manifest"]["created_at"] == timestamp
+        assert result["manifest"]["files"][0]["sha256"] == sha256
+        assert result["experiment_name"] == experiment_name
+        assert result["run_id"] == "20260705_123456_414f40c1"
+        assert result["api_key"] != api_key
 
     def test_string_normal(self) -> None:
         assert sanitize_for_logging("hello") == "hello"

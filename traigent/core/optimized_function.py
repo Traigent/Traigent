@@ -1968,6 +1968,7 @@ class OptimizedFunction(Generic[_P, _R]):
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
         artifact_fingerprint_payload: dict[str, dict[str, Any]],
+        requested_algorithm: str | None,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -1983,6 +1984,7 @@ class OptimizedFunction(Generic[_P, _R]):
             safety_constraints=getattr(self, "safety_constraints", None),
             warm_start_from=getattr(self, "warm_start_from", None),
         )
+        orchestrator_kwargs["requested_algorithm"] = requested_algorithm
 
         # Auto-initialize workflow traces tracker if backend is configured
         workflow_traces_tracker = create_workflow_traces_tracker(traigent_config)
@@ -2736,6 +2738,7 @@ Remediation:
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
             artifact_fingerprint_payload=artifact_fingerprint_payload,
+            requested_algorithm=algorithm,
         )
 
         # Phase 9: Run optimization and finalize
