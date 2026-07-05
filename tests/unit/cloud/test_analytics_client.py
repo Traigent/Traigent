@@ -449,7 +449,7 @@ class TestWave2SingleRunAnalytics:
                     "kind": "weak_examples",
                     "count": 2,
                     "impact": "quality_risk",
-                    "safe_example_refs": ["exref_abc123"],
+                    "safe_example_refs": ["exref_abcdef0123456789"],
                     "recommendation": "Review weak examples before promotion.",
                 }
             ],
@@ -684,6 +684,163 @@ class TestWave2SingleRunAnalytics:
 
         with pytest.raises(AnalyticsClientError, match="at most 100"):
             await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_conforming_summary_and_cohorts_pass_unchanged(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        """A conforming payload's summary/cohort values pass through unchanged."""
+        client = _make_client()
+        _mock_get_response(client, example_insights_payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        assert result["summary"] == example_insights_payload["summary"]
+        assert result["cohorts"] == example_insights_payload["cohorts"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("dataset_quality", ["low", "medium", "high"])
+    async def test_get_example_insights_accepts_all_dataset_quality_enum_values(
+        self,
+        example_insights_payload: dict[str, object],
+        dataset_quality: str,
+    ) -> None:
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        summary = payload["summary"]
+        assert isinstance(summary, dict)
+        payload["summary"] = {**summary, "dataset_quality": dataset_quality}
+        _mock_get_response(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        assert result["summary"]["dataset_quality"] == dataset_quality
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_raw_dataset_quality_value(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        """A backend regression emitting a raw value in dataset_quality must fail closed."""
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        summary = payload["summary"]
+        assert isinstance(summary, dict)
+        payload["summary"] = {
+            **summary,
+            "dataset_quality": "raw prompt text leaked from backend",
+        }
+        _mock_get_response(client, payload)
+
+        with pytest.raises(AnalyticsClientError, match=r"summary\.dataset_quality"):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_missing_dataset_quality(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        summary = payload["summary"]
+        assert isinstance(summary, dict)
+        payload["summary"] = {
+            key: value for key, value in summary.items() if key != "dataset_quality"
+        }
+        _mock_get_response(client, payload)
+
+        with pytest.raises(AnalyticsClientError, match=r"summary\.dataset_quality"):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_non_exref_cohort_safe_example_refs(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        """A backend regression placing raw content in safe_example_refs must fail closed."""
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        cohorts = payload["cohorts"]
+        assert isinstance(cohorts, list)
+        assert isinstance(cohorts[0], dict)
+        payload["cohorts"] = [
+            {**cohorts[0], "safe_example_refs": ["please summarize this raw prompt"]}
+        ]
+        _mock_get_response(client, payload)
+
+        with pytest.raises(
+            AnalyticsClientError, match=r"cohorts\[0\]\.safe_example_refs"
+        ):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_non_list_cohort_safe_example_refs(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        """A nested object/scalar in place of the refs list must fail closed."""
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        cohorts = payload["cohorts"]
+        assert isinstance(cohorts, list)
+        assert isinstance(cohorts[0], dict)
+        payload["cohorts"] = [{**cohorts[0], "safe_example_refs": {"nested": "object"}}]
+        _mock_get_response(client, payload)
+
+        with pytest.raises(
+            AnalyticsClientError,
+            match=r"cohorts\[0\]\.safe_example_refs must be a list",
+        ):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_too_many_cohort_safe_example_refs(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        cohorts = payload["cohorts"]
+        assert isinstance(cohorts, list)
+        assert isinstance(cohorts[0], dict)
+        payload["cohorts"] = [
+            {
+                **cohorts[0],
+                "safe_example_refs": [f"exref_{index:016x}" for index in range(51)],
+            }
+        ]
+        _mock_get_response(client, payload)
+
+        with pytest.raises(AnalyticsClientError, match="at most 50 refs"):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_allows_cohort_without_safe_example_refs(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        """safe_example_refs is optional per cohort; its absence is not a violation."""
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        cohorts = payload["cohorts"]
+        assert isinstance(cohorts, list)
+        assert isinstance(cohorts[0], dict)
+        payload["cohorts"] = [
+            {
+                key: value
+                for key, value in cohorts[0].items()
+                if key != "safe_example_refs"
+            }
+        ]
+        _mock_get_response(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        assert "safe_example_refs" not in result["cohorts"][0]
 
     @pytest.mark.asyncio
     async def test_get_example_insights_drops_unknown_top_level_keys(
