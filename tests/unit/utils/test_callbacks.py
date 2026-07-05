@@ -1722,6 +1722,17 @@ class TestCallbackManagerTimeoutAndIsolation:
         callback.__class__.__name__ = "MockCallback"
         return callback
 
+    @staticmethod
+    def _wait_for_failure_count(
+        manager: CallbackManager, expected_count: int, timeout: float = 1.0
+    ) -> None:
+        """Wait for background callback failure accounting."""
+        deadline = time.monotonic() + timeout
+        while len(manager.callback_failures) < expected_count:
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+
     def test_timeout_parameter_initialization(self) -> None:
         """Test CallbackManager accepts timeout parameter."""
         manager = CallbackManager(timeout=10.0)
@@ -1780,6 +1791,176 @@ class TestCallbackManagerTimeoutAndIsolation:
         assert failure.method == "on_trial_start"
         assert failure.error_type == "exception"
         assert "Test exception" in failure.error_message
+
+    def test_baseexception_is_recorded_and_callbacks_continue(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test panic-like BaseException failures are contained and recorded."""
+
+        class PanicLike(BaseException):
+            """Fake pyo3 PanicException-like failure."""
+
+        class PanicCallback(OptimizationCallback):
+            def on_optimization_start(
+                self,
+                config_space: dict[str, Any],
+                objectives: list[str],
+                algorithm: str,
+            ) -> None:
+                return None
+
+            def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+                raise PanicLike("dictionary changed size during iteration")
+
+            def on_trial_complete(
+                self, trial: TrialResult, progress: ProgressInfo
+            ) -> None:
+                return None
+
+            def on_optimization_complete(self, result: OptimizationResult) -> None:
+                return None
+
+        class SuccessCallback(OptimizationCallback):
+            def __init__(self) -> None:
+                self.trial_start_calls: list[tuple[int, dict[str, Any]]] = []
+
+            def on_optimization_start(
+                self,
+                config_space: dict[str, Any],
+                objectives: list[str],
+                algorithm: str,
+            ) -> None:
+                return None
+
+            def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+                self.trial_start_calls.append((trial_number, config))
+
+            def on_trial_complete(
+                self, trial: TrialResult, progress: ProgressInfo
+            ) -> None:
+                return None
+
+            def on_optimization_complete(self, result: OptimizationResult) -> None:
+                return None
+
+        failing_callback = PanicCallback()
+        success_callback = SuccessCallback()
+
+        manager = CallbackManager(
+            callbacks=[failing_callback, success_callback], timeout=0
+        )
+        caplog.set_level(logging.WARNING)
+
+        manager.on_trial_start(0, {"model": "gpt-4"})
+
+        assert success_callback.trial_start_calls == [(0, {"model": "gpt-4"})]
+        assert len(manager.callback_failures) == 1
+        failure = manager.callback_failures[0]
+        assert failure.callback_name == "PanicCallback"
+        assert failure.method == "on_trial_start"
+        assert failure.error_type == "exception"
+        assert "dictionary changed size during iteration" in failure.error_message
+        assert any(
+            "PanicCallback.on_trial_start failed" in r.message for r in caplog.records
+        )
+
+    def test_baseexception_after_timeout_is_recorded(
+        self, mock_callback: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test abandoned callback futures surface later BaseException failures."""
+
+        class PanicLike(BaseException):
+            """Fake pyo3 PanicException-like failure."""
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def panic_after_timeout(*args: Any, **kwargs: Any) -> None:
+            started.set()
+            release.wait(timeout=1.0)
+            raise PanicLike("dictionary changed size during iteration")
+
+        mock_callback.on_trial_start.side_effect = panic_after_timeout
+        manager = CallbackManager(callbacks=[mock_callback], timeout=0.05)
+        caplog.set_level(logging.WARNING)
+
+        manager.on_trial_start(0, {"model": "gpt-4"})
+
+        assert started.wait(timeout=0.2)
+        assert len(manager.callback_failures) == 1
+        assert manager.callback_failures[0].error_type == "timeout"
+
+        release.set()
+        self._wait_for_failure_count(manager, 2)
+
+        assert len(manager.callback_failures) == 2
+        assert any(
+            failure.error_type == "exception"
+            and "dictionary changed size during iteration" in failure.error_message
+            for failure in manager.callback_failures
+        )
+        assert any(
+            "MockCallback.on_trial_start failed" in r.message for r in caplog.records
+        )
+
+    def test_timeout_callback_receives_snapshot_of_mutable_trial_state(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test callback workers receive copied trial/progress payloads."""
+        started = threading.Event()
+        release = threading.Event()
+        completed = threading.Event()
+        observed: dict[str, Any] = {}
+
+        def inspect_after_timeout(trial: TrialResult, progress: ProgressInfo) -> None:
+            started.set()
+            release.wait(timeout=1.0)
+            observed["trial_config_model"] = trial.config["model"]
+            observed["metadata_value"] = trial.metadata["state"]["value"]
+            observed["best_config_model"] = progress.best_config["model"]
+            completed.set()
+
+        mock_callback.on_trial_complete.side_effect = inspect_after_timeout
+        manager = CallbackManager(callbacks=[mock_callback], timeout=0.05)
+
+        trial = TrialResult(
+            trial_id="trial_1",
+            config={"model": "gpt-4"},
+            metrics={"accuracy": 0.85},
+            status=TrialStatus.COMPLETED,
+            duration=10.0,
+            timestamp=datetime.now(UTC),
+            metadata={"state": {"value": "original"}},
+        )
+        progress = ProgressInfo(
+            current_trial=1,
+            total_trials=10,
+            completed_trials=1,
+            successful_trials=1,
+            failed_trials=0,
+            best_score=0.85,
+            best_config={"model": "gpt-4"},
+            elapsed_time=10.0,
+            estimated_remaining=90.0,
+            current_algorithm="grid",
+        )
+
+        manager.on_trial_complete(trial, progress)
+        assert started.wait(timeout=0.2)
+
+        trial.config["model"] = "gpt-4o"
+        trial.metadata["state"]["value"] = "mutated"
+        assert progress.best_config is not None
+        progress.best_config["model"] = "gpt-4o"
+
+        release.set()
+        assert completed.wait(timeout=1.0)
+
+        assert observed == {
+            "trial_config_model": "gpt-4",
+            "metadata_value": "original",
+            "best_config_model": "gpt-4",
+        }
 
     def test_slow_callback_times_out(
         self, mock_callback: MagicMock, caplog: pytest.LogCaptureFixture
