@@ -14,21 +14,16 @@ from traigent.integrations.utils import Framework
 logger = logging.getLogger(__name__)
 
 # Pattern that validates Anthropic model names.
-# Matches legacy numeric IDs plus current family-first IDs such as
+# Matches legacy numeric IDs plus current Claude 4 family-first IDs such as
 # claude-sonnet-4-6 and claude-opus-4-8.
 ANTHROPIC_MODEL_PATTERN = (
     r"^claude-(?:[0-9](?:[-.][a-z0-9]+)*|instant-[0-9](?:\.[0-9]+)?|"
-    r"(?:opus|sonnet|haiku|fable|mythos)(?:-[a-z0-9]+)+)$"
+    r"(?:opus|sonnet|haiku)-4(?:-[a-z0-9]+)+)$"
 )
 
 # Known Anthropic models (shipped snapshot: 2026-07-05).
 # Keep this in sync with traigent/config/models.yaml.
 KNOWN_ANTHROPIC_MODELS = [
-    # Claude 5 family
-    "claude-fable-5",
-    "claude-sonnet-5",
-    "claude-mythos-5",
-    "claude-mythos-preview",
     # Claude 4 family
     "claude-opus-4-8",
     "claude-opus-4-7",
@@ -66,7 +61,7 @@ class AnthropicDiscovery(ModelDiscovery):
     This implementation relies on:
     1. Config file (user can update with new models)
     2. Hardcoded shipped snapshot
-    3. Pattern-based validation for recognized Claude ID families
+    3. Pattern-based validation for the current Claude 4 ID shape
     """
 
     PROVIDER = "anthropic"
@@ -112,7 +107,7 @@ class AnthropicDiscovery(ModelDiscovery):
     def get_pattern(self) -> str | None:
         """Get pattern for Anthropic models.
 
-        Pattern matches Claude numeric and family-first model IDs.
+        Pattern matches Claude numeric and current Claude 4 family-first model IDs.
         This is permissive to allow new Claude releases without SDK updates.
         """
         # Try config first

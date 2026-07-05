@@ -70,11 +70,6 @@ anthropic:
   support_level: validated
   known_models:
     # Shipped snapshot: 2026-07-05
-    # Claude 5 family
-    - claude-fable-5
-    - claude-sonnet-5
-    - claude-mythos-5
-    - claude-mythos-preview
     # Claude 4 family
     - claude-opus-4-8
     - claude-opus-4-7
@@ -103,7 +98,7 @@ anthropic:
     # Claude Instant (legacy)
     - claude-instant-1.2
     - claude-instant-1.1
-  pattern: "^claude-(?:[0-9](?:[-.][a-z0-9]+)*|instant-[0-9](?:\\.[0-9]+)?|(?:opus|sonnet|haiku|fable|mythos)(?:-[a-z0-9]+)+)$"
+  pattern: "^claude-(?:[0-9](?:[-.][a-z0-9]+)*|instant-[0-9](?:\\.[0-9]+)?|(?:opus|sonnet|haiku)-4(?:-[a-z0-9]+)+)$"
 
 gemini:
   # Canonical provider name is "google"; this registry keys it under "gemini".
