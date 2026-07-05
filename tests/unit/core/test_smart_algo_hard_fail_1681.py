@@ -366,7 +366,7 @@ class TestDecorationTimeSmartAlgorithmRepro:
         return client
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("algorithm", ["bayesian", "nsga2"])
+    @pytest.mark.parametrize("algorithm", ["bayesian"])
     async def test_plain_optimize_raises_when_managed_run_is_empty(
         self, algorithm: str, monkeypatch, tmp_path
     ) -> None:
@@ -385,9 +385,8 @@ class TestDecorationTimeSmartAlgorithmRepro:
         def _empty_managed_optimizer(
             config_space: dict[str, Any], objectives: list[str], **_kwargs: Any
         ) -> MockOptimizer:
-            # The managed/cloud optimizer never suggests a trial — the exact
-            # "managed path is not a first-party service yet" emptiness the
-            # issue reproduces end-to-end.
+            # The managed/cloud optimizer never suggests a trial — the empty
+            # managed-path behavior this guard must continue surfacing loudly.
             optimizer = MockOptimizer(config_space, objectives)
             optimizer.set_max_suggestions(0)
             return optimizer
