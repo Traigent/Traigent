@@ -9,6 +9,8 @@ import types
 from click.testing import CliRunner
 
 from traigent.cli.main import cli
+from traigent.integrations.model_discovery.anthropic_discovery import AnthropicDiscovery
+from traigent.integrations.model_discovery.cache import ModelCache
 
 
 class FakeDiscovery:
@@ -113,6 +115,39 @@ def test_models_command_rejects_unknown_direct_provider_model(
     payload = json.loads(result.output)
     assert payload["model"] == "dead-model"
     assert payload["valid"] is False
+
+
+def test_models_command_check_accepts_current_anthropic_family_first_id(
+    monkeypatch,
+) -> None:
+    discovery = AnthropicDiscovery(cache=ModelCache(enable_file_cache=False))
+
+    def fake_get_model_discovery(provider: str) -> AnthropicDiscovery:
+        assert provider == "anthropic"
+        return discovery
+
+    monkeypatch.setattr(
+        "traigent.integrations.model_discovery.get_model_discovery",
+        fake_get_model_discovery,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "models",
+            "--provider",
+            "anthropic",
+            "--check",
+            "claude-sonnet-4-6",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["model"] == "claude-sonnet-4-6"
+    assert payload["valid"] is True
 
 
 def test_models_command_validates_bedrock_model_without_invoke(

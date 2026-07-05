@@ -69,7 +69,25 @@ openai:
 anthropic:
   support_level: validated
   known_models:
-    # Claude 3.5 family
+    # Shipped snapshot: 2026-07-05
+    # Claude 5 family
+    - claude-fable-5
+    - claude-sonnet-5
+    - claude-mythos-5
+    - claude-mythos-preview
+    # Claude 4 family
+    - claude-opus-4-8
+    - claude-opus-4-7
+    - claude-opus-4-6
+    - claude-opus-4-5-20251101
+    - claude-opus-4-1-20250805
+    - claude-opus-4-20250514
+    - claude-sonnet-4-6
+    - claude-sonnet-4-5-20250929
+    - claude-sonnet-4-20250514
+    - claude-haiku-4-5-20251001
+    # Claude 3.7/3.5 family
+    - claude-3-7-sonnet-20250219
     - claude-3-5-sonnet-20241022
     - claude-3-5-sonnet-latest
     - claude-3-5-haiku-20241022
@@ -85,7 +103,7 @@ anthropic:
     # Claude Instant (legacy)
     - claude-instant-1.2
     - claude-instant-1.1
-  pattern: "^claude-[0-9]"
+  pattern: "^claude-(?:[0-9](?:[-.][a-z0-9]+)*|instant-[0-9](?:\\.[0-9]+)?|(?:opus|sonnet|haiku|fable|mythos)(?:-[a-z0-9]+)+)$"
 
 gemini:
   # Canonical provider name is "google"; this registry keys it under "gemini".

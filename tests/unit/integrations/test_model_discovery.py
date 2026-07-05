@@ -286,6 +286,10 @@ class TestAnthropicDiscovery:
         discovery = AnthropicDiscovery()
 
         valid_models = [
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
             "claude-3-opus-20240229",
             "claude-3-5-sonnet-20241022",
             "claude-2.1",
@@ -294,6 +298,19 @@ class TestAnthropicDiscovery:
 
         for model in valid_models:
             assert discovery.is_valid_model(model), f"Model {model} should be valid"
+
+    def test_pattern_validation_invalid_models(self) -> None:
+        """Invalid Anthropic-like model names should fail pattern validation."""
+        discovery = AnthropicDiscovery()
+
+        invalid_models = [
+            "not-claude-sonnet-4-6",
+            "claude-unknown-4-6",
+            "claude-",
+        ]
+
+        for model in invalid_models:
+            assert not discovery.is_valid_model(model), f"Model {model} should fail"
 
     def test_known_models_included(self) -> None:
         """Known models should be included in list."""
