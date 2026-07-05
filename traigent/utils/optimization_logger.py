@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import sys
 import tempfile
 import threading
@@ -51,20 +52,51 @@ _SENSITIVE_KEYWORDS = {
     "jwt_token",
 }
 _SECRET_VALUE_PREFIXES = (
-    "sk-",
-    "rk-",
+    "ak_",
+    "ghp_",
+    "github_pat_",
     "pk-",
     "pk_",
+    "sk-",
     "sk_",
+    "tk_",
+    "traigent_",
+    "uk_",
+    "xai-",
+    "rk-",
     "rk_",
     "token-",
     "token_",
     "bearer ",
 )
+_BARE_SECRET_VALUE_PREFIX_RE = re.compile(
+    r"^(?:(?:akia|asia)[a-z0-9]{16,}|aiza[a-z0-9_-]{16,})$",
+    re.IGNORECASE,
+)
 _SECRET_VALUE_SUBSTRINGS = (
     "-----BEGIN",
     "PRIVATE KEY",
 )
+_SAFE_LOGGING_KEYS = {
+    "checksum",
+    "checksums",
+    "created_at",
+    "end_time",
+    "experiment_name",
+    "file_sha256",
+    "manifest",
+    "manifest_sha256",
+    "modified_at",
+    "run_id",
+    "run_name",
+    "session_id",
+    "sha256",
+    "start_time",
+    "timestamp",
+    "updated_at",
+}
+_HEX_DIGEST_RE = re.compile(r"^[0-9a-fA-F]{32,128}$")
+_TOKENISH_VALUE_RE = re.compile(r"^[A-Za-z0-9_.+/=-]{40,}$")
 
 
 def _mask_string(value: str) -> str:
@@ -93,11 +125,57 @@ def _is_sensitive_key(key: str) -> bool:
     return False
 
 
-def _looks_like_secret(value: str) -> bool:
+def _is_safe_logging_key(key: str) -> bool:
+    normalized = _normalize_key_name(key)
+    if normalized in _SAFE_LOGGING_KEYS:
+        return True
+    return normalized.endswith(
+        (
+            "_checksum",
+            "_checksums",
+            "_hash",
+            "_id",
+            "_name",
+            "_sha256",
+            "_time",
+            "_timestamp",
+        )
+    )
+
+
+def _is_iso_datetime(value: str) -> bool:
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return any(separator in value for separator in ("T", " "))
+
+
+def _has_secret_value_prefix(value: str) -> bool:
     lowered = value.lower()
-    if any(
-        lowered.startswith(prefix.strip().lower()) for prefix in _SECRET_VALUE_PREFIXES
-    ):
+    return any(lowered.startswith(prefix) for prefix in _SECRET_VALUE_PREFIXES) or bool(
+        _BARE_SECRET_VALUE_PREFIX_RE.fullmatch(value)
+    )
+
+
+def _has_secret_token_shape(value: str) -> bool:
+    if not _TOKENISH_VALUE_RE.fullmatch(value):
+        return False
+    if not any(ch.isupper() for ch in value):
+        return False
+    classes = sum(
+        (
+            any(ch.islower() for ch in value),
+            any(ch.isupper() for ch in value),
+            any(ch.isdigit() for ch in value),
+            any(ch in "_.+/=-" for ch in value),
+        )
+    )
+    return classes >= 3 and len(set(value)) >= 12
+
+
+def _looks_like_secret(value: str, *, key_hint: str | None = None) -> bool:
+    if _has_secret_value_prefix(value):
         return True
     if value.startswith("eyJ") and value.count(".") == 2:
         # Likely a JWT
@@ -105,8 +183,11 @@ def _looks_like_secret(value: str) -> bool:
     for marker in _SECRET_VALUE_SUBSTRINGS:
         if marker in value:
             return True
-    if len(value) >= 32 and " " not in value and any(ch.isdigit() for ch in value):
-        # Long token-like string
+    if _HEX_DIGEST_RE.fullmatch(value):
+        return not (key_hint is not None and _is_safe_logging_key(key_hint))
+    if _is_iso_datetime(value):
+        return False
+    if _has_secret_token_shape(value):
         return True
     return False
 
@@ -161,8 +242,10 @@ def sanitize_for_logging(
     if isinstance(value, str):
         if key_hint and _is_sensitive_key(key_hint):
             return _mask_string(value)
-        if _looks_like_secret(value):
+        if _looks_like_secret(value, key_hint=key_hint):
             return _mask_string(value)
+        if key_hint and _is_safe_logging_key(key_hint):
+            return value
         return value
 
     if isinstance(value, (int, float, bool)) or value is None:
