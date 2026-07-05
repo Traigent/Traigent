@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import copy
 import sys
 import threading
 import time
@@ -76,6 +77,15 @@ def _safe_print(*args: Any, **kwargs: Any) -> None:
 
 
 CallbackInvocationKey = tuple[int, str]
+
+
+def _snapshot_callback_arg(arg: Any) -> Any:
+    """Return an isolated callback argument when it can be copied safely."""
+    try:
+        return copy.deepcopy(arg)
+    except Exception as exc:
+        logger.debug("Could not snapshot callback argument %r: %s", type(arg), exc)
+        return arg
 
 
 def _shutdown_callback_executor(
@@ -779,6 +789,48 @@ class CallbackManager:
             if current_future is future:
                 self._running_callbacks.pop(key, None)
 
+    def _record_callback_exception(
+        self,
+        callback_name: str,
+        method_name: str,
+        exc: BaseException,
+    ) -> None:
+        """Record and log a callback exception, including BaseException panics."""
+        error_message = str(exc) or exc.__class__.__name__
+        self._record_failure(callback_name, method_name, "exception", error_message)
+        logger.warning(
+            f"Callback {callback_name}.{method_name} failed: {error_message} "
+            "- continuing optimization",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+    def _run_callback_safe(
+        self,
+        callback_name: str,
+        method_name: str,
+        method_func: Callable[..., Any],
+        *args: Any,
+    ) -> None:
+        """Run a callback method and contain all callback-originated failures."""
+        try:
+            method_func(*args)
+        except BaseException as exc:  # noqa: B036 - pyo3 panics bypass Exception.
+            self._record_callback_exception(callback_name, method_name, exc)
+
+    def _consume_callback_future(
+        self,
+        callback_name: str,
+        method_name: str,
+        future: concurrent.futures.Future[Any],
+    ) -> None:
+        """Consume a callback future so executor-captured failures are observable."""
+        try:
+            future.result()
+        except concurrent.futures.CancelledError:
+            return
+        except BaseException as exc:  # noqa: B036 - future may hold a pyo3 panic.
+            self._record_callback_exception(callback_name, method_name, exc)
+
     def _submit_callback(
         self,
         callback_name: str,
@@ -805,17 +857,29 @@ class CallbackManager:
 
             # Start callbacks in a fresh context so pooled worker threads do not
             # retain or inherit caller-specific contextvars across invocations.
-            future = executor.submit(contextvars.Context().run, method_func, *args)
+            future = executor.submit(
+                contextvars.Context().run,
+                self._run_callback_safe,
+                callback_name,
+                method_name,
+                method_func,
+                *args,
+            )
             self._running_callbacks[key] = future
 
         self_ref = weakref.ref(self)
 
-        def _cleanup(done_future: concurrent.futures.Future[Any]) -> None:
+        def _on_done(done_future: concurrent.futures.Future[Any]) -> None:
             manager = self_ref()
             if manager is not None:
-                manager._clear_running_callback(key, done_future)
+                try:
+                    manager._consume_callback_future(
+                        callback_name, method_name, done_future
+                    )
+                finally:
+                    manager._clear_running_callback(key, done_future)
 
-        future.add_done_callback(_cleanup)
+        future.add_done_callback(_on_done)
         return future
 
     def _invoke_callback_safe(
@@ -842,15 +906,10 @@ class CallbackManager:
 
         # If timeout is disabled, invoke directly with exception handling only
         if not self.timeout or self.timeout <= 0:
-            try:
-                method_func(*args)
-            except Exception as e:
-                self._record_failure(callback_name, method_name, "exception", str(e))
-                logger.warning(
-                    f"Callback {callback_name}.{method_name} failed: {e} "
-                    "- continuing optimization"
-                )
+            self._run_callback_safe(callback_name, method_name, method_func, *args)
             return
+
+        callback_args = tuple(_snapshot_callback_arg(arg) for arg in args)
 
         # Use a shared ThreadPoolExecutor for timeout protection to avoid
         # creating a new thread pool per callback invocation.
@@ -859,7 +918,7 @@ class CallbackManager:
             callback,
             method_name,
             method_func,
-            *args,
+            *callback_args,
         )
         if future is None:
             return
@@ -879,12 +938,8 @@ class CallbackManager:
             )
             # Cancel if possible (may not stop already-running threads)
             future.cancel()
-        except Exception as e:
-            self._record_failure(callback_name, method_name, "exception", str(e))
-            logger.warning(
-                f"Callback {callback_name}.{method_name} failed: {e} "
-                "- continuing optimization"
-            )
+        except BaseException as exc:  # noqa: B036 - future may hold a pyo3 panic.
+            self._record_callback_exception(callback_name, method_name, exc)
 
     def _record_failure(
         self, callback_name: str, method: str, error_type: str, error_message: str
