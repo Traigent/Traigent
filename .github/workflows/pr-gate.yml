@@ -88,7 +88,14 @@ jobs:
       - name: Install ruff
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          # Pin to the exact version declared in pyproject.toml's `dev` extra
+          # (issue #1550) — installing unpinned `ruff` here let upstream
+          # releases retroactively fail preflight on pre-existing lint debt
+          # in unrelated PRs (e.g. PR #1540). pyproject.toml is the single
+          # source of truth; bump the pin there, not here.
+          ruff_version="$(python scripts/ci/get_ruff_pin.py)"
+          echo "Pinning preflight ruff to ${ruff_version} (from pyproject.toml)"
+          pip install "ruff==${ruff_version}"
       - name: Run changed-file Ruff checks
         shell: bash
         run: |
