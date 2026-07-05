@@ -249,17 +249,37 @@ def _format_model_id_list(model_ids: Sequence[str]) -> str:
     return ", ".join(f"`{model_id}`" for model_id in model_ids)
 
 
-def _format_unpriced_model_warning(model_ids: Sequence[str]) -> str:
+def _format_unpriced_model_warning(
+    model_ids: Sequence[str], occurrences: Mapping[str, int] | None = None
+) -> str:
     formatted = _format_model_id_list(model_ids)
+    # When occurrence counts are available (the runtime path, #1597), make the
+    # warning quantitative and explicit that $0 means UNKNOWN spend — not
+    # verified-free — so a reported total_cost is understood as a lower bound.
+    total_calls = sum(occurrences.get(m, 0) for m in model_ids) if occurrences else 0
+    call_note = (
+        f" across {total_calls} call{'s' if total_calls != 1 else ''}"
+        if total_calls
+        else ""
+    )
+    unknown_spend_note = (
+        " These are recorded as $0 because pricing is UNKNOWN, not because "
+        "usage was free — any reported total_cost is a lower bound on actual "
+        "spend."
+        if total_calls
+        else ""
+    )
     if len(model_ids) == 1:
         return (
-            f"Cost for {formatted} is unavailable — results will report $0 "
-            "for it. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
+            f"Cost for {formatted} is unavailable{call_note} — results will "
+            f"report $0 for it.{unknown_spend_note} Set "
+            "TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
             "Traigent to add coverage."
         )
     return (
-        f"Costs for {formatted} are unavailable — results will report $0 "
-        "for them. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
+        f"Costs for {formatted} are unavailable{call_note} — results will "
+        f"report $0 for them.{unknown_spend_note} Set "
+        "TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
         "Traigent to add coverage."
     )
 
@@ -2099,22 +2119,33 @@ class OptimizedFunction(Generic[_P, _R]):
         mid-run via ``cost_from_tokens(strict=True)``.
         """
         try:
-            from traigent.utils.cost_calculator import get_unpriced_runtime_models
+            from traigent.utils.cost_calculator import (
+                get_unpriced_runtime_models,
+                get_unpriced_runtime_occurrences,
+            )
 
             unpriced = get_unpriced_runtime_models()
+            occurrences = get_unpriced_runtime_occurrences()
         except Exception:  # pragma: no cover - defensive; never break a run
             return
 
         if not unpriced:
             return
 
-        message = _format_unpriced_model_warning(unpriced)
+        message = _format_unpriced_model_warning(unpriced, occurrences)
         if message not in result.warnings:
             result.warnings.append(message)
         if "UNPRICED_MODEL_RUNTIME" not in result.warning_codes:
             result.warning_codes.append("UNPRICED_MODEL_RUNTIME")
         if isinstance(result.metadata, dict):
             result.metadata.setdefault("unpriced_models_runtime", list(unpriced))
+            # Quantified detail (#1597): how many calls per model recorded $0
+            # because pricing was UNKNOWN, not because usage was free — so any
+            # consumer of result.total_cost knows it is a lower bound, not
+            # verified spend, whenever this is non-empty.
+            result.metadata.setdefault(
+                "unpriced_models_runtime_call_counts", dict(occurrences)
+            )
 
         warnings.warn(message, UserWarning, stacklevel=2)
         logger.warning(
