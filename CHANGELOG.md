@@ -6,6 +6,40 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-07-06
+
+Patch release for the managed optimization dispatch fix wave and adjacent
+SDK honesty/hardening fixes shipped on develop after 0.20.0.
+
+### Changed
+- Named smart optimization for managed-backend users now binds supported
+  algorithm names (`bayesian`, `tpe`, `optuna`, `optuna_tpe`, and
+  `optuna_random`) to the typed backend Optuna strategy and serializes
+  `optimization_strategy` on session creation. Unsupported smart names such
+  as `nsga2` and `cmaes` now fail before backend session creation with a
+  capability message instead of creating an orphaned session or returning a
+  misleading zero-trial result. (#1758, #1752)
+
+### Fixed
+- Dict-input evaluation now warns when metadata-only parameters are defaulted
+  instead of silently accepting the defaulted shape. (#1756, #1746)
+- Local run-log persistence preserves trial/configuration fidelity and keeps
+  orchestrator builder compatibility. (#1757, #1747, #1748)
+- CLI algorithm/model surfaces now match public behavior and remove unsourced
+  Claude model guesses. (#1759, #1751)
+- Callback failures derived from `BaseException` are contained without
+  breaking optimization control flow. (#1760, #1749)
+- Objective reporting now honestly records unmatched objective metrics instead
+  of implying a measurement exists. (#1761, #1691)
+- API-key validation failures are classified as auth/permission failures rather
+  than generic backend/network errors. (#1762, #1754)
+- Prior unreleased develop fixes since 0.20.0: public onboarding skills repo
+  selection (#1737, #1623), early-stop decorator propagation (#1739, #1692),
+  unpriceable OpenRouter cost handling (#1740, #1597), redaction fail-open
+  tightening (#1742, #1649, #1650), exact ruff pin extraction in preflight
+  (#1743, #1550), analytics insight value validation (#1744, #1662), and
+  companion error message threading (#1745, #1885).
+
 ## [0.20.0] - 2026-07-05
 
 Fail-closed hardening release. A systematic silent-failure audit of the
