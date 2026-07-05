@@ -1,7 +1,7 @@
 """Anthropic model discovery implementation.
 
-Anthropic SDK does not expose a models.list() API, so this uses
-hardcoded known models with pattern-based fallback.
+This uses a shipped model snapshot with pattern-based fallback so newly
+released Claude IDs are not rejected before the snapshot is refreshed.
 """
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
@@ -13,14 +13,30 @@ from traigent.integrations.utils import Framework
 
 logger = logging.getLogger(__name__)
 
-# Pattern that validates Anthropic model names
-# Matches: claude-3-opus-*, claude-3-5-sonnet-*, claude-2.1, etc.
-ANTHROPIC_MODEL_PATTERN = r"^claude-[0-9]"
+# Pattern that validates Anthropic model names.
+# Matches legacy numeric IDs plus current Claude 4 family-first IDs such as
+# claude-sonnet-4-6 and claude-opus-4-8.
+ANTHROPIC_MODEL_PATTERN = (
+    r"^claude-(?:[0-9](?:[-.][a-z0-9]+)*|instant-[0-9](?:\.[0-9]+)?|"
+    r"(?:opus|sonnet|haiku)-4(?:-[a-z0-9]+)+)$"
+)
 
-# Known Anthropic models (updated as of Dec 2024)
-# Since Anthropic doesn't have a models.list() API, we maintain this list
+# Known Anthropic models (shipped snapshot: 2026-07-05).
+# Keep this in sync with traigent/config/models.yaml.
 KNOWN_ANTHROPIC_MODELS = [
-    # Claude 3.5 family
+    # Claude 4 family
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-opus-4-5-20251101",
+    "claude-opus-4-1-20250805",
+    "claude-opus-4-20250514",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929",
+    "claude-sonnet-4-20250514",
+    "claude-haiku-4-5-20251001",
+    # Claude 3.7/3.5 family
+    "claude-3-7-sonnet-20250219",
     "claude-3-5-sonnet-20241022",
     "claude-3-5-sonnet-latest",
     "claude-3-5-haiku-20241022",
@@ -42,33 +58,30 @@ KNOWN_ANTHROPIC_MODELS = [
 class AnthropicDiscovery(ModelDiscovery):
     """Model discovery for Anthropic.
 
-    Since Anthropic doesn't provide a models.list() SDK method,
-    this implementation relies on:
+    This implementation relies on:
     1. Config file (user can update with new models)
-    2. Hardcoded known models
-    3. Pattern-based validation (accepts any claude-* model)
+    2. Hardcoded shipped snapshot
+    3. Pattern-based validation for the current Claude 4 ID shape
     """
 
     PROVIDER = "anthropic"
     FRAMEWORK = Framework.ANTHROPIC
 
     def _fetch_models_from_sdk(self) -> list[str]:
-        """Anthropic SDK doesn't support listing models.
+        """Live Anthropic model listing is not wired into this discovery path.
 
         Returns:
-            Empty list (SDK discovery not available).
+            Empty list (fall back to config and shipped snapshot).
         """
-        # Anthropic doesn't have a public models.list() API
-        # Return empty to fall back to config/hardcoded list
-        logger.debug("Anthropic SDK doesn't support model listing")
+        logger.debug("Anthropic live model listing is not wired; using snapshot")
         return []
 
     def list_models(self, force_refresh: bool = False) -> list[str]:
         """List available Anthropic models.
 
-        Since SDK discovery isn't available, this combines:
+        Since live SDK discovery is not wired here, this combines:
         1. Config file models
-        2. Hardcoded known models
+        2. Hardcoded shipped snapshot
 
         Args:
             force_refresh: Ignored for Anthropic (no SDK to refresh from).
@@ -94,8 +107,8 @@ class AnthropicDiscovery(ModelDiscovery):
     def get_pattern(self) -> str | None:
         """Get pattern for Anthropic models.
 
-        Pattern matches: claude-[0-9]*
-        This is permissive to allow new model versions without SDK updates.
+        Pattern matches Claude numeric and current Claude 4 family-first model IDs.
+        This is permissive to allow new Claude releases without SDK updates.
         """
         # Try config first
         config_pattern = self._get_pattern_from_config()
