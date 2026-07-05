@@ -52,15 +52,26 @@ _SENSITIVE_KEYWORDS = {
     "jwt_token",
 }
 _SECRET_VALUE_PREFIXES = (
-    "sk-",
-    "rk-",
+    "ak_",
+    "ghp_",
+    "github_pat_",
     "pk-",
     "pk_",
+    "sk-",
     "sk_",
+    "tk_",
+    "traigent_",
+    "uk_",
+    "xai-",
+    "rk-",
     "rk_",
     "token-",
     "token_",
     "bearer ",
+)
+_BARE_SECRET_VALUE_PREFIX_RE = re.compile(
+    r"^(?:(?:akia|asia)[a-z0-9]{16,}|aiza[a-z0-9_-]{16,})$",
+    re.IGNORECASE,
 )
 _SECRET_VALUE_SUBSTRINGS = (
     "-----BEGIN",
@@ -140,6 +151,13 @@ def _is_iso_datetime(value: str) -> bool:
     return any(separator in value for separator in ("T", " "))
 
 
+def _has_secret_value_prefix(value: str) -> bool:
+    lowered = value.lower()
+    return any(lowered.startswith(prefix) for prefix in _SECRET_VALUE_PREFIXES) or bool(
+        _BARE_SECRET_VALUE_PREFIX_RE.fullmatch(value)
+    )
+
+
 def _has_secret_token_shape(value: str) -> bool:
     if not _TOKENISH_VALUE_RE.fullmatch(value):
         return False
@@ -156,11 +174,8 @@ def _has_secret_token_shape(value: str) -> bool:
     return classes >= 3 and len(set(value)) >= 12
 
 
-def _looks_like_secret(value: str) -> bool:
-    lowered = value.lower()
-    if any(
-        lowered.startswith(prefix.strip().lower()) for prefix in _SECRET_VALUE_PREFIXES
-    ):
+def _looks_like_secret(value: str, *, key_hint: str | None = None) -> bool:
+    if _has_secret_value_prefix(value):
         return True
     if value.startswith("eyJ") and value.count(".") == 2:
         # Likely a JWT
@@ -168,7 +183,9 @@ def _looks_like_secret(value: str) -> bool:
     for marker in _SECRET_VALUE_SUBSTRINGS:
         if marker in value:
             return True
-    if _HEX_DIGEST_RE.fullmatch(value) or _is_iso_datetime(value):
+    if _HEX_DIGEST_RE.fullmatch(value):
+        return not (key_hint is not None and _is_safe_logging_key(key_hint))
+    if _is_iso_datetime(value):
         return False
     if _has_secret_token_shape(value):
         return True
@@ -225,10 +242,10 @@ def sanitize_for_logging(
     if isinstance(value, str):
         if key_hint and _is_sensitive_key(key_hint):
             return _mask_string(value)
+        if _looks_like_secret(value, key_hint=key_hint):
+            return _mask_string(value)
         if key_hint and _is_safe_logging_key(key_hint):
             return value
-        if _looks_like_secret(value):
-            return _mask_string(value)
         return value
 
     if isinstance(value, (int, float, bool)) or value is None:

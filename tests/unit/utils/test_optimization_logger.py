@@ -174,6 +174,10 @@ class TestLooksLikeSecret:
         "value",
         [
             "sk-abc123def456ghi789",  # pragma: allowlist secret
+            "GHP_1a2b3c4d5e6f7g8h9i0j",  # pragma: allowlist secret
+            "xai-1a2b3c4d5e6f7g8h9i0j",  # pragma: allowlist secret
+            "akia" + ("1a2b" * 4),  # pragma: allowlist secret
+            "aiza" + ("1a2b" * 4),  # pragma: allowlist secret
             "bearer eyJtoken",
             "token-abc123def456",
         ],
@@ -197,14 +201,21 @@ class TestLooksLikeSecret:
     @pytest.mark.parametrize(
         "value",
         [
-            "0434" + ("a" * 56) + "df42",
             "414f40c1-3c3f-4c98-8129-a400273fa66c",
             "2026-07-05T12:34:56.123456+00:00",
             "enhanced_spider_lite_text2sql_experiment_run_v2",
+            "asia_pacific_text2sql_experiment_run_v2",
         ],
     )
     def test_structural_values_do_not_look_like_secrets(self, value: str) -> None:
         assert _looks_like_secret(value) is False
+
+    def test_hex_digest_requires_safe_key_hint(self) -> None:
+        digest = "0434" + ("a" * 56) + "df42"
+
+        assert _looks_like_secret(digest) is True
+        assert _looks_like_secret(digest, key_hint="payload") is True
+        assert _looks_like_secret(digest, key_hint="manifest_sha256") is False
 
     def test_normal_text(self) -> None:
         assert _looks_like_secret("Hello world") is False
@@ -296,6 +307,32 @@ class TestSanitizeForLogging:
         assert result["experiment_name"] == experiment_name
         assert result["run_id"] == "20260705_123456_414f40c1"
         assert result["api_key"] != api_key
+
+    def test_unknown_key_lowercase_hex_secret_is_masked(self) -> None:
+        secret = "0434" + ("a" * 56) + "df42"
+        result = sanitize_for_logging({"opaque_value": secret})
+
+        assert result["opaque_value"] == _mask_string(secret)
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "ghp_" + ("1a2b" * 12),  # pragma: allowlist secret
+            "sk-" + ("1a2b" * 12),  # pragma: allowlist secret
+        ],
+    )
+    def test_lowercase_provider_token_under_non_sensitive_key_is_masked(
+        self, token: str
+    ) -> None:
+        result = sanitize_for_logging({"opaque_value": token})
+
+        assert result["opaque_value"] == _mask_string(token)
+
+    def test_manifest_sha256_survives_by_safe_key(self) -> None:
+        digest = "0434" + ("a" * 56) + "df42"
+        result = sanitize_for_logging({"manifest_sha256": digest})
+
+        assert result["manifest_sha256"] == digest
 
     def test_string_normal(self) -> None:
         assert sanitize_for_logging("hello") == "hello"

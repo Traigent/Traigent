@@ -2170,6 +2170,7 @@ class OptimizedFunction(Generic[_P, _R]):
         samples_include_pruned_value: bool,
         callbacks: list[Callable[..., Any]] | None,
         save_to: str | None,
+        requested_algorithm: str | None = None,
     ) -> OptimizationResult | None:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
@@ -2258,6 +2259,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 samples_include_pruned_value=samples_include_pruned_value,
                 algorithm_kwargs=algorithm_kwargs,
                 artifact_fingerprint_payload=artifact_fingerprint_payload,
+                requested_algorithm=requested_algorithm,
             )
             orchestrator._cloud_guidance_client = cloud_client
             return await self._run_and_finalize_optimization(
@@ -2679,6 +2681,7 @@ Remediation:
             samples_include_pruned_value,
             callbacks,
             save_to,
+            requested_algorithm=algorithm,
         )
         if cloud_result is not None:
             return cloud_result
