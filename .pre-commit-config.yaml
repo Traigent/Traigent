@@ -21,8 +21,10 @@ repos:
         files: ^traigent/
 
   # Python linting
+  # Keep this rev in sync with the `ruff==` pin in pyproject.toml's `dev`
+  # extra (issue #1550) so the local hook and the CI preflight gate agree.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.12
     hooks:
       - id: ruff
         args: [--fix]
