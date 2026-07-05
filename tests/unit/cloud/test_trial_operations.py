@@ -1127,6 +1127,75 @@ class TestMeasuresUpdateFailureVisibility:
         assert "measures_update_degraded" not in result_data["metadata"]
 
 
+class TestConfigRunStatusErrorMessageForwarding:
+    """Traigent#1885 (companion to TraigentBackend#2002): a failed/pruned
+    trial's error_message must reach _update_config_run_status instead of
+    being dropped on the status-only PUT."""
+
+    @pytest.mark.asyncio
+    async def test_failure_path_forwards_error_message(self) -> None:
+        """result_data carrying a sanitized error_message (set upstream in
+        submit_trial_result_via_session when the caller supplied one) must
+        be passed through to _update_config_run_status."""
+        mock_client = Mock()
+        mock_client._update_config_run_status = AsyncMock(return_value=True)
+        mock_client._update_config_run_measures = AsyncMock(return_value=True)
+
+        ops = TrialOperations(mock_client)
+
+        mock_response = AsyncMock()
+        mock_response.json = AsyncMock(return_value={"continue_optimization": True})
+
+        result_data: dict = {
+            "metadata": {},
+            "error_message": "evaluator raised ValueError",
+        }
+
+        result = await ops._handle_trial_success_response(
+            response=mock_response,
+            session_id="session_123",
+            trial_id="trial_001",
+            backend_status="FAILED",
+            result_data=result_data,
+            clean_metrics={},
+        )
+
+        assert result is True
+        mock_client._update_config_run_status.assert_awaited_once_with(
+            "trial_001", "FAILED", error_message="evaluator raised ValueError"
+        )
+
+    @pytest.mark.asyncio
+    async def test_success_path_forwards_no_error_message(self) -> None:
+        """A successful trial has no error_message in result_data, so
+        _update_config_run_status must be called with None — no wire
+        regression for the happy path."""
+        mock_client = Mock()
+        mock_client._update_config_run_status = AsyncMock(return_value=True)
+        mock_client._update_config_run_measures = AsyncMock(return_value=True)
+
+        ops = TrialOperations(mock_client)
+
+        mock_response = AsyncMock()
+        mock_response.json = AsyncMock(return_value={"continue_optimization": True})
+
+        result_data: dict = {"metadata": {}}
+
+        result = await ops._handle_trial_success_response(
+            response=mock_response,
+            session_id="session_123",
+            trial_id="trial_001",
+            backend_status="COMPLETED",
+            result_data=result_data,
+            clean_metrics={"accuracy": 0.9},
+        )
+
+        assert result is True
+        mock_client._update_config_run_status.assert_awaited_once_with(
+            "trial_001", "COMPLETED", error_message=None
+        )
+
+
 def _mk_slot_client():
     """Backend client stub configured for request_trial_slot HTTP mocking."""
     mock_client = Mock()
