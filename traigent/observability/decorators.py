@@ -17,7 +17,7 @@ from traigent.config.context import (
 )
 from traigent.observability.client import ObservabilityClient
 from traigent.observability.dtos import ObservationType, to_jsonable, utc_now
-from traigent.security.redaction import is_sensitive_key_name
+from traigent.security.redaction import is_credential_key_name
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -50,8 +50,14 @@ def _redacted_input_payload() -> dict[str, bool]:
 
 
 def _is_sensitive_key(key: str) -> bool:
-    """Delegates to the canonical `traigent.security.redaction` keyword set."""
-    return is_sensitive_key_name(key)
+    """Delegates to the canonical `traigent.security.redaction` credential set.
+
+    Deliberately credential-only: this sanitizer also processes tuned
+    configuration values (`traigent_active_config` / optimization context),
+    where a key literally named "prompt" is a variant label the portal must
+    display, not free-form content.
+    """
+    return is_credential_key_name(key)
 
 
 def _coerce_mapping_payload(value: Any) -> dict[str, Any] | None:

@@ -248,32 +248,68 @@ def test_build_payload_happy_path_has_no_fallback_marker() -> None:
     assert "is_fallback" not in payload["fingerprint_meta"]
 
 
-def test_build_payload_non_strict_marks_fallback_on_unexpected_error(
+def test_build_payload_non_strict_marks_fallback_and_keeps_other_stages(
     monkeypatch,
 ) -> None:
     """Regression for issue #1650: unlike its sibling
     `traigent.core.best_config_runtime` (which fail-opens through an
     explicit, commented `strict` parameter), `build_artifact_fingerprints`
-    used to swallow an unexpected assembly error and return a fully
-    synthetic all-None payload with no way to tell it apart from a
-    legitimate empty result. It must now mark the degraded payload."""
+    used to swallow an unexpected error with no marker on the degraded
+    payload. It must now mark it `is_fallback` — AND each stage must degrade
+    independently: one failing stage must not blank the other three real
+    fingerprints (per-stage granularity, reviewer-required)."""
+
+    def sample_agent(prompt: str) -> str:
+        return prompt
 
     def _boom(*_args, **_kwargs):
-        raise RuntimeError("unexpected assembly failure")
+        raise RuntimeError("unexpected stage failure")
 
     monkeypatch.setattr(af, "compute_config_space_fingerprint", _boom)
 
     payload = af.build_artifact_fingerprints(
         dataset=[_example({"question": "a"}, "answer-a")],
+        func=sample_agent,
         configuration_space={"temperature": [0.1]},
     )
 
-    assert payload["artifact_fingerprints"] == {
-        "dataset": None,
-        "agent": None,
-        "evaluator": None,
-        "config_space": None,
-    }
+    fingerprints = payload["artifact_fingerprints"]
+    # Only the failing stage degrades...
+    assert fingerprints["config_space"] is None
+    # ...the other three keep their real fp1 values.
+    assert af.FP_WIRE_RE.fullmatch(fingerprints["dataset"])
+    assert af.FP_WIRE_RE.fullmatch(fingerprints["agent"])
+    assert af.FP_WIRE_RE.fullmatch(fingerprints["evaluator"])
+    assert payload["fingerprint_meta"]["dataset_example_count"] == 1
+    assert payload["fingerprint_meta"]["source_available"] is True
+    # ...and the degraded payload is explicitly marked.
+    assert payload["fingerprint_meta"]["is_fallback"] is True
+
+
+def test_build_payload_each_stage_degrades_independently(monkeypatch) -> None:
+    """Per-stage granularity in the other direction: a dataset-stage failure
+    must not blank agent/evaluator/config_space."""
+
+    def sample_agent(prompt: str) -> str:
+        return prompt
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("unexpected stage failure")
+
+    monkeypatch.setattr(af, "_compute_dataset_fingerprint_and_count", _boom)
+
+    payload = af.build_artifact_fingerprints(
+        dataset=[_example({"question": "a"}, "answer-a")],
+        func=sample_agent,
+        configuration_space={"temperature": [0.1]},
+    )
+
+    fingerprints = payload["artifact_fingerprints"]
+    assert fingerprints["dataset"] is None
+    assert payload["fingerprint_meta"]["dataset_example_count"] == 0
+    assert af.FP_WIRE_RE.fullmatch(fingerprints["agent"])
+    assert af.FP_WIRE_RE.fullmatch(fingerprints["evaluator"])
+    assert af.FP_WIRE_RE.fullmatch(fingerprints["config_space"])
     assert payload["fingerprint_meta"]["is_fallback"] is True
 
 

@@ -15,7 +15,7 @@ from traigent.integrations.observability.workflow_traces import (
     SpanStatus,
     SpanType,
 )
-from traigent.security.redaction import is_sensitive_key_name
+from traigent.security.redaction import is_content_key_name, is_credential_key_name
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -87,8 +87,13 @@ def _normalize_span_type(span_type: str) -> str:
 
 
 def _is_sensitive_metadata_key(key: str) -> bool:
-    """Delegates to the canonical `traigent.security.redaction` keyword set."""
-    return is_sensitive_key_name(key)
+    """Delegates to the canonical `traigent.security.redaction` keyword sets.
+
+    Agent-span metadata is numeric-only, so this path applies both the
+    credential set (shared by all sanitizers) and the content-marker set
+    (this module's pre-unification scope: drop anything content-shaped).
+    """
+    return is_credential_key_name(key) or is_content_key_name(key)
 
 
 def _sanitize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, float | int]:

@@ -20,15 +20,27 @@ _COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}$")
 
 # Canonical, single source of truth for key-*name*-based redaction.
 #
-# This is the union of three keyword lists that were previously maintained
-# independently and had drifted out of sync (traigent.cloud.dataset_converter,
+# Three sanitizers previously maintained independent keyword lists that had
+# drifted out of sync (traigent.cloud.dataset_converter,
 # traigent.observability.decorators, traigent.observability.agent_spans): a
 # key redacted by one path could pass through unredacted on another. All
-# three now call `is_sensitive_key_name` below. Extend this set - do not
-# fork a local copy - when a new sensitive key pattern is identified.
-SENSITIVE_KEY_FRAGMENTS: frozenset[str] = frozenset(
+# three now consume the sets below. Extend these sets - do not fork a local
+# copy - when a new sensitive key pattern is identified.
+#
+# Two DISTINCT tiers, deliberately not merged into one flat set:
+#
+# - CREDENTIAL_KEY_FRAGMENTS: key names that denote secrets/credentials
+#   (api_key, auth_token, ...). Safe to apply on EVERY sanitizer path — a
+#   value stored under such a key is never legitimate telemetry.
+# - CONTENT_KEY_FRAGMENTS: key names that denote free-form content fields
+#   (prompt, response, output, ...). Only for call sites that must never
+#   carry content-shaped fields at all (e.g. agent_spans, which additionally
+#   restricts values to numerics). They must NOT be applied to
+#   tuned-configuration surfaces: config spaces routinely tune a variable
+#   literally named "prompt" (a variant label, not content), and redacting
+#   it would blank legitimate portal/trace display of the chosen config.
+CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
     {
-        # Credential / secret fragments
         "api_key",
         "apikey",
         "auth",  # also matches "authorization"
@@ -39,7 +51,11 @@ SENSITIVE_KEY_FRAGMENTS: frozenset[str] = frozenset(
         "private_key",
         "secret",
         "token",
-        # Free-form content fragments (may carry prompt/response text)
+    }
+)
+
+CONTENT_KEY_FRAGMENTS: frozenset[str] = frozenset(
+    {
         "actual",
         "completion",
         "expected",
@@ -50,16 +66,29 @@ SENSITIVE_KEY_FRAGMENTS: frozenset[str] = frozenset(
 )
 
 
-def is_sensitive_key_name(key: str) -> bool:
-    """Return True when a metadata/config key name looks sensitive.
+def _normalize_key_name(key: str) -> str:
+    return key.strip().lower().replace("-", "_").replace(".", "_")
 
-    "Sensitive" covers both credential-like key names (e.g. `api_key`,
-    `auth_token`) and free-form content fields (e.g. `prompt`, `response`)
-    that may carry PII or secrets. This is the canonical check backing all
-    SDK sanitizers that redact-by-key-name; see `SENSITIVE_KEY_FRAGMENTS`.
+
+def is_credential_key_name(key: str) -> bool:
+    """Return True when a key name looks credential/secret-like.
+
+    Canonical check backing ALL SDK sanitizers that redact-by-key-name;
+    see `CREDENTIAL_KEY_FRAGMENTS`.
     """
-    normalized = key.strip().lower().replace("-", "_").replace(".", "_")
-    return any(fragment in normalized for fragment in SENSITIVE_KEY_FRAGMENTS)
+    normalized = _normalize_key_name(key)
+    return any(fragment in normalized for fragment in CREDENTIAL_KEY_FRAGMENTS)
+
+
+def is_content_key_name(key: str) -> bool:
+    """Return True when a key name looks like a free-form content field.
+
+    Only for sanitizer paths that must drop content-shaped fields entirely
+    (see `CONTENT_KEY_FRAGMENTS` above for why this must not be applied to
+    tuned-configuration metadata).
+    """
+    normalized = _normalize_key_name(key)
+    return any(fragment in normalized for fragment in CONTENT_KEY_FRAGMENTS)
 
 
 def _passes_luhn(digits: str) -> bool:

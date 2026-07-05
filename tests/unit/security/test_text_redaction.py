@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from traigent.security.redaction import (
-    SENSITIVE_KEY_FRAGMENTS,
-    is_sensitive_key_name,
+    CONTENT_KEY_FRAGMENTS,
+    CREDENTIAL_KEY_FRAGMENTS,
+    is_content_key_name,
+    is_credential_key_name,
     redact_sensitive_data,
     redact_sensitive_text,
 )
@@ -66,10 +68,16 @@ class TestOtherPatternsStillWork:
         )
 
 
-class TestCanonicalSensitiveKeyName:
-    """`is_sensitive_key_name` is the single source of truth consumed by the
-    three formerly-divergent SDK sanitizers (dataset_converter, observability
-    decorators, agent_spans). See issue #1649."""
+class TestCanonicalKeyNameSets:
+    """The two canonical key-name sets consumed by the three
+    formerly-divergent SDK sanitizers (dataset_converter, observability
+    decorators, agent_spans). See issue #1649.
+
+    Deliberately two tiers: the credential set applies on every sanitizer
+    path; the content-marker set only where content-shaped fields must be
+    dropped entirely (agent_spans) — NOT on tuned-config surfaces, where a
+    key literally named "prompt" is a variant label the portal must show.
+    """
 
     @pytest.mark.parametrize(
         "key",
@@ -82,24 +90,37 @@ class TestCanonicalSensitiveKeyName:
             "credential",
             "private_key",
             "apikey",
-            # Union member from traigent.observability.agent_spans' old list
-            "prompt",
-            "response",
-            "actual_output",
-            "expected",
-            "completion",
+            "auth_header",
+            "password",
+            "secret",
+            "token",
         ],
     )
-    def test_union_member_flagged_sensitive(self, key: str) -> None:
-        assert is_sensitive_key_name(key) is True
+    def test_credential_union_member_flagged(self, key: str) -> None:
+        assert is_credential_key_name(key) is True
+
+    @pytest.mark.parametrize(
+        "key",
+        ["prompt", "response", "actual_output", "expected", "completion", "output"],
+    )
+    def test_content_marker_flagged_as_content_not_credential(self, key: str) -> None:
+        assert is_content_key_name(key) is True
+        # Content markers must NOT be treated as credentials — tuned config
+        # variables are routinely named "prompt"/"response_format" etc.
+        assert is_credential_key_name(key) is False
 
     def test_ordinary_key_not_flagged(self) -> None:
-        assert is_sensitive_key_name("model_name") is False
-        assert is_sensitive_key_name("safe_score") is False
+        assert is_credential_key_name("model_name") is False
+        assert is_content_key_name("model_name") is False
+        assert is_credential_key_name("safe_score") is False
+        assert is_content_key_name("safe_score") is False
 
-    def test_fragment_set_is_frozen_and_nonempty(self) -> None:
-        assert isinstance(SENSITIVE_KEY_FRAGMENTS, frozenset)
-        assert SENSITIVE_KEY_FRAGMENTS
+    def test_fragment_sets_are_frozen_nonempty_and_disjoint(self) -> None:
+        assert isinstance(CREDENTIAL_KEY_FRAGMENTS, frozenset)
+        assert isinstance(CONTENT_KEY_FRAGMENTS, frozenset)
+        assert CREDENTIAL_KEY_FRAGMENTS
+        assert CONTENT_KEY_FRAGMENTS
+        assert not (CREDENTIAL_KEY_FRAGMENTS & CONTENT_KEY_FRAGMENTS)
 
 
 class TestNestedRedaction:
