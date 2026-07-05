@@ -1289,6 +1289,82 @@ class BaseEvaluator(ABC):
 
         return True
 
+    def _warn_context_mode_metadata_defaulted_params(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        *,
+        force_expand_input_mapping: bool = False,
+    ) -> None:
+        """Warn when metadata/top-level fields will not bind defaulted params."""
+        injection_mode = getattr(func, "_traigent_injection_mode", "context")
+        if getattr(injection_mode, "value", injection_mode) != "context":
+            return
+
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            return
+
+        defaulted_params = [
+            param
+            for param in signature.parameters.values()
+            if param.default is not inspect.Parameter.empty
+            and param.kind
+            in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        ]
+        if not defaulted_params:
+            return
+
+        expanded_examples = [
+            example
+            for example in dataset.examples
+            if isinstance(example.input_data, CollectionsMapping)
+            and (
+                force_expand_input_mapping
+                or self._should_expand_input_mapping(func, example.input_data)
+            )
+        ]
+        if not expanded_examples:
+            return
+
+        input_keys = {
+            key for example in expanded_examples for key in example.input_data.keys()
+        }
+
+        import warnings
+
+        for param in defaulted_params:
+            if param.name in input_keys:
+                continue
+
+            metadata_count = sum(
+                1
+                for example in expanded_examples
+                if example.metadata and param.name in example.metadata
+            )
+            if metadata_count <= 0:
+                continue
+
+            default_repr = repr(param.default)
+            if len(default_repr) > 120:
+                default_repr = f"{default_repr[:117]}..."
+            message = (
+                f"Evaluation dataset field '{param.name}' is present as a "
+                f"metadata/top-level row field in {metadata_count} example(s), "
+                f"but function parameter '{param.name}' is absent from every "
+                "input_data mapping used for context-mode dict expansion. The "
+                f"function will use its signature default {default_repr} for "
+                f"'{param.name}'. Move '{param.name}' inside the row's 'input' "
+                "object to bind it to the function; keep a top-level copy only "
+                "when metric functions need metadata."
+            )
+            warnings.warn(message, UserWarning, stacklevel=3)
+            logger.warning("%s", message)
+
     def _compute_success_rate(
         self,
         outputs: list[Any],
@@ -3389,6 +3465,10 @@ class SimpleScoringEvaluator(BaseEvaluator):
         """
         logger.info(
             f"Starting simple scoring evaluation with {len(dataset.examples)} examples, config: {config}"
+        )
+
+        self._warn_context_mode_metadata_defaulted_params(
+            func, dataset, force_expand_input_mapping=True
         )
 
         start_time = time.time()
