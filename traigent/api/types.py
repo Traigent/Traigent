@@ -727,6 +727,11 @@ class OptimizationResult:
     # Stop reason - why the optimization stopped (see class docstring for values)
     stop_reason: StopReason | None = None
 
+    # Selection reason for no-winner or fail-closed terminal results. This is
+    # distinct from stop_reason: stop_reason explains why execution stopped,
+    # while reason_code explains why result selection did not produce a winner.
+    reason_code: str | None = None
+
     # Run identification and cloud link
     experiment_id: str | None = None
     cloud_url: str | None = None
@@ -781,6 +786,8 @@ class OptimizationResult:
     @property
     def success_rate(self) -> float:
         """Calculate trial success rate."""
+        if "OBJECTIVE_UNMATCHED" in self.warning_codes:
+            return 0.0
         if not self.trials:
             return 0.0
         return len(self.successful_trials) / len(self.trials)

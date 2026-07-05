@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.agent_inference import (
@@ -95,6 +96,7 @@ from traigent.core.parallel_execution_manager import (
 )
 from traigent.core.progress_manager import ProgressManager
 from traigent.core.result_selection import (
+    NO_RANKING_ELIGIBLE_TRIALS,
     TieBreaker,
     _primary_scores_tied,
     _secondary_metric_key,
@@ -155,6 +157,54 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
         "error",
     }
 )
+_OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
+
+
+def _successful_trial_metric_names(trials: Sequence[TrialResult]) -> list[str]:
+    metric_names: set[str] = set()
+    for trial in trials:
+        if not trial.is_successful:
+            continue
+        metrics = trial.metrics or {}
+        metric_names.update(str(name) for name in metrics)
+    return sorted(metric_names)
+
+
+def _objective_metric_never_measured(
+    trials: Sequence[TrialResult],
+    objective: str,
+) -> bool:
+    saw_any_metric = False
+    for trial in trials:
+        if not trial.is_successful:
+            continue
+        metrics = trial.metrics or {}
+        if metrics:
+            saw_any_metric = True
+        if objective in metrics:
+            return False
+    return saw_any_metric
+
+
+def _format_unmatched_objective_warning(
+    objective: str,
+    available_metric_names: Sequence[str],
+) -> tuple[str, str | None]:
+    suggestion = None
+    matches = get_close_matches(
+        objective, list(available_metric_names), n=1, cutoff=0.6
+    )
+    if matches:
+        suggestion = matches[0]
+
+    available = ", ".join(available_metric_names) if available_metric_names else "none"
+    suggestion_text = f" Did you mean '{suggestion}'?" if suggestion else ""
+    return (
+        f"No winner: objective metric '{objective}' was never measured in any "
+        "successful trial; best_config is None. "
+        f"Available metrics: {available}.{suggestion_text}",
+        suggestion,
+    )
 
 
 class OptimizationOrchestrator:
@@ -3791,6 +3841,9 @@ class OptimizationOrchestrator:
                 obj.name: str(obj.orientation)
                 for obj in self.objective_schema.objectives
             }
+        primary_objective = (
+            self.optimizer.objectives[0] if self.optimizer.objectives else None
+        )
         selection = select_best_configuration(
             trials=self._trials,
             # Objectives-free runs are supported (weighted scoring disabled,
@@ -3798,9 +3851,7 @@ class OptimizationOrchestrator:
             # module guards this and the terminal selection must too (#1108
             # review NB). None ⇒ the selector's honest no-eligible shape;
             # strict mode is certificate-driven and never reads it.
-            primary_objective=(
-                self.optimizer.objectives[0] if self.optimizer.objectives else None
-            ),
+            primary_objective=primary_objective,
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_local_mode(),
             tie_breakers=self._tie_breakers or None,
@@ -3818,6 +3869,34 @@ class OptimizationOrchestrator:
         best_config = selection.best_config
         best_score = selection.best_score
         session_summary = selection.session_summary
+        result_status = self._status
+        result_warnings: list[str] = []
+        result_warning_codes: list[str] = []
+        if (
+            primary_objective
+            and selection.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+            and _objective_metric_never_measured(self._trials, primary_objective)
+        ):
+            available_metric_names = _successful_trial_metric_names(self._trials)
+            warning, suggestion = _format_unmatched_objective_warning(
+                primary_objective,
+                available_metric_names,
+            )
+            result_warnings.append(warning)
+            result_warning_codes.append(_OBJECTIVE_UNMATCHED_WARNING_CODE)
+            if session_summary is None:
+                session_summary = {}
+            else:
+                session_summary = dict(session_summary)
+            session_summary["reason"] = warning
+            session_summary["reason_code"] = selection.reason_code
+            session_summary["unmatched_objective"] = primary_objective
+            session_summary["available_metrics"] = list(available_metric_names)
+            if suggestion:
+                session_summary["did_you_mean"] = suggestion
+            if result_status == OptimizationStatus.COMPLETED:
+                result_status = OptimizationStatus.FAILED
+                self._status = result_status
         preset_selection = (
             select_strategy_preset(self.strategy_preset, self._trials)
             if self.strategy_preset is not None
@@ -3838,12 +3917,15 @@ class OptimizationOrchestrator:
 
         # Create convergence info
         successful_trials = [t for t in self._trials if t.is_successful]
+        success_rate = (
+            0.0
+            if _OBJECTIVE_UNMATCHED_WARNING_CODE in result_warning_codes
+            else (len(successful_trials) / len(self._trials) if self._trials else 0.0)
+        )
         convergence_info = {
             "total_trials": len(self._trials),
             "successful_trials": len(successful_trials),
-            "success_rate": (
-                len(successful_trials) / len(self._trials) if self._trials else 0.0
-            ),
+            "success_rate": success_rate,
             "algorithm": self.optimizer.__class__.__name__,
         }
 
@@ -3913,7 +3995,7 @@ class OptimizationOrchestrator:
             optimization_id=self._optimization_id,
             duration=duration,
             convergence_info=convergence_info,
-            status=self._status,
+            status=result_status,
             objectives=self.optimizer.objectives,
             algorithm=self.optimizer.__class__.__name__,
             timestamp=now,
@@ -3923,7 +4005,10 @@ class OptimizationOrchestrator:
             metadata=result_metadata,
             preset_selection=preset_selection,
             stop_reason=self._stop_reason,
+            reason_code=selection.reason_code,
             run_label=run_label,
+            warnings=result_warnings,
+            warning_codes=result_warning_codes,
             source=source,
         )
 
