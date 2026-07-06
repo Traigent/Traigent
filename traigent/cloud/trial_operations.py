@@ -67,6 +67,22 @@ class TrialSlotResult:
         return cls()
 
 
+@dataclass(frozen=True)
+class TrialSubmissionResult:
+    """Neutral result for a backend trial-result submission."""
+
+    submitted: bool = False
+    permanent_rejection: bool = False
+    reason: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.submitted
+
+    @classmethod
+    def rejected(cls, reason: str | None = None) -> "TrialSubmissionResult":
+        return cls(permanent_rejection=True, reason=reason)
+
+
 class TrialOperations:
     """Handles trial management operations."""
 
@@ -805,6 +821,18 @@ class TrialOperations:
         )
         return any(re.search(pat, body_lower) for pat in session_subject_patterns)
 
+    @staticmethod
+    def _format_backend_reason(reason: Any) -> str | None:
+        """Return a log-safe backend details.reason string."""
+
+        values = reason if isinstance(reason, list) else [reason]
+        parts = [
+            str(value).strip()
+            for value in values
+            if value is not None and str(value).strip()
+        ]
+        return "; ".join(parts) or None
+
     def _handle_trial_error_response(
         self,
         status: int,
@@ -812,7 +840,7 @@ class TrialOperations:
         session_id: str,
         url: str,
         error_text: str = "",
-    ) -> bool:
+    ) -> bool | TrialSubmissionResult:
         """Handle error response from trial submission.
 
         Logs the HTTP status and response body so callers can diagnose backend
@@ -824,18 +852,25 @@ class TrialOperations:
         Returns:
             True if the error is a transient session-not-found 400 that the
             caller should treat as a skipped upload rather than a hard failure.
-            False for all other errors (caller should degrade backend tracking).
+            TrialSubmissionResult for permanent backend rejections. False for
+            all other errors (caller should degrade backend tracking).
         """
         # Extract a concise user-facing message from the response body when
         # the backend returned JSON with an "error" or "message" field.
         detail: str = error_text.strip()
+        reason: str | None = None
         if detail:
             try:
                 parsed = json.loads(detail)
                 if isinstance(parsed, dict):
                     detail = parsed.get("error") or parsed.get("message") or detail
+                    details = parsed.get("details") or {}
+                    if isinstance(details, dict):
+                        reason = self._format_backend_reason(details.get("reason"))
             except (ValueError, KeyError):
                 pass
+        if reason:
+            detail = f"{detail}; reason: {reason}" if detail else f"reason: {reason}"
 
         if self._is_session_not_found_400(status, error_text):
             # Log the backend detail so the raw body is still visible even
@@ -851,16 +886,14 @@ class TrialOperations:
             )
             return True
 
-        # A non-transient 4xx is a PERMANENT rejection -- commonly an invalid or
-        # uncomputable optimization objective/metric name (e.g. "cost_usd" instead
-        # of "cost"). Label it explicitly so it is not mistaken for a transient
-        # backend outage; the run continues but is tracked LOCALLY ONLY.
+        # A non-transient 4xx is a PERMANENT rejection. Label it explicitly so it
+        # is not mistaken for a transient backend outage; the run continues but is
+        # tracked LOCALLY ONLY.
         if isinstance(status, int) and 400 <= status < 500:
             logger.error(
                 "\u274c Trial submission REJECTED by the backend: HTTP %s \u2014 %s. "
-                "This is a PERMANENT error (commonly an invalid optimization "
-                "objective/metric name, e.g. 'cost_usd' instead of 'cost'), NOT a "
-                "transient outage. The run will be tracked LOCALLY ONLY "
+                "This is a PERMANENT error, NOT a transient outage. "
+                "The run will be tracked LOCALLY ONLY "
                 "(source='local_fallback'); fix the request to track it on the "
                 "backend.  Trial %s  Session %s  URL %s",
                 status,
@@ -869,7 +902,7 @@ class TrialOperations:
                 session_id,
                 url,
             )
-            return False
+            return TrialSubmissionResult.rejected(reason or detail or None)
         logger.warning(
             "\u274c Failed to submit trial result: HTTP %s \u2014 %s",
             status,
@@ -890,7 +923,7 @@ class TrialOperations:
         error_message: str | None = None,
         execution_mode: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> bool | None:
+    ) -> bool | None | TrialSubmissionResult:
         """Submit trial results via the Traigent session endpoint.
 
         Args:
@@ -905,7 +938,8 @@ class TrialOperations:
 
         Returns:
             True if submission succeeded, False if it failed,
-            None if the operation was skipped (e.g. offline mode).
+            TrialSubmissionResult for permanent backend rejections, or None if
+            the operation was skipped (e.g. offline mode).
         """
         # Skip backend calls in offline mode — return None so callers
         # can distinguish "skipped" from "succeeded" (Rule 2: no fake completion).
@@ -1038,7 +1072,7 @@ class TrialOperations:
                         return False
                     else:
                         error_text = await response.text()
-                        is_transient = self._handle_trial_error_response(
+                        error_result = self._handle_trial_error_response(
                             response.status, trial_id, session_id, url, error_text
                         )
                         # Return None for transient session-not-found (400 +
@@ -1046,7 +1080,7 @@ class TrialOperations:
                         # a skipped upload
                         # rather than a hard backend failure and does not flag
                         # the backend as degraded (BE #1194 per-worker storage).
-                        return None if is_transient else False
+                        return None if error_result is True else error_result
 
         except Exception as exc:
             if is_backend_offline():

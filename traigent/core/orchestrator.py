@@ -3273,6 +3273,16 @@ class OptimizationOrchestrator:
 
             # Populate experiment_id and cloud_url from session metadata
             self._populate_experiment_cloud_url(result)
+        rejection_reason = self.backend_session_manager.backend_rejection_reason
+        if rejection_reason:
+            if persistence_status in {"skipped", "succeeded"}:
+                persistence_status = "degraded"
+            result.metadata["persistence_reason"] = "rejected"
+            result.metadata["persistence_rejected"] = True
+            result.metadata["persistence_rejection_reason"] = rejection_reason
+            self.traigent_config.persistence_reason = "rejected"
+            self.traigent_config.persistence_rejection_reason = rejection_reason
+
         result.metadata["persistence_status"] = persistence_status
         self.traigent_config.persistence_status = persistence_status
 
@@ -3288,14 +3298,26 @@ class OptimizationOrchestrator:
         # prominently at the end (the per-trial warning fired once mid-run; this
         # is the final, unmissable summary tied to the result's source marker).
         if self.backend_session_manager.backend_degraded:
-            logger.warning(
-                "⚠️  Optimization %s finished in LOCAL-ONLY mode "
-                "(source='local_fallback'): "
-                "the Traigent backend was unreachable during the run, so results "
-                "were computed and stored locally and are NOT on the cloud "
-                "backend. They will sync on the next successful run.",
-                self._optimization_id,
-            )
+            rejection_reason = self.backend_session_manager.backend_rejection_reason
+            if rejection_reason:
+                logger.warning(
+                    "⚠️  Optimization %s finished in LOCAL-ONLY mode "
+                    "(source='local_fallback'): "
+                    "your config was rejected by the backend: %s. Results "
+                    "were computed and stored locally and are NOT on the cloud "
+                    "backend; metadata includes persistence_reason='rejected'.",
+                    self._optimization_id,
+                    rejection_reason,
+                )
+            else:
+                logger.warning(
+                    "⚠️  Optimization %s finished in LOCAL-ONLY mode "
+                    "(source='local_fallback'): "
+                    "the Traigent backend was unreachable during the run, so results "
+                    "were computed and stored locally and are NOT on the cloud "
+                    "backend. They will sync on the next successful run.",
+                    self._optimization_id,
+                )
 
         cost_status = self.cost_enforcer.get_status()
         logger.info(
@@ -3982,6 +4004,14 @@ class OptimizationOrchestrator:
         )
         if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
             result_metadata["fallback_reason"] = fallback_reason
+        rejection_reason = (
+            self.backend_session_manager.backend_rejection_reason
+            or getattr(self.traigent_config, "persistence_rejection_reason", None)
+        )
+        if rejection_reason:
+            result_metadata["persistence_reason"] = "rejected"
+            result_metadata["persistence_rejected"] = True
+            result_metadata["persistence_rejection_reason"] = rejection_reason
         if getattr(self.traigent_config, "persistence_status", None):
             result_metadata["persistence_status"] = (
                 self.traigent_config.persistence_status

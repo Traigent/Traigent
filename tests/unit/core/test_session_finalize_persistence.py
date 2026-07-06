@@ -171,6 +171,43 @@ async def test_finalize_marks_persistence_degraded_when_aggregation_not_transmit
     assert result.persistence_failed is False
 
 
+@pytest.mark.asyncio
+async def test_finalize_marks_permanent_submission_rejection_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    reason = 'submitted config["model"] is outside the declared categorical domain'
+
+    def finalize(*args, **kwargs):
+        return {"status": "completed", "metadata": {"finalized_via_api": True}}
+
+    config = _config(monkeypatch)
+    config.execution_mode = "hybrid"
+    client = _backend_client(finalize)
+    manager = _manager(config, client)
+    manager._flag_backend_degraded("trial submission", rejection_reason=reason)
+    orchestrator = _orchestrator(config, manager)
+    result = _result()
+
+    caplog.set_level(logging.WARNING, logger="traigent.core.orchestrator")
+
+    await OptimizationOrchestrator._finalize_optimization(
+        orchestrator, result, "session-finalize", None
+    )
+
+    assert result.metadata["persistence_status"] == "degraded"
+    assert result.metadata["persistence_reason"] == "rejected"
+    assert result.metadata["persistence_rejected"] is True
+    assert result.metadata["persistence_rejection_reason"] == reason
+    assert config.persistence_status == "degraded"
+    assert config.persistence_reason == "rejected"
+
+    combined = " ".join(record.getMessage() for record in caplog.records)
+    assert "rejected by the backend" in combined
+    assert reason in combined
+    assert "unreachable during the run" not in combined
+
+
 def test_finalize_does_not_retry_validation_4xx(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
