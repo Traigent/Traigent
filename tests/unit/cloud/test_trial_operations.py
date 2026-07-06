@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -12,6 +13,7 @@ from traigent.cloud.trial_operations import (
     TrialSlotResult,
     TrialSubmissionResult,
 )
+from traigent.core.metadata_helpers import build_backend_metadata
 
 
 class TestRedactSensitiveFields:
@@ -163,6 +165,93 @@ class TestMeasuresDictValidationInSubmission:
         assert metadata["sdk_version"] == "9.8.6"
         assert metadata["custom"] == "value"
         assert "execution_mode" not in metadata
+
+    def test_trial_result_data_snapshots_live_submission_dicts(self) -> None:
+        """Submission payload dicts are detached before serialization."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.auth_manager = Mock()
+        ops = TrialOperations(mock_client)
+        config = {"temperature": 0.2, "routing": {"top_p": 0.8}}
+        trial_result = SimpleNamespace(
+            trial_id="trial_001",
+            config=config,
+            duration=1.5,
+            timestamp=datetime(2024, 1, 1, 12, 0, 0),
+            metrics={
+                "accuracy": 0.95,
+                "surrogate_score": 0.5,
+                "nested_metric": {"before": 1},
+            },
+            metadata={
+                "comparability": {
+                    "per_metric_coverage": {"accuracy": {"present": 1}},
+                },
+                "surrogate_evaluator": {
+                    "config": {"thresholds": {"minimum": 0.2}},
+                },
+            },
+            summary_stats=None,
+        )
+        traigent_config = SimpleNamespace(
+            execution_mode="edge_analytics",
+            minimal_logging=False,
+            privacy_enabled=False,
+            execution_mode_enum=SimpleNamespace(value="local"),
+        )
+        backend_metadata = build_backend_metadata(
+            trial_result,
+            "accuracy",
+            traigent_config,
+        )
+        clean_metrics = {"accuracy": 0.95, "nested": {"before": 1}}
+
+        result_data = ops._build_trial_result_data(
+            trial_id="trial_001",
+            config=config,
+            clean_metrics=clean_metrics,
+            backend_status="COMPLETED",
+            mode="local",
+            metadata=backend_metadata,
+        )
+
+        config["routing"]["top_p"] = 0.1
+        trial_result.metrics["surrogate_score"] = 0.9
+        trial_result.metrics["nested_metric"]["before"] = 2
+        trial_result.metadata["comparability"]["per_metric_coverage"]["accuracy"][
+            "present"
+        ] = 2
+        trial_result.metadata["surrogate_evaluator"]["config"]["thresholds"][
+            "minimum"
+        ] = 0.8
+        backend_metadata["all_metrics"]["accuracy"] = 0.1
+        clean_metrics["nested"]["before"] = 2
+
+        assert result_data["config"] == {
+            "temperature": 0.2,
+            "routing": {"top_p": 0.8},
+        }
+        assert result_data["metrics"] == {
+            "accuracy": 0.95,
+            "nested": {"before": 1},
+        }
+        assert result_data["metadata"]["all_metrics"] == {
+            "accuracy": 0.95,
+            "surrogate_score": 0.5,
+            "nested_metric": {"before": 1},
+        }
+        assert (
+            result_data["metadata"]["comparability"]["per_metric_coverage"]["accuracy"][
+                "present"
+            ]
+            == 1
+        )
+        assert (
+            result_data["metadata"]["surrogate_evaluator"]["config"]["thresholds"][
+                "minimum"
+            ]
+            == 0.2
+        )
 
     @pytest.mark.asyncio
     async def test_hybrid_trial_submission_uses_session_results_endpoint(self) -> None:

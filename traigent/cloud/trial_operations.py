@@ -8,6 +8,7 @@ for optimization experiments.
 
 import asyncio
 import concurrent.futures
+import copy
 import hashlib
 import json
 import re
@@ -652,14 +653,14 @@ class TrialOperations:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build the trial result data dict."""
-        result_metadata = dict(metadata or {})
+        result_metadata = copy.deepcopy(metadata or {})
         result_metadata.pop("execution_mode", None)
         result_metadata["mode"] = mode
         result_metadata["sdk_version"] = get_version()
         result_data: dict[str, Any] = {
             "trial_id": trial_id,
-            "config": config,
-            "metrics": clean_metrics if clean_metrics else {},
+            "config": copy.deepcopy(config),
+            "metrics": copy.deepcopy(clean_metrics) if clean_metrics else {},
             "status": backend_status,
             "metadata": result_metadata,
         }
@@ -996,11 +997,11 @@ class TrialOperations:
 
             # Add measures and summary_stats at the top level if present
             if measures is not None:
-                result_data["measures"] = measures
+                result_data["measures"] = copy.deepcopy(measures)
             self._log_measures_debug(trial_id, measures)
 
             if summary_stats is not None:
-                result_data["summary_stats"] = summary_stats
+                result_data["summary_stats"] = copy.deepcopy(summary_stats)
             self._log_summary_stats_debug(trial_id, summary_stats)
 
             # Validate the submission data. Schema validation is authoritative;
