@@ -156,7 +156,10 @@ class _SyncBatchTransport:
                 return False
 
             # Direct transport callers bypass ObservabilityClient's trace redaction.
-            redacted_payload = cast(dict[str, Any], redact_sensitive_data(payload))
+            redacted_payload = cast(
+                dict[str, Any],
+                redact_sensitive_data(payload, redact_credential_keys=True),
+            )
             self._buffer[item_id] = copy.deepcopy(redacted_payload)
             self._stats["submitted_items"] += 1
             self._stats["pending_items"] = len(self._buffer)
@@ -610,7 +613,12 @@ class ObservabilityClient:
             trace_payloads = [
                 (
                     trace_id,
-                    cast(dict[str, Any], redact_sensitive_data(state.to_payload())),
+                    cast(
+                        dict[str, Any],
+                        redact_sensitive_data(
+                            state.to_payload(), redact_credential_keys=True
+                        ),
+                    ),
                 )
                 for trace_id, state in self._trace_states.items()
             ]
@@ -1048,7 +1056,10 @@ class ObservabilityClient:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed:
                 return
-            payload = cast(dict[str, Any], redact_sensitive_data(state.to_payload()))
+            payload = cast(
+                dict[str, Any],
+                redact_sensitive_data(state.to_payload(), redact_credential_keys=True),
+            )
             self._inflight_snapshot_submissions += 1
         try:
             self._submit_trace_snapshot(trace_id, payload)
