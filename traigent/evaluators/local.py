@@ -569,6 +569,40 @@ class LocalEvaluator(BaseEvaluator):
         example_result.metrics["output_cost"] = example_metric.cost.output_cost
         example_result.metrics["total_cost"] = example_metric.cost.total_cost
 
+    def _objective_returned_none_error(
+        self,
+        metric_name: str,
+        example_id: str,
+        example_index: int,
+        config: dict[str, Any],
+    ) -> EvaluationError:
+        """Build the fail-closed error for an objective metric returning None.
+
+        Companion to the exception-path guard in ``_invoke_metric_function``
+        (which raises when an objective metric *raises*). A ``None`` return is
+        not an exception, so without this an optimization objective's ``None``
+        would be substituted with a fabricated ``0.0`` and silently corrupt the
+        search. Callers raise the returned error only for objective metrics
+        (``metric_name in self.metrics``); non-objective metrics retain the
+        legacy ``0.0``/skip behaviour.
+        """
+        return EvaluationError(
+            f"Objective metric '{metric_name}' returned None for example "
+            f"{example_id}. Refusing to substitute a fabricated 0.0 score for "
+            "an optimization objective.",
+            config=config,
+            details={
+                "metric_name": metric_name,
+                "example_id": example_id,
+                "example_index": example_index,
+                "is_objective": True,
+                # Mirror the exception-path record shape (error_type) so
+                # downstream consumers parse both failure modes uniformly.
+                "error_type": "NoneReturn",
+                "failure_mode": "returned_none",
+            },
+        )
+
     def _apply_custom_metric_functions(
         self,
         example_metric: ExampleMetrics,
@@ -604,6 +638,11 @@ class LocalEvaluator(BaseEvaluator):
             "response_time_ms": example_metric.response.response_time_ms,
         }
 
+        example_id = (
+            example_obj.metadata.get("example_id", f"example_{example_index}")
+            if example_obj.metadata
+            else f"example_{example_index}"
+        )
         for metric_name, metric_func in self.metric_functions.items():
             value = self._invoke_metric_function(
                 metric_func,
@@ -615,17 +654,39 @@ class LocalEvaluator(BaseEvaluator):
                 example_index,
                 metric_errors=metric_errors,
             )
+            # A ``None`` return is NOT an exception, so it bypasses the
+            # objective fail-closed guard in ``_invoke_metric_function``.
+            # Mirror that guard here: an objective metric that returns
+            # ``None`` (scalar) or omits its value inside a returned mapping
+            # would otherwise be coerced to a fabricated ``0.0`` / silently
+            # dropped, pinning and corrupting the search. Non-objective
+            # metrics keep the legacy ``0.0``/skip behaviour.
             if isinstance(value, Mapping):
                 for result_name, result_value in value.items():
                     if result_value is None:
+                        if str(result_name) in self.metrics:
+                            raise self._objective_returned_none_error(
+                                str(result_name),
+                                example_id,
+                                example_index,
+                                config,
+                            )
                         continue
                     example_metric.custom_metrics[str(result_name)] = float(
                         result_value
                     )
                 continue
-            example_metric.custom_metrics[metric_name] = (
-                float(value) if value is not None else 0.0
-            )
+            if value is None:
+                if metric_name in self.metrics:
+                    raise self._objective_returned_none_error(
+                        metric_name,
+                        example_id,
+                        example_index,
+                        config,
+                    )
+                example_metric.custom_metrics[metric_name] = 0.0
+            else:
+                example_metric.custom_metrics[metric_name] = float(value)
 
     def _build_metric_keyword_arguments(
         self,
