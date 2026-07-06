@@ -2603,6 +2603,16 @@ class BaseEvaluator(ABC):
                     llm_metrics or {},
                     example_index,
                 )
+                if inspect.isawaitable(value):
+                    if inspect.iscoroutine(value):
+                        value.close()
+                    logger.debug(
+                        "Skipping awaitable progress metric %s for example %s; "
+                        "the final async evaluator pass will compute it",
+                        metric_name,
+                        getattr(example, "example_id", None) or example_index,
+                    )
+                    continue
                 if isinstance(value, Mapping):
                     metrics.update(self._coerce_progress_metrics(value))
                 elif value is not None:

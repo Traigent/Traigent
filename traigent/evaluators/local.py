@@ -603,7 +603,82 @@ class LocalEvaluator(BaseEvaluator):
             },
         )
 
-    def _apply_custom_metric_functions(
+    def _handle_metric_function_exception(
+        self,
+        exc: Exception,
+        metric_name: str,
+        example_obj: Any,
+        config: dict[str, Any],
+        example_index: int,
+        *,
+        metric_errors: list[dict[str, Any]] | None = None,
+    ) -> float:
+        example_id = (
+            example_obj.metadata.get("example_id", f"example_{example_index}")
+            if example_obj.metadata
+            else f"example_{example_index}"
+        )
+        logger.warning(
+            "Metric function %s failed for example %s: %s",
+            metric_name,
+            example_id,
+            exc,
+        )
+        # ``self.metrics`` is this evaluator's configured objective/metric
+        # list (every real construction path -- optimization_pipeline's
+        # _create_local_evaluator, cloud/client.py, cli/optimization_validator
+        # -- builds it directly from the optimization's ``objectives``).
+        # A metric named here is an optimization objective; a fabricated
+        # 0.0 for it would silently pin/corrupt the search, so fail the
+        # trial closed instead of scoring it.
+        is_objective = metric_name in self.metrics
+        error_record: dict[str, Any] = {
+            "metric_name": metric_name,
+            "example_id": example_id,
+            "example_index": example_index,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "is_objective": is_objective,
+        }
+        if is_objective:
+            raise EvaluationError(
+                f"Objective metric '{metric_name}' raised "
+                f"{type(exc).__name__} for example {example_id}: {exc}. "
+                "Refusing to substitute a fabricated 0.0 score for an "
+                "optimization objective.",
+                config=config,
+                original_error=exc,
+                details=error_record,
+            ) from exc
+        if metric_errors is not None:
+            metric_errors.append(error_record)
+        return 0.0
+
+    async def _resolve_metric_function_value(
+        self,
+        value: Any,
+        metric_name: str,
+        example_obj: Any,
+        config: dict[str, Any],
+        example_index: int,
+        *,
+        metric_errors: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        if not inspect.isawaitable(value):
+            return value
+        try:
+            return await value
+        except Exception as exc:
+            return self._handle_metric_function_exception(
+                exc,
+                metric_name,
+                example_obj,
+                config,
+                example_index,
+                metric_errors=metric_errors,
+            )
+
+    async def _apply_custom_metric_functions(
         self,
         example_metric: ExampleMetrics,
         output: Any,
@@ -655,13 +730,21 @@ class LocalEvaluator(BaseEvaluator):
         )
         produced_keys: list[str] = []
         for metric_name, metric_func in self.metric_functions.items():
-            value = self._invoke_metric_function(
+            raw_value = self._invoke_metric_function(
                 metric_func,
                 metric_name,
                 output,
                 example_obj,
                 config,
                 llm_payload,
+                example_index,
+                metric_errors=metric_errors,
+            )
+            value = await self._resolve_metric_function_value(
+                raw_value,
+                metric_name,
+                example_obj,
+                config,
                 example_index,
                 metric_errors=metric_errors,
             )
@@ -778,7 +861,7 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
-    ) -> float:
+    ) -> Any:
         """Invoke a single metric function with appropriate arguments.
 
         Args:
@@ -798,10 +881,11 @@ class LocalEvaluator(BaseEvaluator):
                 logged either way.
 
         Returns:
-            Metric value on success, or ``0.0`` for a failed *informational*
-            metric -- never a bare, indistinguishable 0.0. A structured
-            error record is appended to ``metric_errors`` (when provided)
-            so a caller can tell a real 0.0 apart from a degraded one.
+            Metric value on success, an awaitable metric value for async metric
+            functions, or ``0.0`` for a failed *informational* metric -- never
+            a bare, indistinguishable 0.0. A structured error record is
+            appended to ``metric_errors`` (when provided) so a caller can tell
+            a real 0.0 apart from a degraded one.
 
         Raises:
             EvaluationError: If ``metric_name`` is one of this evaluator's
@@ -844,52 +928,20 @@ class LocalEvaluator(BaseEvaluator):
                 except TypeError as exc:
                     bind_error = exc
                     continue
-                return cast(float, metric_func(*args, **candidate_kwargs))
+                return metric_func(*args, **candidate_kwargs)
 
             if bind_error is not None:
                 raise bind_error
-            return cast(float, metric_func(output, example_obj.expected_output))
+            return metric_func(output, example_obj.expected_output)
         except Exception as exc:
-            example_id = (
-                example_obj.metadata.get("example_id", f"example_{example_index}")
-                if example_obj.metadata
-                else f"example_{example_index}"
-            )
-            logger.warning(
-                "Metric function %s failed for example %s: %s",
-                metric_name,
-                example_id,
+            return self._handle_metric_function_exception(
                 exc,
+                metric_name,
+                example_obj,
+                config,
+                example_index,
+                metric_errors=metric_errors,
             )
-            # ``self.metrics`` is this evaluator's configured objective/metric
-            # list (every real construction path -- optimization_pipeline's
-            # _create_local_evaluator, cloud/client.py, cli/optimization_validator
-            # -- builds it directly from the optimization's ``objectives``).
-            # A metric named here is an optimization objective; a fabricated
-            # 0.0 for it would silently pin/corrupt the search, so fail the
-            # trial closed instead of scoring it.
-            is_objective = metric_name in self.metrics
-            error_record: dict[str, Any] = {
-                "metric_name": metric_name,
-                "example_id": example_id,
-                "example_index": example_index,
-                "error_type": type(exc).__name__,
-                "error_message": str(exc),
-                "is_objective": is_objective,
-            }
-            if is_objective:
-                raise EvaluationError(
-                    f"Objective metric '{metric_name}' raised "
-                    f"{type(exc).__name__} for example {example_id}: {exc}. "
-                    "Refusing to substitute a fabricated 0.0 score for an "
-                    "optimization objective.",
-                    config=config,
-                    original_error=exc,
-                    details=error_record,
-                ) from exc
-            if metric_errors is not None:
-                metric_errors.append(error_record)
-            return 0.0
 
     def _build_local_progress_payload(
         self,
@@ -1201,7 +1253,7 @@ class LocalEvaluator(BaseEvaluator):
 
         return meta
 
-    def _process_single_output(
+    async def _process_single_output(
         self,
         output: Any,
         index: int,
@@ -1306,7 +1358,7 @@ class LocalEvaluator(BaseEvaluator):
         # Apply custom metric functions
         if self.metric_functions and index < len(dataset.examples):
             example_obj = dataset.examples[index]
-            produced_metric_keys = self._apply_custom_metric_functions(
+            produced_metric_keys = await self._apply_custom_metric_functions(
                 example_metric,
                 output,
                 example_obj,
@@ -1608,7 +1660,7 @@ class LocalEvaluator(BaseEvaluator):
 
         # Track metrics for each example output using helper method
         for i, output in enumerate(outputs):
-            example_metric = self._process_single_output(
+            example_metric = await self._process_single_output(
                 output=output,
                 index=i,
                 config=config,
