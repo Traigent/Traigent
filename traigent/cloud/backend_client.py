@@ -64,7 +64,11 @@ from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
-from traigent.cloud.trial_operations import TrialOperations, TrialSlotResult
+from traigent.cloud.trial_operations import (
+    TrialOperations,
+    TrialSlotResult,
+    TrialSubmissionResult,
+)
 from traigent.cloud.url_security import (
     CloudUrlUnreachableError,
     validate_cloud_base_url,
@@ -2056,17 +2060,18 @@ class BackendIntegratedClient:
         error_message: str | None = None,
         execution_mode: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> bool | None:
+    ) -> bool | None | TrialSubmissionResult:
         """Submit trial results via the Traigent session endpoint.
         Delegates to trial_operations module.
 
         Returns:
             True if submission succeeded, False if it failed,
-            None if the operation was skipped (e.g. offline mode).
+            TrialSubmissionResult for permanent backend rejections, or None if
+            the operation was skipped (e.g. offline mode).
         """
         if metadata is None:
             return cast(
-                bool | None,
+                bool | None | TrialSubmissionResult,
                 await self._trial_ops.submit_trial_result_via_session(
                     session_id,
                     trial_id,
@@ -2078,7 +2083,7 @@ class BackendIntegratedClient:
                 ),
             )
         return cast(
-            bool | None,
+            bool | None | TrialSubmissionResult,
             await self._trial_ops.submit_trial_result_via_session(
                 session_id,
                 trial_id,

@@ -703,6 +703,8 @@ class TraigentConfig:
     result_source: str | None = None
     fallback_reason: str | None = None
     persistence_status: str | None = None
+    persistence_reason: str | None = None
+    persistence_rejection_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration parameters using unified validators."""

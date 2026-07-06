@@ -1,12 +1,17 @@
 """Tests for trial_operations.py - particularly new code paths."""
 
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from traigent.cloud.trial_operations import TrialOperations, TrialSlotResult
+from traigent.cloud.trial_operations import (
+    TrialOperations,
+    TrialSlotResult,
+    TrialSubmissionResult,
+)
 
 
 class TestRedactSensitiveFields:
@@ -1435,6 +1440,44 @@ class TestHandle400NotFound:
             f"got: {combined!r}"
         )
 
+    def test_handle_trial_error_response_400_validation_logs_backend_reason(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Permanent validation 400s must surface details.reason, not a guess."""
+
+        ops = self._make_ops()
+        error_body = json.dumps(
+            {
+                "details": {
+                    "reason": [
+                        'submitted config["model"] is outside the declared categorical domain'
+                    ]
+                },
+                "error": "Invalid request data...",
+                "error_code": "VALIDATION_ERROR",
+                "message": "Invalid request data...",
+                "success": False,
+            }
+        )
+
+        with caplog.at_level(logging.ERROR, logger="traigent.cloud.trial_operations"):
+            result = ops._handle_trial_error_response(
+                status=400,
+                trial_id="trial_xyz",
+                session_id="sess_abc",
+                url="https://portal.traigent.ai/api/v1/sessions/sess_abc/results",
+                error_text=error_body,
+            )
+
+        assert isinstance(result, TrialSubmissionResult)
+        assert result.permanent_rejection is True
+        assert result.reason is not None
+        assert "outside the declared categorical domain" in result.reason
+
+        combined = " ".join(r.getMessage() for r in caplog.records)
+        assert "outside the declared categorical domain" in combined
+        assert "cost_usd" not in combined
+
     def test_handle_trial_error_response_400_trial_not_found_logs_warning(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1454,7 +1497,7 @@ class TestHandle400NotFound:
                 error_text=error_body,
             )
 
-        assert is_transient is False, (
+        assert not is_transient, (
             "'Trial not found in session' is not a transient session storage miss"
         )
 

@@ -468,6 +468,7 @@ class BackendSessionManager:
         # single prominent warning is emitted (instead of one per trial).
         self._runtime_degraded: bool = False
         self._degraded_warning_emitted: bool = False
+        self._backend_rejection_reason: str | None = None
 
     @property
     def backend_tracking_enabled(self) -> bool:
@@ -476,8 +477,14 @@ class BackendSessionManager:
 
     @property
     def backend_degraded(self) -> bool:
-        """Whether the backend became unreachable mid-run (issue #1265)."""
+        """Whether backend tracking degraded to local-only mid-run."""
         return self._runtime_degraded
+
+    @property
+    def backend_rejection_reason(self) -> str | None:
+        """Return the permanent backend rejection reason, if one was recorded."""
+
+        return self._backend_rejection_reason
 
     @property
     def fallback_reason(self) -> str | None:
@@ -495,7 +502,9 @@ class BackendSessionManager:
         config = getattr(self, "_traigent_config", None)
         return bool(config is not None and backend_egress_disabled(config))
 
-    def _flag_backend_degraded(self, context: str) -> None:
+    def _flag_backend_degraded(
+        self, context: str, *, rejection_reason: str | None = None
+    ) -> None:
         """Mark the run as degraded to local-only and warn once (issue #1265).
 
         Called when a backend-tracking interaction fails at runtime. The first
@@ -505,9 +514,25 @@ class BackendSessionManager:
         self._runtime_degraded = True
         self._fallback_reason = context
         mark_local_fallback(self._traigent_config, context)
+        if rejection_reason:
+            self._backend_rejection_reason = rejection_reason
+            self._traigent_config.persistence_reason = "rejected"
+            self._traigent_config.persistence_rejection_reason = rejection_reason
         if self._degraded_warning_emitted:
             return
         self._degraded_warning_emitted = True
+        if rejection_reason:
+            logger.warning(
+                "⚠️  Traigent backend tracking was REJECTED during %s — "
+                "continuing in LOCAL-ONLY mode. The backend was reachable and "
+                "rejected the submitted config: %s. Trials are still optimized "
+                "and saved to local storage, but this run is NOT tracked on the "
+                "cloud backend; its result is marked source='local_fallback' "
+                "and persistence_reason='rejected'.",
+                context,
+                rejection_reason,
+            )
+            return
         logger.warning(
             "⚠️  Traigent backend tracking became unavailable during %s — "
             "continuing in LOCAL-ONLY mode. Trials are still optimized and "
@@ -1489,12 +1514,27 @@ class BackendSessionManager:
                 # False covers a real backend rejection (non-2xx that is not a
                 # transient not-found) or a network failure; degrade to local-only
                 # (#1265) so subsequent trials don't keep hitting a broken endpoint.
-                self._flag_backend_degraded("trial submission")
-                logger.warning(
-                    "Backend session endpoint did not accept trial %s for session %s",
-                    backend_trial_id,
-                    session_id,
-                )
+                if bool(getattr(submitted, "permanent_rejection", False)):
+                    rejection_reason = (
+                        getattr(submitted, "reason", None)
+                        or "backend returned a permanent 4xx rejection"
+                    )
+                    self._flag_backend_degraded(
+                        "trial submission", rejection_reason=rejection_reason
+                    )
+                    logger.warning(
+                        "Backend session endpoint rejected trial %s for session %s: %s",
+                        backend_trial_id,
+                        session_id,
+                        rejection_reason,
+                    )
+                else:
+                    self._flag_backend_degraded("trial submission")
+                    logger.warning(
+                        "Backend session endpoint did not accept trial %s for session %s",
+                        backend_trial_id,
+                        session_id,
+                    )
             else:
                 # Record the acknowledged backend slot so the certified-selection
                 # report can verify this incumbent is bindable.
