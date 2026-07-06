@@ -612,7 +612,7 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
-    ) -> None:
+    ) -> list[str]:
         """Apply user-defined metric functions for a single example.
 
         Updates example_metric.custom_metrics in place.
@@ -627,6 +627,16 @@ class LocalEvaluator(BaseEvaluator):
                 records from non-objective metric failures; forwarded to
                 ``_invoke_metric_function``. An objective failure instead
                 raises ``EvaluationError`` and propagates out of this call.
+
+        Returns:
+            The custom-metric keys actually written to
+            ``example_metric.custom_metrics`` by this call. For a scalar-
+            returning function this is the function's own name; for a
+            mapping-returning function it is the produced sub-keys (never the
+            function name). Callers use this to transfer the produced metrics
+            downstream without assuming a key exists for every function name
+            (a mapping-returning function never populates ``custom_metrics``
+            under its own name).
         """
         llm_payload = {
             "total_tokens": example_metric.tokens.total_tokens,
@@ -643,6 +653,7 @@ class LocalEvaluator(BaseEvaluator):
             if example_obj.metadata
             else f"example_{example_index}"
         )
+        produced_keys: list[str] = []
         for metric_name, metric_func in self.metric_functions.items():
             value = self._invoke_metric_function(
                 metric_func,
@@ -672,9 +683,9 @@ class LocalEvaluator(BaseEvaluator):
                                 config,
                             )
                         continue
-                    example_metric.custom_metrics[str(result_name)] = float(
-                        result_value
-                    )
+                    key = str(result_name)
+                    example_metric.custom_metrics[key] = float(result_value)
+                    produced_keys.append(key)
                 continue
             if value is None:
                 if metric_name in self.metrics:
@@ -687,6 +698,8 @@ class LocalEvaluator(BaseEvaluator):
                 example_metric.custom_metrics[metric_name] = 0.0
             else:
                 example_metric.custom_metrics[metric_name] = float(value)
+            produced_keys.append(metric_name)
+        return produced_keys
 
     def _build_metric_keyword_arguments(
         self,
@@ -1271,7 +1284,7 @@ class LocalEvaluator(BaseEvaluator):
         # Apply custom metric functions
         if self.metric_functions and index < len(dataset.examples):
             example_obj = dataset.examples[index]
-            self._apply_custom_metric_functions(
+            produced_metric_keys = self._apply_custom_metric_functions(
                 example_metric,
                 output,
                 example_obj,
@@ -1280,17 +1293,28 @@ class LocalEvaluator(BaseEvaluator):
                 metric_errors=metric_errors,
             )
 
-            # Transfer custom metrics to example_results if in detailed mode
+            # Transfer custom metrics to example_results if in detailed mode.
+            # Iterate the keys actually produced (which include mapping
+            # sub-keys and exclude any function name a mapping-returning
+            # function never populated) rather than the function names -- the
+            # latter KeyErrors for mapping-returning metric functions.
             if (
                 self.detailed
                 and example_results
                 and index < len(example_results)
                 and example_results[index] is not None
             ):
-                for metric_name in self.metric_functions:
-                    example_results[index].metrics[metric_name] = (
-                        example_metric.custom_metrics[metric_name]
-                    )
+                # A metric function is authoritative for the key(s) it
+                # produces and overrides a built-in computed value of the same
+                # name -- this is the contract the custom ``scoring_function``
+                # path relies on (it defines the objective, e.g. ``accuracy``).
+                # Mapping sub-keys inherit the same override semantics as
+                # scalar metric-function values, for consistency.
+                target_metrics = example_results[index].metrics
+                for metric_key in produced_metric_keys:
+                    target_metrics[metric_key] = example_metric.custom_metrics[
+                        metric_key
+                    ]
 
         # Send progress callback
         if progress_callback:
@@ -1423,10 +1447,18 @@ class LocalEvaluator(BaseEvaluator):
 
         for metric_name in self.metric_functions:
             values: list[float] = []
+            # A mapping-returning metric function populates its SUB-keys, never
+            # its own name, so ``metric_name`` may be absent from every result.
+            # Track whether it was seen so we don't fabricate a bogus aggregate
+            # ``0.0`` for a function name that produced no such key.
+            saw_metric_name = False
             for result in example_results:
                 if result is None:
                     continue
-                raw_value = result.metrics.get(metric_name)
+                if metric_name not in result.metrics:
+                    continue
+                saw_metric_name = True
+                raw_value = result.metrics[metric_name]
                 if raw_value is None:
                     continue
                 try:
@@ -1439,7 +1471,14 @@ class LocalEvaluator(BaseEvaluator):
                     aggregated[metric_name] = self._compute_percentile(values, 0.95)
                 else:
                     aggregated[metric_name] = sum(values) / len(values)
-            else:
+            elif saw_metric_name or not self.detailed:
+                # Keep the legacy 0.0 sentinel when the name was present but
+                # produced no usable numeric value, OR in non-detailed mode
+                # (no per-example rows to inspect, so scalar metric functions
+                # must retain their legacy 0.0 aggregate). In detailed mode a
+                # name never seen at all -- e.g. a mapping function's own name,
+                # whose sub-keys are aggregated elsewhere -- is NOT fabricated
+                # as a bogus 0.0.
                 aggregated[metric_name] = 0.0
 
         return aggregated
