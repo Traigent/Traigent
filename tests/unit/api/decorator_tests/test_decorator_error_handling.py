@@ -22,6 +22,16 @@ from .test_base import DecoratorTestBase
 class TestConfigurationErrors(DecoratorTestBase):
     """Test configuration-related errors."""
 
+    def _decorate_with_default_config(self, configuration_space, default_config):
+        @optimize(
+            configuration_space=configuration_space,
+            default_config=default_config,
+        )
+        def test_func(text: str) -> str:
+            return text
+
+        return test_func
+
     def test_invalid_configuration_space_type(self):
         """Test error when configuration space is not a dict."""
         with pytest.raises(ValidationError):
@@ -56,18 +66,62 @@ class TestConfigurationErrors(DecoratorTestBase):
             def test_func(text: str) -> str:
                 return text
 
-    def test_conflicting_default_config(self):
-        """Test error when default config conflicts with configuration space."""
-
-        # This test may not trigger validation yet - just test that it creates successfully
-        @optimize(
-            configuration_space={"model": ["gpt-3.5", "gpt-4"]},
-            default_config={"model": "claude-2"},  # Not in configuration space
+    def test_default_config_outside_categorical_domain_passes(self):
+        """Default config may be a local baseline outside the tunable domain."""
+        test_func = self._decorate_with_default_config(
+            {"model": ["gpt-3.5", "gpt-4"]},
+            {"model": "claude-2"},
         )
-        def test_func(text: str) -> str:
-            return text
 
-        # The function should be created (validation might happen later during optimization)
+        assert hasattr(test_func, "optimize")
+
+    def test_default_config_model_outside_space_passes(self):
+        """Regression #1784: backend model repro is valid as a local baseline."""
+        test_func = self._decorate_with_default_config(
+            {"model": ["openrouter/deepseek/deepseek-chat"]},
+            {"model": "openrouter/openai/gpt-4.1-mini"},
+        )
+
+        assert hasattr(test_func, "optimize")
+
+    def test_default_config_categorical_uses_strict_type_membership(self):
+        """Regression #1784: int 0 is not a strict member of float choice 0.0."""
+        with pytest.raises(
+            ConfigurationError,
+            match="default_config\\['value'\\].*0.*type int.*declared type float",
+        ):
+            self._decorate_with_default_config({"value": [0.0]}, {"value": 0})
+
+    def test_default_config_bool_categorical_uses_strict_type_membership(self):
+        """Regression #1784: bool True is not a strict member of int choice 1."""
+        with pytest.raises(
+            ConfigurationError,
+            match="default_config\\['flag'\\].*True.*type bool.*declared type int",
+        ):
+            self._decorate_with_default_config({"flag": [1]}, {"flag": True})
+
+    def test_default_config_numeric_range_outside_domain_passes(self):
+        """Default config ranges are allowed to describe local baselines."""
+        test_func = self._decorate_with_default_config(
+            {"temperature": (0.0, 1.0)}, {"temperature": 2.0}
+        )
+
+        assert hasattr(test_func, "optimize")
+
+    def test_default_config_strict_member_passes(self):
+        test_func = self._decorate_with_default_config({"value": [0.0]}, {"value": 0.0})
+
+        assert hasattr(test_func, "optimize")
+
+    def test_default_config_static_key_outside_space_is_ignored(self):
+        test_func = self._decorate_with_default_config(
+            {"model": ["openrouter/deepseek/deepseek-chat"]},
+            {
+                "model": "openrouter/deepseek/deepseek-chat",
+                "static_timeout": 30,
+            },
+        )
+
         assert hasattr(test_func, "optimize")
 
     def test_invalid_objectives(self):
