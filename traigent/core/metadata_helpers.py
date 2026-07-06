@@ -2,6 +2,7 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
+import copy
 import json
 from collections.abc import Mapping
 from typing import Any, cast
@@ -206,7 +207,7 @@ def _add_summary_stats(
     if not summary_stats_available:
         return
 
-    enhanced_summary_stats = trial_result.summary_stats.copy()  # type: ignore[attr-defined]
+    enhanced_summary_stats = copy.deepcopy(trial_result.summary_stats)  # type: ignore[attr-defined]
     if "metadata" not in enhanced_summary_stats:
         enhanced_summary_stats["metadata"] = {}
     enhanced_summary_stats["metadata"]["aggregation_level"] = "trial"
@@ -284,7 +285,7 @@ def _add_aggregation_summary(
             return
         trial_aggregation_summary = {
             "primary_objective": primary_objective,
-            "metrics": metrics or {},
+            "metrics": copy.deepcopy(metrics or {}),
             "sanitized": True,
         }
         summary_metadata = trial_metadata["summary_stats"].setdefault("metadata", {})
@@ -398,14 +399,14 @@ def build_backend_metadata(
 
     if not traigent_config.minimal_logging:
         trial_metadata["timestamp"] = trial_result.timestamp.isoformat()
-        trial_metadata["all_metrics"] = trial_result.metrics
+        trial_metadata["all_metrics"] = copy.deepcopy(trial_result.metrics)
 
     mode_enum = traigent_config.execution_mode_enum
     _add_summary_stats(trial_metadata, trial_result, mode_enum)
 
     comparability_payload = trial_result.metadata.get("comparability")
     if isinstance(comparability_payload, dict):
-        trial_metadata["comparability"] = comparability_payload
+        trial_metadata["comparability"] = copy.deepcopy(comparability_payload)
 
     # Carry the surrogate (pre-screen) evaluator descriptor explicitly. This
     # metadata dict is rebuilt from scratch for submission, so without an explicit
@@ -414,7 +415,7 @@ def build_backend_metadata(
     # surrogate is configured, so the no-surrogate payload stays byte-identical.
     surrogate_descriptor = trial_result.metadata.get("surrogate_evaluator")
     if isinstance(surrogate_descriptor, dict):
-        trial_metadata["surrogate_evaluator"] = surrogate_descriptor
+        trial_metadata["surrogate_evaluator"] = copy.deepcopy(surrogate_descriptor)
 
     privacy_on = getattr(traigent_config, "privacy_enabled", False)
     example_results = trial_result.metadata.get("example_results")
@@ -433,7 +434,7 @@ def build_backend_metadata(
     if trial_result.metrics:
         for metric_key, metric_value in trial_result.metrics.items():
             if metric_key != primary_objective:
-                trial_metadata[metric_key] = metric_value
+                trial_metadata[metric_key] = copy.deepcopy(metric_value)
 
     _add_aggregation_summary(trial_metadata, primary_objective, trial_result.metrics)
 
