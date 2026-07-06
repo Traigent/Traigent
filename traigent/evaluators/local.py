@@ -682,6 +682,17 @@ class LocalEvaluator(BaseEvaluator):
                                 example_index,
                                 config,
                             )
+                        if metric_errors is not None:
+                            metric_errors.append(
+                                {
+                                    "metric_name": str(result_name),
+                                    "example_id": example_id,
+                                    "example_index": example_index,
+                                    "error_type": "NoneReturn",
+                                    "failure_mode": "returned_none",
+                                    "is_objective": False,
+                                }
+                            )
                         continue
                     key = str(result_name)
                     example_metric.custom_metrics[key] = float(result_value)
@@ -694,6 +705,17 @@ class LocalEvaluator(BaseEvaluator):
                         example_id,
                         example_index,
                         config,
+                    )
+                if metric_errors is not None:
+                    metric_errors.append(
+                        {
+                            "metric_name": metric_name,
+                            "example_id": example_id,
+                            "example_index": example_index,
+                            "error_type": "NoneReturn",
+                            "failure_mode": "returned_none",
+                            "is_objective": False,
+                        }
                     )
                 example_metric.custom_metrics[metric_name] = 0.0
             else:

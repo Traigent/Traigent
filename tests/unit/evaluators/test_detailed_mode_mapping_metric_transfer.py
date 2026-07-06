@@ -167,3 +167,49 @@ class TestDetailedModeMappingMetricTransfer:
         result = await evaluator.evaluate(_func, {}, _dataset())
 
         assert result.metrics.get("zero_metric") == 0.0
+
+
+class TestDetailedModeAllFailedAggregation:
+    def test_all_none_example_results_do_not_fabricate_custom_aggregate(self) -> None:
+        """If detailed-mode example rows are all missing, aggregation must not
+        crash or invent a scalar metric name that was never seen."""
+
+        def scalar_metric(output, expected, **kwargs):
+            return 0.0
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            metric_functions={"scalar_metric": scalar_metric},
+            detailed=True,
+            execution_mode="local",
+        )
+
+        aggregated = evaluator._compute_aggregated_custom_metrics([None, None])
+
+        assert aggregated == {}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_all_examples_failed_does_not_crash(self) -> None:
+        """Current detailed evaluation records failed ExampleResult rows rather
+        than ``None`` rows; this still locks the all-failed no-crash path."""
+
+        async def failing_func(text: str) -> str:
+            raise RuntimeError("boom")
+
+        def combo(output, expected, **kwargs):
+            return {}
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            metric_functions={"combo": combo},
+            detailed=True,
+            execution_mode="local",
+        )
+
+        result = await evaluator.evaluate(failing_func, {}, _dataset())
+
+        assert result.successful_examples == 0
+        assert result.total_examples == 2
+        assert len(result.example_results) == 2
+        assert all(example.success is False for example in result.example_results)
+        assert "combo" not in result.metrics
