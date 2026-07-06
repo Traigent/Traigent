@@ -403,7 +403,10 @@ async def resilient_backend_request(
 
         request_timeout = aiohttp.ClientTimeout(total=timeout)
 
-        async with aiohttp.ClientSession(timeout=request_timeout) as session:
+        async with aiohttp.ClientSession(
+            timeout=request_timeout,
+            trust_env=True,
+        ) as session:
             async with session.request(
                 method,
                 url,

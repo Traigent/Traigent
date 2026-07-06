@@ -885,7 +885,7 @@ class WorkflowTracesClient:
             url = f"{self.backend_url}/api/v1/traces/ingest"
             headers = self._get_headers()
 
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.post(
                     url,
                     json=request_payload,

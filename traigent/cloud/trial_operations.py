@@ -385,7 +385,9 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(connector=connector) as session:
+            async with aiohttp.ClientSession(
+                connector=connector, trust_env=True
+            ) as session:
                 # Use the same endpoint but with "running" status
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -532,7 +534,9 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
             connector = self._create_localhost_connector()
-            async with aiohttp.ClientSession(connector=connector) as session:
+            async with aiohttp.ClientSession(
+                connector=connector, trust_env=True
+            ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1040,7 +1044,10 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(connector=connector) as session:
+            async with aiohttp.ClientSession(
+                connector=connector,
+                trust_env=True,
+            ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1184,7 +1191,9 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(connector=connector) as session:
+            # fmt: off
+            async with aiohttp.ClientSession(connector=connector, trust_env=True) as session:
+                # fmt: on
                 # Submit to session endpoint with summary_stats
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1286,7 +1295,10 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(connector=connector) as session:
+            async with aiohttp.ClientSession(
+                connector=connector,
+                trust_env=True,
+            ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()

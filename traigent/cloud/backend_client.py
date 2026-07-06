@@ -1053,7 +1053,7 @@ class BackendIntegratedClient:
             ).rstrip("/")
             url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
 
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(
                     url,
                     headers=headers,
@@ -1250,6 +1250,7 @@ class BackendIntegratedClient:
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
+                trust_env=True,
             )
             self._register_session_finalizer(self._session)
         return self
@@ -1307,6 +1308,7 @@ class BackendIntegratedClient:
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
+                trust_env=True,
             )
             self._register_session_finalizer(self._session)
 

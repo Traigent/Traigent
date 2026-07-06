@@ -1000,7 +1000,7 @@ class TestLangfuseClientAsync:
                 return self.payload
 
         class AsyncSession:
-            def __init__(self):
+            def __init__(self, **_kwargs):
                 self.calls = 0
 
             async def __aenter__(self):
