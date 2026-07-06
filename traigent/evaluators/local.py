@@ -757,6 +757,19 @@ class LocalEvaluator(BaseEvaluator):
             # metrics keep the legacy ``0.0``/skip behaviour.
             if isinstance(value, Mapping):
                 for result_name, result_value in value.items():
+                    # A mapping sub-value can itself be awaitable (e.g.
+                    # ``{"quality": async_score(...)}``); resolve it the same way
+                    # as a top-level async metric so it never reaches float() as
+                    # a raw coroutine (and its exceptions get the objective /
+                    # degradation-record handling, keyed by the sub-metric name).
+                    result_value = await self._resolve_metric_function_value(
+                        result_value,
+                        str(result_name),
+                        example_obj,
+                        config,
+                        example_index,
+                        metric_errors=metric_errors,
+                    )
                     if result_value is None:
                         if str(result_name) in self.metrics:
                             raise self._objective_returned_none_error(

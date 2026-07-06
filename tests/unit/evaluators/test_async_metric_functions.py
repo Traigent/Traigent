@@ -76,3 +76,36 @@ async def test_optimize_awaits_async_scoring_function(
     assert calls == [("YES", "YES")]
     assert result.best_score == pytest.approx(0.625)
     assert result.trials[0].metrics["quality"] == pytest.approx(0.625)
+
+
+@pytest.mark.asyncio
+async def test_mapping_metric_awaits_awaitable_subvalue() -> None:
+    """A metric function may return a Mapping whose sub-VALUE is awaitable
+    (e.g. {"quality": async_score(...)}); it must be awaited, not passed to
+    float() as a raw coroutine."""
+
+    async def _quality() -> float:
+        await asyncio.sleep(0)
+        return 0.5
+
+    def combo(output: str, expected: str) -> dict:
+        return {"quality": _quality(), "plain": 0.25}
+
+    def agent(text: str) -> str:
+        return text
+
+    dataset = Dataset(
+        examples=[EvaluationExample(input_data={"text": "YES"}, expected_output="YES")],
+        name="async_mapping_subvalue",
+    )
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"combo": combo},
+        detailed=True,
+        execution_mode="local",
+    )
+
+    result = await evaluator.evaluate(agent, {}, dataset)
+
+    assert result.example_results[0].metrics["quality"] == pytest.approx(0.5)
+    assert result.example_results[0].metrics["plain"] == pytest.approx(0.25)
