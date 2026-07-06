@@ -92,6 +92,16 @@ class TestScalarNoneReturn:
         result = await evaluator.evaluate(_func, {}, _dataset())
 
         assert result.metrics.get("debug_metric") == 0.0
+        assert result.metric_errors, "expected a recorded NoneReturn degradation"
+        record = result.metric_errors[0]
+        assert record == {
+            "metric_name": "debug_metric",
+            "example_id": "example_0",
+            "example_index": 0,
+            "error_type": "NoneReturn",
+            "failure_mode": "returned_none",
+            "is_objective": False,
+        }
 
     @pytest.mark.asyncio
     async def test_legitimate_value_is_unchanged(self) -> None:
@@ -165,3 +175,13 @@ class TestMappingNoneReturn:
         # Skipped None entry absent; sibling value recorded.
         assert "aux_none" not in result.metrics
         assert result.metrics.get("aux_value") == 0.5
+        assert result.metric_errors, "expected a recorded NoneReturn degradation"
+        record = result.metric_errors[0]
+        assert record == {
+            "metric_name": "aux_none",
+            "example_id": "example_0",
+            "example_index": 0,
+            "error_type": "NoneReturn",
+            "failure_mode": "returned_none",
+            "is_objective": False,
+        }
