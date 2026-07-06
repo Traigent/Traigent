@@ -54,6 +54,7 @@ def resolve_execution_parameters(
     fallback_config_space: dict[str, Any],
     fallback_algorithm: str,
     fallback_max_trials: int | None,
+    default_config: dict[str, Any] | None = None,
 ) -> tuple[str, int | None, dict[str, Any]]:
     """Resolve and validate execution parameters.
 
@@ -64,6 +65,7 @@ def resolve_execution_parameters(
         fallback_config_space: Config space from decorator
         fallback_algorithm: Algorithm from decorator
         fallback_max_trials: Max trials from decorator
+        default_config: Baseline config to cross-check against tunable domains
 
     Returns:
         Tuple of (resolved_algorithm, resolved_max_trials, effective_config_space)
@@ -87,8 +89,7 @@ def resolve_execution_parameters(
             "Example: optimize(configuration_space={'temperature': [0.0, 0.5, 1.0]})"
         )
 
-    if configuration_space is not None:
-        validate_config_space(configuration_space)
+    validate_config_space(effective_config_space, default_config=default_config)
 
     return resolved_algorithm, resolved_max_trials, effective_config_space
 

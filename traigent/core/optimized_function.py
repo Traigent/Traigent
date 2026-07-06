@@ -973,7 +973,9 @@ class OptimizedFunction(Generic[_P, _R]):
         """Validate configuration space."""
         if self.configuration_space:
             try:
-                validate_config_space(self.configuration_space)
+                validate_config_space(
+                    self.configuration_space, default_config=self.default_config
+                )
             except ValidationError as e:
                 if _CONFIG_SPACE_TYPE_ERROR in str(e):
                     raise TypeError(str(e)) from None
@@ -2592,6 +2594,7 @@ Remediation:
             fallback_config_space=self.configuration_space,
             fallback_algorithm=cast(str, getattr(self, "algorithm", "grid")),
             fallback_max_trials=getattr(self, "max_trials", None),
+            default_config=self.default_config,
         )
         used_implicit_default_max_trials = (
             requested_max_trials is None
