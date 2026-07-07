@@ -290,6 +290,9 @@ async def test_password_auth_success_uses_validated_backend_url():
             }
 
     class _Session:
+        def __init__(self, **_kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -348,6 +351,9 @@ async def test_password_auth_backend_error_redacts_response_body():
             return "upstream leaked token=secret-value"
 
     class _Session:
+        def __init__(self, **_kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 

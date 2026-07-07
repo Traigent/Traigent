@@ -811,7 +811,10 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
-        async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
+        async with cast(Any, aiohttp).ClientSession(
+            connector=connector,
+            trust_env=True,
+        ) as session:
             api_base = (
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
@@ -905,7 +908,8 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
             async with cast(Any, aiohttp).ClientSession(
-                connector=self._build_connector()
+                connector=self._build_connector(),
+                trust_env=True,
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1037,7 +1041,10 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
-            async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
+            async with cast(Any, aiohttp).ClientSession(
+                connector=connector,
+                trust_env=True,
+            ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1221,7 +1228,10 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
-            async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
+            async with cast(Any, aiohttp).ClientSession(
+                connector=connector,
+                trust_env=True,
+            ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1290,7 +1300,10 @@ class ApiOperations:
 
             connector = self._build_connector()
 
-            async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
+            async with cast(Any, aiohttp).ClientSession(
+                connector=connector,
+                trust_env=True,
+            ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()

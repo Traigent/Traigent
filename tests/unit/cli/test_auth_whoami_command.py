@@ -89,10 +89,12 @@ def _install_fake_aiohttp(
 
     fake_module.ClientError = _ClientError
     fake_module.ClientTimeout = lambda total=15: types.SimpleNamespace(total=total)
-    fake_module.ClientSession = lambda timeout=None: _FakeSession(  # noqa: ARG005
-        response=response,
-        error=error,
-    )
+
+    def _client_session(**kwargs: Any) -> _FakeSession:
+        assert kwargs.get("trust_env") is True
+        return _FakeSession(response=response, error=error)
+
+    fake_module.ClientSession = _client_session
     monkeypatch.setitem(sys.modules, "aiohttp", fake_module)
     return fake_module
 
@@ -260,9 +262,12 @@ def test_whoami_extended_status_classification(
 
 def test_whoami_connectivity_error(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_aiohttp = _install_fake_aiohttp(monkeypatch)
-    fake_aiohttp.ClientSession = lambda timeout=None: _FakeSession(  # noqa: ARG005
-        error=fake_aiohttp.ClientError("connection refused")
-    )
+
+    def _client_session(**kwargs: Any) -> _FakeSession:
+        assert kwargs.get("trust_env") is True
+        return _FakeSession(error=fake_aiohttp.ClientError("connection refused"))
+
+    fake_aiohttp.ClientSession = _client_session
 
     result = _run_whoami(monkeypatch)
     assert result.exit_code == 1

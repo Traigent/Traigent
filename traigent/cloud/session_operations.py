@@ -1465,7 +1465,10 @@ class SessionOperations:
 
             connector = None
 
-            async with aiohttp.ClientSession(connector=connector) as session:
+            async with aiohttp.ClientSession(
+                connector=connector,
+                trust_env=True,
+            ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()

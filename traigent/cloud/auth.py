@@ -1558,7 +1558,8 @@ class AuthManager:
 
         try:
             async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=15)
+                timeout=aiohttp.ClientTimeout(total=15),
+                trust_env=True,
             ) as session:
                 async with session.post(
                     url,
@@ -1834,7 +1835,8 @@ class AuthManager:
         }
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30)
+            timeout=aiohttp.ClientTimeout(total=30),
+            trust_env=True,
         ) as session:
             async with session.post(token_url, data=data) as response:
                 if response.status == 200:
