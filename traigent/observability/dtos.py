@@ -72,6 +72,16 @@ def _validate_non_negative(name: str, value: int | float | None) -> None:
         raise ValueError(f"{name} must be non-negative")
 
 
+def _optional_int(payload: dict[str, Any], name: str) -> int | None:
+    value = payload.get(name)
+    return None if value is None else int(value)
+
+
+def _optional_float(payload: dict[str, Any], name: str) -> float | None:
+    value = payload.get(name)
+    return None if value is None else float(value)
+
+
 class ObservationType(StrEnum):
     """Frozen Wave 1 observation types."""
 
@@ -497,11 +507,11 @@ class PromptLinkRecord:
     session_id: str | None
     user_id: str | None
     environment: str | None
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
-    cost_usd: float
-    latency_ms: int
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cost_usd: float | None
+    latency_ms: int | None
     linked_at: datetime | None = None
 
     @classmethod
@@ -523,11 +533,11 @@ class PromptLinkRecord:
             session_id=payload.get("session_id"),
             user_id=payload.get("user_id"),
             environment=payload.get("environment"),
-            input_tokens=int(payload.get("input_tokens", 0)),
-            output_tokens=int(payload.get("output_tokens", 0)),
-            total_tokens=int(payload.get("total_tokens", 0)),
-            cost_usd=float(payload.get("cost_usd", 0.0)),
-            latency_ms=int(payload.get("latency_ms", 0)),
+            input_tokens=_optional_int(payload, "input_tokens"),
+            output_tokens=_optional_int(payload, "output_tokens"),
+            total_tokens=_optional_int(payload, "total_tokens"),
+            cost_usd=_optional_float(payload, "cost_usd"),
+            latency_ms=_optional_int(payload, "latency_ms"),
             linked_at=from_iso(payload.get("linked_at")),
         )
 
@@ -575,11 +585,11 @@ class TraceRecord:
     ended_at: datetime | None = None
     observation_count: int = 0
     root_observation_count: int = 0
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    total_tokens: int = 0
-    total_cost_usd: float = 0.0
-    total_latency_ms: int = 0
+    total_input_tokens: int | None = None
+    total_output_tokens: int | None = None
+    total_tokens: int | None = None
+    total_cost_usd: float | None = None
+    total_latency_ms: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     is_bookmarked: bool = False
@@ -619,11 +629,11 @@ class TraceRecord:
             ended_at=from_iso(payload.get("ended_at")),
             observation_count=int(payload.get("observation_count", 0)),
             root_observation_count=int(payload.get("root_observation_count", 0)),
-            total_input_tokens=int(payload.get("total_input_tokens", 0)),
-            total_output_tokens=int(payload.get("total_output_tokens", 0)),
-            total_tokens=int(payload.get("total_tokens", 0)),
-            total_cost_usd=float(payload.get("total_cost_usd", 0.0)),
-            total_latency_ms=int(payload.get("total_latency_ms", 0)),
+            total_input_tokens=_optional_int(payload, "total_input_tokens"),
+            total_output_tokens=_optional_int(payload, "total_output_tokens"),
+            total_tokens=_optional_int(payload, "total_tokens"),
+            total_cost_usd=_optional_float(payload, "total_cost_usd"),
+            total_latency_ms=_optional_int(payload, "total_latency_ms"),
             created_at=from_iso(payload.get("created_at")),
             updated_at=from_iso(payload.get("updated_at")),
             is_bookmarked=bool(payload.get("is_bookmarked", False)),
@@ -663,11 +673,11 @@ class SessionRecord:
     ended_at: datetime | None = None
     trace_count: int = 0
     observation_count: int = 0
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    total_tokens: int = 0
-    total_cost_usd: float = 0.0
-    total_latency_ms: int = 0
+    total_input_tokens: int | None = None
+    total_output_tokens: int | None = None
+    total_tokens: int | None = None
+    total_cost_usd: float | None = None
+    total_latency_ms: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     traces: list[TraceRecord] = field(default_factory=list)
@@ -691,11 +701,11 @@ class SessionRecord:
             ended_at=from_iso(payload.get("ended_at")),
             trace_count=int(payload.get("trace_count", 0)),
             observation_count=int(payload.get("observation_count", 0)),
-            total_input_tokens=int(payload.get("total_input_tokens", 0)),
-            total_output_tokens=int(payload.get("total_output_tokens", 0)),
-            total_tokens=int(payload.get("total_tokens", 0)),
-            total_cost_usd=float(payload.get("total_cost_usd", 0.0)),
-            total_latency_ms=int(payload.get("total_latency_ms", 0)),
+            total_input_tokens=_optional_int(payload, "total_input_tokens"),
+            total_output_tokens=_optional_int(payload, "total_output_tokens"),
+            total_tokens=_optional_int(payload, "total_tokens"),
+            total_cost_usd=_optional_float(payload, "total_cost_usd"),
+            total_latency_ms=_optional_int(payload, "total_latency_ms"),
             created_at=from_iso(payload.get("created_at")),
             updated_at=from_iso(payload.get("updated_at")),
             traces=(
@@ -727,11 +737,11 @@ class ObservationRecord:
     parent_observation_id: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
-    latency_ms: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    cost_usd: float = 0.0
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cost_usd: float | None = None
     model_name: str | None = None
     tool_name: str | None = None
     input_data: Any = None
@@ -753,11 +763,11 @@ class ObservationRecord:
             parent_observation_id=payload.get("parent_observation_id"),
             started_at=from_iso(payload.get("started_at")),
             ended_at=from_iso(payload.get("ended_at")),
-            latency_ms=int(payload.get("latency_ms", 0)),
-            input_tokens=int(payload.get("input_tokens", 0)),
-            output_tokens=int(payload.get("output_tokens", 0)),
-            total_tokens=int(payload.get("total_tokens", 0)),
-            cost_usd=float(payload.get("cost_usd", 0.0)),
+            latency_ms=_optional_int(payload, "latency_ms"),
+            input_tokens=_optional_int(payload, "input_tokens"),
+            output_tokens=_optional_int(payload, "output_tokens"),
+            total_tokens=_optional_int(payload, "total_tokens"),
+            cost_usd=_optional_float(payload, "cost_usd"),
             model_name=payload.get("model_name"),
             tool_name=payload.get("tool_name"),
             input_data=payload.get("input_data"),
