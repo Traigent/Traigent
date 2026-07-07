@@ -41,7 +41,8 @@ During optimization runs, Traigent collects:
 ### What is NOT Collected
 
 Outside tuned configuration values explicitly sent on the default portal-backed
-path, Traigent does **not** collect:
+path, and outside observability content you explicitly opt into recording,
+Traigent does **not** collect:
 
 - **User prompts or inputs**
 - **LLM responses or outputs**
@@ -87,6 +88,39 @@ Use `TRAIGENT_DISABLE_TELEMETRY=true` for SDK telemetry opt-out, effective
 `TraigentConfig.privacy_enabled` privacy mode to redact tuned string config
 values on privacy-mode submissions, and `offline=True` for zero Traigent backend
 egress.
+
+### `@observe` Content Egress
+
+The `@observe` decorator and `ObserveContext` are metadata-only by default. They
+can send trace names, observation names, status, timing, tags, environment,
+release, IDs, explicit metadata, and token/cost fields you pass, but they omit
+function arguments, explicit context `input_data`, return values, and output data
+unless you opt in.
+
+To send prompt/output content for observability, opt in explicitly:
+
+```python
+@observe("llm-call", content_mode="record")
+def call_model(prompt: str) -> str:
+    ...
+```
+
+Alternatively set `TRAIGENT_OBSERVABILITY_CONTENT=record`. The supported content
+modes are:
+
+- `metadata` (default): omit input and output content
+- `redacted`: send `{"redacted": true}` placeholders for input and output
+- `record`: send captured input and output content
+
+`redact_input=True` and `redact_output=True` force redaction placeholders for the
+corresponding side even when `content_mode="record"`. The transport still applies
+pattern-based secret scrubbing before send, but that scrubber is a final safety
+net, not the content-egress policy.
+
+`@observe(observation_type=GENERATION)` does not estimate LangChain or provider
+token usage from prompts. Pass measured `input_tokens`, `output_tokens`,
+`total_tokens`, or `cost_usd` from the provider response when recording
+generation spans; otherwise usage is reported as unknown, not zero.
 
 ### OpenTelemetry Tracing
 
@@ -179,6 +213,7 @@ The following values are recognized as "opt-out" (case-insensitive):
 - `"true"`
 - `"1"`
 - `"yes"`
+- `"on"`
 
 Any other value (including unset) means telemetry is enabled.
 
