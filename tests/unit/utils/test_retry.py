@@ -4,15 +4,18 @@ This module tests the unified retry system that combines simple decorators
 with advanced retry handling for cloud operations.
 """
 
+import importlib
 import threading
 import time
 from unittest.mock import Mock
 
 import pytest
 
+from traigent.utils.exceptions import AuthenticationError, ClientError
 from traigent.utils.retry import (
     CircuitBreaker,
     CircuitBreakerState,
+    CLOUD_API_RETRY_CONFIG,
     NetworkError,
     NonRetryableError,
     RateLimitError,
@@ -23,6 +26,8 @@ from traigent.utils.retry import (
     ServiceUnavailableError,
     retry,
 )
+
+retry_module = importlib.import_module("traigent.utils.retry")
 
 
 class TestRetryConfig:
@@ -222,6 +227,157 @@ class TestRetryHandler:
         assert result.attempts == 1
         assert mock_func.call_count == 1
         assert isinstance(result.error, NonRetryableError)
+
+    @pytest.mark.parametrize("status_code", [429, 500, 502, 503, 504])
+    def test_retry_handler_retries_cloud_status_codes(self, monkeypatch, status_code):
+        """Cloud retry config should retry transient HTTP status errors."""
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(retry_module.time, "sleep", sleep_calls.append)
+        handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
+        mock_func = Mock(
+            side_effect=[
+                ClientError(f"HTTP {status_code}", status_code=status_code),
+                "success",
+            ]
+        )
+
+        result = handler.execute_with_result(mock_func)
+
+        assert result.success is True
+        assert result.result == "success"
+        assert result.attempts == 2
+        assert mock_func.call_count == 2
+        assert len(sleep_calls) == 1
+
+    def test_retry_handler_retries_status_codes_up_to_max_attempts(self, monkeypatch):
+        """Status-code retries should stop at the configured max attempts."""
+        monkeypatch.setattr(retry_module.time, "sleep", lambda delay: None)
+        handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
+        mock_func = Mock(side_effect=ClientError("rate limited", status_code=429))
+
+        result = handler.execute_with_result(mock_func)
+
+        assert result.success is False
+        assert result.attempts == CLOUD_API_RETRY_CONFIG.max_attempts
+        assert mock_func.call_count == CLOUD_API_RETRY_CONFIG.max_attempts
+        assert isinstance(result.error, ClientError)
+
+    @pytest.mark.parametrize("status_code", [400, 404])
+    def test_retry_handler_does_not_retry_non_transient_status_codes(
+        self, monkeypatch, status_code
+    ):
+        """Cloud retry config should not retry non-transient HTTP status errors."""
+        monkeypatch.setattr(
+            retry_module.time,
+            "sleep",
+            lambda delay: pytest.fail("unexpected retry sleep"),
+        )
+        handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
+        mock_func = Mock(
+            side_effect=ClientError(f"HTTP {status_code}", status_code=status_code)
+        )
+
+        result = handler.execute_with_result(mock_func)
+
+        assert result.success is False
+        assert result.attempts == 1
+        assert mock_func.call_count == 1
+        assert isinstance(result.error, ClientError)
+
+    def test_retry_handler_authentication_error_is_never_retried(self, monkeypatch):
+        """Authentication errors remain terminal even with broad retry settings."""
+        monkeypatch.setattr(
+            retry_module.time,
+            "sleep",
+            lambda delay: pytest.fail("unexpected retry sleep"),
+        )
+        assert not issubclass(AuthenticationError, NonRetryableError)
+        auth_error = AuthenticationError("denied")
+        auth_error.status_code = 401
+        config = RetryConfig(
+            max_attempts=3,
+            retry_on_exception={Exception},
+            retry_on_status={401},
+        )
+        handler = RetryHandler(config)
+        mock_func = Mock(side_effect=auth_error)
+
+        result = handler.execute_with_result(mock_func)
+
+        assert result.success is False
+        assert result.attempts == 1
+        assert mock_func.call_count == 1
+        assert isinstance(result.error, AuthenticationError)
+
+    def test_retry_handler_non_retryable_error_wins_over_status_retry(
+        self, monkeypatch
+    ):
+        """NonRetryableError must short-circuit before status-code matching."""
+        monkeypatch.setattr(
+            retry_module.time,
+            "sleep",
+            lambda delay: pytest.fail("unexpected retry sleep"),
+        )
+        error = NonRetryableError("do not retry")
+        error.status_code = 401
+        config = RetryConfig(
+            max_attempts=3,
+            retry_on_exception={Exception},
+            retry_on_status={401},
+        )
+        handler = RetryHandler(config)
+        mock_func = Mock(side_effect=error)
+
+        result = handler.execute_with_result(mock_func)
+
+        assert result.success is False
+        assert result.attempts == 1
+        assert mock_func.call_count == 1
+        assert isinstance(result.error, NonRetryableError)
+
+    def test_retry_handler_honors_retry_after_for_status_retry(self, monkeypatch):
+        """Retry-After delays should be capped and used for status retries."""
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(retry_module.time, "sleep", sleep_calls.append)
+        error = ClientError("rate limited", status_code=429)
+        error.retry_after = 10.0
+        config = RetryConfig(
+            max_attempts=2,
+            initial_delay=0.01,
+            max_delay=3.0,
+            jitter=False,
+            retry_on_status={429},
+        )
+        handler = RetryHandler(config)
+        mock_func = Mock(side_effect=[error, "success"])
+
+        result = handler.execute_with_result(mock_func)
+
+        assert result.success is True
+        assert result.attempts == 2
+        assert sleep_calls == [3.0]
+
+    def test_retry_handler_honors_retry_after_seconds_alias(self, monkeypatch):
+        """Status retries also accept a retry_after_seconds exception attribute."""
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(retry_module.time, "sleep", sleep_calls.append)
+        error = ClientError("rate limited", status_code=429)
+        error.retry_after_seconds = 4
+        config = RetryConfig(
+            max_attempts=2,
+            initial_delay=0.01,
+            max_delay=2.5,
+            jitter=False,
+            retry_on_status={429},
+        )
+        handler = RetryHandler(config)
+        mock_func = Mock(side_effect=[error, "success"])
+
+        result = handler.execute_with_result(mock_func)
+
+        assert result.success is True
+        assert result.attempts == 2
+        assert sleep_calls == [2.5]
 
     @pytest.mark.asyncio
     async def test_async_retry_handler(self):
