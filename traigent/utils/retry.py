@@ -25,6 +25,7 @@ from threading import RLock
 from typing import Any, TypeVar, cast
 
 from traigent.utils.exceptions import (
+    AuthenticationError,
     NetworkError,
     NonRetryableError,
     RateLimitError,
@@ -132,7 +133,7 @@ class RetryConfig:
 
     def calculate_delay(self, attempt: int, retry_after: float | None = None) -> float:
         """Calculate delay before next retry attempt."""
-        if retry_after and self.respect_retry_after:
+        if retry_after is not None and self.respect_retry_after:
             return min(retry_after, self.max_delay)
 
         if self.strategy in (RetryStrategy.FIXED, RetryStrategy.FIXED_DELAY):
@@ -323,7 +324,7 @@ class RetryHandler:
                     break
 
                 # Calculate delay
-                retry_after = getattr(e, "retry_after", None)
+                retry_after = self._get_retry_after(e)
                 delay = self.config.calculate_delay(attempt, retry_after)
 
                 # Log retry attempt
@@ -388,7 +389,7 @@ class RetryHandler:
                     break
 
                 # Calculate delay
-                retry_after = getattr(e, "retry_after", None)
+                retry_after = self._get_retry_after(e)
                 delay = self.config.calculate_delay(attempt, retry_after)
 
                 # Log retry attempt
@@ -421,10 +422,17 @@ class RetryHandler:
         if attempt >= self.config.max_attempts:
             return False
 
-        # Check if exception type is retryable
         if isinstance(exception, NonRetryableError):
             return False
 
+        if isinstance(exception, AuthenticationError):
+            return False
+
+        status_code = getattr(exception, "status_code", None)
+        if self.config.retry_on_status and status_code in self.config.retry_on_status:
+            return True
+
+        # Check if exception type is retryable
         if self.config.retry_on_exception:
             return any(
                 isinstance(exception, exc_type)
@@ -432,6 +440,19 @@ class RetryHandler:
             )
 
         return True
+
+    @staticmethod
+    def _get_retry_after(exception: Exception) -> float | None:
+        """Return an optional Retry-After delay exposed by an exception."""
+        for attr_name in ("retry_after", "retry_after_seconds"):
+            retry_after = getattr(exception, attr_name, None)
+            if retry_after is None:
+                continue
+            try:
+                return max(0.0, float(retry_after))
+            except (TypeError, ValueError):
+                continue
+        return None
 
 
 # Decorator functions for simple usage

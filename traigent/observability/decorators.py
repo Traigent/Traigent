@@ -16,6 +16,7 @@ from traigent.config.context import (
     get_trial_context,
 )
 from traigent.observability.client import ObservabilityClient
+from traigent.observability.config import OBSERVABILITY_CONTENT_MODES
 from traigent.observability.dtos import ObservationType, to_jsonable, utc_now
 from traigent.security.redaction import is_credential_key_name
 from traigent.utils.logging import get_logger
@@ -173,6 +174,7 @@ class ObserveContext:
         tags: list[str] | None = None,
         redact_input: bool = False,
         redact_output: bool = False,
+        content_mode: str | None = None,
     ) -> None:
         self.name = name
         self.client = client
@@ -191,6 +193,7 @@ class ObserveContext:
         self.tags = list(tags or [])
         self.redact_input = redact_input
         self.redact_output = redact_output
+        self.content_mode = content_mode.strip().lower() if content_mode else None
 
         self._started_at: datetime | None = None
         self._trace_id: str | None = None
@@ -202,19 +205,31 @@ class ObserveContext:
         self._finished = False
         self._result: Any = None
         self._enriched_metadata = _build_observe_enrichment_metadata()
+        self._effective_content_mode = "metadata"
 
     def _captured_input(self) -> Any:
-        return _redacted_input_payload() if self.redact_input else self.input_data
+        return self._captured_payload(self.input_data, redact=self.redact_input)
 
     def _captured_output(self, result: Any) -> Any:
-        return _redacted_input_payload() if self.redact_output else result
+        return self._captured_payload(result, redact=self.redact_output)
+
+    def _captured_payload(self, payload: Any, *, redact: bool) -> Any:
+        if redact or self._effective_content_mode == "redacted":
+            return _redacted_input_payload()
+        if self._effective_content_mode == "record":
+            return payload
+        return None
 
     def __enter__(self) -> ObserveContext:
-        self._started_at = utc_now()
         client = (
             self.client or _current_client.get() or get_default_observability_client()
         )
+        self._effective_content_mode = self.content_mode or client.config.content_mode
+        if self._effective_content_mode not in OBSERVABILITY_CONTENT_MODES:
+            allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
+            raise ValueError(f"content_mode must be one of: {allowed}")
         self._client_token = _current_client.set(client)
+        setup_started_at = utc_now()
 
         trace_id = _current_trace_id.get()
         if trace_id is None:
@@ -229,7 +244,7 @@ class ObserveContext:
                 release=self.release,
                 tags=self.tags,
                 metadata=trace_metadata,
-                started_at=self._started_at,
+                started_at=setup_started_at,
                 input_data=self._captured_input(),
                 custom_trace_id=self.custom_trace_id,
             )
@@ -247,7 +262,7 @@ class ObserveContext:
             observation_type=self.observation_type,
             parent_observation_id=parent_observation_id,
             status="running",
-            started_at=self._started_at,
+            started_at=setup_started_at,
             input_data=self._captured_input(),
             metadata=observation_metadata,
         )
@@ -255,6 +270,7 @@ class ObserveContext:
         self._stack_token = _current_observation_stack.set(
             stack + (self._observation_id,)
         )
+        self._started_at = utc_now()
         return self
 
     def __exit__(self, exc_type, exc, exc_tb) -> Literal[False]:
@@ -276,6 +292,8 @@ class ObserveContext:
             self.client or _current_client.get() or get_default_observability_client()
         )
         ended_at = utc_now()
+        started_at = self._started_at or ended_at
+        latency_ms = max(0, int((ended_at - started_at).total_seconds() * 1000))
         status = "failed" if error is not None else "completed"
         metadata = dict(self.metadata)
         metadata.update(self._enriched_metadata)
@@ -291,7 +309,9 @@ class ObserveContext:
                 name=self.name,
                 observation_type=self.observation_type,
                 status=status,
+                started_at=started_at,
                 ended_at=ended_at,
+                latency_ms=latency_ms,
                 input_data=self._captured_input(),
                 output_data=output_data,
                 metadata=metadata,
@@ -301,6 +321,7 @@ class ObserveContext:
                     self._trace_id,
                     status=status,
                     output_data=output_data,
+                    started_at=started_at,
                     ended_at=ended_at,
                 )
 
@@ -330,6 +351,7 @@ class _ObserveFactory:
         tags: list[str] | None = None,
         redact_input: bool = False,
         redact_output: bool = False,
+        content_mode: str | None = None,
     ) -> None:
         self.name = name
         self.client = client
@@ -343,6 +365,7 @@ class _ObserveFactory:
         self.tags = tags
         self.redact_input = redact_input
         self.redact_output = redact_output
+        self.content_mode = content_mode
         self._context: ObserveContext | None = None
 
     def _require_context(self) -> ObserveContext:
@@ -378,6 +401,7 @@ class _ObserveFactory:
                     tags=self.tags,
                     redact_input=self.redact_input,
                     redact_output=self.redact_output,
+                    content_mode=self.content_mode,
                 ) as ctx:
                     result = await func(*args, **kwargs)
                     ctx._result = result
@@ -406,6 +430,7 @@ class _ObserveFactory:
                 tags=self.tags,
                 redact_input=self.redact_input,
                 redact_output=self.redact_output,
+                content_mode=self.content_mode,
             ) as ctx:
                 result = func(*args, **kwargs)
                 ctx._result = result
@@ -427,6 +452,7 @@ class _ObserveFactory:
             tags=self.tags,
             redact_input=self.redact_input,
             redact_output=self.redact_output,
+            content_mode=self.content_mode,
         )
         return self._context.__enter__()
 
@@ -447,6 +473,7 @@ class _ObserveFactory:
             tags=self.tags,
             redact_input=self.redact_input,
             redact_output=self.redact_output,
+            content_mode=self.content_mode,
         )
         return await self._context.__aenter__()
 
@@ -468,14 +495,16 @@ def observe(
     tags: list[str] | None = None,
     redact_input: bool = False,
     redact_output: bool = False,
+    content_mode: str | None = None,
 ):
     """Create a decorator or context manager for observability instrumentation.
 
-    By default the decorator captures function arguments as trace input and
-    return values as trace output. Set `redact_input=True` or
-    `redact_output=True` when arguments or return values may include secrets,
-    credentials, PII, or proprietary content. When redaction is not enabled,
-    the transport still applies pattern-based secret scrubbing before send.
+    By default the decorator records metadata only and does not send function
+    arguments or return values. Set `content_mode="record"` to opt into raw
+    input/output capture, or `content_mode="redacted"` to emit redaction
+    placeholders. `redact_input=True` and `redact_output=True` force placeholders
+    for the corresponding side. The transport still applies pattern-based
+    secret scrubbing before send.
     """
 
     if callable(name):
@@ -495,4 +524,5 @@ def observe(
         tags=tags,
         redact_input=redact_input,
         redact_output=redact_output,
+        content_mode=content_mode,
     )

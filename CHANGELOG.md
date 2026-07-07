@@ -6,6 +6,47 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-07
+
+Observability hardening release. Enterprise-grade privacy posture for the
+`@observe` instrumentation plus latency/usage accuracy fixes across the
+SDK, backend, and portal.
+
+### Changed
+
+- **BREAKING (behavioral): `@observe` is now metadata-only by default.** The
+  decorator and `ObserveContext` no longer send function arguments or return
+  values to the observability backend by default — only span metadata (name,
+  type, timing, tags, session/environment, and token/cost fields you pass).
+  To restore raw input/output capture, opt in per span with
+  `@observe(..., content_mode="record")` or globally with
+  `TRAIGENT_OBSERVABILITY_CONTENT=record`. Use `content_mode="redacted"` to
+  emit redaction placeholders. This closes an egress path where prompt/response
+  content left the process by default. **Migration:** if you relied on seeing
+  prompts/outputs in the dashboard, set `content_mode="record"` on those spans
+  (only for spans whose I/O is safe to store).
+- Recorded span latency now measures only the wrapped function body. Previously
+  the span start was stamped before SDK trace-setup work, so transport/setup
+  overhead (tens of ms) was misattributed to application latency.
+- Token and cost usage fields are nullable end-to-end (SDK DTO → backend schema
+  and model → portal). Unknown usage now renders as `—` instead of a misleading
+  `0` / `$0.0000`; a measured zero still renders as `0`. Completed generation
+  spans with no usage log a one-time warning rather than implying auto-capture.
+
+### Fixed
+
+- Observability transport no longer blocks the calling application thread on
+  batch-size flushes: sends run on a daemon flush thread, and payload
+  redaction/serialization happen before acquiring the transport lock. An age
+  timer stays armed as a backstop so a tail item is never stranded if the flush
+  thread is in its death window when the next item arrives.
+- Telemetry drops (queue full, oversized/non-serializable payloads, closed
+  transport, failed batches) are no longer silent: each updates stats/errors and
+  emits a `health_callback` event.
+- Unknown `ENVIRONMENT`/`TRAIGENT_ENV` labels now log a warning (without leaking
+  the raw value) instead of being silently ignored; a missing `session_id`
+  renders as `—`.
+
 ## [0.20.1] - 2026-07-06
 
 Patch release for the managed optimization dispatch fix wave and adjacent
