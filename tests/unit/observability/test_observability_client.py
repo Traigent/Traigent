@@ -493,7 +493,11 @@ def test_sync_batch_transport_redacts_direct_submitted_payloads():
     assert "alice@example.com" not in payload_blob
     assert FAKE_TRACE_API_KEY not in payload_blob
     assert "[REDACTED:email]" in payload_blob
-    assert "[REDACTED:api_key]" in payload_blob
+    # The ``api_key`` metadata value is now masked by the credential KEY-NAME
+    # rule (strictly stronger than the prior value-scan ``[REDACTED:api_key]``
+    # tag): any value under a credential-like key is fully masked, so a
+    # regex-evading low-entropy secret can no longer ride along.
+    assert "'api_key': '[REDACTED]'" in payload_blob
 
 
 def test_observability_client_close_flushes_active_trace_payloads_without_explicit_flush():
