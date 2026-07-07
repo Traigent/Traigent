@@ -129,6 +129,120 @@ class TestNestedRedaction:
         assert out["k"] == "[REDACTED:email]"
         assert out["n"] == 1
 
+    def test_credential_key_redacts_low_entropy_value(self) -> None:
+        out = redact_sensitive_data(
+            {
+                "metadata": {
+                    "api_key": "top-secret",  # pragma: allowlist secret
+                    "prompt": "variant-a",
+                }
+            },
+            redact_credential_keys=True,
+        )
+
+        assert out["metadata"]["api_key"] == "[REDACTED]"
+        assert out["metadata"]["prompt"] == "variant-a"
+
+    def test_numeric_token_counts_survive_credential_key_match(self) -> None:
+        """`is_credential_key_name` matches the substring ``token``, so
+        ``*_tokens`` telemetry keys trip the credential check. Numeric values
+        under such keys MUST survive (redacting token counts would corrupt
+        usage/cost telemetry) -- only string values under credential keys are
+        masked."""
+        out = redact_sensitive_data(
+            {
+                "usage": {
+                    "total_tokens": 1234,
+                    "max_tokens": 4096,
+                    "prompt_tokens": 50,
+                    "completion_tokens": 7,
+                },
+                "credentials": {
+                    "api_key": "mylowentropykey"
+                },  # pragma: allowlist secret
+            },
+            redact_credential_keys=True,
+        )
+
+        assert out["usage"] == {
+            "total_tokens": 1234,
+            "max_tokens": 4096,
+            "prompt_tokens": 50,
+            "completion_tokens": 7,
+        }
+        # Nested string secret under a credential key is still masked.
+        assert out["credentials"]["api_key"] == "[REDACTED]"
+
+    def test_secret_nested_in_credential_key_container_is_masked(self) -> None:
+        """A secret one level down under a credential key -- as a dict or list
+        value -- must not slip through under an innocuous inner key."""
+        out = redact_sensitive_data(
+            {
+                "api_key": {"value": "mylowentropykey"},  # pragma: allowlist secret
+                "authorization": ["mylowentropykey", 5],  # pragma: allowlist secret
+            },
+            redact_credential_keys=True,
+        )
+        assert out["api_key"]["value"] == "[REDACTED]"
+        # Non-string leaf under the credential subtree is preserved.
+        assert out["authorization"] == ["[REDACTED]", 5]
+
+    def test_redacted_prefixed_value_is_not_trusted(self) -> None:
+        """A value crafted to start with ``[REDACTED`` must NOT be passed
+        through as already-safe (that was a bypass)."""
+        out = redact_sensitive_data(
+            {"api_key": "[REDACTED]stillsecret"},  # pragma: allowlist secret
+            redact_credential_keys=True,
+        )
+        assert out["api_key"] == "[REDACTED]"
+        assert "stillsecret" not in out["api_key"]
+
+    def test_mixed_matched_and_unmatched_secret_is_fully_masked(self) -> None:
+        """Under a credential key the whole string is masked -- partial
+        value-regex redaction would leak the adjacent unmatched portion."""
+        out = redact_sensitive_data(
+            {
+                "api_key": "mylowentropykey sk-abcd1234abcd1234"
+            },  # pragma: allowlist secret
+            redact_credential_keys=True,
+        )
+        assert out["api_key"] == "[REDACTED]"
+        assert "mylowentropykey" not in out["api_key"]
+
+    def test_default_does_not_redact_by_key_name(self) -> None:
+        """Key-name redaction is OPT-IN. By default (typed/bounded call sites)
+        a value under a credential-substring key is only value-scanned, so
+        legitimate non-secret fields such as ``auth_source: "device"`` or a
+        numeric-shaped string survive -- avoiding the ``auth``/``token``
+        substring over-redaction."""
+        out = redact_sensitive_data({"auth_source": "device", "token_type": "Bearer"})
+        assert out["auth_source"] == "device"
+        assert out["token_type"] == "Bearer"
+
+        # ...but with the opt-in flag, the same fields are masked (egress bag).
+        hardened = redact_sensitive_data(
+            {"auth_source": "device"}, redact_credential_keys=True
+        )
+        assert hardened["auth_source"] == "[REDACTED]"
+
+    def test_numeric_secret_under_credential_key_survives_known_limitation(
+        self,
+    ) -> None:
+        """Documented limitation: numeric values are preserved (to keep
+        token-count telemetry), so a numeric-valued secret survives. Real
+        credentials are strings and ARE masked; a numeric can't be told apart
+        from a token count by type."""
+        out = redact_sensitive_data(
+            {
+                "password": 123456,
+                "api_key": "sk-secretstring",
+            },  # pragma: allowlist secret
+            redact_credential_keys=True,
+        )
+        # String secret masked; numeric "secret" preserved (accepted tradeoff).
+        assert out["api_key"] == "[REDACTED]"
+        assert out["password"] == 123456
+
     def test_list_recursive(self) -> None:
         out = redact_sensitive_data(["alice@example.com", "plain"])
         assert out[0] == "[REDACTED:email]"

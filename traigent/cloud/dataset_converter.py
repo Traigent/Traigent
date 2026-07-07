@@ -155,7 +155,8 @@ class DatasetConverter:
         """Async context manager entry."""
         if AIOHTTP_AVAILABLE:
             self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=60)
+                timeout=aiohttp.ClientTimeout(total=60),
+                trust_env=True,
             )
         return self
 

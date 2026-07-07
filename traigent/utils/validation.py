@@ -21,6 +21,7 @@ from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_open
@@ -1066,10 +1067,93 @@ def validate_numeric_metric(
 # ===== Convenience Functions (Backward Compatibility) =====
 
 
-def validate_config_space(config_space: dict[str, Any]) -> None:
+def _type_name(value: Any) -> str:
+    return type(value).__name__
+
+
+def _raise_default_config_domain_error(
+    param_name: str,
+    value: Any,
+    detail: str,
+) -> None:
+    raise ConfigurationError(
+        f"default_config[{param_name!r}] value {value!r} "
+        f"(type {_type_name(value)}) {detail}"
+    )
+
+
+def _strict_choice_match(value: Any, choices: list[Any] | tuple[Any, ...]) -> bool:
+    return any(type(value) is type(choice) and value == choice for choice in choices)
+
+
+def _validate_default_choice(
+    param_name: str,
+    value: Any,
+    choices: list[Any] | tuple[Any, ...],
+) -> None:
+    if _strict_choice_match(value, choices):
+        return
+
+    for choice in choices:
+        if value == choice:
+            _raise_default_config_domain_error(
+                param_name,
+                value,
+                f"matches configuration_space[{param_name!r}] choice {choice!r} "
+                f"but does not match declared type {_type_name(choice)}",
+            )
+
+
+def _validate_default_config_value(
+    param_name: str,
+    value: Any,
+    param_values: Any,
+) -> None:
+    from traigent.api.parameter_ranges import ParameterRange
+
+    if isinstance(param_values, ParameterRange):
+        param_values = param_values.to_config_value()
+
+    if isinstance(param_values, list):
+        _validate_default_choice(param_name, value, param_values)
+        return
+
+    if isinstance(param_values, tuple) and len(param_values) == 2:
+        return
+
+    if isinstance(param_values, dict):
+        param_type = Validators._infer_param_type(param_values)
+        if param_type in {"categorical", "choice"}:
+            choices = param_values.get("choices") or param_values.get("values")
+            if isinstance(choices, (list, tuple)):
+                _validate_default_choice(param_name, value, choices)
+            return
+
+        if param_type in Validators._NUMERIC_TYPES:
+            return
+
+
+def _validate_default_config_against_config_space(
+    config_space: dict[str, Any],
+    default_config: dict[str, Any] | None,
+) -> None:
+    if not isinstance(default_config, dict):
+        return
+
+    for param_name, value in default_config.items():
+        if param_name not in config_space:
+            continue
+        _validate_default_config_value(param_name, value, config_space[param_name])
+
+
+def validate_config_space(
+    config_space: dict[str, Any],
+    default_config: dict[str, Any] | None = None,
+) -> None:
     """Validate configuration space (raises exception on error)."""
     result = Validators.validate_configuration_space(config_space)
     result.raise_if_invalid()
+    _validate_default_config_against_config_space(config_space, default_config)
 
 
 def validate_objectives(objectives: list[str]) -> None:

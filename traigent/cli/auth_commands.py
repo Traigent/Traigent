@@ -503,7 +503,8 @@ class TraigentAuthCLI:
 
         try:
             async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=15)
+                timeout=aiohttp.ClientTimeout(total=15),
+                trust_env=True,
             ) as session:
                 async with session.post(url, headers=headers) as response:
                     response_text = await response.text()
@@ -896,7 +897,7 @@ class TraigentAuthCLI:
             return False
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 authorization = await self._start_device_authorization(session)
                 self._display_device_authorization(authorization)
                 credentials = await self._poll_device_token(
@@ -1026,7 +1027,7 @@ class TraigentAuthCLI:
 
         console.print(f"[dim]POST {login_url}[/dim]")
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.post(
                 login_url,
                 json={"email": email, "password": password},
@@ -1113,7 +1114,7 @@ class TraigentAuthCLI:
         console.print(f"\n[dim]POST {api_key_url}[/dim]")
         console.print(f"[dim]Creating API key: {key_name}[/dim]")
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.post(
                 api_key_url,
                 json=key_payload,
@@ -1446,7 +1447,7 @@ class TraigentAuthCLI:
             try:
                 import aiohttp
 
-                async with aiohttp.ClientSession():
+                async with aiohttp.ClientSession(trust_env=True):
                     # Backend may not expose a revoke endpoint yet; placeholder for future call.
                     pass  # Silently continue if revocation fails
             except Exception as e:
@@ -1985,7 +1986,8 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
 
     try:
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=15)
+            timeout=aiohttp.ClientTimeout(total=15),
+            trust_env=True,
         ) as session:
             async with session.post(
                 url,

@@ -461,7 +461,7 @@ class LangfuseClient:
             )
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(
                     f"{self.host}/api/public/traces/{trace_id}",
                     headers=self._get_auth_header(),
@@ -506,7 +506,7 @@ class LangfuseClient:
         self._observations_partial_by_trace[trace_id] = False
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 while page <= max_pages:
                     async with session.get(
                         f"{self.host}/api/public/observations",

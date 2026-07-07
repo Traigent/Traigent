@@ -281,7 +281,7 @@ class PasswordAuthHandler:
         )
 
         async def perform_login():
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.post(
                     login_url,
                     json={

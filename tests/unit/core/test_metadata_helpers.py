@@ -189,6 +189,62 @@ class TestBuildBackendMetadataBasic:
         assert "all_metrics" in metadata
         assert metadata["timestamp"] == "2024-01-01T12:00:00"
 
+    def test_metadata_snapshots_live_trial_dicts(self, mock_trial_result, mock_config):
+        """Backend metadata is not aliased to concurrently-mutated trial dicts."""
+        mock_trial_result.metrics = {
+            "accuracy": 0.85,
+            "surrogate_score": 0.5,
+            "nested_metric": {"before": 1},
+        }
+        mock_trial_result.summary_stats = {
+            "metrics": {"accuracy": {"mean": 0.85}},
+            "metadata": {"source": {"batch": 1}},
+        }
+        mock_trial_result.metadata = {
+            "comparability": {
+                "per_metric_coverage": {"accuracy": {"present": 1}},
+                "warning_codes": [],
+            },
+            "surrogate_evaluator": {
+                "config": {"thresholds": {"minimum": 0.2}},
+            },
+        }
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        mock_trial_result.metrics["surrogate_score"] = 0.9
+        mock_trial_result.metrics["nested_metric"]["before"] = 2
+        mock_trial_result.metrics["new_metric"] = 1.0
+        mock_trial_result.summary_stats["metadata"]["source"]["batch"] = 2
+        mock_trial_result.metadata["comparability"]["per_metric_coverage"]["accuracy"][
+            "present"
+        ] = 2
+        mock_trial_result.metadata["comparability"]["warning_codes"].append("mutated")
+        mock_trial_result.metadata["surrogate_evaluator"]["config"]["thresholds"][
+            "minimum"
+        ] = 0.8
+
+        assert metadata["all_metrics"] == {
+            "accuracy": 0.85,
+            "surrogate_score": 0.5,
+            "nested_metric": {"before": 1},
+        }
+        assert metadata["summary_stats"]["metadata"]["source"]["batch"] == 1
+        assert metadata["summary_stats"]["metadata"]["aggregation_summary"][
+            "metrics"
+        ] == {
+            "accuracy": 0.85,
+            "surrogate_score": 0.5,
+            "nested_metric": {"before": 1},
+        }
+        assert (
+            metadata["comparability"]["per_metric_coverage"]["accuracy"]["present"] == 1
+        )
+        assert metadata["comparability"]["warning_codes"] == []
+        assert metadata["surrogate_evaluator"]["config"]["thresholds"]["minimum"] == 0.2
+        assert metadata["nested_metric"] == {"before": 1}
+        assert "new_metric" not in metadata["all_metrics"]
+
     def test_additional_metrics_added(self, mock_trial_result, mock_config):
         """Test additional metrics beyond primary objective are added."""
         mock_trial_result.metrics = {

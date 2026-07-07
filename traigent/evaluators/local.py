@@ -569,6 +569,40 @@ class LocalEvaluator(BaseEvaluator):
         example_result.metrics["output_cost"] = example_metric.cost.output_cost
         example_result.metrics["total_cost"] = example_metric.cost.total_cost
 
+    def _objective_returned_none_error(
+        self,
+        metric_name: str,
+        example_id: str,
+        example_index: int,
+        config: dict[str, Any],
+    ) -> EvaluationError:
+        """Build the fail-closed error for an objective metric returning None.
+
+        Companion to the exception-path guard in ``_invoke_metric_function``
+        (which raises when an objective metric *raises*). A ``None`` return is
+        not an exception, so without this an optimization objective's ``None``
+        would be substituted with a fabricated ``0.0`` and silently corrupt the
+        search. Callers raise the returned error only for objective metrics
+        (``metric_name in self.metrics``); non-objective metrics retain the
+        legacy ``0.0``/skip behaviour.
+        """
+        return EvaluationError(
+            f"Objective metric '{metric_name}' returned None for example "
+            f"{example_id}. Refusing to substitute a fabricated 0.0 score for "
+            "an optimization objective.",
+            config=config,
+            details={
+                "metric_name": metric_name,
+                "example_id": example_id,
+                "example_index": example_index,
+                "is_objective": True,
+                # Mirror the exception-path record shape (error_type) so
+                # downstream consumers parse both failure modes uniformly.
+                "error_type": "NoneReturn",
+                "failure_mode": "returned_none",
+            },
+        )
+
     def _apply_custom_metric_functions(
         self,
         example_metric: ExampleMetrics,
@@ -578,7 +612,7 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
-    ) -> None:
+    ) -> list[str]:
         """Apply user-defined metric functions for a single example.
 
         Updates example_metric.custom_metrics in place.
@@ -593,6 +627,16 @@ class LocalEvaluator(BaseEvaluator):
                 records from non-objective metric failures; forwarded to
                 ``_invoke_metric_function``. An objective failure instead
                 raises ``EvaluationError`` and propagates out of this call.
+
+        Returns:
+            The custom-metric keys actually written to
+            ``example_metric.custom_metrics`` by this call. For a scalar-
+            returning function this is the function's own name; for a
+            mapping-returning function it is the produced sub-keys (never the
+            function name). Callers use this to transfer the produced metrics
+            downstream without assuming a key exists for every function name
+            (a mapping-returning function never populates ``custom_metrics``
+            under its own name).
         """
         llm_payload = {
             "total_tokens": example_metric.tokens.total_tokens,
@@ -604,6 +648,12 @@ class LocalEvaluator(BaseEvaluator):
             "response_time_ms": example_metric.response.response_time_ms,
         }
 
+        example_id = (
+            example_obj.metadata.get("example_id", f"example_{example_index}")
+            if example_obj.metadata
+            else f"example_{example_index}"
+        )
+        produced_keys: list[str] = []
         for metric_name, metric_func in self.metric_functions.items():
             value = self._invoke_metric_function(
                 metric_func,
@@ -615,17 +665,63 @@ class LocalEvaluator(BaseEvaluator):
                 example_index,
                 metric_errors=metric_errors,
             )
+            # A ``None`` return is NOT an exception, so it bypasses the
+            # objective fail-closed guard in ``_invoke_metric_function``.
+            # Mirror that guard here: an objective metric that returns
+            # ``None`` (scalar) or omits its value inside a returned mapping
+            # would otherwise be coerced to a fabricated ``0.0`` / silently
+            # dropped, pinning and corrupting the search. Non-objective
+            # metrics keep the legacy ``0.0``/skip behaviour.
             if isinstance(value, Mapping):
                 for result_name, result_value in value.items():
                     if result_value is None:
+                        if str(result_name) in self.metrics:
+                            raise self._objective_returned_none_error(
+                                str(result_name),
+                                example_id,
+                                example_index,
+                                config,
+                            )
+                        if metric_errors is not None:
+                            metric_errors.append(
+                                {
+                                    "metric_name": str(result_name),
+                                    "example_id": example_id,
+                                    "example_index": example_index,
+                                    "error_type": "NoneReturn",
+                                    "failure_mode": "returned_none",
+                                    "is_objective": False,
+                                }
+                            )
                         continue
-                    example_metric.custom_metrics[str(result_name)] = float(
-                        result_value
-                    )
+                    key = str(result_name)
+                    example_metric.custom_metrics[key] = float(result_value)
+                    produced_keys.append(key)
                 continue
-            example_metric.custom_metrics[metric_name] = (
-                float(value) if value is not None else 0.0
-            )
+            if value is None:
+                if metric_name in self.metrics:
+                    raise self._objective_returned_none_error(
+                        metric_name,
+                        example_id,
+                        example_index,
+                        config,
+                    )
+                if metric_errors is not None:
+                    metric_errors.append(
+                        {
+                            "metric_name": metric_name,
+                            "example_id": example_id,
+                            "example_index": example_index,
+                            "error_type": "NoneReturn",
+                            "failure_mode": "returned_none",
+                            "is_objective": False,
+                        }
+                    )
+                example_metric.custom_metrics[metric_name] = 0.0
+            else:
+                example_metric.custom_metrics[metric_name] = float(value)
+            produced_keys.append(metric_name)
+        return produced_keys
 
     def _build_metric_keyword_arguments(
         self,
@@ -1210,7 +1306,7 @@ class LocalEvaluator(BaseEvaluator):
         # Apply custom metric functions
         if self.metric_functions and index < len(dataset.examples):
             example_obj = dataset.examples[index]
-            self._apply_custom_metric_functions(
+            produced_metric_keys = self._apply_custom_metric_functions(
                 example_metric,
                 output,
                 example_obj,
@@ -1219,17 +1315,28 @@ class LocalEvaluator(BaseEvaluator):
                 metric_errors=metric_errors,
             )
 
-            # Transfer custom metrics to example_results if in detailed mode
+            # Transfer custom metrics to example_results if in detailed mode.
+            # Iterate the keys actually produced (which include mapping
+            # sub-keys and exclude any function name a mapping-returning
+            # function never populated) rather than the function names -- the
+            # latter KeyErrors for mapping-returning metric functions.
             if (
                 self.detailed
                 and example_results
                 and index < len(example_results)
                 and example_results[index] is not None
             ):
-                for metric_name in self.metric_functions:
-                    example_results[index].metrics[metric_name] = (
-                        example_metric.custom_metrics[metric_name]
-                    )
+                # A metric function is authoritative for the key(s) it
+                # produces and overrides a built-in computed value of the same
+                # name -- this is the contract the custom ``scoring_function``
+                # path relies on (it defines the objective, e.g. ``accuracy``).
+                # Mapping sub-keys inherit the same override semantics as
+                # scalar metric-function values, for consistency.
+                target_metrics = example_results[index].metrics
+                for metric_key in produced_metric_keys:
+                    target_metrics[metric_key] = example_metric.custom_metrics[
+                        metric_key
+                    ]
 
         # Send progress callback
         if progress_callback:
@@ -1362,10 +1469,18 @@ class LocalEvaluator(BaseEvaluator):
 
         for metric_name in self.metric_functions:
             values: list[float] = []
+            # A mapping-returning metric function populates its SUB-keys, never
+            # its own name, so ``metric_name`` may be absent from every result.
+            # Track whether it was seen so we don't fabricate a bogus aggregate
+            # ``0.0`` for a function name that produced no such key.
+            saw_metric_name = False
             for result in example_results:
                 if result is None:
                     continue
-                raw_value = result.metrics.get(metric_name)
+                if metric_name not in result.metrics:
+                    continue
+                saw_metric_name = True
+                raw_value = result.metrics[metric_name]
                 if raw_value is None:
                     continue
                 try:
@@ -1378,7 +1493,14 @@ class LocalEvaluator(BaseEvaluator):
                     aggregated[metric_name] = self._compute_percentile(values, 0.95)
                 else:
                     aggregated[metric_name] = sum(values) / len(values)
-            else:
+            elif saw_metric_name or not self.detailed:
+                # Keep the legacy 0.0 sentinel when the name was present but
+                # produced no usable numeric value, OR in non-detailed mode
+                # (no per-example rows to inspect, so scalar metric functions
+                # must retain their legacy 0.0 aggregate). In detailed mode a
+                # name never seen at all -- e.g. a mapping function's own name,
+                # whose sub-keys are aggregated elsewhere -- is NOT fabricated
+                # as a bogus 0.0.
                 aggregated[metric_name] = 0.0
 
         return aggregated

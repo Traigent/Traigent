@@ -361,7 +361,7 @@ class TokenManager:
         )
 
         async def perform_refresh():
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.post(
                     refresh_url,
                     json={"refresh_token": refresh_token_value},
@@ -546,7 +546,7 @@ class TokenManager:
         # invalid_grant) should also invalidate stored credentials, that
         # behavior should be added explicitly here.
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.post(token_url, data=data) as response:
                     if response.status != 200:
                         await (

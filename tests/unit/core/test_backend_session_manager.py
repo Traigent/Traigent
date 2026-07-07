@@ -20,7 +20,7 @@ from traigent.cloud.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
 )
-from traigent.cloud.trial_operations import TrialSlotResult
+from traigent.cloud.trial_operations import TrialSlotResult, TrialSubmissionResult
 from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import (
     BackendSessionManager,
@@ -2193,6 +2193,47 @@ class TestRuntimeDegradationSourceMarker:
             record for record in caplog.records if "LOCAL-ONLY" in record.getMessage()
         ]
         assert len(local_only_warnings) == 1, "should warn once, not per trial"
+
+    @pytest.mark.asyncio
+    async def test_permanent_submission_rejection_marks_rejected_degrade(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        traigent_config,
+        caplog,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        reason = 'submitted config["model"] is outside the declared categorical domain'
+        traigent_config.execution_mode = "hybrid"
+        backend_session_manager._backend_tracking_enabled = True
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_1"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=TrialSubmissionResult.rejected(reason)
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            await backend_session_manager.submit_trial(
+                trial_result=mock_trial_result,
+                session_id="test-session-id",
+            )
+
+        assert backend_session_manager.backend_degraded is True
+        assert backend_session_manager.backend_rejection_reason == reason
+        assert backend_session_manager.result_source(trial_count=1) == "local_fallback"
+        assert traigent_config.persistence_reason == "rejected"
+        assert traigent_config.persistence_rejection_reason == reason
+
+        combined = " ".join(record.getMessage() for record in caplog.records)
+        assert "REJECTED" in combined
+        assert reason in combined
+        assert "unavailable during trial submission" not in combined
 
 
 class TestIssue1373SilentAuthPathSurfacing:

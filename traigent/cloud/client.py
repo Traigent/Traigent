@@ -835,6 +835,7 @@ class TraigentCloudClient(BaseTraigentClient):
         self._aio_session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.timeout),
             headers=await self.auth.get_headers(),
+            trust_env=True,
         )
         self._register_session_finalizer(self._aio_session)
         return self
@@ -884,6 +885,7 @@ class TraigentCloudClient(BaseTraigentClient):
             self._aio_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers=headers,
+                trust_env=True,
             )
             self._register_session_finalizer(self._aio_session)
             return self._aio_session
