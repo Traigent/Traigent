@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import io
 import json
 import logging
@@ -26,6 +27,8 @@ from traigent.observability.client import _SyncBatchTransport
 from traigent.observability.decorators import set_default_observability_client
 from traigent.observability.dtos import ObservationDTO, TraceDTO
 from traigent.utils.exceptions import AuthenticationError, ClientError
+
+retry_module = importlib.import_module("traigent.utils.retry")
 
 
 def _encoded_trace_batch_size(traces: list[dict]) -> int:
@@ -526,6 +529,45 @@ def test_sync_batch_transport_redacts_direct_submitted_payloads():
     # tag): any value under a credential-like key is fully masked, so a
     # regex-evading low-entropy secret can no longer ride along.
     assert "'api_key': '[REDACTED]'" in payload_blob
+
+
+def test_sync_batch_transport_retries_status_client_errors(monkeypatch):
+    sent_batches: list[list[dict]] = []
+    sleep_calls: list[float] = []
+    call_count = 0
+
+    monkeypatch.setattr(retry_module.time, "sleep", sleep_calls.append)
+
+    def sender(traces):
+        nonlocal call_count
+        call_count += 1
+        sent_batches.append(traces)
+        if call_count <= 2:
+            raise ClientError("rate limited", status_code=429)
+        return None
+
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+    )
+
+    assert (
+        transport.submit("trace_retry", {"id": "trace_retry", "name": "retry"}) is True
+    )
+
+    result = transport.flush()
+    transport.close()
+
+    assert result.success is True
+    assert result.items_sent == 1
+    assert result.items_dropped == 0
+    assert result.failed_batches == 0
+    assert call_count == 3
+    assert len(sent_batches) == 3
+    assert len(sleep_calls) == 2
 
 
 def test_observability_client_close_flushes_active_trace_payloads_without_explicit_flush():
@@ -2047,3 +2089,38 @@ def test_observability_client_closes_http_errors(
     client.close()
 
     assert close_calls["count"] == 1
+
+
+def test_observability_ingest_http_error_attaches_retry_after(monkeypatch):
+    http_error = error.HTTPError(
+        url="http://localhost:5000",
+        code=429,
+        msg="rate limited",
+        hdrs={"Retry-After": "4.25"},
+        fp=io.BytesIO(b'{"error":"rate limited"}'),
+    )
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: None,
+    )
+
+    monkeypatch.setattr(
+        client,
+        "_open_http_request",
+        lambda http_request: (_ for _ in ()).throw(http_error),
+    )
+
+    with pytest.raises(ClientError) as exc_info:
+        client._post_batch_sync([{"id": "trace_retry_after"}])
+
+    client.close()
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.retry_after == 4.25

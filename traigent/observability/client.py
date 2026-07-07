@@ -11,7 +11,8 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, cast
 from urllib import error, request
 from urllib.parse import urlencode
@@ -76,6 +77,30 @@ def _new_trace_id() -> str:
 
 def _new_observation_id() -> str:
     return f"obs_{uuid.uuid4().hex}"
+
+
+def _parse_retry_after(headers: Any) -> float | None:
+    if not headers:
+        return None
+    try:
+        value = headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(str(value))
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
 
 @dataclass
@@ -1007,10 +1032,11 @@ class ObservabilityClient:
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 if status_code >= 400:
-                    raise ClientError(
+                    raise self._client_error_with_retry_after(
                         f"Observability ingest failed with status {status_code}",
                         status_code=status_code,
                         details={"body": body},
+                        headers=getattr(response, "headers", None),
                     )
                 return self._parse_ingest_response(body)
         except error.HTTPError as exc:
@@ -1019,10 +1045,11 @@ class ObservabilityClient:
                 raise AuthenticationError(
                     f"Observability ingest rejected with status {exc.code}"
                 ) from exc
-            raise ClientError(
+            raise self._client_error_with_retry_after(
                 f"Observability ingest failed with status {exc.code}",
                 status_code=exc.code,
                 details={"body": body},
+                headers=getattr(exc, "headers", None),
             ) from exc
         except error.URLError as exc:
             raise TraigentConnectionError(
@@ -1100,10 +1127,11 @@ class ObservabilityClient:
                 body = response.read().decode("utf-8") if response else ""
                 parsed = json.loads(body) if body else {}
                 if status_code >= 400:
-                    raise ClientError(
+                    raise self._client_error_with_retry_after(
                         f"Observability request failed with status {status_code}",
                         status_code=status_code,
                         details={"body": body},
+                        headers=getattr(response, "headers", None),
                     )
                 return parsed
         except error.HTTPError as exc:
@@ -1112,10 +1140,11 @@ class ObservabilityClient:
                 raise AuthenticationError(
                     f"Observability request rejected with status {exc.code}"
                 ) from exc
-            raise ClientError(
+            raise self._client_error_with_retry_after(
                 f"Observability request failed with status {exc.code}",
                 status_code=exc.code,
                 details={"body": body},
+                headers=getattr(exc, "headers", None),
             ) from exc
         except error.URLError as exc:
             raise TraigentConnectionError(
@@ -1234,6 +1263,20 @@ class ObservabilityClient:
         except (TypeError, ValueError) as exc:
             raise ClientError(f"{field_name} must be JSON serializable") from exc
         return value
+
+    @staticmethod
+    def _client_error_with_retry_after(
+        message: str,
+        *,
+        status_code: int,
+        details: dict[str, Any],
+        headers: Any,
+    ) -> ClientError:
+        exc = ClientError(message, status_code=status_code, details=details)
+        retry_after = _parse_retry_after(headers)
+        if retry_after is not None:
+            exc.retry_after = retry_after
+        return exc
 
     def _read_http_error_body(self, exc: error.HTTPError) -> str:
         try:
