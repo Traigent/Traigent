@@ -170,6 +170,12 @@ def resolve_environment_label(default: str | None = None) -> str | None:
     env_name = resolve_environment_name(default=None)
     if env_name in _KNOWN_ENVIRONMENT_NAMES:
         return env_name
+    if env_name is not None:
+        logger.warning(
+            "Ignoring unknown environment label from ENVIRONMENT/TRAIGENT_ENV/"
+            "TRAIGENT_ENVIRONMENT; expected one of: %s",
+            ", ".join(sorted(_KNOWN_ENVIRONMENT_NAMES)),
+        )
     return default.strip().lower() if default else None
 
 

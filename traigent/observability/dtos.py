@@ -181,10 +181,10 @@ class ObservationDTO:
     started_at: datetime | None = None
     ended_at: datetime | None = None
     latency_ms: int | None = None
-    input_tokens: int = 0
-    output_tokens: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     total_tokens: int | None = None
-    cost_usd: float = 0.0
+    cost_usd: float | None = None
     model_name: str | None = None
     tool_name: str | None = None
     input_data: Any = None
@@ -232,7 +232,11 @@ class ObservationDTO:
             "total_tokens": (
                 self.total_tokens
                 if self.total_tokens is not None
-                else self.input_tokens + self.output_tokens
+                else (
+                    self.input_tokens + self.output_tokens
+                    if self.input_tokens is not None and self.output_tokens is not None
+                    else None
+                )
             ),
             "cost_usd": self.cost_usd,
             "model_name": self.model_name,
