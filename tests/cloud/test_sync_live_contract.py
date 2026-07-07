@@ -1,15 +1,22 @@
 """Live-backend contract test for edge-analytics sync (#868, gates #1211/#1213).
 
 Boots nothing itself: requires a running TraigentBackend + a scoped API key. It
-builds a finalized cost-bearing local session, syncs it, and asserts the full
-chain landed — agent -> benchmark -> experiment -> experiment-run -> per-trial
-configuration_run with cost INSIDE measures. This is the only test that catches
-sync<->backend contract drift end-to-end; mocked-transport unit tests cannot.
+builds a finalized cost-bearing local session and syncs it through the
+content-free typed-session path (POST /sessions with
+tracking_mode=native_local -> per-trial POST /sessions/{id}/results ->
+POST /sessions/{id}/finalize). NO benchmark is created or bound, so the
+backend's empty-dataset guard takes its no-dataset pass-through and an empty
+server-side dataset never blocks the import. It then asserts the full chain
+landed — session -> experiment -> experiment-run -> per-trial
+configuration_run with cost INSIDE measures (metrics submitted per trial are
+materialized by the backend's native_local handler). This is the only test
+that catches sync<->backend contract drift end-to-end; mocked-transport unit
+tests cannot.
 
 Enable with:
     TRAIGENT_LIVE_SYNC_E2E=1 \
     TRAIGENT_BACKEND_URL=http://localtest.me:5001 \
-    TRAIGENT_API_KEY=<scoped key: agents/benchmarks/experiments :write> \
+    TRAIGENT_API_KEY=<scoped key: sessions/experiments :write> \
     pytest tests/cloud/test_sync_live_contract.py -m contract
 """
 
