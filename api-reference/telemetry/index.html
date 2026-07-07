@@ -2742,6 +2742,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#observe-content-egress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        @observe Content Egress
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#opentelemetry-tracing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4247,6 +4258,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#observe-content-egress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        @observe Content Egress
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#opentelemetry-tracing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4625,7 +4647,8 @@
 - Dataset size and evaluation metrics</p>
 <h3 id="what-is-not-collected">What is NOT Collected<a class="headerlink" href="#what-is-not-collected" title="Permanent link">&para;</a></h3>
 <p>Outside tuned configuration values explicitly sent on the default portal-backed
-path, Traigent does <strong>not</strong> collect:</p>
+path, and outside observability content you explicitly opt into recording,
+Traigent does <strong>not</strong> collect:</p>
 <ul>
 <li><strong>User prompts or inputs</strong></li>
 <li><strong>LLM responses or outputs</strong></li>
@@ -4664,6 +4687,32 @@ own function to call LLM providers or other services.</p>
 <code>TraigentConfig.privacy_enabled</code> privacy mode to redact tuned string config
 values on privacy-mode submissions, and <code>offline=True</code> for zero Traigent backend
 egress.</p>
+<h3 id="observe-content-egress"><code>@observe</code> Content Egress<a class="headerlink" href="#observe-content-egress" title="Permanent link">&para;</a></h3>
+<p>The <code>@observe</code> decorator and <code>ObserveContext</code> are metadata-only by default. They
+can send trace names, observation names, status, timing, tags, environment,
+release, IDs, explicit metadata, and token/cost fields you pass, but they omit
+function arguments, explicit context <code>input_data</code>, return values, and output data
+unless you opt in.</p>
+<p>To send prompt/output content for observability, opt in explicitly:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@observe</span><span class="p">(</span><span class="s2">&quot;llm-call&quot;</span><span class="p">,</span> <span class="n">content_mode</span><span class="o">=</span><span class="s2">&quot;record&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>Alternatively set <code>TRAIGENT_OBSERVABILITY_CONTENT=record</code>. The supported content
+modes are:</p>
+<ul>
+<li><code>metadata</code> (default): omit input and output content</li>
+<li><code>redacted</code>: send <code>{"redacted": true}</code> placeholders for input and output</li>
+<li><code>record</code>: send captured input and output content</li>
+</ul>
+<p><code>redact_input=True</code> and <code>redact_output=True</code> force redaction placeholders for the
+corresponding side even when <code>content_mode="record"</code>. The transport still applies
+pattern-based secret scrubbing before send, but that scrubber is a final safety
+net, not the content-egress policy.</p>
+<p><code>@observe(observation_type=GENERATION)</code> does not estimate LangChain or provider
+token usage from prompts. Pass measured <code>input_tokens</code>, <code>output_tokens</code>,
+<code>total_tokens</code>, or <code>cost_usd</code> from the provider response when recording
+generation spans; otherwise usage is reported as unknown, not zero.</p>
 <h3 id="opentelemetry-tracing">OpenTelemetry Tracing<a class="headerlink" href="#opentelemetry-tracing" title="Permanent link">&para;</a></h3>
 <p>OpenTelemetry tracing is opt-in and uses a separate flag from telemetry
 opt-out:</p>
@@ -4731,7 +4780,8 @@ are dropped, and model identifiers are validated before emission.</p>
 <p>The following values are recognized as "opt-out" (case-insensitive):
 - <code>"true"</code>
 - <code>"1"</code>
-- <code>"yes"</code></p>
+- <code>"yes"</code>
+- <code>"on"</code></p>
 <p>Any other value (including unset) means telemetry is enabled.</p>
 <h3 id="what-happens-when-disabled">What Happens When Disabled<a class="headerlink" href="#what-happens-when-disabled" title="Permanent link">&para;</a></h3>
 <p>When <code>TRAIGENT_DISABLE_TELEMETRY</code> is set:</p>
