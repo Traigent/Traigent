@@ -46,26 +46,31 @@ def _make_completed_session(storage: LocalStorageManager) -> str:
 
 
 def _stub_backend_success(sync_manager: SyncManager) -> dict[str, Mock]:
-    """Patch the legacy resource uploads so a sync 'succeeds' with no HTTP."""
+    """Patch the content-free session uploads so a sync 'succeeds' with no HTTP."""
     mocks = {
-        "_sync_agent": Mock(return_value={"success": True, "agent_id": "ag1"}),
-        "_sync_benchmark": Mock(return_value={"success": True, "benchmark_id": "bm1"}),
-        "_sync_experiment": Mock(
-            return_value={"success": True, "experiment_id": "exp1"}
+        # Offline sync now imports through the content-free typed-session
+        # endpoints: create session -> per-trial results -> finalize. The
+        # session binds no benchmark, so an empty server-side dataset never
+        # blocks the import (empty-dataset sync fix).
+        "_sync_create_session": Mock(
+            return_value={
+                "success": True,
+                "session_id": "sess1",
+                "experiment_id": "exp1",
+                "experiment_run_id": "run1",
+                "project_id": None,
+                "tenant_id": None,
+            }
         ),
-        "_sync_experiment_run": Mock(
-            return_value={"success": True, "experiment_run_id": "run1"}
+        "_sync_finalize_session": Mock(
+            return_value={"success": True, "classification": "completed"}
         ),
-        # The post-hoc sync now finalizes the experiment to COMPLETED via
-        # PUT /experiments/{id} after all runs upload (issue #1420); stub it so
-        # the no-HTTP success path reaches finalization without a real request.
-        "_finalize_experiment": Mock(return_value={"success": True}),
     }
 
-    # ``_sync_configuration_runs`` gained ``already_synced_keys`` / ``on_synced``
-    # kwargs and now returns a ``skipped`` count (resume idempotency, #1420).
-    # Mirror the real contract: accept the kwargs and report 0 skipped.
-    def _runs(_run_id, configuration_runs, **_kwargs):
+    # ``_sync_session_results`` carries the ``already_synced_keys`` / ``on_synced``
+    # kwargs and returns a ``skipped`` count (resume idempotency). Mirror the
+    # real contract: accept the kwargs and report 0 skipped.
+    def _runs(_session_id, configuration_runs, **_kwargs):
         return {
             "success": True,
             "synced": len(configuration_runs),
@@ -73,7 +78,7 @@ def _stub_backend_success(sync_manager: SyncManager) -> dict[str, Mock]:
             "errors": [],
         }
 
-    mocks["_sync_configuration_runs"] = Mock(side_effect=_runs)
+    mocks["_sync_session_results"] = Mock(side_effect=_runs)
     for name, mock in mocks.items():
         setattr(sync_manager, name, mock)
     return mocks
@@ -122,8 +127,9 @@ def test_first_sync_records_synced_state(sync_manager):
     assert state["status"] == "synced"
     assert state["payload_hash"] == result["payload_hash"]
     assert state["cloud_experiment_id"] == "exp1"
+    assert state["cloud_session_id"] == "sess1"
     assert state["attempts"] == 1
-    mocks["_sync_agent"].assert_called_once()
+    mocks["_sync_create_session"].assert_called_once()
 
 
 def test_resync_unchanged_is_noop(sync_manager):
@@ -139,9 +145,9 @@ def test_resync_unchanged_is_noop(sync_manager):
 
     assert second["status"] == "already_synced"
     assert second["cloud_experiment_id"] == "exp1"
-    # No backend resource was created the second time → no duplicate experiment.
-    mocks["_sync_experiment"].assert_not_called()
-    mocks["_sync_agent"].assert_not_called()
+    # No backend resource was created the second time → no duplicate session.
+    mocks["_sync_create_session"].assert_not_called()
+    mocks["_sync_session_results"].assert_not_called()
 
 
 def test_force_reuploads_even_when_synced(sync_manager):
@@ -154,7 +160,7 @@ def test_force_reuploads_even_when_synced(sync_manager):
     forced = sync_manager.sync_session_to_cloud(sid, force=True)
 
     assert forced["status"] == "success"
-    mocks["_sync_experiment"].assert_called_once()
+    mocks["_sync_create_session"].assert_called_once()
 
 
 def test_changed_session_is_resynced(sync_manager):
@@ -172,36 +178,50 @@ def test_changed_session_is_resynced(sync_manager):
 
     result = sync_manager.sync_session_to_cloud(sid)
     assert result["status"] == "success"
-    mocks["_sync_experiment"].assert_called_once()
+    mocks["_sync_create_session"].assert_called_once()
 
 
 def test_partial_failure_then_resume_reuses_experiment(sync_manager):
     """BLOCKER regression: a retry after a partial failure must reuse the
-    cloud experiment, never create a duplicate one."""
+    cloud session, never create a duplicate one."""
     sid = _make_completed_session(sync_manager.storage)
     mocks = _stub_backend_success(sync_manager)
-    # First attempt: experiment is created but the run step fails → partial.
-    mocks["_sync_experiment_run"].return_value = {"success": False, "error": "boom"}
+    # First attempt: session is created but the result step fails → partial.
+    mocks["_sync_session_results"] = Mock(
+        return_value={
+            "success": False,
+            "synced": 0,
+            "skipped": 0,
+            "errors": ["boom"],
+        }
+    )
+    sync_manager._sync_session_results = mocks["_sync_session_results"]
 
     first = sync_manager.sync_session_to_cloud(sid)
     assert first["status"] == "partial"
     state = sync_manager.storage.load_session(sid).sync_state
     assert state["status"] == "partial"
-    assert state["cloud_experiment_id"] == "exp1"  # experiment was created
+    assert state["cloud_experiment_id"] == "exp1"  # session/experiment was created
+    assert state["cloud_session_id"] == "sess1"
 
-    # Second attempt (same content): run now succeeds.
-    mocks["_sync_experiment_run"].return_value = {
-        "success": True,
-        "experiment_run_id": "run1",
-    }
-    for name in ("_sync_agent", "_sync_benchmark", "_sync_experiment"):
-        mocks[name].reset_mock()
+    # Second attempt (same content): results now succeed.
+    def _runs(_session_id, configuration_runs, **_kwargs):
+        return {
+            "success": True,
+            "synced": len(configuration_runs),
+            "skipped": 0,
+            "errors": [],
+        }
+
+    mocks["_sync_session_results"] = Mock(side_effect=_runs)
+    sync_manager._sync_session_results = mocks["_sync_session_results"]
+    mocks["_sync_create_session"].reset_mock()
 
     second = sync_manager.sync_session_to_cloud(sid)
 
     assert second["status"] == "success"
-    # The experiment was REUSED, not re-created → no duplicate.
-    mocks["_sync_experiment"].assert_not_called()
+    # The session was REUSED, not re-created → no duplicate.
+    mocks["_sync_create_session"].assert_not_called()
     assert second["cloud_experiment_id"] == "exp1"
 
 
@@ -310,6 +330,207 @@ def test_freetext_metadata_not_in_converted_payload(sync_manager):
     # ...but numeric metadata is still forwarded as a measure.
     measures = converted["configuration_runs"][0]["measures"]
     assert measures.get("tokens") == 42
+
+
+# --------------------------------------------------------------------------- #
+# Regression: empty server-side dataset no longer blocks offline sync
+# (content-free typed-session import; issue: HTTP 400 EMPTY_DATASET)
+# --------------------------------------------------------------------------- #
+
+
+def _backend_response(status_code=201, payload=None, text="Created"):
+    response = Mock(status_code=status_code, text=text)
+    response.json.return_value = (
+        payload if payload is not None else {"id": "created-id"}
+    )
+    return response
+
+
+def test_empty_dataset_session_syncs_via_content_free_session_endpoints(sync_manager):
+    """Regression: a completed run whose server-side dataset would have ZERO
+    examples now imports cleanly.
+
+    Before the fix, offline sync created a server-side dataset via
+    ``POST /datasets`` with no example rows and bound an experiment_run to it,
+    so the backend's ``dataset_run_guard`` rejected the run with HTTP 400
+    EMPTY_DATASET. The fix reroutes sync through the content-free typed-session
+    endpoints (``POST /sessions`` with tracking_mode=native_local and NO
+    benchmark), which hit the backend's no-dataset pass-through. This test
+    proves the sync (a) succeeds, (b) never creates/binds a benchmark, and
+    (c) uses the session endpoints.
+    """
+    # Two completed trials; the local store retains NO raw example rows, so the
+    # server-side dataset for this run would have zero examples.
+    sid = _make_completed_session(sync_manager.storage)
+
+    posts: list[str] = []
+
+    def _route(url, *args, **kwargs):
+        posts.append(url)
+        if url.endswith("/sessions"):
+            return _backend_response(
+                201,
+                payload={
+                    "session_id": "sess-1",
+                    "metadata": {
+                        "experiment_id": "exp-1",
+                        "experiment_run_id": "run-1",
+                    },
+                },
+            )
+        if url.endswith("/finalize"):
+            return _backend_response(200, payload={"status": "finalized"})
+        # per-trial results
+        return _backend_response(201, payload={"id": "result-1"})
+
+    sync_manager._session = Mock()
+    sync_manager._session.post = Mock(side_effect=_route)
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    # (a) The empty-dataset run syncs successfully (was HTTP 400 EMPTY_DATASET).
+    assert result["status"] == "success", result.get("errors")
+
+    base = sync_manager.base_url
+    results_url = f"{base}/sessions/sess-1/results"
+
+    # (b) NO benchmark is ever created or bound — no dataset POST, no
+    # experiment-run POST (the two calls that used to trigger EMPTY_DATASET).
+    assert not any("/datasets" in url for url in posts), (
+        f"offline sync must not create a benchmark/dataset; posts={posts}"
+    )
+    assert not any(url.endswith("/runs") for url in posts), (
+        f"offline sync must not bind an experiment_run to a dataset; posts={posts}"
+    )
+    assert not any("/experiment-runs/" in url for url in posts), posts
+    assert not any(url.endswith("/agents") for url in posts), posts
+
+    # (c) It DOES use the content-free session endpoints: create, one result
+    # per trial (2 trials), and finalize.
+    assert posts.count(f"{base}/sessions") == 1
+    assert posts.count(results_url) == 2  # one per completed trial
+    assert posts.count(f"{base}/sessions/sess-1/finalize") == 1
+
+    # The result payloads are content-free (config + numeric metrics only) and
+    # carry the native_local-required trial config.
+    result_calls = [
+        call
+        for call in sync_manager._session.post.call_args_list
+        if call.args[0] == results_url
+    ]
+    for call in result_calls:
+        body = call.kwargs["json"]
+        assert body["status"] == "COMPLETED"
+        assert "config" in body and isinstance(body["config"], dict)
+        assert "metrics" in body
+
+    # The create payload is the typed native_local contract with no benchmark.
+    create_call = next(
+        call
+        for call in sync_manager._session.post.call_args_list
+        if call.args[0] == f"{base}/sessions"
+    )
+    create_body = create_call.kwargs["json"]
+    assert create_body["optimization_strategy"]["tracking_mode"] == "native_local"
+    assert "benchmark" not in create_body
+    assert "benchmark_id" not in create_body
+    assert create_body["dataset_metadata"]["privacy_mode"] is True
+
+
+def test_dataset_metadata_size_is_positive_when_local_size_unknown(sync_manager):
+    """The typed path validates dataset_metadata.size as a positive int when the
+    key is present, so an unknown/zero local size must be coerced to 1 (like the
+    live SDK builder) — otherwise EVERY offline sync would 400 at create."""
+    sid = _make_completed_session(sync_manager.storage)  # no dataset_size recorded
+    session = sync_manager.storage.load_session(sid)
+
+    converted = sync_manager.convert_session_to_traigent_format(session)
+
+    size = converted["session_create"]["dataset_metadata"]["size"]
+    assert isinstance(size, int) and not isinstance(size, bool)
+    assert size >= 1
+
+
+def test_empty_config_trial_degrades_to_partial_with_clear_error(sync_manager):
+    """native_local rejects empty trial configs; the SDK must surface a clear
+    per-trial error (and a partial sync), not the raw backend message."""
+    sid = sync_manager.storage.create_session(
+        "fn_empty_cfg", optimization_config={"search_space": {"model": ["a"]}}
+    )
+    sync_manager.storage.add_trial_result(sid, config={}, score=0.5)
+    sync_manager.storage.add_trial_result(sid, config={"model": "a"}, score=0.9)
+    sync_manager.storage.finalize_session(sid, "completed")
+
+    def _route(url, *args, **kwargs):
+        if url.endswith("/sessions"):
+            return _backend_response(
+                201,
+                payload={
+                    "session_id": "sess-ec",
+                    "metadata": {
+                        "experiment_id": "exp-ec",
+                        "experiment_run_id": "run-ec",
+                    },
+                },
+            )
+        return _backend_response(201, payload={"id": "ok"})
+
+    sync_manager._session = Mock()
+    sync_manager._session.post = Mock(side_effect=_route)
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "partial"
+    assert any("empty config" in err for err in result["errors"]), result["errors"]
+    # The empty-config trial was never POSTed; the valid trial was.
+    result_posts = [
+        call.kwargs["json"]
+        for call in sync_manager._session.post.call_args_list
+        if call.args[0].endswith("/results")
+    ]
+    assert len(result_posts) == 1
+    assert result_posts[0]["config"] == {"model": "a"}
+
+
+def test_failed_trial_submits_real_failed_status(sync_manager):
+    """A failed local trial is submitted with its REAL status, not masked to
+    COMPLETED (the session results endpoint accepts failed trials)."""
+    sid = sync_manager.storage.create_session(
+        "fn_failed_trial", optimization_config={"search_space": {"model": ["a", "b"]}}
+    )
+    sync_manager.storage.add_trial_result(sid, config={"model": "a"}, score=0.9)
+    sync_manager.storage.add_trial_result(
+        sid, config={"model": "b"}, score=0.0, error="Timeout error"
+    )
+    sync_manager.storage.finalize_session(sid, "completed")
+
+    def _route(url, *args, **kwargs):
+        if url.endswith("/sessions"):
+            return _backend_response(
+                201,
+                payload={
+                    "session_id": "sess-ft",
+                    "metadata": {
+                        "experiment_id": "exp-ft",
+                        "experiment_run_id": "run-ft",
+                    },
+                },
+            )
+        return _backend_response(201, payload={"id": "ok"})
+
+    sync_manager._session = Mock()
+    sync_manager._session.post = Mock(side_effect=_route)
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success", result.get("errors")
+    result_posts = [
+        call.kwargs["json"]
+        for call in sync_manager._session.post.call_args_list
+        if call.args[0].endswith("/results")
+    ]
+    statuses = {body["config"]["model"]: body["status"] for body in result_posts}
+    assert statuses == {"a": "COMPLETED", "b": "FAILED"}
 
 
 if __name__ == "__main__":  # pragma: no cover

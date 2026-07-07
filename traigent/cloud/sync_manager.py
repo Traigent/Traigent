@@ -9,13 +9,14 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
 
+from traigent.cloud.api_operations import _typed_configuration_space
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
 
@@ -39,13 +40,8 @@ from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-VALID_SYNC_AGENT_TYPE_IDS = frozenset(
-    {"chat", "classification", "completion", "qa", "retrieval", "tool", "function"}
-)
-DEFAULT_SYNC_AGENT_TYPE_ID = "completion"
 _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
-TERMINAL_NON_COMPLETED_EXPERIMENT_STATUSES = frozenset({"FAILED", "CANCELLED"})
 
 
 def build_experiment_url(
@@ -295,85 +291,130 @@ class SyncManager:
         self, session: OptimizationSession
     ) -> dict[str, Any]:
         """
-        Convert local session to Traigent experiment format.
+        Convert a local session to the content-free typed-session payload.
+
+        Offline sync imports historical runs through the same content-free
+        typed-session endpoints the live SDK uses (``POST /sessions`` ->
+        per-trial ``POST /sessions/{id}/results`` -> ``POST
+        /sessions/{id}/finalize``).  The session is created with
+        ``tracking_mode=native_local`` and binds NO benchmark, so the backend's
+        empty-dataset guard hits its documented no-dataset pass-through and a run
+        whose server-side dataset would have zero examples imports cleanly.  No
+        prompt/output content egresses: the dataset is represented only by a
+        content-free label (name + size).
 
         Args:
             session: Local optimization session
 
         Returns:
-            Dict in Traigent experiment/experiment_run format
+            Dict with a ``session_create`` payload plus ``configuration_runs``.
         """
         opt_config = session.optimization_config or {}
         search_space = opt_config.get("search_space", {})
         if not isinstance(search_space, dict):
             search_space = {}
-        # The experiment-run create validator requires a top-level
-        # `infrastructure` key inside `configurations` (presence-checked); the
-        # canonical shape is {infrastructure, parameters}.
-        configurations = {"infrastructure": {}, "parameters": search_space}
 
         configuration_runs = self._convert_trials_to_configuration_runs(
             session.trials or []
         )
-        measures = self._derive_experiment_measures(configuration_runs)
+        objectives = self._derive_objectives(opt_config, configuration_runs)
 
-        # Create minimal agent definition accepted by POST /agents.
-        agent_data = {
-            "name": f"Local Agent: {session.function_name}",
-            "agent_type_id": DEFAULT_SYNC_AGENT_TYPE_ID,
-        }
+        # Content-free dataset label: name + size only, never example content.
+        # The typed path validates dataset_metadata.size as a positive int
+        # whenever the key is present, so an unknown/zero local size is coerced
+        # to 1 — exactly like the live SDK builder
+        # (api_operations._build_typed_session_payload). The empty-dataset
+        # pass-through comes from binding NO benchmark, not from the size field.
+        dataset_size = opt_config.get("dataset_size")
+        if (
+            not isinstance(dataset_size, int)
+            or isinstance(dataset_size, bool)
+            or dataset_size <= 0
+        ):
+            dataset_size = 1
+        dataset_name = sanitize_backend_name(f"Local Dataset {session.function_name}")
+        evaluation_set = opt_config.get("evaluation_set") or "default"
 
-        # The backend benchmark route is the dataset source for experiments.
-        benchmark_data = {
-            "name": sanitize_backend_name(f"Local Dataset {session.function_name}"),
-            "type": "input-output",
-            "label": sanitize_backend_name(
-                f"{session.function_name} eval", fallback="Local Eval"
-            ),
-        }
-
-        # agent_id and dataset_id are filled with returned backend IDs at sync time.
-        # Status is PENDING (a non-run-requiring status) so the backend accepts the
-        # POST before any experiment_run exists.  The backend rejects RUNNING and
-        # COMPLETED at create time with 409 EXPERIMENT_HAS_NO_RUNS when no runs
-        # exist yet (_RUN_REQUIRING_EXPERIMENT_STATUSES = {RUNNING, COMPLETED},
-        # TraigentBackend src/models/status_enums.py:333, issue #1420).
-        # After all runs are uploaded, _upload_session transitions the experiment
-        # to COMPLETED via PUT /experiments/{id} {"status":"COMPLETED"}.
-        experiment_data = {
-            "name": f"Local Import: {session.function_name}",
-            "measures": measures,
-            "configurations": configurations,
-            "status": "PENDING",
-        }
-
-        # experiment_data is filled with returned backend IDs at sync time.
-        experiment_run_data = {
-            "measures": measures,
-            "configurations": configurations,
+        session_create = {
+            "function_name": session.function_name,
+            "configuration_space": _typed_configuration_space(search_space),
+            "objectives": objectives,
+            "dataset_metadata": {
+                "size": dataset_size,
+                "name": dataset_name,
+                "privacy_mode": True,
+            },
+            "max_trials": max(len(configuration_runs), 1),
+            # native_local lets the backend materialize each trial directly from
+            # the submitted config (historical backfill, no /next-trial round
+            # trip, no Optuna suggestion). It binds no benchmark, so the
+            # EMPTY_DATASET guard never fires (empty-dataset sync fix).
+            "optimization_strategy": {
+                "algorithm": "optuna",
+                "tracking_mode": "native_local",
+            },
+            "metadata": {
+                "function_name": session.function_name,
+                "evaluation_set": evaluation_set,
+                "source": "offline_sync",
+            },
         }
 
         return {
-            "agent": agent_data,
-            "benchmark": benchmark_data,
-            "experiment": experiment_data,
-            "experiment_run": experiment_run_data,
+            "session_create": session_create,
             "configuration_runs": configuration_runs,
         }
+
+    @staticmethod
+    def _derive_objectives(
+        opt_config: dict[str, Any], configuration_runs: list[dict[str, Any]]
+    ) -> list[str]:
+        """Derive objective names for the typed session create payload.
+
+        Prefer the objectives recorded on the local optimization config; fall
+        back to the measure names present on the trials (``["score"]`` at
+        minimum). Content-free: only measure/objective *names* are emitted.
+        """
+        raw_objectives = opt_config.get("objectives")
+        if isinstance(raw_objectives, (list, tuple)):
+            names = [str(name) for name in raw_objectives if name]
+            if names:
+                return names
+        return SyncManager._derive_experiment_measures(configuration_runs)
 
     def _convert_trials_to_configuration_runs(
         self, trials: list[Any]
     ) -> list[dict[str, Any]]:
-        """Reshape local trial results into configuration-run create payloads."""
+        """Reshape local trial results into per-trial result payloads.
+
+        Each entry carries ``trial_id`` (native_local requires it so the
+        backend can create the trial from the submitted ``config``),
+        ``experiment_parameters`` (the trial config), content-free numeric
+        ``measures``, and the trial's REAL terminal status (``COMPLETED`` or
+        ``FAILED`` — never masked to COMPLETED; the session results endpoint
+        accepts failed trials).
+        """
         configuration_runs: list[dict[str, Any]] = []
 
         for result in self._convert_trials_to_results(trials):
             measures = self._configuration_run_measures(result)
+            experiment_parameters = result.get("experiment_parameters") or {}
+            if not experiment_parameters:
+                # native_local requires a non-empty config to materialize the
+                # trial; fall back to a config recorded in the trial metadata
+                # (if any) before giving up.
+                metadata = result.get("metadata")
+                if isinstance(metadata, Mapping):
+                    metadata_config = metadata.get("config")
+                    if isinstance(metadata_config, Mapping) and metadata_config:
+                        experiment_parameters = dict(metadata_config)
+            status = "FAILED" if result.get("status") == "failed" else "COMPLETED"
             configuration_runs.append(
                 {
-                    "experiment_parameters": result.get("experiment_parameters", {}),
+                    "trial_id": result.get("trial_id"),
+                    "experiment_parameters": experiment_parameters,
                     "measures": measures,
-                    "status": "COMPLETED",
+                    "status": status,
                 }
             )
 
@@ -552,44 +593,26 @@ class SyncManager:
                 return sync_result
 
             if dry_run:
-                # Dry-run mirrors the real sync ordering so it predicts the same
-                # outcome.  The experiment is now created with status=PENDING (a
-                # non-run-requiring status).  The backend rejects RUNNING and
-                # COMPLETED at create time with 409 EXPERIMENT_HAS_NO_RUNS when no
-                # runs exist yet (_RUN_REQUIRING_EXPERIMENT_STATUSES = {RUNNING,
-                # COMPLETED}, issue #1420).  Validate the converted payload and flag
-                # any status that would cause the real sync to fail.
+                # Dry-run validates the content-free typed-session payload the
+                # real sync would submit (create session -> per-trial results ->
+                # finalize). The session binds no benchmark, so an empty
+                # server-side dataset never blocks the import; a completed local
+                # session always predicts success.
+                session_create = traigent_data["session_create"]
+                dataset_metadata = session_create["dataset_metadata"]
                 trial_count = len(traigent_data["configuration_runs"])
-                experiment_create_status = traigent_data["experiment"].get("status")
-                # Catch regressions where the create status is run-requiring
-                # (RUNNING or COMPLETED) — both would 409 on a real sync.
-                _RUN_REQUIRING = {"RUNNING", "COMPLETED"}
-                ordering_valid = (
-                    experiment_create_status or ""
-                ).upper() not in _RUN_REQUIRING
 
                 if already_synced:
                     sync_result["status"] = "already_synced"
-                elif not ordering_valid:
-                    # The payload would 409 — flag as predictable failure.
-                    sync_result["status"] = "error"
-                    sync_result["errors"].append(
-                        f"Dry-run detected experiment would be created with "
-                        f"status={experiment_create_status!r} which is run-requiring "
-                        "(RUNNING or COMPLETED); this would 409 EXPERIMENT_HAS_NO_RUNS "
-                        "on the real sync — use a non-run-requiring status (e.g. PENDING)"
-                    )
                 else:
                     sync_result["status"] = "success"
                 sync_result["preview"] = {
-                    "experiment_name": traigent_data["experiment"]["name"],
-                    "agent_name": traigent_data["agent"]["name"],
-                    "benchmark_name": traigent_data["benchmark"]["name"],
+                    "function_name": session_create["function_name"],
+                    "dataset_name": dataset_metadata.get("name"),
+                    "dataset_size": dataset_metadata.get("size"),
                     "trial_count": trial_count,
                     "best_score": session.best_score,
                     "already_synced": already_synced,
-                    "experiment_create_status": experiment_create_status,
-                    "ordering_valid": ordering_valid,
                 }
                 return sync_result
 
@@ -639,94 +662,58 @@ class SyncManager:
         *,
         resume: bool,
     ) -> None:
-        """Upload a converted session to the backend resource endpoints.
+        """Import a converted session through the content-free session endpoints.
 
-        When ``resume`` is True, reuses any cloud ids a prior attempt already
-        created so a retry resumes rather than minting a duplicate experiment.
-        Mutates ``sync_result`` in place and returns early on a failed step.
+        Three steps: create a native_local typed session (no benchmark, so the
+        backend's EMPTY_DATASET guard never fires), submit one result
+        per trial, then finalize. When ``resume`` is True, reuses any cloud ids
+        a prior attempt already created so a retry resumes rather than minting a
+        duplicate session. Mutates ``sync_result`` in place and returns early on
+        a failed step.
         """
         reuse = resume
         configuration_runs = traigent_data["configuration_runs"]
-        total_steps = 4 + len(configuration_runs)
+        total_steps = 2 + len(configuration_runs)
         successful_steps = 0
         project_id = prior_state.get("project_id") if reuse else None
         tenant_id = prior_state.get("tenant_id") if reuse else None
         sync_result["project_id"] = project_id
         sync_result["tenant_id"] = tenant_id
 
-        # Agent + benchmark dedup by name; reuse a saved id when present.
-        agent_id = prior_state.get("cloud_agent_id") if reuse else None
-        if not agent_id:
-            agent_result = self._sync_agent(traigent_data["agent"])
-            if not agent_result["success"]:
+        # Step 1: create the typed session. The session is NOT name-deduped by
+        # the backend, so reusing a saved id on resume is what prevents a
+        # duplicate session/experiment.
+        session_cloud_id = prior_state.get("cloud_session_id") if reuse else None
+        experiment_id = prior_state.get("cloud_experiment_id") if reuse else None
+        experiment_run_id = (
+            prior_state.get("cloud_experiment_run_id") if reuse else None
+        )
+        if not session_cloud_id:
+            create_result = self._sync_create_session(traigent_data["session_create"])
+            if not create_result["success"]:
                 sync_result["status"] = "error"
                 sync_result["errors"].append(
-                    f"Agent sync failed: {agent_result['error']}"
+                    f"Session create failed: {create_result['error']}"
                 )
                 return
-            agent_id = agent_result["agent_id"]
-        sync_result["cloud_agent_id"] = agent_id
-        successful_steps += 1
-
-        benchmark_id = prior_state.get("cloud_benchmark_id") if reuse else None
-        if not benchmark_id:
-            benchmark_result = self._sync_benchmark(traigent_data["benchmark"])
-            if not benchmark_result["success"]:
-                sync_result["status"] = "partial"
-                sync_result["errors"].append(
-                    f"Benchmark sync failed: {benchmark_result['error']}"
-                )
-                return
-            benchmark_id = benchmark_result["benchmark_id"]
-        sync_result["cloud_benchmark_id"] = benchmark_id
-        successful_steps += 1
-
-        # The experiment is NOT name-deduped by the backend, so reusing a saved
-        # id is what prevents duplicate experiments on a retry (BLOCKER fix).
-        experiment_id = prior_state.get("cloud_experiment_id") if reuse else None
-        if not experiment_id:
-            experiment_payload = self._build_experiment_payload(
-                traigent_data["experiment"], agent_id, benchmark_id
-            )
-            experiment_result = self._sync_experiment(experiment_payload)
-            if not experiment_result["success"]:
-                sync_result["status"] = "partial"
-                sync_result["errors"].append(
-                    f"Experiment sync failed: {experiment_result['error']}"
-                )
-                return
-            experiment_id = experiment_result["experiment_id"]
-            project_id = experiment_result.get("project_id")
-            tenant_id = experiment_result.get("tenant_id")
+            session_cloud_id = create_result["session_id"]
+            experiment_id = create_result["experiment_id"]
+            experiment_run_id = create_result["experiment_run_id"]
+            project_id = create_result.get("project_id")
+            tenant_id = create_result.get("tenant_id")
+        sync_result["cloud_session_id"] = session_cloud_id
         sync_result["cloud_experiment_id"] = experiment_id
+        sync_result["cloud_experiment_run_id"] = experiment_run_id
         sync_result["project_id"] = project_id
         sync_result["tenant_id"] = tenant_id
         successful_steps += 1
 
-        experiment_run_id = (
-            prior_state.get("cloud_experiment_run_id") if reuse else None
-        )
-        if not experiment_run_id:
-            run_payload = self._build_experiment_run_payload(
-                traigent_data["experiment_run"], agent_id, benchmark_id
-            )
-            run_result = self._sync_experiment_run(experiment_id, run_payload)
-            if not run_result["success"]:
-                sync_result["status"] = "partial"
-                sync_result["errors"].append(
-                    f"Experiment run sync failed: {run_result['error']}"
-                )
-                return
-            experiment_run_id = run_result["experiment_run_id"]
-        sync_result["cloud_experiment_run_id"] = experiment_run_id
-        successful_steps += 1
-
-        # Resume idempotency (BLOCKER fix): on a retry of the SAME content we
-        # must NOT re-POST configuration-runs a prior attempt already created —
-        # the backend does not dedup config-run creates (backend issue #1330),
-        # so a re-POST silently duplicates rows. We persist each config-run as
-        # synced (keyed by its stable position) immediately after its POST
-        # succeeds, and on resume we skip the ones already recorded.
+        # Step 2: submit each completed trial result.
+        # Resume idempotency: on a retry of the SAME content we must NOT re-POST
+        # trial results a prior attempt already submitted — the backend does not
+        # dedup other creates, so a re-POST silently duplicates rows. We persist
+        # each result as synced (keyed by its stable position) immediately after
+        # its POST succeeds, and on resume we skip the ones already recorded.
         already_synced_keys: set[str] = set()
         if reuse:
             prior_trials = prior_state.get("trials")
@@ -740,7 +727,7 @@ class SyncManager:
         def _record_config_run_synced(
             key: str, configuration_run_id: str | None
         ) -> None:
-            """Persist one config-run as synced right after its POST succeeds.
+            """Persist one result as synced right after its POST succeeds.
 
             Crash-safe: written incrementally (not batched at the end) so a
             crash/failure mid-batch still leaves a durable marker that lets the
@@ -761,37 +748,35 @@ class SyncManager:
                 Exception
             ) as exc:  # pragma: no cover - bookkeeping must not break sync
                 logger.warning(
-                    "Failed to persist config-run progress (%s) for session %s: %s",
+                    "Failed to persist result progress (%s) for session %s: %s",
                     key,
                     session_id,
                     exc,
                 )
 
-        configuration_result = self._sync_configuration_runs(
-            experiment_run_id,
+        configuration_result = self._sync_session_results(
+            session_cloud_id,
             configuration_runs,
             already_synced_keys=already_synced_keys,
             on_synced=_record_config_run_synced,
         )
-        # Both freshly-synced AND already-synced (skipped) config-runs count as
-        # done, so a fully-resumed session can still reach total_steps and be
-        # finalized to COMPLETED.
+        # Both freshly-synced AND already-synced (skipped) results count as done,
+        # so a fully-resumed session can still reach total_steps and be finalized.
         successful_steps += configuration_result["synced"]
         successful_steps += configuration_result["skipped"]
         if not configuration_result["success"]:
             sync_result["errors"].extend(
-                f"Configuration run sync failed: {error}"
+                f"Result sync failed: {error}"
                 for error in configuration_result["errors"]
             )
 
-        # Transition the experiment from RUNNING to COMPLETED now that all runs
-        # are uploaded.  This ordering is required: the backend rejects the
-        # POST /experiments payload when status=COMPLETED and no runs exist yet
-        # (HTTP 409 EXPERIMENT_HAS_NO_RUNS).  We finalize only on a clean upload
-        # (all config-runs synced); a partial upload stays RUNNING so a retry
-        # can resume and finish it.
+        # Step 3: finalize the session now that all results are submitted. We
+        # finalize only on a clean upload (all results synced); a partial upload
+        # stays open so a retry can resume and finish it.
         if configuration_result["success"]:
-            finalize_result = self._finalize_experiment(experiment_id)
+            finalize_result = self._sync_finalize_session(
+                session_cloud_id, experiment_run_id
+            )
             finalization_status = finalize_result.get("classification")
             if finalization_status:
                 sync_result["finalization_status"] = finalization_status
@@ -800,14 +785,17 @@ class SyncManager:
                 sync_result["finalization_current_status"] = current_status
             if finalize_result.get("skipped"):
                 sync_result.setdefault("warnings", []).append(
-                    f"Experiment finalization skipped: {finalize_result['message']}"
+                    f"Session finalization skipped: {finalize_result['message']}"
                 )
-            if not finalize_result["success"]:
+                successful_steps += 1
+            elif finalize_result["success"]:
+                successful_steps += 1
+            else:
                 sync_result["errors"].append(
-                    f"Experiment finalization failed: {finalize_result['error']}"
+                    f"Session finalization failed: {finalize_result['error']}"
                 )
-                # Successful configuration uploads but failed finalization is partial.
-                if successful_steps == total_steps:
+                # Successful result uploads but failed finalization is partial.
+                if successful_steps == total_steps - 1:
                     sync_result["status"] = "partial"
                     return
 
@@ -847,9 +835,8 @@ class SyncManager:
             "source": "offline_sync",
             "payload_hash": payload_hash,
             # Persist all cloud ids so a retry of a partial sync reuses them
-            # instead of creating duplicate resources.
-            "cloud_agent_id": sync_result.get("cloud_agent_id"),
-            "cloud_benchmark_id": sync_result.get("cloud_benchmark_id"),
+            # instead of creating a duplicate session/experiment.
+            "cloud_session_id": sync_result.get("cloud_session_id"),
             "cloud_experiment_id": sync_result.get("cloud_experiment_id"),
             "cloud_experiment_run_id": sync_result.get("cloud_experiment_run_id"),
             "project_id": sync_result.get("project_id"),
@@ -939,329 +926,149 @@ class SyncManager:
             "overall_status": overall_status,
         }
 
-    def _sync_agent(self, agent_data: dict[str, Any]) -> dict[str, Any]:
-        """Create or reuse the local-import agent by stable name."""
-        self._raise_if_backend_egress_disabled("sync agent")
-        try:
-            existing_agent = self._find_existing_by_name(
-                "agents", agent_data["name"], "agents"
-            )
-            if existing_agent:
-                agent_id = self._extract_resource_id(existing_agent)
-                if agent_id:
-                    return {"success": True, "agent_id": agent_id, "reused": True}
+    def _sync_create_session(self, session_create: dict[str, Any]) -> dict[str, Any]:
+        """Create the content-free native_local typed session.
 
-            response = self._session.post(
-                f"{self.base_url}/agents",
-                json=agent_data,
-                timeout=self._request_timeout,
-            )
-
-            if response.status_code == 429:
-                existing_agent = self._find_existing_by_name(
-                    "agents", agent_data["name"], "agents"
-                )
-                if existing_agent:
-                    agent_id = self._extract_resource_id(existing_agent)
-                    if agent_id:
-                        return {
-                            "success": True,
-                            "agent_id": agent_id,
-                            "reused": True,
-                        }
-
-            if response.status_code in [200, 201]:
-                agent_id = self._extract_response_id(response)
-                if not agent_id:
-                    return {
-                        "success": False,
-                        "error": "Agent create response did not include id",
-                    }
-                return {"success": True, "agent_id": agent_id, "reused": False}
-
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _sync_benchmark(self, benchmark_data: dict[str, Any]) -> dict[str, Any]:
-        """Create or reuse the benchmark by stable name."""
-        self._raise_if_backend_egress_disabled("sync benchmark")
-        try:
-            existing_benchmark = self._find_existing_by_name(
-                "datasets", benchmark_data["name"], "datasets"
-            )
-            if existing_benchmark:
-                benchmark_id = self._extract_resource_id(existing_benchmark)
-                if benchmark_id:
-                    return {
-                        "success": True,
-                        "dataset_id": benchmark_id,
-                        "benchmark_id": benchmark_id,
-                        "reused": True,
-                    }
-
-            response = self._session.post(
-                f"{self.base_url}/datasets",
-                json=benchmark_data,
-                timeout=self._request_timeout,
-            )
-
-            if response.status_code in [409, 500]:
-                existing_benchmark = self._find_existing_by_name(
-                    "datasets", benchmark_data["name"], "datasets"
-                )
-                if existing_benchmark:
-                    benchmark_id = self._extract_resource_id(existing_benchmark)
-                    if benchmark_id:
-                        return {
-                            "success": True,
-                            "dataset_id": benchmark_id,
-                            "benchmark_id": benchmark_id,
-                            "reused": True,
-                        }
-
-            if response.status_code in [200, 201]:
-                benchmark_id = self._extract_response_id(response)
-                if not benchmark_id:
-                    return {
-                        "success": False,
-                        "error": "Benchmark create response did not include id",
-                    }
-                return {
-                    "success": True,
-                    "dataset_id": benchmark_id,
-                    "benchmark_id": benchmark_id,
-                    "reused": False,
-                }
-
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _sync_experiment(self, experiment_data: dict[str, Any]) -> dict[str, Any]:
-        """Sync experiment data to cloud."""
-        self._raise_if_backend_egress_disabled("sync experiment")
-        try:
-            response = self._session.post(
-                f"{self.base_url}/experiments",
-                json=experiment_data,
-                timeout=self._request_timeout,
-            )
-            if response.status_code in [200, 201]:
-                payload = self._response_json(response)
-                experiment_id = (
-                    self._extract_resource_id(payload)
-                    if isinstance(payload, Mapping)
-                    else None
-                )
-                if not experiment_id:
-                    return {
-                        "success": False,
-                        "error": "Experiment create response did not include id",
-                    }
-                context = (
-                    self._extract_experiment_context(payload)
-                    if isinstance(payload, Mapping)
-                    else {}
-                )
-                return {"success": True, "experiment_id": experiment_id, **context}
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _finalize_experiment(self, experiment_id: str) -> dict[str, Any]:
-        """Transition a synced experiment to COMPLETED via PUT /experiments/{id}.
-
-        Must be called after all experiment_run and configuration_run rows have
-        been uploaded.  The backend rejects experiment creation with a
-        run-requiring status (RUNNING or COMPLETED) when no runs exist yet
-        (#1420), and exposes only PUT (not PATCH) for experiment updates
-        (TraigentBackend src/routes/experiment_routes.py:1058).  The correct
-        sync protocol is therefore:
-          1. POST /experiments  (status="PENDING")
-          2. POST /experiment-runs/{id}/runs
-          3. POST /configuration-runs/runs/{run_id}/configurations  (N times)
-          4. GET  /experiments/{id}  (status preflight)
-          5. PUT  /experiments/{id}  {"status":"COMPLETED"}   <-- this method
-        The PUT COMPLETED guard passes once >=1 experiment_run exists, but the
-        transition guard rejects illegal terminal edges. A prior live/hybrid
-        owner may already have driven a deterministic experiment id to a
-        terminal non-COMPLETED state; offline sync must not issue the illegal
-        direct terminal -> COMPLETED PUT.
+        POSTs the typed contract to ``/sessions`` (content-free: function name,
+        typed configuration space, objective names, and a dataset *label* only).
+        Because the session binds no benchmark, the backend's EMPTY_DATASET
+        guard hits its no-dataset pass-through, so a run whose server-side
+        dataset would have zero examples imports cleanly. Parses the response
+        like ``api_operations._parse_session_response`` (experiment_id /
+        experiment_run_id fall back to session_id when absent).
         """
-        self._raise_if_backend_egress_disabled("finalize experiment")
+        self._raise_if_backend_egress_disabled("sync session create")
         try:
-            current_status: str | None = None
-            status_response = self._session.get(
-                f"{self.base_url}/experiments/{experiment_id}",
-                timeout=self._request_timeout,
-            )
-            if status_response.status_code == 200:
-                payload = self._response_json(status_response)
-                current_status = self._extract_experiment_status(payload)
-                if not current_status:
-                    return {
-                        "success": False,
-                        "error": "Experiment status lookup response did not include status",
-                    }
-            elif status_response.status_code != 404:
-                return {
-                    "success": False,
-                    "error": (
-                        "Experiment status lookup failed: "
-                        f"HTTP {status_response.status_code}: {status_response.text}"
-                    ),
-                }
-            else:
-                logger.warning(
-                    "Could not preflight experiment status for %s before finalization "
-                    "(HTTP 404); continuing with legacy finalize path",
-                    experiment_id,
-                )
-
-            if current_status == "COMPLETED":
-                return {
-                    "success": True,
-                    "classification": "already_completed",
-                    "current_status": current_status,
-                    "message": f"Experiment {experiment_id} is already COMPLETED",
-                }
-
-            if current_status in TERMINAL_NON_COMPLETED_EXPERIMENT_STATUSES:
-                message = (
-                    f"Experiment {experiment_id} is {current_status}; offline sync "
-                    "will not advance it to COMPLETED because this SDK sync does "
-                    "not own terminal-state recovery transitions"
-                )
-                logger.warning(message)
-                return {
-                    "success": True,
-                    "skipped": True,
-                    "classification": "skipped_terminal_not_owned",
-                    "current_status": current_status,
-                    "message": message,
-                }
-
-            response = self._session.put(
-                f"{self.base_url}/experiments/{experiment_id}",
-                json={"status": "COMPLETED"},
-                timeout=self._request_timeout,
-            )
-            if response.status_code in [200, 204]:
-                return {
-                    "success": True,
-                    "classification": "completed",
-                    "current_status": current_status,
-                }
-            return {
-                "success": False,
-                "current_status": current_status,
-                "error": f"HTTP {response.status_code}: {response.text}",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _sync_experiment_run(
-        self, experiment_id: str, run_data: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Sync experiment run data to cloud."""
-        self._raise_if_backend_egress_disabled("sync experiment run")
-        try:
-            if not experiment_id:
-                return {
-                    "success": False,
-                    "error": "Experiment run sync requires experiment_id",
-                }
-
             response = self._session.post(
-                f"{self.base_url}/experiment-runs/{experiment_id}/runs",
-                json=run_data,
+                f"{self.base_url}/sessions",
+                json=session_create,
                 timeout=self._request_timeout,
             )
-            if response.status_code in [200, 201]:
-                experiment_run_id = self._extract_response_id(response)
-                if not experiment_run_id:
-                    return {
-                        "success": False,
-                        "error": "Experiment-run create response did not include id",
-                    }
+            if response.status_code not in (200, 201):
                 return {
-                    "success": True,
-                    "run_id": experiment_run_id,
-                    "experiment_run_id": experiment_run_id,
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}",
                 }
+            payload = self._response_json(response)
+            if not isinstance(payload, Mapping):
+                return {
+                    "success": False,
+                    "error": "Session create response was not a JSON object",
+                }
+            session_id = payload.get("session_id")
+            if not session_id:
+                return {
+                    "success": False,
+                    "error": "Session create response did not include session_id",
+                }
+            session_id = str(session_id)
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, Mapping):
+                metadata = {}
+            experiment_id = str(metadata.get("experiment_id") or session_id)
+            experiment_run_id = str(metadata.get("experiment_run_id") or session_id)
+            project_id = self._optional_context_id(
+                payload.get("project_id") or metadata.get("project_id")
+            )
+            tenant_id = self._optional_context_id(
+                payload.get("tenant_id") or metadata.get("tenant_id")
+            )
             return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "success": True,
+                "session_id": session_id,
+                "experiment_id": experiment_id,
+                "experiment_run_id": experiment_run_id,
+                "project_id": project_id,
+                "tenant_id": tenant_id,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _sync_configuration_runs(
+    @staticmethod
+    def _optional_context_id(value: Any) -> str | None:
+        """Normalize an owning-context id (project/tenant) to a non-empty str."""
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    def _sync_session_results(
         self,
-        experiment_run_id: str,
-        trials: list[dict[str, Any]],
+        session_id: str,
+        configuration_runs: list[dict[str, Any]],
         *,
         already_synced_keys: set[str] | None = None,
         on_synced: Callable[[str, str | None], None] | None = None,
     ) -> dict[str, Any]:
-        """Create the cost-bearing configuration rows for an experiment run.
+        """Submit one trial result per configuration run.
 
-        Idempotent across resumes: each config-run carries a stable key
+        Idempotent across resumes: each result carries a stable key
         (``_config_run_key`` of its zero-based position). Runs whose key is in
-        ``already_synced_keys`` are SKIPPED (not re-POSTed) — the backend does
-        not dedup config-run creates (backend issue #1330), so re-POSTing would
-        duplicate rows. ``on_synced(key, configuration_run_id)`` is invoked
-        immediately after each successful POST so progress is persisted
-        incrementally (crash-safe), not only at the end of the batch.
+        ``already_synced_keys`` are SKIPPED (not re-POSTed) -- the backend does
+        not dedup result creates, so re-POSTing would duplicate rows.
+        ``on_synced(key, result_id)`` is invoked immediately after each
+        successful POST so progress is persisted incrementally (crash-safe),
+        not only at the end of the batch. The per-trial payload is
+        ``{trial_id, config, status, metrics}`` -- ``config`` is REQUIRED (and
+        must be non-empty) in native_local because the backend materializes the
+        trial from it; ``status`` is the trial's real terminal status
+        (COMPLETED or FAILED).
         """
-        self._raise_if_backend_egress_disabled("sync configuration runs")
+        self._raise_if_backend_egress_disabled("sync session results")
         already_synced_keys = already_synced_keys or set()
         errors: list[str] = []
         configuration_run_ids: list[str] = []
         synced = 0
         skipped = 0
 
-        for index, trial in enumerate(trials):
+        for index, configuration_run in enumerate(configuration_runs):
             key = self._config_run_key(index)
-            # Skip config-runs a prior attempt already uploaded so a resume
-            # never creates duplicate rows.
+            # Skip results a prior attempt already uploaded so a resume never
+            # creates duplicate rows.
             if key in already_synced_keys:
                 skipped += 1
                 continue
 
             # 1-based ordinal for human-readable error messages.
             ordinal = index + 1
+            trial_config = configuration_run.get("experiment_parameters") or {}
+            if not trial_config:
+                # native_local rejects empty configs ("config is required for
+                # native_local trial submissions"); surface a clear SDK-side
+                # error instead of the raw backend message.
+                errors.append(
+                    f"trial {ordinal}: trial has an empty config, which the "
+                    "content-free session import cannot submit (native_local "
+                    "materializes each trial from its config); this trial was "
+                    "skipped"
+                )
+                continue
+            result_payload = {
+                "trial_id": configuration_run.get("trial_id"),
+                "config": trial_config,
+                "status": configuration_run.get("status") or "COMPLETED",
+                "metrics": configuration_run.get("measures", {}),
+            }
             try:
                 response = self._session.post(
-                    f"{self.base_url}/configuration-runs/runs/"
-                    f"{experiment_run_id}/configurations",
-                    json=trial,
+                    f"{self.base_url}/sessions/{session_id}/results",
+                    json=result_payload,
                     timeout=self._request_timeout,
                 )
             except Exception as exc:
                 errors.append(f"trial {ordinal}: {exc}")
                 continue
 
-            if response.status_code == 201:
+            if response.status_code in (200, 201):
                 synced += 1
-                configuration_run_id = self._extract_response_id(response)
-                if configuration_run_id:
-                    configuration_run_ids.append(configuration_run_id)
-                # Persist this config-run as synced RIGHT NOW (before the next
-                # POST) so a crash/failure on a later row leaves a durable
-                # marker the next resume can skip past.
+                result_id = self._extract_response_id(response)
+                if result_id:
+                    configuration_run_ids.append(result_id)
+                # Persist this result as synced RIGHT NOW (before the next POST)
+                # so a crash/failure on a later row leaves a durable marker the
+                # next resume can skip past.
                 if on_synced is not None:
-                    on_synced(key, configuration_run_id)
+                    on_synced(key, result_id)
                 continue
 
             errors.append(
@@ -1276,75 +1083,34 @@ class SyncManager:
             "configuration_run_ids": configuration_run_ids,
         }
 
-    @staticmethod
-    def _build_experiment_payload(
-        experiment_data: dict[str, Any], agent_id: str, benchmark_id: str
+    def _sync_finalize_session(
+        self, session_id: str, experiment_run_id: str | None
     ) -> dict[str, Any]:
-        """Fill returned backend IDs into the experiment create payload."""
-        return {
-            **experiment_data,
-            "agent_id": agent_id,
-            "dataset_id": benchmark_id,
-        }
+        """Finalize the typed session after all results are submitted.
 
-    @staticmethod
-    def _build_experiment_run_payload(
-        run_data: dict[str, Any], agent_id: str, benchmark_id: str
-    ) -> dict[str, Any]:
-        """Build the closed-schema experiment-run payload."""
-        return {
-            "experiment_data": {
-                "agent_id": agent_id,
-                "benchmark_id": benchmark_id,
-                "measures": run_data["measures"],
-                "configurations": run_data["configurations"],
+        POSTs ``/sessions/{id}/finalize`` with a content-free reason and the
+        experiment_run_id (no certified_selection -- this is a content-free
+        historical import). Treats an already-finalized session as an
+        idempotent success.
+        """
+        self._raise_if_backend_egress_disabled("finalize session")
+        try:
+            response = self._session.post(
+                f"{self.base_url}/sessions/{session_id}/finalize",
+                json={
+                    "reason": "offline_sync_finalization",
+                    "experiment_run_id": experiment_run_id,
+                },
+                timeout=self._request_timeout,
+            )
+            if response.status_code in (200, 201):
+                return {"success": True, "classification": "completed"}
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
             }
-        }
-
-    def _find_existing_by_name(
-        self, resource_path: str, name: str, collection_key: str
-    ) -> dict[str, Any] | None:
-        """Find an existing backend resource by exact name."""
-        self._raise_if_backend_egress_disabled("sync lookup")
-        response = self._session.get(
-            f"{self.base_url}/{resource_path}",
-            params={"name": name},
-            timeout=self._request_timeout,
-        )
-        if response.status_code != 200:
-            return None
-
-        payload = self._response_json(response)
-        for item in self._iter_response_items(payload, collection_key):
-            if item.get("name") == name:
-                return item
-
-        return None
-
-    def _iter_response_items(
-        self, payload: Any, collection_key: str
-    ) -> Iterable[dict[str, Any]]:
-        """Yield resource dicts from common list-response envelope shapes."""
-        if isinstance(payload, list):
-            for item in payload:
-                if isinstance(item, dict):
-                    yield item
-            return
-
-        if not isinstance(payload, dict):
-            return
-
-        if "name" in payload and self._extract_resource_id(payload):
-            yield payload
-
-        for key in (collection_key, "items", "data", "results"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict):
-                        yield item
-            elif isinstance(value, dict):
-                yield from self._iter_response_items(value, collection_key)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     @staticmethod
     def _response_json(response: requests.Response) -> Any:
@@ -1379,54 +1145,6 @@ class SyncManager:
         if isinstance(payload, Mapping):
             return self._extract_resource_id(payload)
         return None
-
-    @staticmethod
-    def _extract_experiment_status(payload: Any) -> str | None:
-        """Extract a canonical experiment status from common response envelopes."""
-        if not isinstance(payload, Mapping):
-            return None
-
-        value = payload.get("status")
-        if value is not None:
-            normalized = str(getattr(value, "value", value)).strip().upper()
-            if normalized:
-                return normalized
-
-        for key in ("data", "experiment", "item", "result"):
-            nested = payload.get(key)
-            status = SyncManager._extract_experiment_status(nested)
-            if status:
-                return status
-
-        return None
-
-    @staticmethod
-    def _extract_context_value(payload: Mapping[str, Any], key: str) -> str | None:
-        value = payload.get(key)
-        if value is not None:
-            normalized = str(value).strip()
-            return normalized or None
-
-        metadata = payload.get("metadata")
-        if isinstance(metadata, Mapping):
-            value = metadata.get(key)
-            if value is not None:
-                normalized = str(value).strip()
-                return normalized or None
-
-        data = payload.get("data")
-        if isinstance(data, Mapping):
-            return SyncManager._extract_context_value(data, key)
-        return None
-
-    @staticmethod
-    def _extract_experiment_context(payload: Mapping[str, Any]) -> dict[str, str]:
-        context: dict[str, str] = {}
-        for key in ("project_id", "tenant_id"):
-            value = SyncManager._extract_context_value(payload, key)
-            if value:
-                context[key] = value
-        return context
 
     def get_cloud_analytics_preview(self) -> dict[str, Any]:
         """Get preview of analytics available in cloud after sync."""
