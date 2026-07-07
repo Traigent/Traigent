@@ -2603,6 +2603,16 @@ class BaseEvaluator(ABC):
                     llm_metrics or {},
                     example_index,
                 )
+                if inspect.isawaitable(value):
+                    if inspect.iscoroutine(value):
+                        value.close()
+                    logger.debug(
+                        "Skipping awaitable progress metric %s for example %s; "
+                        "the final async evaluator pass will compute it",
+                        metric_name,
+                        getattr(example, "example_id", None) or example_index,
+                    )
+                    continue
                 if isinstance(value, Mapping):
                     metrics.update(self._coerce_progress_metrics(value))
                 elif value is not None:
@@ -2660,6 +2670,14 @@ class BaseEvaluator(ABC):
         if not values:
             return metrics
         for name, value in values.items():
+            if inspect.isawaitable(value):
+                # A mapping sub-value can be awaitable; the final async
+                # evaluator pass computes the real value. Close the coroutine
+                # here so best-effort progress never leaks a
+                # "coroutine was never awaited" warning.
+                if inspect.iscoroutine(value):
+                    value.close()
+                continue
             if isinstance(value, bool) or value is None:
                 continue
             try:
