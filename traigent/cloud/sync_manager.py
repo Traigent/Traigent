@@ -1043,8 +1043,14 @@ class SyncManager:
                     "skipped"
                 )
                 continue
+            # Local trial ids are ints (local_storage assigns a 1-based counter);
+            # the session /results validator requires a STRING trial_id, so coerce
+            # here. Fall back to the stable positional key when a trial somehow
+            # carries no id, so native_local can still materialize the trial.
+            raw_trial_id = configuration_run.get("trial_id")
+            trial_id = str(raw_trial_id) if raw_trial_id is not None else key
             result_payload = {
-                "trial_id": configuration_run.get("trial_id"),
+                "trial_id": trial_id,
                 "config": trial_config,
                 "status": configuration_run.get("status") or "COMPLETED",
                 "metrics": configuration_run.get("measures", {}),

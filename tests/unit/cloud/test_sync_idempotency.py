@@ -423,6 +423,12 @@ def test_empty_dataset_session_syncs_via_content_free_session_endpoints(sync_man
         assert body["status"] == "COMPLETED"
         assert "config" in body and isinstance(body["config"], dict)
         assert "metrics" in body
+        # trial_id MUST be a string: local trial ids are ints, but the session
+        # /results validator rejects a non-string trial_id with HTTP 400
+        # ("trial_id must be a string"), which left offline sync stuck at
+        # `partial`/exit 1 even though EMPTY_DATASET was already gone. Caught by
+        # live api-dev E2E; mocked transport could not (it never type-checks).
+        assert isinstance(body["trial_id"], str), body["trial_id"]
 
     # The create payload is the typed native_local contract with no benchmark.
     create_call = next(

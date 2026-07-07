@@ -995,7 +995,9 @@ class TestSyncManager:
         sync_manager._session.post.assert_called_once_with(
             f"{sync_manager.base_url}/sessions/sess-1/results",
             json={
-                "trial_id": 7,
+                # int trial_id 7 is coerced to the string "7": the session
+                # /results validator rejects a non-string trial_id (HTTP 400).
+                "trial_id": "7",
                 "config": {"model": "gpt-4"},
                 "status": "COMPLETED",
                 "metrics": {"score": 0.5},
@@ -1039,7 +1041,7 @@ class TestSyncManager:
         assert sync_manager._session.post.call_args.args[0] == (
             f"{sync_manager.base_url}/sessions/sess-1/results"
         )
-        assert sync_manager._session.post.call_args.kwargs["json"]["trial_id"] == 2
+        assert sync_manager._session.post.call_args.kwargs["json"]["trial_id"] == "2"
 
     def test_sync_session_results_http_failure(self, sync_manager: SyncManager) -> None:
         """A non-2xx result POST is reported as a per-trial error, not synced."""
@@ -1302,7 +1304,8 @@ class TestSyncManager:
         ]
         cfg_1 = expected_runs[1]
         assert result_posts[0].kwargs["json"] == {
-            "trial_id": cfg_1["trial_id"],
+            # trial_id is coerced to a string for the /results validator.
+            "trial_id": str(cfg_1["trial_id"]),
             "config": cfg_1["experiment_parameters"],
             "status": "COMPLETED",
             "metrics": cfg_1["measures"],
