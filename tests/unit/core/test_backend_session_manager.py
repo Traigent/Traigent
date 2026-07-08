@@ -6,6 +6,7 @@ Tests the extracted backend session lifecycle manager with stub backend client.
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -270,6 +271,22 @@ class TestBackendSessionManagerTrialSubmission:
             )
 
         mock_backend_client.submit_result.side_effect = submit_result
+
+    @staticmethod
+    def _completed_trial(
+        *,
+        metrics: dict[str, object] | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> TrialResult:
+        return TrialResult(
+            trial_id="trial-cost-contract",
+            config={"param1": 1},
+            metrics=metrics or {"accuracy": 0.9},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata=metadata or {},
+        )
 
     @pytest.mark.asyncio
     async def test_submit_trial_success(
@@ -772,6 +789,84 @@ class TestBackendSessionManagerTrialSubmission:
         metrics_payload = call_kwargs["metrics"]
         pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
         assert all(pattern.match(k) for k in metrics_payload.keys())
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_cost_telemetry_populates_metrics_cost(
+        self, backend_session_manager, mock_backend_client
+    ):
+        trial = self._completed_trial(
+            metrics={"accuracy": 0.9, "cost": "not-a-number"},
+            metadata={"total_cost": 0.37},
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=trial,
+            session_id="test-session-id",
+        )
+
+        metrics_payload = (
+            mock_backend_client._submit_trial_result_via_session.call_args.kwargs[
+                "metrics"
+            ]
+        )
+        assert metrics_payload["cost"] == pytest.approx(0.37)
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_budget_session_backfills_zero_cost_without_telemetry(
+        self,
+        backend_session_manager,
+        mock_backend_client,
+        mock_dataset,
+        caplog,
+    ):
+        def func(x):
+            return x
+
+        func.__name__ = "budgeted_func"
+        descriptor = resolve_function_descriptor(func)
+        backend_session_manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=5,
+            start_time=1234567890.0,
+            cost_limit=5.0,
+        )
+        trial = self._completed_trial(metrics={"accuracy": 0.9})
+
+        with caplog.at_level(
+            logging.DEBUG, logger="traigent.core.backend_session_manager"
+        ):
+            await backend_session_manager.submit_trial(
+                trial_result=trial,
+                session_id="test-session-id",
+            )
+
+        metrics_payload = (
+            mock_backend_client._submit_trial_result_via_session.call_args.kwargs[
+                "metrics"
+            ]
+        )
+        assert metrics_payload["cost"] == 0.0
+        assert "no cost telemetry; backfilling 0.0 for budget accounting" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_without_budget_or_telemetry_does_not_add_cost(
+        self, backend_session_manager, mock_backend_client
+    ):
+        trial = self._completed_trial(metrics={"accuracy": 0.9})
+
+        await backend_session_manager.submit_trial(
+            trial_result=trial,
+            session_id="test-session-id",
+        )
+
+        metrics_payload = (
+            mock_backend_client._submit_trial_result_via_session.call_args.kwargs[
+                "metrics"
+            ]
+        )
+        assert "cost" not in metrics_payload
 
 
 class TestBackendSessionManagerWeightedScores:

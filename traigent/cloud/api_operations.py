@@ -98,6 +98,7 @@ _LEGACY_SESSION_CONTRACT_DEPRECATION = (
     "edge_analytics where a compatibility wire value is still required. The "
     "legacy session contract will be removed in a future major release."
 )
+_DIRECTION_OBJECTIVES = frozenset({"maximize", "minimize"})
 
 
 class TraigentSessionApiResult(tuple):
@@ -675,6 +676,48 @@ class ApiOperations:
         strategy = getattr(session_request, "optimization_strategy", None)
         return dict(strategy) if isinstance(strategy, dict) and strategy else None
 
+    @staticmethod
+    def _normalize_typed_objectives(objectives: Any) -> list[Any]:
+        """Normalize typed objective shorthands without changing legacy semantics."""
+
+        normalized: list[Any] = []
+        seen_score_directions: set[str] = set()
+        raw_objectives = list(objectives or ["maximize"])
+
+        for objective in raw_objectives:
+            if isinstance(objective, str):
+                direction = objective.strip().lower()
+                if direction in _DIRECTION_OBJECTIVES:
+                    # Bare direction words are legacy optimization_goal placeholders,
+                    # not metric names. Use "score" because BackendSessionManager
+                    # backfills metrics_payload["score"] before submission
+                    # (traigent/core/backend_session_manager.py:1424).
+                    objective = {"metric": "score", "direction": direction}
+            elif isinstance(objective, dict):
+                objective = dict(objective)
+
+            score_direction = None
+            if isinstance(objective, dict):
+                metric = objective.get("metric")
+                direction = objective.get("direction")
+                if (
+                    isinstance(metric, str)
+                    and metric == "score"
+                    and isinstance(direction, str)
+                    and direction.lower() in _DIRECTION_OBJECTIVES
+                ):
+                    score_direction = direction.lower()
+
+            if score_direction is not None:
+                if score_direction in seen_score_directions:
+                    continue
+                seen_score_directions.add(score_direction)
+                objective["direction"] = score_direction
+
+            normalized.append(objective)
+
+        return normalized
+
     def _build_typed_session_payload(
         self, session_request: SessionCreationRequest, max_trials: int
     ) -> dict[str, Any]:
@@ -695,7 +738,7 @@ class ApiOperations:
             "configuration_space": _typed_configuration_space(
                 session_request.configuration_space
             ),
-            "objectives": list(session_request.objectives or []),
+            "objectives": self._normalize_typed_objectives(session_request.objectives),
             "dataset_metadata": dataset_metadata,
             "max_trials": max_trials,
             "metadata": {
