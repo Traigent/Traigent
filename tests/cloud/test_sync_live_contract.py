@@ -129,11 +129,18 @@ def test_edge_analytics_sync_lands_cost_in_configuration_run():
             or configs.json().get("data")
             or []
         )
-        costs = [
-            float((c.get("measures") or {}).get("cost", 0))
-            for c in cfg_items
-            if isinstance(c.get("measures"), dict)
-        ]
+
+        # The live backend serves configuration-run measures as a LIST of
+        # measure dicts; older responses used a single dict. Accept both.
+        def _iter_measures(config_run: dict) -> list[dict]:
+            measures = config_run.get("measures")
+            if isinstance(measures, dict):
+                return [measures]
+            if isinstance(measures, list):
+                return [m for m in measures if isinstance(m, dict)]
+            return []
+
+        costs = [float(m.get("cost", 0)) for c in cfg_items for m in _iter_measures(c)]
         assert any(cost > 0 for cost in costs), (
             f"no configuration_run carried cost>0: {cfg_items}"
         )
