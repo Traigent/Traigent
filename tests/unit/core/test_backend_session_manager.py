@@ -44,7 +44,9 @@ def test_trailing_newline_labels_rejected_by_fullmatch():
     from scalar labels, metric/sample keys, and significance keys alike."""
     assert _bounded_label("aggregated_mean\n") is None
     assert _bounded_label("aggregated_mean") == "aggregated_mean"
-    assert _sanitized_numeric_dict({"accuracy\n": 0.5, "accuracy": 0.9}) == {"accuracy": 0.9}
+    assert _sanitized_numeric_dict({"accuracy\n": 0.5, "accuracy": 0.9}) == {
+        "accuracy": 0.9
+    }
     assert _sanitize_significance({"accuracy\n": {"n_shared_examples": 1}}) is None
 
 
