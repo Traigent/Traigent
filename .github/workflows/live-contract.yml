@@ -121,18 +121,20 @@ jobs:
       - name: Mint live-contract API key
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
-          # Extract the sentinel line: app logging handlers bound to the real
-          # stdout can leak log lines around redirect_stdout, so the raw key is
-          # emitted as CI_RAW_API_KEY=<key>.
-          key="$(
-            docker compose \
-              -p "$COMPOSE_PROJECT_NAME" \
-              -f docker/docker-compose.dev.yml \
-              exec -T backend python scripts/ci/mint_ci_api_key.py \
-            | sed -n 's/^CI_RAW_API_KEY=//p' | tail -n 1
-          )"
+          # The mint script writes the raw key to a private (0600) file inside
+          # the container — never to stdout — so the secret can't leak into
+          # captured CI output or race ::add-mask::. Read it back, mask it, then
+          # delete the file.
+          compose() {
+            docker compose -p "$COMPOSE_PROJECT_NAME" \
+              -f docker/docker-compose.dev.yml "$@"
+          }
+          compose exec -T backend python scripts/ci/mint_ci_api_key.py \
+            --out /tmp/ci_api_key
+          key="$(compose exec -T backend cat /tmp/ci_api_key)"
+          compose exec -T backend rm -f /tmp/ci_api_key || true
           if [ -z "$key" ]; then
-            echo "mint_ci_api_key.py returned an empty key" >&2
+            echo "mint_ci_api_key.py produced an empty key" >&2
             exit 1
           fi
           echo "::add-mask::$key"
