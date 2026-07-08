@@ -192,7 +192,7 @@ class TestSessionMappingRecovery:
         assert mapping.experiment_id == "exp-42"
         assert mapping.experiment_run_id == "run-42"
         client._session_ops._finalize_session_via_api.assert_awaited_once_with(
-            session_id, "run-42", certified_selection=None
+            session_id, "run-42", certified_selection=None, session_aggregation=None
         )
 
     @pytest.mark.asyncio

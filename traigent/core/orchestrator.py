@@ -44,7 +44,10 @@ if TYPE_CHECKING:
     )
 
 from traigent.config.types import ExecutionMode, TraigentConfig
-from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.core.backend_session_manager import (
+    BackendSessionManager,
+    session_aggregation_echoed,
+)
 from traigent.core.cache_policy import CachePolicyHandler
 from traigent.core.cost_enforcement import (
     DEFAULT_COST_LIMIT_USD,
@@ -3222,8 +3225,13 @@ class OptimizationOrchestrator:
                 await self.backend_session_manager.update_weighted_scores(
                     result, session_id
                 )
-                aggregation_persisted = (
-                    self.backend_session_manager.submit_session_aggregation(
+                # Traigent#1720/#1724 (g2:agg-summary): fold the session-level
+                # rollup into the existing finalize request body (mirroring
+                # certified_selection) instead of the dead local-only
+                # submit_result shim. Build the payload BEFORE finalize so it
+                # rides the same request.
+                agg_payload = (
+                    self.backend_session_manager.build_session_aggregation_payload(
                         result, session_id
                     )
                 )
@@ -3232,31 +3240,39 @@ class OptimizationOrchestrator:
                     session_id,
                     self._status,
                     certified_selection=self._build_certified_selection_report(),
+                    session_aggregation=agg_payload,
                 )
                 self.backend_session_manager.attach_session_metadata(
                     result, session_id, session_summary
                 )
-                if aggregation_persisted is False:
-                    # Traigent#1724: the session-level AGG_SUMMARY rollup was
-                    # built but only reached a local-only shim — it never left
-                    # the process. Trial-level results and session finalize
-                    # above did succeed, so this is not a full failure; but
-                    # 'succeeded' must not be reported for data that was
-                    # never transmitted.
+                if agg_payload is not None and not session_aggregation_echoed(
+                    session_summary
+                ):
+                    # A rollup was sent, but the finalize response did not
+                    # echo it back — either an older backend without this
+                    # field (safe to merge before the backend deploys) or the
+                    # backend rejected/dropped it. Trial-level results and
+                    # session finalize above did succeed, so this is not a
+                    # full failure; but 'succeeded' must not be reported for
+                    # a rollup the backend never confirmed.
                     persistence_status = "degraded"
                     result.metadata["persistence_degraded_reason"] = (
-                        "session aggregation rollup was not transmitted to the "
-                        "backend (local-only submission path); trial-level "
-                        "results and session finalize were persisted normally."
+                        "session aggregation rollup was sent to the backend "
+                        "finalize endpoint but was not acknowledged in the "
+                        "response (the backend may not yet support "
+                        "session_aggregation); trial-level results and "
+                        "session finalize were persisted normally."
                     )
                     logger.warning(
                         "Session aggregation rollup for session_id=%s was not "
-                        "transmitted to the backend; marking "
-                        "persistence_status=degraded (trial results and "
-                        "finalize succeeded).",
+                        "acknowledged by the backend finalize response; "
+                        "marking persistence_status=degraded (trial results "
+                        "and finalize succeeded).",
                         session_id,
                     )
                 else:
+                    # agg_payload is None (nothing to persist — not a
+                    # degradation) or the backend echoed it back (succeeded).
                     persistence_status = "succeeded"
             except Exception as exc:
                 persistence_status = "failed"

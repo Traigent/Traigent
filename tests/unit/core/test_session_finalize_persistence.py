@@ -132,21 +132,24 @@ async def test_finalize_retries_transient_failures_then_marks_persistence_succee
 
 
 @pytest.mark.asyncio
-async def test_finalize_marks_persistence_degraded_when_aggregation_not_transmitted(
+async def test_finalize_marks_persistence_degraded_when_aggregation_not_echoed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Traigent#1724: never report 'succeeded' for an AGG_SUMMARY rollup that
-    never left the process.
+    """Traigent#1720/#1724 (g2:agg-summary): never report 'succeeded' for a
+    session_aggregation rollup the backend didn't confirm.
 
-    submit_session_aggregation builds a session-level rollup payload but
-    hands it to BackendIntegratedClient.submit_result, a local-only shim
-    that never makes a network call. Trial-level results and session
-    finalize succeed normally, but persistence_status must be "degraded"
-    (not "succeeded") to be honest that the rollup itself was never
-    transmitted.
+    build_session_aggregation_payload builds a session-level rollup payload
+    that is threaded into the finalize request body. Trial-level results and
+    session finalize succeed normally, but if the finalize response does NOT
+    echo session_aggregation back (e.g. an old backend without this field),
+    persistence_status must be "degraded" (not "succeeded") to be honest
+    that the rollup itself was never acknowledged as persisted.
     """
 
     def finalize(*args, **kwargs):
+        # Old-backend behavior: acknowledges finalize but does not echo
+        # session_aggregation back — merge-ordering independence (SDK safe
+        # to merge before the backend deploys the echo).
         return {"status": "completed", "metadata": {"finalized_via_api": True}}
 
     config = _config(monkeypatch)
@@ -165,10 +168,82 @@ async def test_finalize_marks_persistence_degraded_when_aggregation_not_transmit
         orchestrator, result, "session-finalize", None
     )
 
-    client.submit_result.assert_called_once()
+    # The payload reached finalize_body via finalize_session_sync's
+    # session_aggregation kwarg — the shim-restoration regression guard: if
+    # the dead submit_result-shim path were restored instead, this kwarg
+    # would be absent/None and this assertion would fail.
+    call_kwargs = client.finalize_session_sync.call_args.kwargs
+    assert call_kwargs["session_aggregation"] is not None
+    assert call_kwargs["session_aggregation"]["metrics"] == {"accuracy": 0.9}
+    assert call_kwargs["session_aggregation"]["samples_per_config"] == {"test": 1}
+
+    client.submit_result.assert_not_called()
     assert result.metadata["persistence_status"] == "degraded"
     assert "persistence_degraded_reason" in result.metadata
     assert result.persistence_failed is False
+
+
+@pytest.mark.asyncio
+async def test_finalize_marks_persistence_succeeded_when_aggregation_echoed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Honest signal, positive case: the backend echoes session_aggregation
+    back in the finalize response -> persistence_status is 'succeeded'."""
+
+    def finalize(*args, **kwargs):
+        sent = kwargs.get("session_aggregation")
+        return {
+            "status": "completed",
+            "metadata": {"finalized_via_api": True},
+            "session_aggregation": sent,
+        }
+
+    config = _config(monkeypatch)
+    config.execution_mode = "hybrid"
+    client = _backend_client(finalize)
+    manager = _manager(config, client)
+    orchestrator = _orchestrator(config, manager)
+
+    result = _result()
+    result.metadata["session_summary"] = {
+        "metrics": {"accuracy": 0.9},
+        "samples_per_config": {"test": 1},
+    }
+
+    await OptimizationOrchestrator._finalize_optimization(
+        orchestrator, result, "session-finalize", None
+    )
+
+    assert result.metadata["persistence_status"] == "succeeded"
+    assert "persistence_degraded_reason" not in result.metadata
+
+
+@pytest.mark.asyncio
+async def test_finalize_persistence_succeeded_when_no_aggregation_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No session_summary -> build_session_aggregation_payload returns None
+    -> this is a legitimate skip, not a degradation."""
+
+    def finalize(*args, **kwargs):
+        return {"status": "completed", "metadata": {"finalized_via_api": True}}
+
+    config = _config(monkeypatch)
+    config.execution_mode = "hybrid"
+    client = _backend_client(finalize)
+    manager = _manager(config, client)
+    orchestrator = _orchestrator(config, manager)
+
+    result = _result()  # no session_summary in metadata
+
+    await OptimizationOrchestrator._finalize_optimization(
+        orchestrator, result, "session-finalize", None
+    )
+
+    call_kwargs = client.finalize_session_sync.call_args.kwargs
+    assert call_kwargs["session_aggregation"] is None
+    assert result.metadata["persistence_status"] == "succeeded"
+    assert "persistence_degraded_reason" not in result.metadata
 
 
 @pytest.mark.asyncio

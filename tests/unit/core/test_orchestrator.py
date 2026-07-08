@@ -704,7 +704,7 @@ class TestOptimizationOrchestrator:
                 return_value=BackendTrialSubmissionOutcome.complete("converged")
             )
             manager.update_weighted_scores = AsyncMock(return_value=0)
-            manager.submit_session_aggregation = MagicMock()
+            manager.build_session_aggregation_payload = MagicMock(return_value=None)
             manager.finalize_session = MagicMock(
                 return_value={"status": "completed", "metadata": {}}
             )
@@ -778,7 +778,7 @@ class TestOptimizationOrchestrator:
                 ]
             )
             manager.update_weighted_scores = AsyncMock(return_value=0)
-            manager.submit_session_aggregation = MagicMock()
+            manager.build_session_aggregation_payload = MagicMock(return_value=None)
             manager.finalize_session = MagicMock(
                 return_value={"status": "completed", "metadata": {}}
             )
