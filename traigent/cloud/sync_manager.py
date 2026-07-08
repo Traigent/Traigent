@@ -294,13 +294,15 @@ class SyncManager:
         Convert a local session to the content-free typed-session payload.
 
         Offline sync imports historical runs through the same content-free
-        typed-session endpoints the live SDK uses (``POST /sessions`` ->
-        per-trial ``POST /sessions/{id}/results`` -> ``POST
-        /sessions/{id}/finalize``).  The session is created with
-        ``tracking_mode=native_local`` and binds NO benchmark, so the backend's
-        empty-dataset guard hits its documented no-dataset pass-through and a run
-        whose server-side dataset would have zero examples imports cleanly.  No
-        prompt/output content egresses: the dataset is represented only by a
+        typed-session endpoints the live SDK uses (``POST /sessions`` -> per
+        trial ``POST /sessions/{id}/next-trial`` then ``POST
+        /sessions/{id}/results`` -> ``POST /sessions/{id}/finalize``).  The
+        session is created with ``tracking_mode=backend_guided`` (shared-RDB
+        session state, so it works across the backend's multiple workers) and
+        binds NO benchmark, so the empty-dataset guard hits its documented
+        no-dataset pass-through and a run whose server-side dataset would have
+        zero examples imports cleanly.  No prompt/output content egresses: the
+        dataset is represented only by a
         content-free label (name + size).
 
         Args:
@@ -318,6 +320,12 @@ class SyncManager:
             session.trials or []
         )
         objectives = self._derive_objectives(opt_config, configuration_runs)
+        # Guard: the backend rejects a COMPLETED trial whose metrics lack any
+        # declared objective. Backfill each completed trial's measures so every
+        # objective is present as a number (prefer its own ``score``, else 0.0),
+        # so a real user-declared objective missing from one trial can't 400 the
+        # whole sync.
+        self._backfill_objective_measures(configuration_runs, objectives)
 
         # Content-free dataset label: name + size only, never example content.
         # The typed path validates dataset_metadata.size as a positive int
@@ -345,13 +353,19 @@ class SyncManager:
                 "privacy_mode": True,
             },
             "max_trials": max(len(configuration_runs), 1),
-            # native_local lets the backend materialize each trial directly from
-            # the submitted config (historical backfill, no /next-trial round
-            # trip, no Optuna suggestion). It binds no benchmark, so the
-            # EMPTY_DATASET guard never fires (empty-dataset sync fix).
+            # backend_guided: the backend allocates each trial slot (POST
+            # /next-trial) and persists session state to the SHARED Optuna RDB,
+            # so a create on one worker is visible to the /results submit on any
+            # other worker. native_local keeps session state in a process-local
+            # in-memory dict, which 404s across api-dev's multiple workers
+            # (backend gap — see BE issue). backend_guided is the production-
+            # proven live path. It still binds NO benchmark, so the EMPTY_DATASET
+            # guard never fires (the original empty-dataset sync fix is intact).
+            # The backend suggests configs, but we ignore them and attest the
+            # real per-trial config in each /results body (config-binding).
             "optimization_strategy": {
                 "algorithm": "optuna",
-                "tracking_mode": "native_local",
+                "tracking_mode": "backend_guided",
             },
             "metadata": {
                 "function_name": session.function_name,
@@ -369,30 +383,67 @@ class SyncManager:
     def _derive_objectives(
         opt_config: dict[str, Any], configuration_runs: list[dict[str, Any]]
     ) -> list[str]:
-        """Derive objective names for the typed session create payload.
+        """Derive the session's objective names for the typed create payload.
 
-        Prefer the objectives recorded on the local optimization config; fall
-        back to the measure names present on the trials (``["score"]`` at
-        minimum). Content-free: only measure/objective *names* are emitted.
+        The backend requires EVERY declared objective to be present as a numeric
+        metric on EVERY completed trial (an Optuna objective must be a scalar it
+        can ``tell()``). So the objective set must be MINIMAL and universally
+        present, NOT the union of every incidental per-trial measure — declaring
+        the union makes run-level overlays (``run_trials_completed``,
+        ``duration``, tokens, cost, ...) "required objectives" that not every
+        trial reports, and each such trial's /results then 400s
+        ("Completed trial is missing numeric metric ...").
+
+        Prefer the run's real optimization objectives; otherwise fall back to
+        ``["score"]`` — ``score`` is written on every trial by
+        ``_convert_trials_to_results``, so it is guaranteed present. The caller
+        additionally backfills any declared objective missing from a completed
+        trial (see ``convert_session_to_traigent_format``). Content-free: only
+        objective *names* are emitted.
         """
         raw_objectives = opt_config.get("objectives")
         if isinstance(raw_objectives, (list, tuple)):
             names = [str(name) for name in raw_objectives if name]
             if names:
                 return names
-        return SyncManager._derive_experiment_measures(configuration_runs)
+        return ["score"]
+
+    @staticmethod
+    def _backfill_objective_measures(
+        configuration_runs: list[dict[str, Any]], objectives: list[str]
+    ) -> None:
+        """Ensure every COMPLETED trial reports each declared objective numerically.
+
+        The backend requires a numeric value for every objective on a completed
+        trial (Optuna ``tell``). If a trial's measures omit one (or it is
+        non-numeric), backfill it with the trial's ``score`` when available, else
+        ``0.0``. Only completed trials are guarded — failed trials skip the
+        objective check server-side. Mutates ``configuration_runs`` in place.
+        """
+        for configuration_run in configuration_runs:
+            if str(configuration_run.get("status", "")).upper() != "COMPLETED":
+                continue
+            measures = configuration_run.setdefault("measures", {})
+            fallback = measures.get("score")
+            if not isinstance(fallback, (int, float)) or isinstance(fallback, bool):
+                fallback = 0.0
+            for objective in objectives:
+                value = measures.get(objective)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(
         self, trials: list[Any]
     ) -> list[dict[str, Any]]:
         """Reshape local trial results into per-trial result payloads.
 
-        Each entry carries ``trial_id`` (native_local requires it so the
-        backend can create the trial from the submitted ``config``),
-        ``experiment_parameters`` (the trial config), content-free numeric
+        Each entry carries ``experiment_parameters`` (the trial config, bound to
+        the backend-allocated trial at submit time), content-free numeric
         ``measures``, and the trial's REAL terminal status (``COMPLETED`` or
         ``FAILED`` — never masked to COMPLETED; the session results endpoint
-        accepts failed trials).
+        accepts failed trials). ``trial_id`` (the local id) is carried for
+        provenance but the submitted result binds to the backend-minted slot id,
+        not this one.
         """
         configuration_runs: list[dict[str, Any]] = []
 
@@ -400,9 +451,9 @@ class SyncManager:
             measures = self._configuration_run_measures(result)
             experiment_parameters = result.get("experiment_parameters") or {}
             if not experiment_parameters:
-                # native_local requires a non-empty config to materialize the
-                # trial; fall back to a config recorded in the trial metadata
-                # (if any) before giving up.
+                # The backend binds each trial to a non-empty config; fall back
+                # to a config recorded in the trial metadata (if any) before
+                # giving up.
                 metadata = result.get("metadata")
                 if isinstance(metadata, Mapping):
                     metadata_config = metadata.get("config")
@@ -443,19 +494,6 @@ class SyncManager:
     def _is_numeric(value: Any) -> bool:
         """Return True for JSON numeric values while excluding booleans."""
         return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-    @staticmethod
-    def _derive_experiment_measures(
-        configuration_runs: list[dict[str, Any]],
-    ) -> list[str]:
-        """Derive the experiment-level measure list from trial payloads."""
-        measures: list[str] = []
-        for configuration_run in configuration_runs:
-            for measure_name in configuration_run.get("measures", {}):
-                if measure_name not in measures:
-                    measures.append(measure_name)
-
-        return measures or ["score"]
 
     def _convert_trials_to_results(self, trials: list[Any]) -> list[dict[str, Any]]:
         """Convert local trials to Traigent configuration_run format."""
@@ -664,12 +702,12 @@ class SyncManager:
     ) -> None:
         """Import a converted session through the content-free session endpoints.
 
-        Three steps: create a native_local typed session (no benchmark, so the
-        backend's EMPTY_DATASET guard never fires), submit one result
-        per trial, then finalize. When ``resume`` is True, reuses any cloud ids
-        a prior attempt already created so a retry resumes rather than minting a
-        duplicate session. Mutates ``sync_result`` in place and returns early on
-        a failed step.
+        Three steps: create a backend_guided typed session (no benchmark, so the
+        backend's EMPTY_DATASET guard never fires), submit one result per trial
+        (each bound to a backend-allocated trial slot), then finalize. When
+        ``resume`` is True, reuses any cloud ids a prior attempt already created
+        so a retry resumes rather than minting a duplicate session. Mutates
+        ``sync_result`` in place and returns early on a failed step.
         """
         reuse = resume
         configuration_runs = traigent_data["configuration_runs"]
@@ -927,7 +965,7 @@ class SyncManager:
         }
 
     def _sync_create_session(self, session_create: dict[str, Any]) -> dict[str, Any]:
-        """Create the content-free native_local typed session.
+        """Create the content-free backend_guided typed session.
 
         POSTs the typed contract to ``/sessions`` (content-free: function name,
         typed configuration space, objective names, and a dataset *label* only).
@@ -992,6 +1030,47 @@ class SyncManager:
         normalized = str(value).strip()
         return normalized or None
 
+    def _sync_next_trial(self, session_id: str) -> dict[str, Any]:
+        """Allocate a backend-minted trial slot for a backend_guided session.
+
+        The backend mints configuration_run ids only through
+        ``POST /sessions/{id}/next-trial``; a result POST must be bound to the
+        session by the id the backend itself minted (a client id 404s). We
+        ignore the backend's suggested config — the real per-trial config is
+        attested in the /results body (config-binding). Mirrors the live SDK's
+        ``TrialOperations.request_trial_slot`` request/response contract.
+
+        Returns ``{success, trial_id, complete, error}``: ``trial_id`` set when a
+        slot was granted; ``complete=True`` when the backend returned
+        ``should_continue=False`` with no slot (optimization budget reached).
+        """
+        self._raise_if_backend_egress_disabled("sync next trial")
+        try:
+            response = self._session.post(
+                f"{self.base_url}/sessions/{session_id}/next-trial",
+                json={"session_id": session_id, "previous_results": []},
+                timeout=self._request_timeout,
+            )
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        if response.status_code not in (200, 201):
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+            }
+        payload = self._response_json(response)
+        if not isinstance(payload, Mapping):
+            return {"success": False, "error": "next-trial response was not JSON"}
+        suggestion = payload.get("suggestion")
+        trial_id = (
+            suggestion.get("trial_id") if isinstance(suggestion, Mapping) else None
+        )
+        if isinstance(trial_id, str) and trial_id:
+            return {"success": True, "trial_id": trial_id}
+        if payload.get("should_continue") is False:
+            return {"success": True, "complete": True}
+        return {"success": False, "error": "next-trial returned no trial slot"}
+
     def _sync_session_results(
         self,
         session_id: str,
@@ -1000,19 +1079,23 @@ class SyncManager:
         already_synced_keys: set[str] | None = None,
         on_synced: Callable[[str, str | None], None] | None = None,
     ) -> dict[str, Any]:
-        """Submit one trial result per configuration run.
+        """Submit one trial result per configuration run (backend_guided).
+
+        Per trial: allocate a backend trial slot (``POST /next-trial``), then
+        POST the content-free result bound to that backend-minted id. The
+        backend persists session state to the shared RDB, so this works across
+        api-dev's multiple workers.
 
         Idempotent across resumes: each result carries a stable key
         (``_config_run_key`` of its zero-based position). Runs whose key is in
-        ``already_synced_keys`` are SKIPPED (not re-POSTed) -- the backend does
-        not dedup result creates, so re-POSTing would duplicate rows.
-        ``on_synced(key, result_id)`` is invoked immediately after each
-        successful POST so progress is persisted incrementally (crash-safe),
-        not only at the end of the batch. The per-trial payload is
-        ``{trial_id, config, status, metrics}`` -- ``config`` is REQUIRED (and
-        must be non-empty) in native_local because the backend materializes the
-        trial from it; ``status`` is the trial's real terminal status
-        (COMPLETED or FAILED).
+        ``already_synced_keys`` are SKIPPED (never re-POSTed and no new slot is
+        minted) -- the backend does not dedup result creates, so re-POSTing would
+        duplicate rows. ``on_synced(key, result_id)`` is invoked immediately
+        after each successful POST so progress is persisted incrementally
+        (crash-safe). The /results payload is ``{trial_id, config, status,
+        metrics}`` -- ``config`` is REQUIRED (and must be non-empty) because the
+        backend binds it to the allocated trial; ``status`` is the trial's real
+        terminal status (COMPLETED or FAILED).
         """
         self._raise_if_backend_egress_disabled("sync session results")
         already_synced_keys = already_synced_keys or set()
@@ -1024,7 +1107,7 @@ class SyncManager:
         for index, configuration_run in enumerate(configuration_runs):
             key = self._config_run_key(index)
             # Skip results a prior attempt already uploaded so a resume never
-            # creates duplicate rows.
+            # creates duplicate rows (and never mints a wasted trial slot).
             if key in already_synced_keys:
                 skipped += 1
                 continue
@@ -1033,18 +1116,33 @@ class SyncManager:
             ordinal = index + 1
             trial_config = configuration_run.get("experiment_parameters") or {}
             if not trial_config:
-                # native_local rejects empty configs ("config is required for
-                # native_local trial submissions"); surface a clear SDK-side
-                # error instead of the raw backend message.
+                # The backend binds the submitted config to the allocated trial;
+                # an empty config is rejected. Surface a clear SDK-side error
+                # instead of the raw backend message, and don't burn a slot.
                 errors.append(
                     f"trial {ordinal}: trial has an empty config, which the "
-                    "content-free session import cannot submit (native_local "
-                    "materializes each trial from its config); this trial was "
-                    "skipped"
+                    "content-free session import cannot submit (the backend "
+                    "binds each trial to its config); this trial was skipped"
                 )
                 continue
+
+            # Allocate the backend-minted trial id this result must bind to.
+            slot = self._sync_next_trial(session_id)
+            if not slot.get("success") or not slot.get("trial_id"):
+                detail = (
+                    "backend reported the optimization budget was reached"
+                    if slot.get("complete")
+                    else (slot.get("error") or "no trial slot returned")
+                )
+                errors.append(
+                    f"trial {ordinal}: could not allocate a backend trial slot "
+                    f"({detail})"
+                )
+                continue
+            trial_id = slot["trial_id"]
+
             result_payload = {
-                "trial_id": configuration_run.get("trial_id"),
+                "trial_id": trial_id,
                 "config": trial_config,
                 "status": configuration_run.get("status") or "COMPLETED",
                 "metrics": configuration_run.get("measures", {}),
@@ -1061,7 +1159,7 @@ class SyncManager:
 
             if response.status_code in (200, 201):
                 synced += 1
-                result_id = self._extract_response_id(response)
+                result_id = self._extract_response_id(response) or trial_id
                 if result_id:
                     configuration_run_ids.append(result_id)
                 # Persist this result as synced RIGHT NOW (before the next POST)
