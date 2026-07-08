@@ -172,6 +172,21 @@ def _bounded_label(value: Any) -> str | None:
     return value if isinstance(value, str) and _LABEL_RE.fullmatch(value) else None
 
 
+# Anchored version token (allows '+' build metadata) — matches the backend
+# _VERSION_RE and the schema sdk_version pattern.
+_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}$")
+
+
+def _bounded_version(value: Any) -> str | None:
+    """Return ``value`` iff it is a bounded version token, else ``None``.
+
+    ``get_version()`` echoes ``TRAIGENT_FORCE_VERSION`` verbatim, so the SDK
+    must gate the resolved version before it rides ``session_aggregation`` —
+    a malformed/whitespace override must not reach egress (Codex round 5).
+    """
+    return value if isinstance(value, str) and _VERSION_RE.fullmatch(value) else None
+
+
 def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
     """Coerce ``value`` to a ``{label: number}`` map, dropping everything else.
 
@@ -2013,7 +2028,7 @@ class BackendSessionManager:
             "best_weighted_score": best_weighted_score,
             "statistical_significance": statistical_significance,
             "execution_time": execution_time,
-            "sdk_version": get_version(),
+            "sdk_version": _bounded_version(get_version()),
         }
 
     def finalize_session(

@@ -26,6 +26,7 @@ from traigent.core.backend_session_manager import (
     BackendSessionManager,
     BackendTrialSubmissionOutcome,
     _bounded_label,
+    _bounded_version,
     _classify_session_creation_failure,
     _format_untracked_warning_block,
     _sanitize_significance,
@@ -48,6 +49,16 @@ def test_trailing_newline_labels_rejected_by_fullmatch():
         "accuracy": 0.9
     }
     assert _sanitize_significance({"accuracy\n": {"n_shared_examples": 1}}) is None
+
+
+def test_sdk_version_egress_is_bounded():
+    """Codex round-5 canary: get_version() echoes TRAIGENT_FORCE_VERSION
+    verbatim, so the SDK must gate the resolved version before egress — a
+    malformed/whitespace override must be dropped, a real version kept."""
+    assert _bounded_version("x\n") is None
+    assert _bounded_version("bad version") is None
+    assert _bounded_version("0.21.0") == "0.21.0"
+    assert _bounded_version("0.21.0+abc") == "0.21.0+abc"
 
 
 @pytest.fixture
