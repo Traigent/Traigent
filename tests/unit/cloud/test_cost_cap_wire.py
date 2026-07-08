@@ -217,6 +217,22 @@ class TestSessionOperationsCostLimitThreading:
         payload = api_ops._build_typed_session_payload(request, max_trials=5)
         assert payload["budget"] == {"max_cost_usd": 2.5}
 
+    def test_default_objective_fallback_reaches_typed_wire_as_score_maximize(self):
+        """Full path: objectives=None -> [maximize] fallback -> typed score objective."""
+        ops, client = self._make_ops()
+        ops.create_session(
+            "my_func",
+            {"model": ["a", "b"]},
+            metadata={"max_trials": 5, "dataset_size": 10, "evaluation_set": "test"},
+        )
+        request = client.captured_session_request
+        assert request is not None
+        assert request.objectives == ["maximize"]
+
+        api_ops = _make_api_ops()
+        payload = api_ops._build_typed_session_payload(request, max_trials=5)
+        assert payload["objectives"] == [{"metric": "score", "direction": "maximize"}]
+
     def test_optimization_strategy_end_to_end_reaches_typed_wire_payload(self):
         """Full path: SessionOperations.create_session -> typed payload."""
         ops, client = self._make_ops()
