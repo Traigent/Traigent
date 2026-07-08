@@ -79,6 +79,38 @@ class TestContractGate:
         assert "problem_statement" not in payload
         assert "search_space" not in payload
 
+    def test_typed_empty_objectives_default_to_score_maximize(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(_request(objectives=None), 5)
+        assert payload["objectives"] == [{"metric": "score", "direction": "maximize"}]
+
+    def test_typed_direction_objective_uses_score_metric(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(_request(objectives=["minimize"]), 5)
+        assert payload["objectives"] == [{"metric": "score", "direction": "minimize"}]
+
+    def test_typed_real_metric_objective_is_unchanged(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(_request(objectives=["accuracy"]), 5)
+        assert payload["objectives"] == ["accuracy"]
+
+    def test_typed_direction_objective_dedupes_generated_score(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(
+            _request(
+                objectives=[
+                    "MAXIMIZE",
+                    {"metric": "score", "direction": "maximize"},
+                    "accuracy",
+                ]
+            ),
+            5,
+        )
+        assert payload["objectives"] == [
+            {"metric": "score", "direction": "maximize"},
+            "accuracy",
+        ]
+
     def test_legacy_contract_refuses_governed_sessions(self, monkeypatch):
         """The Phase 7 laundering bug must be impossible to reintroduce via
         the compatibility flag: legacy CANNOT carry strict mode."""
@@ -111,6 +143,12 @@ class TestContractGate:
         assert "configuration_space" not in payload
         assert "promotion_policy" not in payload
         assert duplicate_payload == payload
+
+    def test_legacy_contract_empty_objectives_keeps_maximize_goal(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
+        payload = _ops()._build_session_payload(_request(objectives=None), 5)
+        assert payload["optimization_config"]["optimization_goal"] == "maximize"
+        assert "objectives" not in payload
 
     def test_invalid_contract_value_fails_loud(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "yolo")

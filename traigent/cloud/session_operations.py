@@ -1167,6 +1167,7 @@ class SessionOperations:
         session_id: str,
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
+        session_aggregation: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
 
@@ -1176,6 +1177,10 @@ class SessionOperations:
         Args:
             session_id: Session ID to finalize
             include_full_history: Whether to include full trial history in response
+            certified_selection: Client-attested certified-selection report.
+            session_aggregation: Content-free session-level rollup payload
+                (Traigent#1720/#1724, g2:agg-summary), threaded to the
+                finalize endpoint exactly like ``certified_selection``.
 
         Returns:
             OptimizationFinalizationResponse with session summary
@@ -1227,6 +1232,7 @@ class SessionOperations:
                     session_id,
                     mapping.experiment_run_id,
                     certified_selection=certified_selection,
+                    session_aggregation=session_aggregation,
                 )
             except CloudServiceError:
                 raise
@@ -1294,6 +1300,14 @@ class SessionOperations:
         backend_convergence_history = backend_summary.get("convergence_history")
         backend_full_history = backend_summary.get("full_history")
         backend_metadata = backend_summary.get("metadata")
+        # Traigent#1720/#1724 (g2:agg-summary): the backend echoes the
+        # allowlist-normalized session_aggregation rollup back as a
+        # top-level finalize-response property (mirrors the request shape).
+        # Only surface it when it round-tripped as a dict — the SDK
+        # orchestrator uses its presence here as the honest "was this
+        # actually persisted" signal, so a malformed/missing echo must not
+        # be synthesized.
+        backend_session_aggregation = backend_summary.get("session_aggregation")
         backend_warm_start_transfer = (
             backend_metadata.get("warm_start_transfer")
             if isinstance(backend_metadata, dict)
@@ -1427,6 +1441,15 @@ class SessionOperations:
                     if isinstance(effective_warm_start_transfer, dict)
                     else {}
                 ),
+                # Traigent#1720/#1724 (g2:agg-summary): echo the backend's
+                # acknowledged session_aggregation rollup so the orchestrator
+                # can derive an honest "was this actually persisted" signal.
+                # Absent/malformed echo => key omitted (never synthesized).
+                **(
+                    {"session_aggregation": dict(backend_session_aggregation)}
+                    if isinstance(backend_session_aggregation, dict)
+                    else {}
+                ),
             },
         )
 
@@ -1437,12 +1460,16 @@ class SessionOperations:
         session_id: str,
         experiment_run_id: str,
         certified_selection: dict[str, Any] | None = None,
+        session_aggregation: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
         Args:
             session_id: Session ID to finalize
             experiment_run_id: Associated experiment run ID
+            certified_selection: Client-attested certified-selection report.
+            session_aggregation: Content-free session-level rollup payload
+                (Traigent#1720/#1724, g2:agg-summary).
 
         Returns:
             Parsed backend response payload (may be ``{}`` if the backend
@@ -1484,6 +1511,27 @@ class SessionOperations:
                     # selection report — TOP-LEVEL key only (the backend
                     # rejects metadata-tunneled reports).
                     finalize_body["certified_selection"] = certified_selection
+                if session_aggregation is not None:
+                    # Traigent#1720/#1724 (g2:agg-summary): the content-free
+                    # session-level rollup — TOP-LEVEL key only, mirroring
+                    # certified_selection immediately above (the backend
+                    # rejects metadata-tunneled payloads).
+                    #
+                    # EGRESS GUARD (Codex round 6): re-sanitize here, at the
+                    # true wire boundary, so a caller-supplied dict passed to
+                    # finalize_session(..., session_aggregation=...) that
+                    # bypassed the builder cannot leak unbounded content. The
+                    # builder's output is already bounded, so this is a no-op
+                    # on the normal path. Lazy import avoids an import cycle.
+                    from traigent.core.backend_session_manager import (
+                        sanitize_session_aggregation_payload,
+                    )
+
+                    sanitized_aggregation = sanitize_session_aggregation_payload(
+                        session_aggregation
+                    )
+                    if sanitized_aggregation is not None:
+                        finalize_body["session_aggregation"] = sanitized_aggregation
                 async with session.post(
                     url,
                     json=finalize_body,
@@ -1631,6 +1679,7 @@ class SessionOperations:
         session_id: str,
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
+        session_aggregation: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
         import concurrent.futures
@@ -1647,6 +1696,7 @@ class SessionOperations:
                         session_id,
                         include_full_history,
                         certified_selection=certified_selection,
+                        session_aggregation=session_aggregation,
                     )
                 )
             finally:

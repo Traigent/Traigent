@@ -1314,6 +1314,235 @@ def _aiohttp_post_returning(mock_response):
     return mock_session_ctx, mock_session
 
 
+def _mk_submission_client(*, armed_sessions: set[str] | None = None):
+    mock_client = Mock()
+    mock_client.backend_config = Mock()
+    mock_client.backend_config.backend_base_url = "https://api.example.com"
+    mock_client.backend_config.api_base_url = "https://api.example.com/api/v1"
+    mock_client.auth_manager = AsyncMock()
+    mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+    mock_client._cost_budget_armed_sessions = set(armed_sessions or set())
+    mock_client._map_to_backend_status = Mock(
+        side_effect=lambda status, endpoint="config_run": {
+            "completed": "COMPLETED",
+            "running": "RUNNING",
+            "in_progress": "RUNNING",
+            "failed": "FAILED",
+        }.get(str(status).lower(), str(status).upper())
+    )
+    mock_client._normalize_execution_mode = Mock(return_value="local")
+    mock_client._sanitize_error_message = Mock(return_value="")
+    return mock_client
+
+
+class TestBudgetedSessionResultCostGuarantee:
+    @pytest.mark.asyncio
+    async def test_budgeted_completed_submission_backfills_zero_cost(self) -> None:
+        mock_client = _mk_submission_client(armed_sessions={"session_123"})
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_session_ctx, mock_session = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                metrics={"accuracy": 0.95},
+                status="completed",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["metrics"]["cost"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_budgeted_completed_submission_promotes_metadata_cost(self) -> None:
+        mock_client = _mk_submission_client(armed_sessions={"session_123"})
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_session_ctx, mock_session = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                metrics={"accuracy": 0.95},
+                status="completed",
+                metadata={"total_cost": 0.42},
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["metrics"]["cost"] == pytest.approx(0.42)
+
+    @pytest.mark.asyncio
+    async def test_non_budget_completed_submission_does_not_add_cost(self) -> None:
+        mock_client = _mk_submission_client()
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_session_ctx, mock_session = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                metrics={"accuracy": 0.95},
+                status="completed",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert "cost" not in payload["metrics"]
+
+    @pytest.mark.asyncio
+    async def test_budgeted_non_completed_submission_does_not_add_cost(self) -> None:
+        mock_client = _mk_submission_client(armed_sessions={"session_123"})
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_session_ctx, mock_session = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                metrics={"accuracy": 0.95},
+                status="running",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["status"] == "RUNNING"
+        assert "cost" not in payload["metrics"]
+
+    @pytest.mark.asyncio
+    async def test_budgeted_running_trial_start_does_not_add_cost(self) -> None:
+        mock_client = _mk_submission_client(armed_sessions={"session_123"})
+        ops = TrialOperations(mock_client)
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_session_ctx, mock_session = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.register_trial_start(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["status"] == "RUNNING"
+        assert payload["metrics"] == {}
+
+    @pytest.mark.asyncio
+    async def test_budgeted_summary_stats_completed_backfills_cost(self) -> None:
+        mock_client = _mk_submission_client(armed_sessions={"session_123"})
+        ops = TrialOperations(mock_client)
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_session_ctx, mock_session = _aiohttp_post_returning(mock_response)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_summary_stats(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                summary_stats={"metrics": {"accuracy": 0.95}},
+                status="completed",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["metrics"]["cost"] == 0.0
+
+
 class TestRequestTrialSlot:
     """The backend mints configuration_run ids only via next-trial; the SDK
     must obtain that id before submitting results (a client hash 404s)."""

@@ -1,0 +1,223 @@
+name: Live Contract
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "traigent/cloud/**"
+      - "traigent/core/backend_session_manager.py"
+      - "tests/cloud/test_sync_live_contract.py"
+      - "tests/integration/backend/**"
+      - "tests/conftest.py"
+      - ".github/workflows/live-contract.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk-backend-live-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      API_PORT: "8016"
+      DB_PORT: "25432"
+      REDIS_PORT: "26379"
+      SDK_DIR: ${{ github.workspace }}/Traigent
+      BACKEND_DIR: ${{ github.workspace }}/TraigentBackend
+      SCHEMA_DIR: ${{ github.workspace }}/TraigentSchema
+      COMPOSE_PROJECT_NAME: live-contract-${{ github.run_id }}-${{ github.run_attempt }}
+      LIVE_CONTRACT_CHECKOUT_TOKEN: ${{ secrets.LIVE_CONTRACT_CHECKOUT_TOKEN }}
+
+    steps:
+      - name: Skip live contract when sibling checkout token is unavailable
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN == '' }}
+        run: echo "::notice::LIVE_CONTRACT_CHECKOUT_TOKEN is not configured; skipping live contract lane for this run."
+
+      - name: Checkout SDK
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        uses: actions/checkout@v7
+        with:
+          path: Traigent
+          # This lane never pushes; don't leave the token in .git/config where a
+          # later step or third-party action could read it (Aikido hardening).
+          persist-credentials: false
+
+      - name: Checkout TraigentBackend develop
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        uses: actions/checkout@v7
+        with:
+          repository: Traigent/TraigentBackend
+          ref: develop
+          path: TraigentBackend
+          # Configure LIVE_CONTRACT_CHECKOUT_TOKEN if this repo's GITHUB_TOKEN
+          # cannot read sibling private repositories.
+          token: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN }}
+          persist-credentials: false
+
+      - name: Checkout TraigentSchema develop
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        uses: actions/checkout@v7
+        with:
+          repository: Traigent/TraigentSchema
+          ref: develop
+          path: TraigentSchema
+          # Configure LIVE_CONTRACT_CHECKOUT_TOKEN if this repo's GITHUB_TOKEN
+          # cannot read sibling private repositories.
+          token: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN }}
+          persist-credentials: false
+
+      - name: Verify backend provides the CI mint script
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          # Fail fast with an actionable message instead of booting the whole
+          # stack and dying at key-mint time. The script ships in the companion
+          # TraigentBackend PR (ci/ephemeral-key-fixture); this lane requires
+          # that PR to be merged to develop first.
+          if [ ! -f scripts/ci/mint_ci_api_key.py ]; then
+            echo "::error::TraigentBackend@develop lacks scripts/ci/mint_ci_api_key.py — merge the companion backend PR (ci: ephemeral CI API key) before enabling this lane."
+            exit 1
+          fi
+
+      - name: Set up Python
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        run: python -m pip install --upgrade pip "uv==0.8.13"
+
+      - name: Prepare compose environment
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        run: |
+          {
+            echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
+            echo "SECRET_KEY=$(openssl rand -hex 32)"
+            echo "TRAIGENT_MASTER_KEY=$(openssl rand -hex 32)"
+            echo "TRAIGENT_ID_SECRET=$(openssl rand -hex 32)"
+          } >> "$GITHUB_ENV"
+
+      - name: Start dockerized backend
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml \
+            up -d --wait postgres redis backend
+
+      - name: Poll backend health
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        run: |
+          for attempt in {1..60}; do
+            if curl -fsS "http://localhost:${API_PORT}/health" >/dev/null; then
+              exit 0
+            fi
+            echo "backend health not ready yet (${attempt}/60)"
+            sleep 2
+          done
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f "$BACKEND_DIR/docker/docker-compose.dev.yml" \
+            ps
+          exit 1
+
+      - name: Mint live-contract API key
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          # The mint script writes the raw key to a private (0600) file inside
+          # the container — never to stdout — so the secret can't leak into
+          # captured CI output or race ::add-mask::. Read it back, mask it, then
+          # delete the file.
+          compose() {
+            docker compose -p "$COMPOSE_PROJECT_NAME" \
+              -f docker/docker-compose.dev.yml "$@"
+          }
+          compose exec -T backend python scripts/ci/mint_ci_api_key.py \
+            --out /tmp/ci_api_key
+          key="$(compose exec -T backend cat /tmp/ci_api_key)"
+          compose exec -T backend rm -f /tmp/ci_api_key || true
+          if [ -z "$key" ]; then
+            echo "mint_ci_api_key.py produced an empty key" >&2
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "TRAIGENT_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Clean container-owned build artifacts from the SDK checkout
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.SDK_DIR }}
+        run: |
+          # The backend container pip-installs the mounted SDK, writing a
+          # root-owned traigent.egg-info into this checkout; uv/pip on the
+          # runner then fails with "Cannot update time stamp of directory
+          # 'traigent.egg-info'". Remove it before installing SDK deps.
+          sudo rm -rf traigent.egg-info
+
+      - name: Install SDK dev dependencies
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.SDK_DIR }}
+        run: uv sync --extra dev
+
+      - name: Run sync live-contract test
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.SDK_DIR }}
+        env:
+          ENVIRONMENT: development
+          PYTHONPATH: .
+          TRAIGENT_LIVE_SYNC_E2E: "1"
+        run: |
+          TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
+          TRAIGENT_API_URL="http://localtest.me:${API_PORT}" \
+          uv run pytest tests/cloud/test_sync_live_contract.py -m contract --tb=short
+
+      - name: Run hybrid session live test
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.SDK_DIR }}
+        env:
+          ENVIRONMENT: development
+          PYTHONPATH: .
+          TRAIGENT_HYBRID_LIVE: "1"
+        run: |
+          TRAIGENT_API_URL="http://localtest.me:${API_PORT}/api/v1" \
+          TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
+          uv run pytest tests/integration/backend/test_hybrid_session_live.py --tb=short
+
+      - name: Run backend DTO live smoke
+        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.SDK_DIR }}
+        env:
+          ENVIRONMENT: development
+          PYTHONPATH: .
+          TRAIGENT_BACKEND_LIVE: "1"
+        run: |
+          TRAIGENT_API_URL="http://localtest.me:${API_PORT}/api/v1" \
+          TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
+          uv run pytest tests/integration/backend/test_backend_minimal.py --tb=short
+
+      - name: Backend logs on failure
+        if: ${{ failure() && env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml \
+            logs --tail=300 backend
+
+      - name: Stop dockerized backend
+        if: ${{ always() && env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml \
+            down -v --remove-orphans

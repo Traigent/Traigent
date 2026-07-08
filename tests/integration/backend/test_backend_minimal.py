@@ -95,10 +95,9 @@ async def test_backend_api():
                     print(f"   ✅ Created experiment: {experiment_id}")
                 else:
                     error_text = await response.text()
-                    print(
-                        f"   ❌ Failed to create experiment: {response.status} - {error_text}"
+                    pytest.fail(
+                        f"Failed to create experiment: {response.status} - {error_text}"
                     )
-                    return
         except aiohttp.ClientError as e:
             pytest.skip(f"Backend not reachable at {backend_url}: {e}")
         except TimeoutError as e:
@@ -135,10 +134,9 @@ async def test_backend_api():
                     print(f"   ✅ Created experiment run: {run_id}")
                 else:
                     error_text = await response.text()
-                    print(
-                        f"   ❌ Failed to create experiment run: {response.status} - {error_text}"
+                    pytest.fail(
+                        f"Failed to create experiment run: {response.status} - {error_text}"
                     )
-                    return
         except aiohttp.ClientError as e:
             pytest.skip(f"Backend not reachable at {backend_url}: {e}")
         except TimeoutError as e:
@@ -170,10 +168,9 @@ async def test_backend_api():
                     print(f"   ✅ Created configuration run: {config_id}")
                 else:
                     error_text = await response.text()
-                    print(
-                        f"   ❌ Failed to create configuration run: {response.status} - {error_text}"
+                    pytest.fail(
+                        f"Failed to create configuration run: {response.status} - {error_text}"
                     )
-                    return
         except aiohttp.ClientError as e:
             pytest.skip(f"Backend not reachable at {backend_url}: {e}")
         except TimeoutError as e:
@@ -193,8 +190,8 @@ async def test_backend_api():
                     print("   ✅ Updated status to COMPLETED")
                 else:
                     error_text = await response.text()
-                    print(
-                        f"   ❌ Failed to update status: {response.status} - {error_text}"
+                    pytest.fail(
+                        f"Failed to update status: {response.status} - {error_text}"
                     )
         except aiohttp.ClientError as e:
             pytest.skip(f"Backend not reachable at {backend_url}: {e}")
@@ -220,8 +217,8 @@ async def test_backend_api():
                     )
                 else:
                     error_text = await response.text()
-                    print(
-                        f"   ❌ Failed to update measures: {response.status} - {error_text}"
+                    pytest.fail(
+                        f"Failed to update measures: {response.status} - {error_text}"
                     )
         except aiohttp.ClientError as e:
             pytest.skip(f"Backend not reachable at {backend_url}: {e}")

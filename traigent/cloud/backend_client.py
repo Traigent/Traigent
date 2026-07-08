@@ -58,6 +58,10 @@ from traigent.cloud.models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+from traigent.cloud.session_budgets import (
+    is_cost_budget_armed_session,
+    remember_cost_budget_armed_session,
+)
 
 # Import refactored sub-modules
 from traigent.cloud.privacy_operations import PrivacyOperations
@@ -765,6 +769,7 @@ class BackendIntegratedClient:
         self._session = None
         self._active_sessions: dict[str, OptimizationSession] = {}
         self._active_sessions_lock = Lock()
+        self._cost_budget_armed_sessions: set[str] = set()
 
         # Memory bounds to prevent unbounded growth
         self._max_active_sessions = 100  # Maximum concurrent sessions
@@ -825,6 +830,18 @@ class BackendIntegratedClient:
             return
         logger.info("using local interaction policy")
         self._interaction_policy_fallback_logged = True
+
+    def _remember_cost_budget_armed_session(
+        self, session_id: str, budget: Mapping[str, Any] | None
+    ) -> None:
+        """Track sessions whose typed create armed a positive cost budget."""
+
+        remember_cost_budget_armed_session(self, session_id, budget)
+
+    def _is_cost_budget_armed_session(self, session_id: str) -> bool:
+        """Return whether this client created the session with a positive budget."""
+
+        return is_cost_budget_armed_session(self, session_id)
 
     def _static_interaction_policy(self) -> dict[str, Any]:
         self._log_local_interaction_policy_once()
@@ -1568,12 +1585,18 @@ class BackendIntegratedClient:
         session_id: str,
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
+        session_aggregation: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
         Delegates to session_operations module. Phase 8: an optional
-        client-attested certified-selection report (content-free)."""
+        client-attested certified-selection report (content-free).
+        Traigent#1720/#1724 (g2:agg-summary): an optional content-free
+        session-level rollup, threaded the same way."""
         return await self._session_ops.finalize_session(
-            session_id, include_full_history, certified_selection=certified_selection
+            session_id,
+            include_full_history,
+            certified_selection=certified_selection,
+            session_aggregation=session_aggregation,
         )
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
@@ -1586,11 +1609,15 @@ class BackendIntegratedClient:
         session_id: str,
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
+        session_aggregation: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session.
         Delegates to session_operations module."""
         return self._session_ops.finalize_session_sync(
-            session_id, include_full_history, certified_selection=certified_selection
+            session_id,
+            include_full_history,
+            certified_selection=certified_selection,
+            session_aggregation=session_aggregation,
         )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:

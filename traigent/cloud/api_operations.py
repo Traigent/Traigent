@@ -30,6 +30,8 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
 )
+from traigent.cloud.session_budgets import remember_cost_budget_armed_session
+from traigent.cloud.session_objectives import normalize_typed_objectives
 from traigent.cloud.smart_pruning import (
     normalize_intermediate_report_payload,
     normalize_smart_pruning_options,
@@ -523,9 +525,13 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
             try:
-                return await self._post_session_creation(
+                result = await self._post_session_creation(
                     session_payload, headers, connector
                 )
+                remember_cost_budget_armed_session(
+                    self.client, result[0], session_payload.get("budget")
+                )
+                return result
             except CloudServiceError as typed_exc:
                 # auto-contract fallback: a failed TYPED create may retry the
                 # legacy shape ONCE — and only for NON-governed sessions
@@ -675,6 +681,12 @@ class ApiOperations:
         strategy = getattr(session_request, "optimization_strategy", None)
         return dict(strategy) if isinstance(strategy, dict) and strategy else None
 
+    @staticmethod
+    def _normalize_typed_objectives(objectives: Any) -> list[Any]:
+        """Compatibility wrapper around the shared typed objective normalizer."""
+
+        return normalize_typed_objectives(objectives)
+
     def _build_typed_session_payload(
         self, session_request: SessionCreationRequest, max_trials: int
     ) -> dict[str, Any]:
@@ -695,7 +707,7 @@ class ApiOperations:
             "configuration_space": _typed_configuration_space(
                 session_request.configuration_space
             ),
-            "objectives": list(session_request.objectives or []),
+            "objectives": self._normalize_typed_objectives(session_request.objectives),
             "dataset_metadata": dataset_metadata,
             "max_trials": max_trials,
             "metadata": {
