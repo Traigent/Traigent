@@ -4,21 +4,14 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
-  # NOTE: no `pull_request` trigger yet — this lane checks out the sibling
-  # TraigentBackend repo (internal) and runs its ci/mint_ci_api_key.py, so it
-  # cannot pass until BOTH prerequisites are in place:
-  #   1. the companion TraigentBackend PR (ci: ephemeral CI API key ...) is
-  #      merged to develop (the mint script lives there), and
-  #   2. a `LIVE_CONTRACT_CHECKOUT_TOKEN` repo secret is configured (the default
-  #      GITHUB_TOKEN is current-repo scoped and cannot read the sibling repo).
-  # Until then it runs on schedule + manual dispatch only, so it never posts a
-  # red required check on unrelated PRs. A follow-up re-adds the paths-scoped
-  # `pull_request` trigger once both prerequisites are satisfied:
-  #   pull_request:
-  #     paths: ["traigent/cloud/**", "traigent/core/backend_session_manager.py",
-  #             "tests/cloud/test_sync_live_contract.py",
-  #             "tests/integration/backend/**", "tests/conftest.py",
-  #             ".github/workflows/live-contract.yml"]
+  pull_request:
+    paths:
+      - "traigent/cloud/**"
+      - "traigent/core/backend_session_manager.py"
+      - "tests/cloud/test_sync_live_contract.py"
+      - "tests/integration/backend/**"
+      - "tests/conftest.py"
+      - ".github/workflows/live-contract.yml"
 
 permissions:
   contents: read
