@@ -31,6 +31,7 @@ from traigent.core.backend_session_manager import (
     _format_untracked_warning_block,
     _sanitize_significance,
     _sanitized_numeric_dict,
+    sanitize_session_aggregation_payload,
     session_aggregation_echoed,
 )
 from traigent.core.objectives import create_default_objectives
@@ -59,6 +60,45 @@ def test_sdk_version_egress_is_bounded():
     assert _bounded_version("bad version") is None
     assert _bounded_version("0.21.0") == "0.21.0"
     assert _bounded_version("0.21.0+abc") == "0.21.0+abc"
+
+
+def test_egress_sanitizer_bounds_caller_supplied_payload():
+    """Codex round-6 canary: finalize_session(session_aggregation=<dict>) can
+    bypass the builder, so the egress boundary re-sanitizes ANY payload. A
+    hand-crafted dict with content in scalar labels, map keys, significance,
+    and version must be stripped before the wire."""
+    malicious = {
+        "selection_mode": "aggregated_mean\nraw prompt: USER SECRET",
+        "primary_objective": "accuracy secret text",
+        "sdk_version": "bad version",
+        "metrics": {"accuracy raw example text": 0.5, "accuracy": 0.9},
+        "samples_per_config": {"SENTINEL prompt": 3, "a1b2c3d4e5f60718": 3},
+        "statistical_significance": {
+            "accuracy\n": {"raw_prompt": "SECRET"},
+            "accuracy": {
+                "winners": [0],
+                "badge_name": "accuracy",
+                "n_shared_examples": 5,
+            },
+        },
+        "best_weighted_config": {"system_prompt": "config value — allowed exception"},
+        "total_examples": 3,
+    }
+    out = sanitize_session_aggregation_payload(malicious)
+    blob = json.dumps(out)
+    assert "SECRET" not in blob
+    assert "raw prompt" not in blob
+    assert "raw example text" not in blob
+    assert out["selection_mode"] is None
+    assert out["primary_objective"] is None
+    assert out["sdk_version"] is None
+    assert set(out["metrics"]) == {"accuracy"}
+    assert set(out["samples_per_config"]) == {"a1b2c3d4e5f60718"}
+    assert set(out["statistical_significance"]) == {"accuracy"}
+    # best_weighted_config config values are the documented exception (kept).
+    assert out["best_weighted_config"] == {
+        "system_prompt": "config value — allowed exception"
+    }
 
 
 @pytest.fixture

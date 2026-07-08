@@ -187,6 +187,69 @@ def _bounded_version(value: Any) -> str | None:
     return value if isinstance(value, str) and _VERSION_RE.fullmatch(value) else None
 
 
+def _bounded_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _bounded_number(value: Any) -> float | int | None:
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
+
+
+def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
+    """Re-apply the content-free allowlist to a session_aggregation payload dict.
+
+    Defense-in-depth EGRESS guard (Codex xhigh review round 6):
+    ``build_session_aggregation_payload`` already produces bounded output, but
+    ``finalize_session(..., session_aggregation=...)`` and the lower-level
+    ``backend_client`` / ``session_operations`` finalize entrypoints accept a
+    caller-supplied dict, which would otherwise reach the wire unbounded. The
+    egress boundary re-sanitizes ANY payload here so no path can leak
+    whitespace/free-text/example content. Idempotent on builder output.
+
+    ``best_weighted_config`` config VALUES are the documented dataflow
+    exception (prompt text a customer tuned as a variable travels as config);
+    they are passed through as a dict, and the builder omits them under
+    privacy mode.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw_samples = payload.get("samples_per_config")
+    samples: dict[str, int] = {}
+    if isinstance(raw_samples, dict):
+        samples = {
+            key: value
+            for key, value in raw_samples.items()
+            if isinstance(key, str)
+            and _LABEL_RE.fullmatch(key)
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+        }
+    best_weighted_config = payload.get("best_weighted_config")
+    return {
+        "selection_mode": _bounded_label(payload.get("selection_mode")),
+        "primary_objective": _bounded_label(payload.get("primary_objective")),
+        "metrics": _sanitized_numeric_dict(payload.get("metrics")),
+        "samples_per_config": samples,
+        "total_examples": _bounded_int(payload.get("total_examples")) or 0,
+        "trials_completed": _bounded_int(payload.get("trials_completed")) or 0,
+        "successful_trials": _bounded_int(payload.get("successful_trials")) or 0,
+        "success_rate": _bounded_number(payload.get("success_rate")),
+        "best_weighted_config": best_weighted_config
+        if isinstance(best_weighted_config, dict)
+        else None,
+        "best_weighted_score": _bounded_number(payload.get("best_weighted_score")),
+        "statistical_significance": _sanitize_significance(
+            payload.get("statistical_significance")
+        ),
+        "execution_time": _bounded_number(payload.get("execution_time")),
+        "sdk_version": _bounded_version(payload.get("sdk_version")),
+    }
+
+
 def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
     """Coerce ``value`` to a ``{label: number}`` map, dropping everything else.
 

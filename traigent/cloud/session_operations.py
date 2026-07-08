@@ -1516,7 +1516,22 @@ class SessionOperations:
                     # session-level rollup — TOP-LEVEL key only, mirroring
                     # certified_selection immediately above (the backend
                     # rejects metadata-tunneled payloads).
-                    finalize_body["session_aggregation"] = session_aggregation
+                    #
+                    # EGRESS GUARD (Codex round 6): re-sanitize here, at the
+                    # true wire boundary, so a caller-supplied dict passed to
+                    # finalize_session(..., session_aggregation=...) that
+                    # bypassed the builder cannot leak unbounded content. The
+                    # builder's output is already bounded, so this is a no-op
+                    # on the normal path. Lazy import avoids an import cycle.
+                    from traigent.core.backend_session_manager import (
+                        sanitize_session_aggregation_payload,
+                    )
+
+                    sanitized_aggregation = sanitize_session_aggregation_payload(
+                        session_aggregation
+                    )
+                    if sanitized_aggregation is not None:
+                        finalize_body["session_aggregation"] = sanitized_aggregation
                 async with session.post(
                     url,
                     json=finalize_body,

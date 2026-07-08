@@ -402,7 +402,11 @@ class TestWireThreading:
 
         agg = {"selection_mode": "aggregated_mean", "sdk_version": "0.0.0"}
         await ops._finalize_session_via_api("s-1", "r-1", session_aggregation=agg)
-        assert captured["body"]["session_aggregation"] == agg
+        # Egress boundary re-sanitizes (Codex round 6): the payload is carried
+        # TOP-LEVEL (never under metadata) with its valid fields preserved.
+        carried = captured["body"]["session_aggregation"]
+        assert carried["selection_mode"] == "aggregated_mean"
+        assert carried["sdk_version"] == "0.0.0"
         assert "session_aggregation" not in captured["body"].get("metadata", {})
 
         captured.clear()
