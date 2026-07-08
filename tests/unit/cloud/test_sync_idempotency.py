@@ -8,6 +8,7 @@ is re-synced, and free-text trial metadata never rides to the backend.
 
 from __future__ import annotations
 
+import itertools
 import json
 from unittest.mock import Mock, patch
 
@@ -354,7 +355,7 @@ def test_empty_dataset_session_syncs_via_content_free_session_endpoints(sync_man
     ``POST /datasets`` with no example rows and bound an experiment_run to it,
     so the backend's ``dataset_run_guard`` rejected the run with HTTP 400
     EMPTY_DATASET. The fix reroutes sync through the content-free typed-session
-    endpoints (``POST /sessions`` with tracking_mode=native_local and NO
+    endpoints (``POST /sessions`` with tracking_mode=backend_guided and NO
     benchmark), which hit the backend's no-dataset pass-through. This test
     proves the sync (a) succeeds, (b) never creates/binds a benchmark, and
     (c) uses the session endpoints.
@@ -364,6 +365,7 @@ def test_empty_dataset_session_syncs_via_content_free_session_endpoints(sync_man
     sid = _make_completed_session(sync_manager.storage)
 
     posts: list[str] = []
+    slot_counter = itertools.count(1)
 
     def _route(url, *args, **kwargs):
         posts.append(url)
@@ -377,6 +379,12 @@ def test_empty_dataset_session_syncs_via_content_free_session_endpoints(sync_man
                         "experiment_run_id": "run-1",
                     },
                 },
+            )
+        if url.endswith("/next-trial"):
+            # Each trial gets a UNIQUE backend-minted slot id.
+            return _backend_response(
+                200,
+                payload={"suggestion": {"trial_id": f"bt-{next(slot_counter)}"}},
             )
         if url.endswith("/finalize"):
             return _backend_response(200, payload={"status": "finalized"})
@@ -412,7 +420,7 @@ def test_empty_dataset_session_syncs_via_content_free_session_endpoints(sync_man
     assert posts.count(f"{base}/sessions/sess-1/finalize") == 1
 
     # The result payloads are content-free (config + numeric metrics only) and
-    # carry the native_local-required trial config.
+    # carry the required trial config bound to the backend-minted slot.
     result_calls = [
         call
         for call in sync_manager._session.post.call_args_list
@@ -430,14 +438,14 @@ def test_empty_dataset_session_syncs_via_content_free_session_endpoints(sync_man
         # live api-dev E2E; mocked transport could not (it never type-checks).
         assert isinstance(body["trial_id"], str), body["trial_id"]
 
-    # The create payload is the typed native_local contract with no benchmark.
+    # The create payload is the typed backend_guided contract with no benchmark.
     create_call = next(
         call
         for call in sync_manager._session.post.call_args_list
         if call.args[0] == f"{base}/sessions"
     )
     create_body = create_call.kwargs["json"]
-    assert create_body["optimization_strategy"]["tracking_mode"] == "native_local"
+    assert create_body["optimization_strategy"]["tracking_mode"] == "backend_guided"
     assert "benchmark" not in create_body
     assert "benchmark_id" not in create_body
     assert create_body["dataset_metadata"]["privacy_mode"] is True
@@ -458,7 +466,7 @@ def test_dataset_metadata_size_is_positive_when_local_size_unknown(sync_manager)
 
 
 def test_empty_config_trial_degrades_to_partial_with_clear_error(sync_manager):
-    """native_local rejects empty trial configs; the SDK must surface a clear
+    """The backend rejects empty trial configs; the SDK must surface a clear
     per-trial error (and a partial sync), not the raw backend message."""
     sid = sync_manager.storage.create_session(
         "fn_empty_cfg", optimization_config={"search_space": {"model": ["a"]}}
@@ -466,6 +474,8 @@ def test_empty_config_trial_degrades_to_partial_with_clear_error(sync_manager):
     sync_manager.storage.add_trial_result(sid, config={}, score=0.5)
     sync_manager.storage.add_trial_result(sid, config={"model": "a"}, score=0.9)
     sync_manager.storage.finalize_session(sid, "completed")
+
+    slot_counter = itertools.count(1)
 
     def _route(url, *args, **kwargs):
         if url.endswith("/sessions"):
@@ -479,6 +489,11 @@ def test_empty_config_trial_degrades_to_partial_with_clear_error(sync_manager):
                     },
                 },
             )
+        if url.endswith("/next-trial"):
+            return _backend_response(
+                200,
+                payload={"suggestion": {"trial_id": f"bt-{next(slot_counter)}"}},
+            )
         return _backend_response(201, payload={"id": "ok"})
 
     sync_manager._session = Mock()
@@ -488,7 +503,14 @@ def test_empty_config_trial_degrades_to_partial_with_clear_error(sync_manager):
 
     assert result["status"] == "partial"
     assert any("empty config" in err for err in result["errors"]), result["errors"]
-    # The empty-config trial was never POSTed; the valid trial was.
+    # The empty-config trial minted NO slot and was never POSTed; the valid trial
+    # was. Exactly one /next-trial (for the valid trial) and one /results.
+    next_trial_posts = [
+        call
+        for call in sync_manager._session.post.call_args_list
+        if call.args[0].endswith("/next-trial")
+    ]
+    assert len(next_trial_posts) == 1
     result_posts = [
         call.kwargs["json"]
         for call in sync_manager._session.post.call_args_list
@@ -510,6 +532,8 @@ def test_failed_trial_submits_real_failed_status(sync_manager):
     )
     sync_manager.storage.finalize_session(sid, "completed")
 
+    slot_counter = itertools.count(1)
+
     def _route(url, *args, **kwargs):
         if url.endswith("/sessions"):
             return _backend_response(
@@ -521,6 +545,11 @@ def test_failed_trial_submits_real_failed_status(sync_manager):
                         "experiment_run_id": "run-ft",
                     },
                 },
+            )
+        if url.endswith("/next-trial"):
+            return _backend_response(
+                200,
+                payload={"suggestion": {"trial_id": f"bt-{next(slot_counter)}"}},
             )
         return _backend_response(201, payload={"id": "ok"})
 
