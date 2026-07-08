@@ -162,6 +162,16 @@ _LABEL_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$")
 _SIG_BADGE_LABEL = _LABEL_RE
 
 
+def _bounded_label(value: Any) -> str | None:
+    """Return ``value`` iff it is a bounded label string, else ``None``.
+
+    Used for the scalar label fields (``selection_mode``, ``primary_objective``)
+    so a prompt/output string cannot ride along in a scalar position either
+    (Codex xhigh review round 3).
+    """
+    return value if isinstance(value, str) and _LABEL_RE.match(value) else None
+
+
 def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
     """Coerce ``value`` to a ``{label: number}`` map, dropping everything else.
 
@@ -1987,8 +1997,10 @@ class BackendSessionManager:
             success_rate = None
 
         return {
-            "selection_mode": session_summary.get("selection_mode"),
-            "primary_objective": session_summary.get("primary_objective"),
+            "selection_mode": _bounded_label(session_summary.get("selection_mode")),
+            "primary_objective": _bounded_label(
+                session_summary.get("primary_objective")
+            ),
             "metrics": metrics,
             "samples_per_config": samples_per_config,
             "total_examples": sum(samples_per_config.values())

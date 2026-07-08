@@ -1607,6 +1607,44 @@ class TestBuildSessionAggregationPayload:
         assert set(payload["statistical_significance"]) == {"accuracy"}
         assert sentinel not in json.dumps(payload)
 
+    def test_content_bearing_scalar_labels_are_dropped(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex round-3 canary: scalar label fields are bounded labels too.
+
+        A prompt/output string (with whitespace) placed in selection_mode or
+        primary_objective must be dropped to None, never forwarded.
+        """
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        sentinel = "SENTINEL-PII-8842 raw prompt content"
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "selection_mode": sentinel,
+                "primary_objective": sentinel,
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"a1b2c3d4e5f60718": 5},
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert payload["selection_mode"] is None
+        assert payload["primary_objective"] is None
+        assert sentinel not in json.dumps(payload)
+        # A legitimate short label still survives.
+        result.metadata["session_summary"]["selection_mode"] = "aggregated_mean"
+        payload2 = manager.build_session_aggregation_payload(result, "s2")
+        assert payload2["selection_mode"] == "aggregated_mean"
+
     def test_aggregation_summary_uses_sdk_version_resolver(
         self,
         mock_backend_client,
