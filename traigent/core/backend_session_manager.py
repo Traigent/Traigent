@@ -151,38 +151,55 @@ def _field(container: Any, key: str) -> Any:
     return getattr(container, key, None)
 
 
+# Bounded label for any content-free MAP KEY on the session_aggregation wire
+# (metric names, config hashes, objective/badge names). A prompt/output/LLM
+# response cannot masquerade as a key: no whitespace, capped at 64 chars,
+# identifier-ish charset. Codex xhigh review round 2 — keys, not just values,
+# must be allowlisted, else content can be smuggled into the KEY position.
+_LABEL_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$")
+
+# Back-compat alias — badge_name uses the same bounded-label rule.
+_SIG_BADGE_LABEL = _LABEL_RE
+
+
 def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
-    """Coerce ``value`` to a ``{str: number}`` map, dropping everything else.
+    """Coerce ``value`` to a ``{label: number}`` map, dropping everything else.
 
     Defense-in-depth for the session_aggregation allowlist (Traigent#1720/
     #1724): ``metrics`` and ``samples_per_config`` are documented as
-    numeric-only maps (metric-name / config-hash keys). Non-numeric values
-    are dropped rather than forwarded, so a future non-numeric value slipped
-    into ``session_summary`` cannot leak content onto the wire.
+    numeric-only maps (metric-name / config-hash keys). Both the VALUE (must
+    be numeric) and the KEY (must be a bounded label — see ``_LABEL_RE``) are
+    allowlisted, so neither a future non-numeric value nor a content-bearing
+    key slipped into ``session_summary`` can leak onto the wire.
     """
     if not isinstance(value, dict):
         return {}
     return {
-        str(key): item
+        key: item
         for key, item in value.items()
-        if isinstance(item, (int, float)) and not isinstance(item, bool)
+        if isinstance(key, str)
+        and _LABEL_RE.match(key)
+        and isinstance(item, (int, float))
+        and not isinstance(item, bool)
     }
-
-
-_SIG_BADGE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 
 
 def _sanitize_significance(raw: Any) -> dict[str, Any] | None:
     """Fail-closed allowlist for statistical_significance (content-free).
 
     Keeps only the fixed numeric badge shape per objective; drops any nested
-    key (e.g. a prompt/output/LLM response) that isn't in the allowlist.
+    key (e.g. a prompt/output/LLM response) that isn't in the allowlist, and
+    drops the whole entry when the outer objective KEY is not a bounded label.
     """
     if not isinstance(raw, dict):
         return None
     out: dict[str, Any] = {}
     for obj_name, entry in raw.items():
-        if not isinstance(obj_name, str) or not isinstance(entry, dict):
+        if (
+            not isinstance(obj_name, str)
+            or not _LABEL_RE.match(obj_name)
+            or not isinstance(entry, dict)
+        ):
             continue
         clean: dict[str, Any] = {}
         for list_key in ("winners", "top_group", "rest_group"):

@@ -1559,6 +1559,54 @@ class TestBuildSessionAggregationPayload:
         assert "llm_response" not in blob
         assert "secret" not in blob
 
+    def test_content_bearing_map_keys_are_dropped(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex round-2 canary: content must not be smuggled into a KEY.
+
+        The significance outer objective key, metrics keys, and
+        samples_per_config keys are all bounded labels — a prompt/output
+        string placed in the KEY position (not just a nested value) must be
+        dropped, never forwarded onto the wire.
+        """
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        sentinel = "SENTINEL-PII-8842 raw prompt content"
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {sentinel: 0.5, "accuracy": 0.95},
+                "samples_per_config": {sentinel: 3, "a1b2c3d4e5f60718": 3},
+            },
+            "statistical_significance": {
+                sentinel: {
+                    "winners": [0],
+                    "badge_name": "accuracy",
+                    "n_shared_examples": 1,
+                },
+                "accuracy": {
+                    "winners": [0],
+                    "badge_name": "accuracy",
+                    "n_shared_examples": 5,
+                },
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        # Clean keys survive; the sentinel key is dropped from every map.
+        assert "accuracy" in payload["metrics"]
+        assert "a1b2c3d4e5f60718" in payload["samples_per_config"]
+        assert set(payload["statistical_significance"]) == {"accuracy"}
+        assert sentinel not in json.dumps(payload)
+
     def test_aggregation_summary_uses_sdk_version_resolver(
         self,
         mock_backend_client,
