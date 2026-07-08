@@ -1,0 +1,169 @@
+name: Live Contract
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "traigent/cloud/**"
+      - "traigent/core/backend_session_manager.py"
+      - "tests/cloud/test_sync_live_contract.py"
+      - "tests/integration/backend/**"
+      - ".github/workflows/live-contract.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk-backend-live-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      API_PORT: "8016"
+      DB_PORT: "25432"
+      REDIS_PORT: "26379"
+      SDK_DIR: ${{ github.workspace }}/Traigent
+      BACKEND_DIR: ${{ github.workspace }}/TraigentBackend
+      SCHEMA_DIR: ${{ github.workspace }}/TraigentSchema
+      COMPOSE_PROJECT_NAME: live-contract-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout SDK
+        uses: actions/checkout@v7
+        with:
+          path: Traigent
+
+      - name: Checkout TraigentBackend develop
+        uses: actions/checkout@v7
+        with:
+          repository: Traigent/TraigentBackend
+          ref: develop
+          path: TraigentBackend
+          # Configure LIVE_CONTRACT_CHECKOUT_TOKEN if this repo's GITHUB_TOKEN
+          # cannot read sibling private repositories.
+          token: ${{ secrets.LIVE_CONTRACT_CHECKOUT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout TraigentSchema develop
+        uses: actions/checkout@v7
+        with:
+          repository: Traigent/TraigentSchema
+          ref: develop
+          path: TraigentSchema
+          # Configure LIVE_CONTRACT_CHECKOUT_TOKEN if this repo's GITHUB_TOKEN
+          # cannot read sibling private repositories.
+          token: ${{ secrets.LIVE_CONTRACT_CHECKOUT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip "uv==0.8.13"
+
+      - name: Prepare compose environment
+        run: |
+          {
+            echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
+            echo "SECRET_KEY=$(openssl rand -hex 32)"
+            echo "TRAIGENT_MASTER_KEY=$(openssl rand -hex 32)"
+          } >> "$GITHUB_ENV"
+
+      - name: Start dockerized backend
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml \
+            up -d --wait postgres redis backend
+
+      - name: Poll backend health
+        run: |
+          for attempt in {1..60}; do
+            if curl -fsS "http://localhost:${API_PORT}/health" >/dev/null; then
+              exit 0
+            fi
+            echo "backend health not ready yet (${attempt}/60)"
+            sleep 2
+          done
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f "$BACKEND_DIR/docker/docker-compose.dev.yml" \
+            ps
+          exit 1
+
+      - name: Mint live-contract API key
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          key="$(
+            docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
+              -f docker/docker-compose.dev.yml \
+              exec -T backend python scripts/ci/mint_ci_api_key.py
+          )"
+          if [ -z "$key" ]; then
+            echo "mint_ci_api_key.py returned an empty key" >&2
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "TRAIGENT_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Install SDK dev dependencies
+        working-directory: ${{ env.SDK_DIR }}
+        run: uv sync --extra dev
+
+      - name: Run sync live-contract test
+        working-directory: ${{ env.SDK_DIR }}
+        env:
+          ENVIRONMENT: development
+          PYTHONPATH: .
+          TRAIGENT_LIVE_SYNC_E2E: "1"
+        run: |
+          TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
+          TRAIGENT_API_URL="http://localtest.me:${API_PORT}" \
+          uv run pytest tests/cloud/test_sync_live_contract.py -m contract --tb=short
+
+      - name: Run hybrid session live test
+        working-directory: ${{ env.SDK_DIR }}
+        env:
+          ENVIRONMENT: development
+          PYTHONPATH: .
+          TRAIGENT_HYBRID_LIVE: "1"
+        run: |
+          TRAIGENT_API_URL="http://localtest.me:${API_PORT}/api/v1" \
+          TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
+          uv run pytest tests/integration/backend/test_hybrid_session_live.py --tb=short
+
+      - name: Run backend DTO live smoke
+        working-directory: ${{ env.SDK_DIR }}
+        env:
+          ENVIRONMENT: development
+          PYTHONPATH: .
+          TRAIGENT_BACKEND_LIVE: "1"
+        run: |
+          TRAIGENT_API_URL="http://localtest.me:${API_PORT}/api/v1" \
+          TRAIGENT_BACKEND_URL="http://localtest.me:${API_PORT}" \
+          uv run pytest tests/integration/backend/test_backend_minimal.py --tb=short
+
+      - name: Backend logs on failure
+        if: failure()
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml \
+            logs --tail=300 backend
+
+      - name: Stop dockerized backend
+        if: always()
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          docker compose \
+            -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml \
+            down -v --remove-orphans
