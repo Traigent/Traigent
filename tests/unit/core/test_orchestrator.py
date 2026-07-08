@@ -33,8 +33,11 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.config.types import TraigentConfig
-from traigent.core.backend_session_manager import BackendTrialSubmissionOutcome
+from traigent.config.types import TraigentConfig, resolve_execution_policy
+from traigent.core.backend_session_manager import (
+    BackendSessionManager,
+    BackendTrialSubmissionOutcome,
+)
 from traigent.core.cost_enforcement import Permit
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -382,6 +385,244 @@ class TestOptimizationOrchestrator:
             return input_data.get("query", "default response")
 
         return test_function
+
+    def _online_backend_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        algorithm: str = "grid",
+    ) -> TraigentConfig:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+        config = TraigentConfig()
+        config.no_egress = False
+        config.execution_policy = resolve_execution_policy(
+            algorithm=algorithm,
+            offline=False,
+        )
+        return config
+
+    def _orchestrator_with_finalize_wire_capture(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        config_space: dict[str, Any],
+        objectives: list[str],
+        *,
+        algorithm: str = "grid",
+    ) -> tuple[OptimizationOrchestrator, list[dict[str, Any]]]:
+        finalize_calls: list[dict[str, Any]] = []
+
+        def finalize_session_sync(
+            session_id: str,
+            include_full_history: bool,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            terminal_status = "completed" if include_full_history else "failed"
+            finalize_calls.append(
+                {
+                    "session_id": session_id,
+                    "status": terminal_status,
+                    "certified_selection": kwargs.get("certified_selection"),
+                    "session_aggregation": kwargs.get("session_aggregation"),
+                }
+            )
+            return {
+                "status": terminal_status,
+                "metadata": {"finalized_via_api": True},
+                "session_aggregation": kwargs.get("session_aggregation"),
+            }
+
+        config = self._online_backend_config(monkeypatch, algorithm=algorithm)
+        backend_client = MagicMock()
+        backend_client.finalize_session_sync = MagicMock(
+            side_effect=finalize_session_sync
+        )
+        backend_client.update_trial_weighted_scores = AsyncMock(return_value=True)
+        backend_client.get_session_mapping = MagicMock(
+            return_value=MagicMock(
+                experiment_id="exp-finalize",
+                experiment_run_id="run-finalize",
+            )
+        )
+
+        with patch.object(
+            BackendSessionManager,
+            "create_backend_client",
+            return_value=backend_client,
+        ):
+            orchestrator = OptimizationOrchestrator(
+                optimizer=MockOptimizer(config_space, objectives),
+                evaluator=MockEvaluator(),
+                max_trials=1,
+                timeout=None,
+                config=config,
+            )
+
+        orchestrator._check_cost_approval = MagicMock()
+        orchestrator._submit_usage_analytics = AsyncMock()
+        orchestrator._submit_workflow_traces = AsyncMock()
+        orchestrator._cleanup_backend_client = AsyncMock()
+        orchestrator._cleanup_hybrid_lifecycle = AsyncMock()
+        return orchestrator, finalize_calls
+
+    async def _run_trace_with_wire_capture(
+        self,
+        orchestrator: OptimizationOrchestrator,
+        mock_function: Callable[..., Any],
+        sample_dataset: Dataset,
+    ) -> OptimizationResult:
+        return await orchestrator._run_optimization_with_tracing(
+            mock_function,
+            sample_dataset,
+            "session-finalize",
+            "test_function",
+            None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_infra_exception_finalizes_backend_session_as_failed(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch,
+            config_space,
+            objectives,
+        )
+        orchestrator._run_optimization_loop = AsyncMock(
+            side_effect=RuntimeError("infra boom")
+        )
+
+        with pytest.raises(OptimizationError, match="Optimization failed: infra boom"):
+            await self._run_trace_with_wire_capture(
+                orchestrator,
+                mock_function,
+                sample_dataset,
+            )
+
+        assert finalize_calls == [
+            {
+                "session_id": "session-finalize",
+                "status": "failed",
+                "certified_selection": None,
+                "session_aggregation": None,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_failed_optimization_error_reraise_finalizes_backend_session_as_failed(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch,
+            config_space,
+            objectives,
+        )
+        original_error = OptimizationError("optimizer boom")
+        orchestrator._run_optimization_loop = AsyncMock(side_effect=original_error)
+
+        with pytest.raises(OptimizationError) as excinfo:
+            await self._run_trace_with_wire_capture(
+                orchestrator,
+                mock_function,
+                sample_dataset,
+            )
+
+        assert excinfo.value is original_error
+        assert [call["status"] for call in finalize_calls] == ["failed"]
+
+    @pytest.mark.asyncio
+    async def test_cloud_required_empty_managed_abort_finalizes_backend_session_as_failed(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch,
+            config_space,
+            objectives,
+            algorithm="bayesian",
+        )
+        orchestrator._run_optimization_loop = AsyncMock(return_value=None)
+
+        with pytest.raises(OptimizationError) as excinfo:
+            await self._run_trace_with_wire_capture(
+                orchestrator,
+                mock_function,
+                sample_dataset,
+            )
+
+        message = str(excinfo.value)
+        assert "'bayesian'" in message
+        assert "without executing a single trial" in message
+        assert [call["status"] for call in finalize_calls] == ["failed"]
+
+    @pytest.mark.asyncio
+    async def test_success_path_finalizes_backend_session_once(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch,
+            config_space,
+            objectives,
+        )
+        orchestrator._run_optimization_loop = AsyncMock(return_value=None)
+
+        result = await self._run_trace_with_wire_capture(
+            orchestrator,
+            mock_function,
+            sample_dataset,
+        )
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert [call["status"] for call in finalize_calls] == ["completed"]
+
+    @pytest.mark.asyncio
+    async def test_post_finalize_error_does_not_double_finalize_backend_session(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch,
+            config_space,
+            objectives,
+        )
+        orchestrator._run_optimization_loop = AsyncMock(return_value=None)
+        orchestrator.callback_manager.on_optimization_complete = MagicMock(
+            side_effect=RuntimeError("callback boom")
+        )
+
+        with pytest.raises(
+            OptimizationError, match="Optimization failed: callback boom"
+        ):
+            await self._run_trace_with_wire_capture(
+                orchestrator,
+                mock_function,
+                sample_dataset,
+            )
+
+        assert [call["status"] for call in finalize_calls] == ["completed"]
 
     # Constructor Tests
 
