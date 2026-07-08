@@ -491,8 +491,11 @@ class TestSyncManager:
         assert session_create["configuration_space"] == {
             "model": {"type": "categorical", "choices": ["gpt-3.5-turbo", "gpt-4"]}
         }
-        # Objectives are derived from trial measure names (content-free).
-        assert session_create["objectives"] == ["latency", "score"]
+        # With no objectives on the local config, the session declares the
+        # MINIMAL universally-present objective ["score"] — NOT the union of
+        # incidental per-trial measures (which would make run-level overlays
+        # "required objectives" that not every trial reports, 400ing /results).
+        assert session_create["objectives"] == ["score"]
         # Content-free dataset label: name + size + privacy flag only.
         # Unknown local size is coerced to 1 (the typed path validates
         # dataset_metadata.size as a positive int whenever the key is present).

@@ -568,5 +568,76 @@ def test_failed_trial_submits_real_failed_status(sync_manager):
     assert statuses == {"a": "COMPLETED", "b": "FAILED"}
 
 
+def test_objectives_are_minimal_not_union_of_measures(sync_manager):
+    """Regression: the session must NOT declare the union of every per-trial
+    measure as objectives.
+
+    The backend requires each declared objective on EVERY completed trial (an
+    Optuna objective must be a scalar it can ``tell``). Declaring the union of
+    incidental run-level overlays (``run_trials_completed``, ``duration``,
+    tokens, ...) made trials that omit one 400 with
+    "Completed trial is missing numeric metric". With no objectives on the local
+    config the session must fall back to the minimal, universally-present
+    ``["score"]``. Caught by live api-dev E2E; mocked transport could not.
+    """
+    sid = sync_manager.storage.create_session(
+        "answer",
+        optimization_config={"search_space": {"model": ["a", "b"]}},
+    )
+    # Two trials with DIFFERENT incidental numeric measures — a union would make
+    # both "duration" and "run_trials_completed" required objectives, and each
+    # trial is missing the other's.
+    sync_manager.storage.add_trial_result(
+        sid, config={"model": "a"}, score=0.8, metadata={"duration": 1.2}
+    )
+    sync_manager.storage.add_trial_result(
+        sid, config={"model": "b"}, score=0.9, metadata={"run_trials_completed": 2}
+    )
+    sync_manager.storage.finalize_session(sid, "completed")
+
+    converted = sync_manager.convert_session_to_traigent_format(
+        sync_manager.storage.load_session(sid)
+    )
+
+    # Minimal objective set — score only, never the union.
+    assert converted["session_create"]["objectives"] == ["score"]
+    # Backfill guarantees every declared objective (score) is numeric on every
+    # completed trial, so no /results can 400 on a missing objective.
+    for run in converted["configuration_runs"]:
+        if run["status"] == "COMPLETED":
+            assert isinstance(run["measures"]["score"], (int, float))
+
+
+def test_declared_objective_backfilled_when_missing_on_a_trial(sync_manager):
+    """A user-declared objective absent from one completed trial is backfilled
+    (from score) so the whole sync can't 400 on that trial."""
+    sid = sync_manager.storage.create_session(
+        "answer",
+        optimization_config={
+            "search_space": {"model": ["a", "b"]},
+            "objectives": ["accuracy"],
+        },
+    )
+    # Trial 1 reports accuracy; trial 2 does NOT (only score).
+    sync_manager.storage.add_trial_result(
+        sid,
+        config={"model": "a"},
+        score=0.8,
+        metadata={"all_metrics": {"accuracy": 1.0}},
+    )
+    sync_manager.storage.add_trial_result(sid, config={"model": "b"}, score=0.5)
+    sync_manager.storage.finalize_session(sid, "completed")
+
+    converted = sync_manager.convert_session_to_traigent_format(
+        sync_manager.storage.load_session(sid)
+    )
+
+    assert converted["session_create"]["objectives"] == ["accuracy"]
+    # Both completed trials carry a numeric "accuracy" (trial 2 backfilled).
+    for run in converted["configuration_runs"]:
+        if run["status"] == "COMPLETED":
+            assert isinstance(run["measures"].get("accuracy"), (int, float))
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))

@@ -320,6 +320,12 @@ class SyncManager:
             session.trials or []
         )
         objectives = self._derive_objectives(opt_config, configuration_runs)
+        # Guard: the backend rejects a COMPLETED trial whose metrics lack any
+        # declared objective. Backfill each completed trial's measures so every
+        # objective is present as a number (prefer its own ``score``, else 0.0),
+        # so a real user-declared objective missing from one trial can't 400 the
+        # whole sync.
+        self._backfill_objective_measures(configuration_runs, objectives)
 
         # Content-free dataset label: name + size only, never example content.
         # The typed path validates dataset_metadata.size as a positive int
@@ -377,18 +383,54 @@ class SyncManager:
     def _derive_objectives(
         opt_config: dict[str, Any], configuration_runs: list[dict[str, Any]]
     ) -> list[str]:
-        """Derive objective names for the typed session create payload.
+        """Derive the session's objective names for the typed create payload.
 
-        Prefer the objectives recorded on the local optimization config; fall
-        back to the measure names present on the trials (``["score"]`` at
-        minimum). Content-free: only measure/objective *names* are emitted.
+        The backend requires EVERY declared objective to be present as a numeric
+        metric on EVERY completed trial (an Optuna objective must be a scalar it
+        can ``tell()``). So the objective set must be MINIMAL and universally
+        present, NOT the union of every incidental per-trial measure — declaring
+        the union makes run-level overlays (``run_trials_completed``,
+        ``duration``, tokens, cost, ...) "required objectives" that not every
+        trial reports, and each such trial's /results then 400s
+        ("Completed trial is missing numeric metric ...").
+
+        Prefer the run's real optimization objectives; otherwise fall back to
+        ``["score"]`` — ``score`` is written on every trial by
+        ``_convert_trials_to_results``, so it is guaranteed present. The caller
+        additionally backfills any declared objective missing from a completed
+        trial (see ``convert_session_to_traigent_format``). Content-free: only
+        objective *names* are emitted.
         """
         raw_objectives = opt_config.get("objectives")
         if isinstance(raw_objectives, (list, tuple)):
             names = [str(name) for name in raw_objectives if name]
             if names:
                 return names
-        return SyncManager._derive_experiment_measures(configuration_runs)
+        return ["score"]
+
+    @staticmethod
+    def _backfill_objective_measures(
+        configuration_runs: list[dict[str, Any]], objectives: list[str]
+    ) -> None:
+        """Ensure every COMPLETED trial reports each declared objective numerically.
+
+        The backend requires a numeric value for every objective on a completed
+        trial (Optuna ``tell``). If a trial's measures omit one (or it is
+        non-numeric), backfill it with the trial's ``score`` when available, else
+        ``0.0``. Only completed trials are guarded — failed trials skip the
+        objective check server-side. Mutates ``configuration_runs`` in place.
+        """
+        for configuration_run in configuration_runs:
+            if str(configuration_run.get("status", "")).upper() != "COMPLETED":
+                continue
+            measures = configuration_run.setdefault("measures", {})
+            fallback = measures.get("score")
+            if not isinstance(fallback, (int, float)) or isinstance(fallback, bool):
+                fallback = 0.0
+            for objective in objectives:
+                value = measures.get(objective)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(
         self, trials: list[Any]
@@ -452,19 +494,6 @@ class SyncManager:
     def _is_numeric(value: Any) -> bool:
         """Return True for JSON numeric values while excluding booleans."""
         return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-    @staticmethod
-    def _derive_experiment_measures(
-        configuration_runs: list[dict[str, Any]],
-    ) -> list[str]:
-        """Derive the experiment-level measure list from trial payloads."""
-        measures: list[str] = []
-        for configuration_run in configuration_runs:
-            for measure_name in configuration_run.get("measures", {}):
-                if measure_name not in measures:
-                    measures.append(measure_name)
-
-        return measures or ["score"]
 
     def _convert_trials_to_results(self, trials: list[Any]) -> list[dict[str, Any]]:
         """Convert local trials to Traigent configuration_run format."""
