@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
-import math
 import threading
 import time
 from collections.abc import Callable, Coroutine, Mapping
@@ -57,7 +56,11 @@ from traigent.core.session_types import (
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
-from traigent.storage.local_storage import TRIAL_COST_FIELDS, extract_trial_cost_fields
+from traigent.utils.trial_costs import (
+    TRIAL_COST_FIELDS,
+    extract_trial_cost_metric,
+    is_finite_numeric_cost,
+)
 from traigent.utils.env_config import is_untracked_fallback_allowed
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
@@ -515,41 +518,6 @@ class BackendSessionManager:
         except (TypeError, ValueError):
             return False
 
-    @staticmethod
-    def _coerce_cost_metric(value: Any) -> float | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if not isinstance(value, (int, float)):
-            return None
-        cost = float(value)
-        return cost if math.isfinite(cost) else None
-
-    @classmethod
-    def _extract_trial_cost_metric(
-        cls,
-        trial_result: TrialResult,
-        metrics_payload: Mapping[str, Any],
-        metadata: Mapping[str, Any],
-    ) -> float | None:
-        attr_costs = {
-            field: getattr(trial_result, field, None) for field in TRIAL_COST_FIELDS
-        }
-        sources = (
-            metrics_payload,
-            getattr(trial_result, "metrics", None),
-            getattr(trial_result, "metadata", None),
-            metadata,
-            attr_costs,
-        )
-        for source in sources:
-            if not isinstance(source, Mapping):
-                continue
-            costs = extract_trial_cost_fields(source)
-            cost = cls._coerce_cost_metric(costs.get("cost"))
-            if cost is not None:
-                return cost
-        return None
-
     def _ensure_budget_cost_metric(
         self,
         *,
@@ -558,10 +526,19 @@ class BackendSessionManager:
         metrics_payload: dict[str, Any],
         metadata: Mapping[str, Any],
     ) -> None:
-        if self._coerce_cost_metric(metrics_payload.get("cost")) is not None:
+        if is_finite_numeric_cost(metrics_payload.get("cost")):
             return
 
-        cost = self._extract_trial_cost_metric(trial_result, metrics_payload, metadata)
+        attr_costs = {
+            field: getattr(trial_result, field, None) for field in TRIAL_COST_FIELDS
+        }
+        cost = extract_trial_cost_metric(
+            metrics_payload,
+            getattr(trial_result, "metrics", None),
+            getattr(trial_result, "metadata", None),
+            metadata,
+            attr_costs,
+        )
         if cost is not None:
             metrics_payload["cost"] = cost
             return

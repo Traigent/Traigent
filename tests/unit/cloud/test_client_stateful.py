@@ -184,6 +184,42 @@ class TestSessionCreation:
         }
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("objectives", "expected_objectives"),
+        [
+            (None, [{"metric": "score", "direction": "maximize"}]),
+            (["maximize"], [{"metric": "score", "direction": "maximize"}]),
+            (["accuracy"], ["accuracy"]),
+        ],
+    )
+    async def test_create_optimization_session_normalizes_typed_objectives(
+        self, cloud_client, mock_session, objectives, expected_objectives
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-normalized",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={
+                "temperature": {"type": "float", "low": 0.0, "high": 1.0}
+            },
+            objectives=objectives,
+            dataset_metadata={"size": 100},
+            max_trials=3,
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert submitted_payload["objectives"] == expected_objectives
+
+    @pytest.mark.asyncio
     async def test_create_optimization_session_serializes_banded_objectives_and_policy(
         self, cloud_client, mock_session
     ):
@@ -317,6 +353,47 @@ class TestSessionCreation:
             # Check that the error message matches
             assert "Failed to create session" in str(e)
             assert "400" in str(e)
+
+    @pytest.mark.asyncio
+    async def test_budgeted_direct_submit_backfills_missing_cost(
+        self, cloud_client, mock_session
+    ):
+        create_response = Mock()
+        create_response.status = 201
+        create_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-budgeted",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = create_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={
+                "temperature": {"type": "float", "low": 0.0, "high": 1.0}
+            },
+            objectives=["accuracy"],
+            dataset_metadata={"size": 100},
+            max_trials=3,
+            budget={"max_cost_usd": 1.25},
+        )
+
+        submit_response = Mock()
+        submit_response.status = 201
+        mock_session.post.return_value.__aenter__.return_value = submit_response
+
+        await cloud_client.submit_trial_result(
+            session_id="session-budgeted",
+            trial_id="trial-001",
+            metrics={"accuracy": 0.95},
+            duration=0.2,
+            status="completed",
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert submitted_payload["metrics"]["cost"] == 0.0
 
 
 class TestTrialOperations:
