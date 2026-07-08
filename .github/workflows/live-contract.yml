@@ -100,11 +100,15 @@ jobs:
       - name: Mint live-contract API key
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
+          # Extract the sentinel line: app logging handlers bound to the real
+          # stdout can leak log lines around redirect_stdout, so the raw key is
+          # emitted as CI_RAW_API_KEY=<key>.
           key="$(
             docker compose \
               -p "$COMPOSE_PROJECT_NAME" \
               -f docker/docker-compose.dev.yml \
-              exec -T backend python scripts/ci/mint_ci_api_key.py
+              exec -T backend python scripts/ci/mint_ci_api_key.py \
+            | sed -n 's/^CI_RAW_API_KEY=//p' | tail -n 1
           )"
           if [ -z "$key" ]; then
             echo "mint_ci_api_key.py returned an empty key" >&2
@@ -112,6 +116,15 @@ jobs:
           fi
           echo "::add-mask::$key"
           echo "TRAIGENT_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Clean container-owned build artifacts from the SDK checkout
+        working-directory: ${{ env.SDK_DIR }}
+        run: |
+          # The backend container pip-installs the mounted SDK, writing a
+          # root-owned traigent.egg-info into this checkout; uv/pip on the
+          # runner then fails with "Cannot update time stamp of directory
+          # 'traigent.egg-info'". Remove it before installing SDK deps.
+          sudo rm -rf traigent.egg-info
 
       - name: Install SDK dev dependencies
         working-directory: ${{ env.SDK_DIR }}
