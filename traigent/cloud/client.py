@@ -66,6 +66,12 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+from .session_budgets import (
+    ensure_cost_metric_for_budgeted_completed_submission,
+    is_cost_budget_armed_session,
+    remember_cost_budget_armed_session,
+)
+from .session_objectives import normalize_typed_objectives, session_objective_to_wire
 from .smart_pruning import normalize_smart_pruning_options
 from .subset_selection import SmartSubsetSelector
 from .url_security import validate_cloud_base_url
@@ -813,6 +819,7 @@ class TraigentCloudClient(BaseTraigentClient):
         self._session_finalizer: weakref.finalize | None = None
         # Track session ownership fingerprints for clearer error reporting
         self._session_owners: dict[str, dict[str, Any]] = {}
+        self._cost_budget_armed_sessions: set[str] = set()
 
     @property
     def _session(self) -> aiohttp.ClientSession | None:
@@ -1054,6 +1061,18 @@ class TraigentCloudClient(BaseTraigentClient):
 
         if owner_info:
             self._session_owners[session_id] = owner_info
+
+    def _remember_cost_budget_armed_session(
+        self, session_id: str, budget: dict[str, Any] | None
+    ) -> None:
+        """Track sessions whose typed create armed a positive cost budget."""
+
+        remember_cost_budget_armed_session(self, session_id, budget)
+
+    def _is_cost_budget_armed_session(self, session_id: str) -> bool:
+        """Return whether this client created the session with a positive budget."""
+
+        return is_cost_budget_armed_session(self, session_id)
 
     @staticmethod
     def _summarize_actor(info: dict[str, Any] | None) -> str:
@@ -1715,6 +1734,9 @@ class TraigentCloudClient(BaseTraigentClient):
                         dict(request.metadata or {}),
                         data.get("metadata", {}),
                     )
+                    self._remember_cost_budget_armed_session(
+                        result.session_id, request_data.get("budget")
+                    )
                     return result
                 else:
                     error_text = await response.text()
@@ -1832,6 +1854,15 @@ class TraigentCloudClient(BaseTraigentClient):
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/results"
             request_data = self._serialize_trial_result(result)
+            request_data["metrics"] = dict(request_data.get("metrics") or {})
+            ensure_cost_metric_for_budgeted_completed_submission(
+                client=self,
+                session_id=session_id,
+                metrics=request_data["metrics"],
+                status=request_data.get("status"),
+                telemetry_sources=(result.metadata, request_data.get("metadata")),
+                logger=logger,
+            )
 
             async with self._aio_session.post(
                 url, json=request_data, headers=await self._get_headers()
@@ -1917,13 +1948,11 @@ class TraigentCloudClient(BaseTraigentClient):
         """Serialize session creation request."""
         metadata = self._ensure_owner_metadata(request.metadata)
         request.metadata = metadata
+        objectives_payload = normalize_typed_objectives(request.objectives)
         payload: dict[str, Any] = {
             "function_name": request.function_name,
             "configuration_space": request.configuration_space,
-            "objectives": [
-                self._serialize_session_objective(objective)
-                for objective in (request.objectives or [])
-            ],
+            "objectives": objectives_payload,
             "dataset_metadata": request.dataset_metadata,
             "max_trials": request.max_trials,
             "optimization_strategy": request.optimization_strategy,
@@ -1962,28 +1991,7 @@ class TraigentCloudClient(BaseTraigentClient):
         objective: str | SessionObjectiveDefinition | dict[str, Any],
     ) -> str | dict[str, Any]:
         """Serialize a typed objective while preserving string shorthand."""
-        if isinstance(objective, str):
-            return objective
-        if isinstance(objective, SessionObjectiveDefinition):
-            payload: dict[str, Any] = {
-                "metric": objective.metric,
-            }
-            if objective.band is not None:
-                payload["band"] = dict(objective.band)
-                if objective.test is not None:
-                    payload["test"] = objective.test
-                if objective.alpha is not None:
-                    payload["alpha"] = objective.alpha
-            elif objective.direction is not None:
-                payload["direction"] = objective.direction
-            if objective.weight is not None:
-                payload["weight"] = objective.weight
-            return payload
-        if isinstance(objective, dict):
-            return dict(objective)
-        raise TypeError(
-            "Session objectives must be strings, dicts, or SessionObjectiveDefinition objects"
-        )
+        return session_objective_to_wire(objective)
 
     def _deserialize_session_response(
         self, data: dict[str, Any]

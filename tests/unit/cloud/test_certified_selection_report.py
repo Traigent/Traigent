@@ -346,6 +346,73 @@ class TestWireThreading:
         await ops._finalize_session_via_api("s-1", "r-1")
         assert "certified_selection" not in captured["body"]
 
+    @pytest.mark.asyncio
+    async def test_finalize_body_carries_session_aggregation_top_level(
+        self, monkeypatch
+    ):
+        """Traigent#1720/#1724 (g2:agg-summary): session_aggregation rides the
+        finalize body at the TOP level (never under metadata), mirroring
+        certified_selection exactly, and is omitted entirely when absent."""
+        from traigent.cloud.session_operations import SessionOperations
+
+        ops = SessionOperations.__new__(SessionOperations)
+        ops.client = Mock()
+        captured: dict = {}
+
+        class FakeResponse:
+            status = 200
+
+            async def json(self):
+                return {"session_id": "s-1", "best_config": {"m": 1}}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class FakeSession:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def post(self, url, *, json=None, headers=None, timeout=None):
+                captured["body"] = json
+                return FakeResponse()
+
+        async def fake_headers(base):
+            return base
+
+        ops.client.auth_manager.augment_headers = fake_headers
+        ops.client.backend_config.api_base_url = "http://localhost:5000/api/v1"
+        monkeypatch.setattr(
+            "traigent.cloud.session_operations.aiohttp",
+            types.SimpleNamespace(
+                ClientSession=FakeSession,
+                ClientTimeout=lambda total=None: None,
+                ClientError=Exception,
+            ),
+        )
+        monkeypatch.setattr("traigent.cloud.session_operations.AIOHTTP_AVAILABLE", True)
+
+        agg = {"selection_mode": "aggregated_mean", "sdk_version": "0.0.0"}
+        await ops._finalize_session_via_api("s-1", "r-1", session_aggregation=agg)
+        # Egress boundary re-sanitizes (Codex round 6): the payload is carried
+        # TOP-LEVEL (never under metadata) with its valid fields preserved.
+        carried = captured["body"]["session_aggregation"]
+        assert carried["selection_mode"] == "aggregated_mean"
+        assert carried["sdk_version"] == "0.0.0"
+        assert "session_aggregation" not in captured["body"].get("metadata", {})
+
+        captured.clear()
+        await ops._finalize_session_via_api("s-1", "r-1")
+        assert "session_aggregation" not in captured["body"]
+
     def test_manager_drops_report_on_failed_runs(self):
         """A failed optimization must never carry a certified winner."""
         from traigent.api.types import OptimizationStatus
@@ -371,4 +438,24 @@ class TestWireThreading:
         assert (
             client.finalize_session_sync.call_args.kwargs["certified_selection"]
             == report
+        )
+
+    def test_manager_threads_session_aggregation_regardless_of_status(self):
+        """session_aggregation is not gated on completion status the way
+        certified_selection is — it rides whatever finalize call is made."""
+        from traigent.api.types import OptimizationStatus
+        from traigent.core.backend_session_manager import BackendSessionManager
+
+        manager = BackendSessionManager.__new__(BackendSessionManager)
+        manager._backend_tracking_enabled = True
+        client = Mock(spec=["finalize_session_sync"])
+        client.finalize_session_sync = Mock(return_value={"ok": True})
+        manager._backend_client = client
+
+        agg = {"selection_mode": "aggregated_mean"}
+        manager.finalize_session(
+            "s-1", OptimizationStatus.COMPLETED, session_aggregation=agg
+        )
+        assert (
+            client.finalize_session_sync.call_args.kwargs["session_aggregation"] == agg
         )

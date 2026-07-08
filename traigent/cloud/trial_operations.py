@@ -22,6 +22,9 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.dtos import MeasuresDict
+from traigent.cloud.session_budgets import (
+    ensure_cost_metric_for_budgeted_completed_submission,
+)
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
@@ -989,6 +992,15 @@ class TrialOperations:
                 )
                 return False
 
+            ensure_cost_metric_for_budgeted_completed_submission(
+                client=self.client,
+                session_id=session_id,
+                metrics=validated_metrics,
+                status=backend_status,
+                telemetry_sources=(metrics, metadata, measures, summary_stats),
+                logger=logger,
+            )
+
             # Build result data
             result_data = self._build_trial_result_data(
                 trial_id,
@@ -1169,6 +1181,16 @@ class TrialOperations:
                 # Also include summary_stats for backend to detect privacy mode
                 "summary_stats": summary_stats,
             }
+            submission_metrics = submission_data["metrics"]
+            if isinstance(submission_metrics, dict):
+                ensure_cost_metric_for_budgeted_completed_submission(
+                    client=self.client,
+                    session_id=session_id,
+                    metrics=submission_metrics,
+                    status=backend_status,
+                    telemetry_sources=(summary_stats, submission_metadata),
+                    logger=logger,
+                )
 
             # Validate the submission data. Schema validation is authoritative;
             # invalid payloads must not be posted to the backend.

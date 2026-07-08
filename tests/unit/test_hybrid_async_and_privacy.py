@@ -178,7 +178,15 @@ class DummyBackend:
         )
 
     def finalize_session_sync(self, session_id: str, succeeded: bool, **kwargs: Any):
-        self.finalized.append({"id": session_id, "ok": succeeded})
+        # Capture the folded session-level rollup (Traigent#1720/#1724): it now
+        # rides the finalize call instead of a local-only submit_result shim.
+        self.finalized.append(
+            {
+                "id": session_id,
+                "ok": succeeded,
+                "session_aggregation": kwargs.get("session_aggregation"),
+            }
+        )
         return {"status": "ok", "succeeded": succeeded}
 
 
@@ -247,8 +255,10 @@ async def test_privacy_mode_sanitizes_measures():
 
     await orch.optimize(func=tiny_func, dataset=ds, function_name="tiny_priv")
 
-    # Should have two submissions: trial + aggregated summary for non-Edge Analytics modes
-    assert len(dummy.submissions) == 2
+    # One submission: the trial (privacy-sanitized measures). The session-level
+    # rollup no longer rides a local-only submit_result shim — it is folded into
+    # the finalize call (Traigent#1720/#1724 g2:agg-summary), asserted below.
+    assert len(dummy.submissions) == 1
 
     # First submission is the trial with measures
     trial_meta = dummy.submissions[0]["metadata"]
@@ -286,10 +296,17 @@ async def test_privacy_mode_sanitizes_measures():
     forbidden = {"input", "output", "prompt", "messages", "actual_output"}
     assert not any(k in agg for k in forbidden)
 
-    # Second submission is the session-level aggregation
-    session_meta = dummy.submissions[1]["metadata"]
-    assert "summary_stats" in session_meta
-    assert session_meta["summary_stats"]["metadata"]["aggregation_level"] == "session"
+    # Session-level aggregation now rides the finalize call (folded into the
+    # finalize request, not a second submit_result shim). It is content-free,
+    # and under privacy mode best_weighted_config is omitted.
+    assert len(dummy.finalized) == 1
+    session_agg = dummy.finalized[0]["session_aggregation"]
+    assert isinstance(session_agg, dict)
+    assert session_agg["primary_objective"] == "accuracy"
+    assert isinstance(session_agg.get("metrics", {}), dict)
+    assert session_agg["best_weighted_config"] is None  # privacy mode omits config
+    forbidden_agg = {"input", "output", "prompt", "messages", "actual_output"}
+    assert not any(k in session_agg for k in forbidden_agg)
 
 
 @pytest.mark.asyncio
