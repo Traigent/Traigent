@@ -149,6 +149,191 @@ def _finalize_acknowledged(result: Any) -> bool:
     return True
 
 
+def _field(container: Any, key: str) -> Any:
+    """Read ``key`` off a dict OR an attribute-holding object uniformly."""
+    if isinstance(container, dict):
+        return container.get(key)
+    return getattr(container, key, None)
+
+
+# Bounded label for any content-free MAP KEY on the session_aggregation wire
+# (metric names, config hashes, objective/badge names). A prompt/output/LLM
+# response cannot masquerade as a key: no whitespace, capped at 64 chars,
+# identifier-ish charset. Codex xhigh review round 2 — keys, not just values,
+# must be allowlisted, else content can be smuggled into the KEY position.
+_LABEL_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$")
+
+# Back-compat alias — badge_name uses the same bounded-label rule.
+_SIG_BADGE_LABEL = _LABEL_RE
+
+
+def _bounded_label(value: Any) -> str | None:
+    """Return ``value`` iff it is a bounded label string, else ``None``.
+
+    Used for the scalar label fields (``selection_mode``, ``primary_objective``)
+    so a prompt/output string cannot ride along in a scalar position either
+    (Codex xhigh review round 3).
+    """
+    return value if isinstance(value, str) and _LABEL_RE.fullmatch(value) else None
+
+
+# Anchored version token (allows '+' build metadata) — matches the backend
+# _VERSION_RE and the schema sdk_version pattern.
+_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}$")
+
+
+def _bounded_version(value: Any) -> str | None:
+    """Return ``value`` iff it is a bounded version token, else ``None``.
+
+    ``get_version()`` echoes ``TRAIGENT_FORCE_VERSION`` verbatim, so the SDK
+    must gate the resolved version before it rides ``session_aggregation`` —
+    a malformed/whitespace override must not reach egress (Codex round 5).
+    """
+    return value if isinstance(value, str) and _VERSION_RE.fullmatch(value) else None
+
+
+def _bounded_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _bounded_number(value: Any) -> float | int | None:
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
+
+
+def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
+    """Re-apply the content-free allowlist to a session_aggregation payload dict.
+
+    Defense-in-depth EGRESS guard (Codex xhigh review round 6):
+    ``build_session_aggregation_payload`` already produces bounded output, but
+    ``finalize_session(..., session_aggregation=...)`` and the lower-level
+    ``backend_client`` / ``session_operations`` finalize entrypoints accept a
+    caller-supplied dict, which would otherwise reach the wire unbounded. The
+    egress boundary re-sanitizes ANY payload here so no path can leak
+    whitespace/free-text/example content. Idempotent on builder output.
+
+    ``best_weighted_config`` config VALUES are the documented dataflow
+    exception (prompt text a customer tuned as a variable travels as config);
+    they are passed through as a dict, and the builder omits them under
+    privacy mode.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw_samples = payload.get("samples_per_config")
+    samples: dict[str, int] = {}
+    if isinstance(raw_samples, dict):
+        samples = {
+            key: value
+            for key, value in raw_samples.items()
+            if isinstance(key, str)
+            and _LABEL_RE.fullmatch(key)
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+        }
+    best_weighted_config = payload.get("best_weighted_config")
+    return {
+        "selection_mode": _bounded_label(payload.get("selection_mode")),
+        "primary_objective": _bounded_label(payload.get("primary_objective")),
+        "metrics": _sanitized_numeric_dict(payload.get("metrics")),
+        "samples_per_config": samples,
+        "total_examples": _bounded_int(payload.get("total_examples")) or 0,
+        "trials_completed": _bounded_int(payload.get("trials_completed")) or 0,
+        "successful_trials": _bounded_int(payload.get("successful_trials")) or 0,
+        "success_rate": _bounded_number(payload.get("success_rate")),
+        "best_weighted_config": best_weighted_config
+        if isinstance(best_weighted_config, dict)
+        else None,
+        "best_weighted_score": _bounded_number(payload.get("best_weighted_score")),
+        "statistical_significance": _sanitize_significance(
+            payload.get("statistical_significance")
+        ),
+        "execution_time": _bounded_number(payload.get("execution_time")),
+        "sdk_version": _bounded_version(payload.get("sdk_version")),
+    }
+
+
+def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
+    """Coerce ``value`` to a ``{label: number}`` map, dropping everything else.
+
+    Defense-in-depth for the session_aggregation allowlist (Traigent#1720/
+    #1724): ``metrics`` and ``samples_per_config`` are documented as
+    numeric-only maps (metric-name / config-hash keys). Both the VALUE (must
+    be numeric) and the KEY (must be a bounded label — see ``_LABEL_RE``) are
+    allowlisted, so neither a future non-numeric value nor a content-bearing
+    key slipped into ``session_summary`` can leak onto the wire.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: item
+        for key, item in value.items()
+        if isinstance(key, str)
+        and _LABEL_RE.fullmatch(key)
+        and isinstance(item, (int, float))
+        and not isinstance(item, bool)
+    }
+
+
+def _sanitize_significance(raw: Any) -> dict[str, Any] | None:
+    """Fail-closed allowlist for statistical_significance (content-free).
+
+    Keeps only the fixed numeric badge shape per objective; drops any nested
+    key (e.g. a prompt/output/LLM response) that isn't in the allowlist, and
+    drops the whole entry when the outer objective KEY is not a bounded label.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    for obj_name, entry in raw.items():
+        if (
+            not isinstance(obj_name, str)
+            or not _LABEL_RE.fullmatch(obj_name)
+            or not isinstance(entry, dict)
+        ):
+            continue
+        clean: dict[str, Any] = {}
+        for list_key in ("winners", "top_group", "rest_group"):
+            v = entry.get(list_key)
+            if isinstance(v, list) and all(
+                isinstance(i, int) and not isinstance(i, bool) for i in v
+            ):
+                clean[list_key] = [int(i) for i in v]
+        n = entry.get("n_shared_examples")
+        if isinstance(n, int) and not isinstance(n, bool):
+            clean["n_shared_examples"] = int(n)
+        badge = entry.get("badge_name")
+        if isinstance(badge, str) and _SIG_BADGE_LABEL.fullmatch(badge):
+            clean["badge_name"] = badge
+        if clean:
+            out[obj_name] = clean
+    return out or None
+
+
+def session_aggregation_echoed(result: Any) -> bool:
+    """True iff a finalize response echoes back ``session_aggregation``.
+
+    Traigent#1720/#1724 (g2:agg-summary): the SDK must never report the
+    session-level AGG_SUMMARY rollup as persisted unless the backend
+    actually acknowledged it in the finalize response. ``result`` may be a
+    plain dict (raw backend JSON, or the dict-shaped test doubles used by
+    unit tests) or an ``OptimizationFinalizationResponse`` dataclass, which
+    surfaces extra backend-echoed fields under ``.metadata`` rather than as
+    top-level attributes — check both shapes so real cloud responses and
+    dict-shaped mocks are handled consistently.
+    """
+    if result is None:
+        return False
+
+    if isinstance(_field(result, "session_aggregation"), dict):
+        return True
+
+    metadata = _field(result, "metadata")
+    return isinstance(_field(metadata, "session_aggregation"), dict)
+
+
 def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
     return any(needle in value for needle in needles)
 
@@ -1848,35 +2033,38 @@ class BackendSessionManager:
             logger.error("Error updating weighted scores: %s", exc)
             return 0
 
-    def submit_session_aggregation(
+    def build_session_aggregation_payload(
         self, result: OptimizationResult, session_id: str | None
-    ) -> bool | None:
-        """Submit aggregated summary for non-edge modes.
+    ) -> dict[str, Any] | None:
+        """Build the content-free session-level rollup for POST .../finalize.
+
+        Traigent#1720/#1724 (g2:agg-summary): this is a PURE builder — it has
+        no side effects and makes no backend call. The caller
+        (``orchestrator._finalize_optimization``) folds the returned payload
+        into the existing ``finalize_session(..., session_aggregation=...)``
+        call, mirroring how ``certified_selection`` already rides the
+        finalize request body, instead of the old local-only
+        ``BackendIntegratedClient.submit_result`` shim (which never left the
+        process — see the removed ``submit_session_aggregation``).
+
+        CRITICAL (fail-closed against future content leakage): every field is
+        picked by an EXPLICIT ALLOWLIST of names — ``session_summary`` is
+        never forwarded verbatim, so an unexpected/future key added to
+        ``session_summary`` cannot leak onto the wire through this path.
 
         Args:
             result: Final optimization result
             session_id: Backend session identifier
 
         Returns:
-            ``True`` if the session-level rollup was actually transmitted to
-            the backend; ``False`` if a rollup payload was built but only
-            reached the local-only ``BackendIntegratedClient.submit_result``
-            shim (Traigent#1724 — this never leaves the process today, so
-            callers must not treat it as persisted); ``None`` if aggregation
-            was skipped entirely (offline/local mode, no session, or no
-            session summary to submit).
+            The allowlisted rollup dict, or ``None`` under the same skip
+            conditions the old submit path used: egress disabled, no backend
+            client, no session id, local/offline mode, backend tracking
+            disabled, or no ``session_summary`` to build from.
         """
         if (
             self._egress_disabled()
             or not self._backend_client
-            or session_id is None
-            or self._traigent_config.is_local_mode()
-            or not self._backend_tracking_enabled
-        ):
-            return None
-
-        if (
-            not self._backend_client
             or session_id is None
             or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
@@ -1892,95 +2080,97 @@ class BackendSessionManager:
         if not session_summary:
             return None
 
-        aggregated_trial_id = f"{session_id}_AGG_SUMMARY"
-
-        samples_per_config = session_summary.get("samples_per_config", {})
-        total_examples = sum(samples_per_config.values()) if samples_per_config else 0
-
-        summary_stats_with_aggregation = {
-            "metrics": session_summary.get("metrics", {}),
-            "execution_time": result.duration,
-            "total_examples": total_examples,
-            "metadata": {
-                "aggregation_level": "session",
-                "aggregation_summary": session_summary,
-                "trial_id": aggregated_trial_id,
-                "sdk_version": get_version(),
-            },
-        }
-
-        # Include statistical significance badges if computed
-        stat_sig = (
-            result.metadata.get("statistical_significance") if result.metadata else None
+        metrics = _sanitized_numeric_dict(session_summary.get("metrics"))
+        samples_per_config = _sanitized_numeric_dict(
+            session_summary.get("samples_per_config")
         )
-        if stat_sig:
-            agg_meta = summary_stats_with_aggregation["metadata"]
-            agg_meta["statistical_significance"] = stat_sig
 
         try:
-            successful_trials = len([t for t in result.trials if t.is_successful])
-            overlay_metrics: dict[str, float] = {
-                "run_trials_completed": len(result.trials),
-                "run_successful_trials": successful_trials,
-                "run_success_rate": result.success_rate,
-            }
-            if isinstance(result.metrics, dict):
-                for key, value in result.metrics.items():
-                    if isinstance(value, (int, float)):
-                        overlay_metrics[f"run_{key}"] = value
+            trials = list(result.trials or [])
+            trials_completed = len(trials)
+            successful_trials = len([t for t in trials if t.is_successful])
         except (KeyError, TypeError, ValueError) as exc:
-            logger.debug("Failed building overlay run metrics: %s", exc)
-            overlay_metrics = {}
+            logger.debug("Failed computing trial counts for aggregation: %s", exc)
+            trials_completed = 0
+            successful_trials = 0
 
-        submission_metadata: dict[str, Any] = {
-            "summary_stats": summary_stats_with_aggregation,
-            "trial_id": aggregated_trial_id,
-            **overlay_metrics,
+        weighted_results = (
+            result.metadata.get("weighted_results")
+            if hasattr(result, "metadata") and result.metadata
+            else None
+        )
+        if not isinstance(weighted_results, dict):
+            weighted_results = {}
+
+        best_weighted_config = weighted_results.get("best_weighted_config")
+        if not isinstance(best_weighted_config, dict):
+            best_weighted_config = None
+        # Privacy mode omits the winning config from the rollup, mirroring
+        # trial-config redaction (see trial_operations._is_privacy_enabled):
+        # a tuned system_prompt/persona in the winning config must never
+        # ride the wire when the run is privacy-enabled.
+        if bool(getattr(self._traigent_config, "privacy_enabled", False)):
+            best_weighted_config = None
+
+        best_weighted_score = weighted_results.get("best_weighted_score")
+        if not isinstance(best_weighted_score, (int, float)) or isinstance(
+            best_weighted_score, bool
+        ):
+            best_weighted_score = None
+
+        statistical_significance = _sanitize_significance(
+            result.metadata.get("statistical_significance")
+            if hasattr(result, "metadata") and result.metadata
+            else None
+        )
+
+        execution_time = getattr(result, "duration", None)
+        if not isinstance(execution_time, (int, float)) or isinstance(
+            execution_time, bool
+        ):
+            execution_time = None
+
+        success_rate = getattr(result, "success_rate", None)
+        if not isinstance(success_rate, (int, float)) or isinstance(success_rate, bool):
+            success_rate = None
+
+        return {
+            "selection_mode": _bounded_label(session_summary.get("selection_mode")),
+            "primary_objective": _bounded_label(
+                session_summary.get("primary_objective")
+            ),
+            "metrics": metrics,
+            "samples_per_config": samples_per_config,
+            "total_examples": sum(samples_per_config.values())
+            if samples_per_config
+            else 0,
+            "trials_completed": trials_completed,
+            "successful_trials": successful_trials,
+            "success_rate": success_rate,
+            "best_weighted_config": best_weighted_config,
+            "best_weighted_score": best_weighted_score,
+            "statistical_significance": statistical_significance,
+            "execution_time": execution_time,
+            "sdk_version": _bounded_version(get_version()),
         }
-        if self._strategy_preset_metadata is not None:
-            submission_metadata["strategy_preset"] = dict(
-                self._strategy_preset_metadata
-            )
-
-        # NOTE (Traigent#1724): BackendIntegratedClient.submit_result is a
-        # local-only compatibility shim (writes local_storage + bumps an
-        # in-memory counter) — it never makes a network call. This rollup is
-        # therefore built but NOT transmitted to the backend today. Return
-        # False so the caller (orchestrator._finalize_optimization) does not
-        # report persistence_status="succeeded" for a submission that never
-        # left the process. Folding this rollup into the existing
-        # POST /sessions/{id}/finalize payload (session_operations.py
-        # finalize_body) is the real fix and is tracked separately; it needs
-        # backend-side schema support this SDK change cannot verify alone.
-        self._backend_client.submit_result(
-            session_id=session_id,
-            config=cast(dict[str, Any], result.best_config),
-            score=result.best_score,
-            metadata=submission_metadata,
-        )
-        logger.debug(
-            "Submitted session aggregation with overlay metrics: %s",
-            list(overlay_metrics.keys()),
-        )
-        logger.info(
-            "Session aggregation rollup for session_id=%s was built locally but "
-            "not transmitted to the backend (local-only submission path); "
-            "trial-level results and session finalize are unaffected.",
-            session_id,
-        )
-        return False
 
     def finalize_session(
         self,
         session_id: str | None,
         optimization_status: OptimizationStatus,
         certified_selection: dict[str, Any] | None = None,
+        session_aggregation: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Finalize backend session and return summary.
 
         Args:
             session_id: Backend session identifier
             optimization_status: Final optimization status
+            certified_selection: Client-attested certified-selection report.
+            session_aggregation: Content-free session-level rollup payload
+                (Traigent#1720/#1724, g2:agg-summary) built by
+                ``build_session_aggregation_payload``. Threaded into the
+                finalize request body exactly like ``certified_selection``.
 
         Returns:
             Session summary metadata (or None if backend disabled)
@@ -2019,6 +2209,7 @@ class BackendSessionManager:
                             session_id,
                             final_status == "completed",
                             certified_selection=report,
+                            session_aggregation=session_aggregation,
                         )
                     )
                 else:
@@ -2026,6 +2217,7 @@ class BackendSessionManager:
                         session_id,
                         final_status == "completed",
                         certified_selection=report,
+                        session_aggregation=session_aggregation,
                     )
 
                 if _finalize_acknowledged(result):

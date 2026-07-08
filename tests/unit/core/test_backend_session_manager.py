@@ -26,13 +26,80 @@ from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import (
     BackendSessionManager,
     BackendTrialSubmissionOutcome,
+    _bounded_label,
+    _bounded_version,
     _classify_session_creation_failure,
     _format_untracked_warning_block,
+    _sanitize_significance,
+    _sanitized_numeric_dict,
+    sanitize_session_aggregation_payload,
+    session_aggregation_echoed,
 )
 from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.function_identity import resolve_function_descriptor
+
+
+def test_trailing_newline_labels_rejected_by_fullmatch():
+    """Codex round-4 canary: Python `$` matches before a trailing newline, so
+    the bounded-label gates must use `fullmatch`. A `label\\n` must be dropped
+    from scalar labels, metric/sample keys, and significance keys alike."""
+    assert _bounded_label("aggregated_mean\n") is None
+    assert _bounded_label("aggregated_mean") == "aggregated_mean"
+    assert _sanitized_numeric_dict({"accuracy\n": 0.5, "accuracy": 0.9}) == {
+        "accuracy": 0.9
+    }
+    assert _sanitize_significance({"accuracy\n": {"n_shared_examples": 1}}) is None
+
+
+def test_sdk_version_egress_is_bounded():
+    """Codex round-5 canary: get_version() echoes TRAIGENT_FORCE_VERSION
+    verbatim, so the SDK must gate the resolved version before egress — a
+    malformed/whitespace override must be dropped, a real version kept."""
+    assert _bounded_version("x\n") is None
+    assert _bounded_version("bad version") is None
+    assert _bounded_version("0.21.0") == "0.21.0"
+    assert _bounded_version("0.21.0+abc") == "0.21.0+abc"
+
+
+def test_egress_sanitizer_bounds_caller_supplied_payload():
+    """Codex round-6 canary: finalize_session(session_aggregation=<dict>) can
+    bypass the builder, so the egress boundary re-sanitizes ANY payload. A
+    hand-crafted dict with content in scalar labels, map keys, significance,
+    and version must be stripped before the wire."""
+    malicious = {
+        "selection_mode": "aggregated_mean\nraw prompt: USER SECRET",
+        "primary_objective": "accuracy secret text",
+        "sdk_version": "bad version",
+        "metrics": {"accuracy raw example text": 0.5, "accuracy": 0.9},
+        "samples_per_config": {"SENTINEL prompt": 3, "a1b2c3d4e5f60718": 3},
+        "statistical_significance": {
+            "accuracy\n": {"raw_prompt": "SECRET"},
+            "accuracy": {
+                "winners": [0],
+                "badge_name": "accuracy",
+                "n_shared_examples": 5,
+            },
+        },
+        "best_weighted_config": {"system_prompt": "config value — allowed exception"},
+        "total_examples": 3,
+    }
+    out = sanitize_session_aggregation_payload(malicious)
+    blob = json.dumps(out)
+    assert "SECRET" not in blob
+    assert "raw prompt" not in blob
+    assert "raw example text" not in blob
+    assert out["selection_mode"] is None
+    assert out["primary_objective"] is None
+    assert out["sdk_version"] is None
+    assert set(out["metrics"]) == {"accuracy"}
+    assert set(out["samples_per_config"]) == {"a1b2c3d4e5f60718"}
+    assert set(out["statistical_significance"]) == {"accuracy"}
+    # best_weighted_config config values are the documented exception (kept).
+    assert out["best_weighted_config"] == {
+        "system_prompt": "config value — allowed exception"
+    }
 
 
 @pytest.fixture
@@ -1043,7 +1110,29 @@ class TestBackendSessionManagerFinalization:
 
         assert summary == {"status": "completed"}
         mock_backend_client.finalize_session_sync.assert_called_once_with(
-            "test-session-id", True, certified_selection=None
+            "test-session-id",
+            True,
+            certified_selection=None,
+            session_aggregation=None,
+        )
+
+    def test_finalize_session_threads_session_aggregation(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """Traigent#1720/#1724 (g2:agg-summary): session_aggregation rides
+        the same finalize call as certified_selection."""
+        payload = {"selection_mode": "aggregated_mean", "sdk_version": "0.0.0"}
+        backend_session_manager.finalize_session(
+            session_id="test-session-id",
+            optimization_status=OptimizationStatus.COMPLETED,
+            session_aggregation=payload,
+        )
+
+        mock_backend_client.finalize_session_sync.assert_called_once_with(
+            "test-session-id",
+            True,
+            certified_selection=None,
+            session_aggregation=payload,
         )
 
     def test_finalize_session_without_backend(
@@ -1066,6 +1155,64 @@ class TestBackendSessionManagerFinalization:
         )
 
         assert summary is None
+
+
+class TestSessionAggregationEchoed:
+    """Traigent#1720/#1724 (g2:agg-summary): the honest 'was this actually
+    persisted' signal — the orchestrator must only report the session
+    aggregation rollup as succeeded when the finalize response echoes it
+    back, whether the response is a dict (raw JSON / test doubles) or an
+    OptimizationFinalizationResponse dataclass (real cloud path)."""
+
+    def test_none_result_is_not_echoed(self):
+        assert session_aggregation_echoed(None) is False
+
+    def test_dict_top_level_key_is_echoed(self):
+        result = {"session_aggregation": {"selection_mode": "aggregated_mean"}}
+        assert session_aggregation_echoed(result) is True
+
+    def test_dict_nested_under_metadata_is_echoed(self):
+        result = {"metadata": {"session_aggregation": {"sdk_version": "0.0.0"}}}
+        assert session_aggregation_echoed(result) is True
+
+    def test_dict_without_session_aggregation_is_not_echoed(self):
+        result = {"status": "completed", "metadata": {"finalized_via_api": True}}
+        assert session_aggregation_echoed(result) is False
+
+    def test_non_dict_session_aggregation_value_is_not_echoed(self):
+        """A malformed (non-dict) echo must not count as confirmation."""
+        result = {"session_aggregation": "not-a-dict"}
+        assert session_aggregation_echoed(result) is False
+
+    def test_dataclass_response_metadata_is_echoed(self):
+        from traigent.cloud.models import OptimizationFinalizationResponse
+
+        response = OptimizationFinalizationResponse(
+            session_id="s-1",
+            best_config={},
+            best_metrics={},
+            total_trials=0,
+            successful_trials=0,
+            total_duration=0.0,
+            cost_savings=0.0,
+            metadata={"session_aggregation": {"selection_mode": "aggregated_mean"}},
+        )
+        assert session_aggregation_echoed(response) is True
+
+    def test_dataclass_response_without_aggregation_is_not_echoed(self):
+        from traigent.cloud.models import OptimizationFinalizationResponse
+
+        response = OptimizationFinalizationResponse(
+            session_id="s-1",
+            best_config={},
+            best_metrics={},
+            total_trials=0,
+            successful_trials=0,
+            total_duration=0.0,
+            cost_savings=0.0,
+            metadata={"finalized_via_api": True},
+        )
+        assert session_aggregation_echoed(response) is False
 
 
 class TestBackendSessionManagerWarningSuppression:
@@ -1379,31 +1526,112 @@ class TestBackendSessionManagerMetadata:
         assert result.metadata == {}
 
 
-class TestStatisticalSignificanceWiring:
-    """Verify significance data flows through submit_session_aggregation."""
+class TestBuildSessionAggregationPayload:
+    """Traigent#1720/#1724 (g2:agg-summary): the pure allowlist builder that
+    replaces the old submit_session_aggregation local-only shim path."""
 
     @pytest.fixture(autouse=True)
     def _backend_enabled_for_aggregation(self, monkeypatch):
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
 
-    def test_significance_included_in_aggregation_payload(
-        self, mock_backend_client, mock_optimizer, objective_schema
-    ):
-        """Significance metadata propagates to backend submit_result call."""
-        # Non-edge config so submit_session_aggregation actually submits
+    _ALLOWED_KEYS = {
+        "selection_mode",
+        "primary_objective",
+        "metrics",
+        "samples_per_config",
+        "total_examples",
+        "trials_completed",
+        "successful_trials",
+        "success_rate",
+        "best_weighted_config",
+        "best_weighted_score",
+        "statistical_significance",
+        "execution_time",
+        "sdk_version",
+    }
+
+    def _manager(self, mock_backend_client, mock_optimizer, objective_schema, **kwargs):
         config = TraigentConfig()
         config.execution_mode = "hybrid"
-
-        manager = BackendSessionManager(
+        return BackendSessionManager(
             backend_client=mock_backend_client,
             traigent_config=config,
             objectives=["accuracy"],
             objective_schema=objective_schema,
             optimizer=mock_optimizer,
-            optimization_id="test-sig-wiring",
+            optimization_id="test-agg-builder",
             optimization_status=OptimizationStatus.COMPLETED,
+            **kwargs,
         )
+
+    def test_only_allowlisted_keys_present(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """No key beyond the documented allowlist can appear in the payload."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert set(payload.keys()) == self._ALLOWED_KEYS
+
+    def test_content_bearing_key_in_session_summary_does_not_leak(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Fail-closed regression: session_summary is never forwarded verbatim.
+
+        An extra content-bearing key (e.g. a raw prompt) injected into
+        session_summary must NOT survive into the built payload — only the
+        named allowlist fields are ever read out of it.
+        """
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+                "raw_prompt": "the user's secret system prompt content",
+                "example_content": {"question": "leaked example text"},
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert set(payload.keys()) == self._ALLOWED_KEYS
+        blob = json.dumps(payload)
+        assert "raw_prompt" not in blob
+        assert "secret system prompt" not in blob
+        assert "example_content" not in blob
+        assert "leaked example text" not in blob
+
+    def test_significance_included_in_aggregation_payload(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Significance metadata propagates into the built payload."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
 
         sig_data = {
             "accuracy": {
@@ -1429,17 +1657,154 @@ class TestStatisticalSignificanceWiring:
             "statistical_significance": sig_data,
         }
 
-        manager.submit_session_aggregation(result, "test-session-id")
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
 
-        mock_backend_client.submit_result.assert_called_once()
-        call_kwargs = mock_backend_client.submit_result.call_args
-        payload_metadata = call_kwargs.kwargs.get(
-            "metadata", call_kwargs[1].get("metadata", {})
-        )
-        summary_stats = payload_metadata.get("summary_stats", {})
-        inner_metadata = summary_stats.get("metadata", {})
-        assert "statistical_significance" in inner_metadata
-        assert inner_metadata["statistical_significance"] == sig_data
+        assert payload is not None
+        assert payload["statistical_significance"] == sig_data
+
+    def test_significance_content_leak_is_sanitized(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex blocker canary: statistical_significance must be sanitized to
+        the fixed numeric badge allowlist, never forwarded as an opaque dict.
+
+        A nested raw_prompt/llm_response smuggled in metadata alongside the
+        legitimate badge fields must not survive onto the built payload.
+        """
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        sentinel = "SENTINEL-PII-8842"
+        sig_data = {
+            "accuracy": {
+                "raw_prompt": sentinel,
+                "llm_response": "secret",
+                "winners": [0],
+                "top_group": [0],
+                "rest_group": [1],
+                "badge_name": "accuracy",
+                "n_shared_examples": 5,
+            }
+        }
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+            "statistical_significance": sig_data,
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        sanitized = payload["statistical_significance"]
+        assert sanitized == {
+            "accuracy": {
+                "winners": [0],
+                "top_group": [0],
+                "rest_group": [1],
+                "badge_name": "accuracy",
+                "n_shared_examples": 5,
+            }
+        }
+        blob = json.dumps(payload)
+        assert sentinel not in blob
+        assert "raw_prompt" not in blob
+        assert "llm_response" not in blob
+        assert "secret" not in blob
+
+    def test_content_bearing_map_keys_are_dropped(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex round-2 canary: content must not be smuggled into a KEY.
+
+        The significance outer objective key, metrics keys, and
+        samples_per_config keys are all bounded labels — a prompt/output
+        string placed in the KEY position (not just a nested value) must be
+        dropped, never forwarded onto the wire.
+        """
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        sentinel = "SENTINEL-PII-8842 raw prompt content"
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {sentinel: 0.5, "accuracy": 0.95},
+                "samples_per_config": {sentinel: 3, "a1b2c3d4e5f60718": 3},
+            },
+            "statistical_significance": {
+                sentinel: {
+                    "winners": [0],
+                    "badge_name": "accuracy",
+                    "n_shared_examples": 1,
+                },
+                "accuracy": {
+                    "winners": [0],
+                    "badge_name": "accuracy",
+                    "n_shared_examples": 5,
+                },
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        # Clean keys survive; the sentinel key is dropped from every map.
+        assert "accuracy" in payload["metrics"]
+        assert "a1b2c3d4e5f60718" in payload["samples_per_config"]
+        assert set(payload["statistical_significance"]) == {"accuracy"}
+        assert sentinel not in json.dumps(payload)
+
+    def test_content_bearing_scalar_labels_are_dropped(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex round-3 canary: scalar label fields are bounded labels too.
+
+        A prompt/output string (with whitespace) placed in selection_mode or
+        primary_objective must be dropped to None, never forwarded.
+        """
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        sentinel = "SENTINEL-PII-8842 raw prompt content"
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "selection_mode": sentinel,
+                "primary_objective": sentinel,
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"a1b2c3d4e5f60718": 5},
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert payload["selection_mode"] is None
+        assert payload["primary_objective"] is None
+        assert sentinel not in json.dumps(payload)
+        # A legitimate short label still survives.
+        result.metadata["session_summary"]["selection_mode"] = "aggregated_mean"
+        payload2 = manager.build_session_aggregation_payload(result, "s2")
+        assert payload2["selection_mode"] == "aggregated_mean"
 
     def test_aggregation_summary_uses_sdk_version_resolver(
         self,
@@ -1448,20 +1813,9 @@ class TestStatisticalSignificanceWiring:
         objective_schema,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """Session aggregation summary metadata uses the SDK version resolver."""
+        """Built payload's sdk_version uses the SDK version resolver."""
         monkeypatch.setenv("TRAIGENT_FORCE_VERSION", "7.6.5")
-        config = TraigentConfig()
-        config.execution_mode = "hybrid"
-
-        manager = BackendSessionManager(
-            backend_client=mock_backend_client,
-            traigent_config=config,
-            objectives=["accuracy"],
-            objective_schema=objective_schema,
-            optimizer=mock_optimizer,
-            optimization_id="test-version-wiring",
-            optimization_status=OptimizationStatus.COMPLETED,
-        )
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
 
         result = Mock(spec=OptimizationResult)
         result.trials = []
@@ -1477,82 +1831,53 @@ class TestStatisticalSignificanceWiring:
             },
         }
 
-        manager.submit_session_aggregation(result, "test-session-id")
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
 
-        call_kwargs = mock_backend_client.submit_result.call_args
-        payload_metadata = call_kwargs.kwargs.get(
-            "metadata", call_kwargs[1].get("metadata", {})
-        )
-        summary_stats = payload_metadata.get("summary_stats", {})
-        inner_metadata = summary_stats.get("metadata", {})
-        assert inner_metadata["sdk_version"] == "7.6.5"
+        assert payload is not None
+        assert payload["sdk_version"] == "7.6.5"
 
-    def test_strategy_preset_metadata_included_in_aggregation_payload(
+    def test_totals_and_samples_computed_from_session_summary(
         self, mock_backend_client, mock_optimizer, objective_schema
     ):
-        """Aggregate submission includes the schema-shaped strategy_preset payload."""
-        config = TraigentConfig()
-        config.execution_mode = "hybrid"
-        strategy_preset_metadata = {
-            "preset_name": "quality_floor_min_cost",
-            "params": {"floor": 0.82},
-            "selection_grade": "advisory",
-            "selection_rationale": (
-                "Selected the lowest-cost completed trial satisfying the preset "
-                "quality floor."
-            ),
-        }
+        """total_examples/samples_per_config are derived from session_summary,
+        trials_completed/successful_trials from result.trials."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
 
-        manager = BackendSessionManager(
-            backend_client=mock_backend_client,
-            traigent_config=config,
-            objectives=["accuracy"],
-            objective_schema=objective_schema,
-            optimizer=mock_optimizer,
-            optimization_id="test-preset-aggregation",
-            optimization_status=OptimizationStatus.COMPLETED,
-            strategy_preset_metadata=strategy_preset_metadata,
-        )
+        trial_a = Mock(is_successful=True)
+        trial_b = Mock(is_successful=False)
 
         result = Mock(spec=OptimizationResult)
-        result.trials = []
+        result.trials = [trial_a, trial_b]
         result.best_config = {"model": "gpt-4o"}
         result.best_score = 0.95
         result.duration = 10.0
-        result.success_rate = 1.0
+        result.success_rate = 0.5
         result.metrics = {"accuracy": 0.95}
         result.metadata = {
             "session_summary": {
+                "selection_mode": "aggregated_mean",
+                "primary_objective": "accuracy",
                 "metrics": {"accuracy": 0.95},
-                "samples_per_config": {"gpt-4o": 5},
+                "samples_per_config": {"gpt-4o": 5, "gpt-4o-mini": 3},
             },
         }
 
-        manager.submit_session_aggregation(result, "test-session-id")
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
 
-        mock_backend_client.submit_result.assert_called_once()
-        call_kwargs = mock_backend_client.submit_result.call_args
-        payload_metadata = call_kwargs.kwargs.get(
-            "metadata", call_kwargs[1].get("metadata", {})
-        )
-        assert payload_metadata["strategy_preset"] == strategy_preset_metadata
+        assert payload is not None
+        assert payload["selection_mode"] == "aggregated_mean"
+        assert payload["primary_objective"] == "accuracy"
+        assert payload["samples_per_config"] == {"gpt-4o": 5, "gpt-4o-mini": 3}
+        assert payload["total_examples"] == 8
+        assert payload["trials_completed"] == 2
+        assert payload["successful_trials"] == 1
+        assert payload["success_rate"] == 0.5
 
     def test_aggregation_works_without_significance(
         self, mock_backend_client, mock_optimizer, objective_schema
     ):
-        """Aggregation still works when no significance data is present."""
-        config = TraigentConfig()
-        config.execution_mode = "hybrid"
-
-        manager = BackendSessionManager(
-            backend_client=mock_backend_client,
-            traigent_config=config,
-            objectives=["accuracy"],
-            objective_schema=objective_schema,
-            optimizer=mock_optimizer,
-            optimization_id="test-no-sig",
-            optimization_status=OptimizationStatus.COMPLETED,
-        )
+        """Built payload has statistical_significance=None when absent."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
 
         result = Mock(spec=OptimizationResult)
         result.trials = []
@@ -1568,40 +1893,18 @@ class TestStatisticalSignificanceWiring:
             },
         }
 
-        manager.submit_session_aggregation(result, "test-session-id")
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
 
-        mock_backend_client.submit_result.assert_called_once()
-        call_kwargs = mock_backend_client.submit_result.call_args
-        payload_metadata = call_kwargs.kwargs.get(
-            "metadata", call_kwargs[1].get("metadata", {})
-        )
-        summary_stats = payload_metadata.get("summary_stats", {})
-        inner_metadata = summary_stats.get("metadata", {})
-        assert "statistical_significance" not in inner_metadata
+        assert payload is not None
+        assert payload["statistical_significance"] is None
 
-    def test_aggregation_reports_not_persisted_when_transmitted(
+    def test_no_shim_call_for_aggregation(
         self, mock_backend_client, mock_optimizer, objective_schema
     ):
-        """Traigent#1724: the AGG_SUMMARY rollup must self-report as not persisted.
-
-        BackendIntegratedClient.submit_result is a local-only compatibility
-        shim (writes local_storage, bumps a counter) — it never reaches the
-        backend. submit_session_aggregation must return False (not None) so
-        callers cannot mistake a local-only no-op for a successful remote
-        submission.
-        """
-        config = TraigentConfig()
-        config.execution_mode = "hybrid"
-
-        manager = BackendSessionManager(
-            backend_client=mock_backend_client,
-            traigent_config=config,
-            objectives=["accuracy"],
-            objective_schema=objective_schema,
-            optimizer=mock_optimizer,
-            optimization_id="test-agg-not-persisted",
-            optimization_status=OptimizationStatus.COMPLETED,
-        )
+        """Regression guard: the pure builder must never call the local-only
+        submit_result shim (Traigent#1724 — that call never left the process
+        and is the exact bug this fix removes)."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
 
         result = Mock(spec=OptimizationResult)
         result.trials = []
@@ -1617,35 +1920,157 @@ class TestStatisticalSignificanceWiring:
             },
         }
 
-        persisted = manager.submit_session_aggregation(result, "test-session-id")
+        manager.build_session_aggregation_payload(result, "test-session-id")
 
-        mock_backend_client.submit_result.assert_called_once()
-        assert persisted is False
+        mock_backend_client.submit_result.assert_not_called()
 
     def test_aggregation_skipped_returns_none(
         self, mock_backend_client, mock_optimizer, objective_schema
     ):
         """No session_summary => aggregation is a legitimate skip, not degraded."""
-        config = TraigentConfig()
-        config.execution_mode = "hybrid"
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
 
+        result = Mock(spec=OptimizationResult)
+        result.metadata = {}
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        mock_backend_client.submit_result.assert_not_called()
+        assert payload is None
+
+    def test_aggregation_skipped_in_local_mode(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Local-only execution mode must skip building the payload."""
+        config = TraigentConfig()
+        config.execution_mode = "local"
         manager = BackendSessionManager(
             backend_client=mock_backend_client,
             traigent_config=config,
             objectives=["accuracy"],
             objective_schema=objective_schema,
             optimizer=mock_optimizer,
-            optimization_id="test-agg-skipped",
+            optimization_id="test-agg-local",
             optimization_status=OptimizationStatus.COMPLETED,
         )
 
         result = Mock(spec=OptimizationResult)
-        result.metadata = {}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+        }
 
-        persisted = manager.submit_session_aggregation(result, "test-session-id")
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
 
-        mock_backend_client.submit_result.assert_not_called()
-        assert persisted is None
+        assert payload is None
+
+    def test_privacy_enabled_omits_best_weighted_config(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex blocker canary: privacy mode must omit best_weighted_config
+        entirely rather than forwarding the winning config verbatim.
+
+        Reproduces Codex's finding that a tuned system_prompt/persona in the
+        winning weighted config survived finalize under
+        ``TraigentConfig(privacy_enabled=True)``.
+        """
+        config = TraigentConfig()
+        config.execution_mode = "hybrid"
+        config.privacy_enabled = True
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-agg-privacy",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        sentinel = "SENTINEL-PII-8842"
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+            "weighted_results": {
+                "best_weighted_config": {
+                    "system_prompt": sentinel,
+                    "temperature": 0.1,
+                },
+                "best_weighted_score": 0.9,
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert payload["best_weighted_config"] is None
+        blob = json.dumps(payload)
+        assert sentinel not in blob
+
+    def test_non_privacy_keeps_best_weighted_config(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Non-privacy runs keep best_weighted_config on the wire — the
+        documented inherent exception (config dict is allowed there)."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+            "weighted_results": {
+                "best_weighted_config": {
+                    "system_prompt": "some prompt",
+                    "temperature": 0.1,
+                },
+                "best_weighted_score": 0.9,
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert payload["best_weighted_config"] == {
+            "system_prompt": "some prompt",
+            "temperature": 0.1,
+        }
+
+    def test_aggregation_skipped_without_session_id(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """No session_id => skip (matches the old shim's skip condition)."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        result = Mock(spec=OptimizationResult)
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, None)
+
+        assert payload is None
 
 
 class TestHandleSessionCreationResult:

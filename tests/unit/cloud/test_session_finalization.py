@@ -227,6 +227,96 @@ class TestSessionFinalization:
         assert "warm_start_transfer" not in response.metadata
 
     @pytest.mark.asyncio
+    async def test_finalize_session_surfaces_backend_session_aggregation(self, client):
+        """Traigent#1720/#1724 (g2:agg-summary): a top-level session_aggregation
+        echoed back by the backend must be carried onto the SDK response
+        metadata — this is the orchestrator's honest "was this persisted"
+        signal (session_aggregation_echoed)."""
+        session_id = "test-session-agg"
+        client.session_bridge.create_session_mapping(
+            session_id=session_id,
+            experiment_id="exp-agg",
+            experiment_run_id="run-agg",
+            function_name="agg_func",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+        agg = {
+            "selection_mode": "aggregated_mean",
+            "primary_objective": "accuracy",
+            "metrics": {"accuracy": 0.9},
+            "samples_per_config": {"cfg_hash_1": 5},
+            "total_examples": 5,
+            "trials_completed": 3,
+            "successful_trials": 3,
+            "success_rate": 1.0,
+            "best_weighted_config": None,
+            "best_weighted_score": None,
+            "statistical_significance": None,
+            "execution_time": 12.5,
+            "sdk_version": "0.0.0",
+        }
+        backend_payload = {
+            "best_config": {"model": "gpt-4o"},
+            "best_metrics": {"accuracy": 0.9},
+            "session_aggregation": agg,
+        }
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value=backend_payload)
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            response = await client._session_ops.finalize_session(session_id)
+
+        assert response.metadata["session_aggregation"] == agg
+
+        from traigent.core.backend_session_manager import session_aggregation_echoed
+
+        assert session_aggregation_echoed(response) is True
+
+    @pytest.mark.asyncio
+    async def test_finalize_session_omits_session_aggregation_when_absent(self, client):
+        """No session_aggregation in the backend response -> key absent (no
+        synthetic echo) and session_aggregation_echoed is False."""
+        session_id = "test-session-no-agg"
+        client.session_bridge.create_session_mapping(
+            session_id=session_id,
+            experiment_id="exp-no-agg",
+            experiment_run_id="run-no-agg",
+            function_name="no_agg_func",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"stop_reason": "timeout", "metadata": {}}
+        )
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            response = await client._session_ops.finalize_session(session_id)
+
+        assert "session_aggregation" not in response.metadata
+
+        from traigent.core.backend_session_manager import session_aggregation_echoed
+
+        assert session_aggregation_echoed(response) is False
+
+    @pytest.mark.asyncio
     async def test_finalize_session_partial_summary_lists_preserved_fields(
         self, client
     ):
