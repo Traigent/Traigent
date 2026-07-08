@@ -230,16 +230,28 @@ def jwt_development_mode(monkeypatch, request):
     # when their gate is exported, e.g. by the live-contract CI lane) must not
     # have offline forced on either — this autouse monkeypatch would otherwise
     # override the lane's environment and fail those runs with "backend egress
-    # is disabled (offline)".
+    # is disabled (offline)". SCOPING IS LOAD-BEARING: the carve-out requires
+    # BOTH the env gate AND the test to live in a known live-test module — a
+    # stray exported gate variable in a developer shell must NOT flip offline
+    # mode off for the rest of the suite (that would silently no-op the
+    # backend-egress guards in unit tests).
     _live_gates = (
         "TRAIGENT_LIVE_SYNC_E2E",
         "TRAIGENT_HYBRID_LIVE",
         "TRAIGENT_BACKEND_LIVE",
         "TRAIGENT_CTD_LIVE",
     )
-    if "tests/unit/cloud/" in _test_path(request.node) or any(
-        os.getenv(gate) for gate in _live_gates
-    ):
+    _live_test_paths = (
+        "tests/cloud/test_sync_live_contract.py",
+        "tests/integration/backend/test_hybrid_session_live.py",
+        "tests/integration/backend/test_backend_minimal.py",
+        "tests/integration/test_ctd_execution_modes_live.py",
+    )
+    _node_path = _test_path(request.node)
+    _is_gated_live_test = any(
+        marker in _node_path for marker in _live_test_paths
+    ) and any(os.getenv(gate) for gate in _live_gates)
+    if "tests/unit/cloud/" in _node_path or _is_gated_live_test:
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     else:
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")

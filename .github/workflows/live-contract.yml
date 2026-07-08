@@ -10,6 +10,7 @@ on:
       - "traigent/core/backend_session_manager.py"
       - "tests/cloud/test_sync_live_contract.py"
       - "tests/integration/backend/**"
+      - "tests/conftest.py"
       - ".github/workflows/live-contract.yml"
 
 permissions:
@@ -58,6 +59,18 @@ jobs:
           # cannot read sibling private repositories.
           token: ${{ secrets.LIVE_CONTRACT_CHECKOUT_TOKEN || secrets.GITHUB_TOKEN }}
 
+      - name: Verify backend provides the CI mint script
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          # Fail fast with an actionable message instead of booting the whole
+          # stack and dying at key-mint time. The script ships in the companion
+          # TraigentBackend PR (ci/ephemeral-key-fixture); this lane requires
+          # that PR to be merged to develop first.
+          if [ ! -f scripts/ci/mint_ci_api_key.py ]; then
+            echo "::error::TraigentBackend@develop lacks scripts/ci/mint_ci_api_key.py — merge the companion backend PR (ci: ephemeral CI API key) before enabling this lane."
+            exit 1
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -72,6 +85,7 @@ jobs:
             echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
             echo "SECRET_KEY=$(openssl rand -hex 32)"
             echo "TRAIGENT_MASTER_KEY=$(openssl rand -hex 32)"
+            echo "TRAIGENT_ID_SECRET=$(openssl rand -hex 32)"
           } >> "$GITHUB_ENV"
 
       - name: Start dockerized backend
