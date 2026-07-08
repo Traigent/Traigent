@@ -226,8 +226,20 @@ def jwt_development_mode(monkeypatch, request):
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     # Most tests run fully offline. Cloud unit tests exercise mocked transport
     # boundaries, so keep them online unless an individual test opts into
-    # offline mode explicitly.
-    if "tests/unit/cloud/" in _test_path(request.node):
+    # offline mode explicitly. Env-gated LIVE-contract tests (which only run
+    # when their gate is exported, e.g. by the live-contract CI lane) must not
+    # have offline forced on either — this autouse monkeypatch would otherwise
+    # override the lane's environment and fail those runs with "backend egress
+    # is disabled (offline)".
+    _live_gates = (
+        "TRAIGENT_LIVE_SYNC_E2E",
+        "TRAIGENT_HYBRID_LIVE",
+        "TRAIGENT_BACKEND_LIVE",
+        "TRAIGENT_CTD_LIVE",
+    )
+    if "tests/unit/cloud/" in _test_path(request.node) or any(
+        os.getenv(gate) for gate in _live_gates
+    ):
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     else:
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
