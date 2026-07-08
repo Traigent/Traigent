@@ -1501,6 +1501,64 @@ class TestBuildSessionAggregationPayload:
         assert payload is not None
         assert payload["statistical_significance"] == sig_data
 
+    def test_significance_content_leak_is_sanitized(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex blocker canary: statistical_significance must be sanitized to
+        the fixed numeric badge allowlist, never forwarded as an opaque dict.
+
+        A nested raw_prompt/llm_response smuggled in metadata alongside the
+        legitimate badge fields must not survive onto the built payload.
+        """
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        sentinel = "SENTINEL-PII-8842"
+        sig_data = {
+            "accuracy": {
+                "raw_prompt": sentinel,
+                "llm_response": "secret",
+                "winners": [0],
+                "top_group": [0],
+                "rest_group": [1],
+                "badge_name": "accuracy",
+                "n_shared_examples": 5,
+            }
+        }
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+            "statistical_significance": sig_data,
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        sanitized = payload["statistical_significance"]
+        assert sanitized == {
+            "accuracy": {
+                "winners": [0],
+                "top_group": [0],
+                "rest_group": [1],
+                "badge_name": "accuracy",
+                "n_shared_examples": 5,
+            }
+        }
+        blob = json.dumps(payload)
+        assert sentinel not in blob
+        assert "raw_prompt" not in blob
+        assert "llm_response" not in blob
+        assert "secret" not in blob
+
     def test_aggregation_summary_uses_sdk_version_resolver(
         self,
         mock_backend_client,
@@ -1660,6 +1718,94 @@ class TestBuildSessionAggregationPayload:
         payload = manager.build_session_aggregation_payload(result, "test-session-id")
 
         assert payload is None
+
+    def test_privacy_enabled_omits_best_weighted_config(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Codex blocker canary: privacy mode must omit best_weighted_config
+        entirely rather than forwarding the winning config verbatim.
+
+        Reproduces Codex's finding that a tuned system_prompt/persona in the
+        winning weighted config survived finalize under
+        ``TraigentConfig(privacy_enabled=True)``.
+        """
+        config = TraigentConfig()
+        config.execution_mode = "hybrid"
+        config.privacy_enabled = True
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-agg-privacy",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        sentinel = "SENTINEL-PII-8842"
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+            "weighted_results": {
+                "best_weighted_config": {
+                    "system_prompt": sentinel,
+                    "temperature": 0.1,
+                },
+                "best_weighted_score": 0.9,
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert payload["best_weighted_config"] is None
+        blob = json.dumps(payload)
+        assert sentinel not in blob
+
+    def test_non_privacy_keeps_best_weighted_config(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Non-privacy runs keep best_weighted_config on the wire — the
+        documented inherent exception (config dict is allowed there)."""
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+            "weighted_results": {
+                "best_weighted_config": {
+                    "system_prompt": "some prompt",
+                    "temperature": 0.1,
+                },
+                "best_weighted_score": 0.9,
+            },
+        }
+
+        payload = manager.build_session_aggregation_payload(result, "test-session-id")
+
+        assert payload is not None
+        assert payload["best_weighted_config"] == {
+            "system_prompt": "some prompt",
+            "temperature": 0.1,
+        }
 
     def test_aggregation_skipped_without_session_id(
         self, mock_backend_client, mock_optimizer, objective_schema

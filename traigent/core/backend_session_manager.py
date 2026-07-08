@@ -169,6 +169,39 @@ def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
     }
 
 
+_SIG_BADGE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
+
+
+def _sanitize_significance(raw: Any) -> dict[str, Any] | None:
+    """Fail-closed allowlist for statistical_significance (content-free).
+
+    Keeps only the fixed numeric badge shape per objective; drops any nested
+    key (e.g. a prompt/output/LLM response) that isn't in the allowlist.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    for obj_name, entry in raw.items():
+        if not isinstance(obj_name, str) or not isinstance(entry, dict):
+            continue
+        clean: dict[str, Any] = {}
+        for list_key in ("winners", "top_group", "rest_group"):
+            v = entry.get(list_key)
+            if isinstance(v, list) and all(
+                isinstance(i, int) and not isinstance(i, bool) for i in v
+            ):
+                clean[list_key] = [int(i) for i in v]
+        n = entry.get("n_shared_examples")
+        if isinstance(n, int) and not isinstance(n, bool):
+            clean["n_shared_examples"] = int(n)
+        badge = entry.get("badge_name")
+        if isinstance(badge, str) and _SIG_BADGE_LABEL.match(badge):
+            clean["badge_name"] = badge
+        if clean:
+            out[obj_name] = clean
+    return out or None
+
+
 def session_aggregation_echoed(result: Any) -> bool:
     """True iff a finalize response echoes back ``session_aggregation``.
 
@@ -1907,6 +1940,12 @@ class BackendSessionManager:
         best_weighted_config = weighted_results.get("best_weighted_config")
         if not isinstance(best_weighted_config, dict):
             best_weighted_config = None
+        # Privacy mode omits the winning config from the rollup, mirroring
+        # trial-config redaction (see trial_operations._is_privacy_enabled):
+        # a tuned system_prompt/persona in the winning config must never
+        # ride the wire when the run is privacy-enabled.
+        if bool(getattr(self._traigent_config, "privacy_enabled", False)):
+            best_weighted_config = None
 
         best_weighted_score = weighted_results.get("best_weighted_score")
         if not isinstance(best_weighted_score, (int, float)) or isinstance(
@@ -1914,13 +1953,11 @@ class BackendSessionManager:
         ):
             best_weighted_score = None
 
-        statistical_significance = (
+        statistical_significance = _sanitize_significance(
             result.metadata.get("statistical_significance")
             if hasattr(result, "metadata") and result.metadata
             else None
         )
-        if not isinstance(statistical_significance, dict):
-            statistical_significance = None
 
         execution_time = getattr(result, "duration", None)
         if not isinstance(execution_time, (int, float)) or isinstance(
