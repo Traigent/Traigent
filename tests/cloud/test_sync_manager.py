@@ -242,10 +242,10 @@ class TestSyncManager:
         assert BACKEND_NAME_PATTERN.fullmatch(dataset_metadata["name"])
         assert isinstance(dataset_metadata["size"], int)
 
-        # native_local tracking is what makes the empty-dataset import work.
+        # backend_guided tracking is what makes the empty-dataset import work.
         assert session_create["optimization_strategy"] == {
             "algorithm": "optuna",
-            "tracking_mode": "native_local",
+            "tracking_mode": "backend_guided",
         }
         assert session_create["metadata"]["source"] == "offline_sync"
         assert session_create["metadata"]["function_name"] == "test_llm_function"
@@ -292,7 +292,7 @@ class TestSyncManager:
         assert ":" not in dataset_name
         assert session_create["dataset_metadata"]["privacy_mode"] is True
         assert (
-            session_create["optimization_strategy"]["tracking_mode"] == "native_local"
+            session_create["optimization_strategy"]["tracking_mode"] == "backend_guided"
         )
 
         configuration_run = traigent_data["configuration_runs"][0]
@@ -394,7 +394,17 @@ class TestSyncManager:
 
         mock_post.side_effect = [
             create_session_response(),
-            *[backend_response(payload={"id": f"result-{i}"}) for i in range(4)],
+            *[
+                item
+                for i in range(4)
+                for item in (
+                    backend_response(
+                        status_code=200,
+                        payload={"suggestion": {"trial_id": f"bt-{i}"}},
+                    ),
+                    backend_response(payload={"id": f"result-{i}"}),
+                )
+            ],
             backend_response(payload={}),
         ]
 
@@ -411,14 +421,18 @@ class TestSyncManager:
         assert result["cloud_experiment_run_id"] == "experiment-run-id"
         assert "cloud_url" in result
 
-        # 1 create + 4 result posts + 1 finalize.
-        assert mock_post.call_count == 6
+        # 1 create + 4 * (next-trial + result) + 1 finalize.
+        assert mock_post.call_count == 10
         base = self.sync_manager.base_url
         assert [call.args[0] for call in mock_post.call_args_list] == [
             f"{base}/sessions",
+            f"{base}/sessions/sess-id/next-trial",
             f"{base}/sessions/sess-id/results",
+            f"{base}/sessions/sess-id/next-trial",
             f"{base}/sessions/sess-id/results",
+            f"{base}/sessions/sess-id/next-trial",
             f"{base}/sessions/sess-id/results",
+            f"{base}/sessions/sess-id/next-trial",
             f"{base}/sessions/sess-id/results",
             f"{base}/sessions/sess-id/finalize",
         ]
@@ -431,7 +445,17 @@ class TestSyncManager:
         self.test_session = self._create_test_session()
         mock_post.side_effect = [
             create_session_response(project_id="proj-1", tenant_id="tenant-1"),
-            *[backend_response(payload={"id": f"result-{i}"}) for i in range(4)],
+            *[
+                item
+                for i in range(4)
+                for item in (
+                    backend_response(
+                        status_code=200,
+                        payload={"suggestion": {"trial_id": f"bt-{i}"}},
+                    ),
+                    backend_response(payload={"id": f"result-{i}"}),
+                )
+            ],
             backend_response(payload={}),
         ]
 
@@ -460,6 +484,10 @@ class TestSyncManager:
             self.sync_manager._session.post = Mock(
                 side_effect=[
                     create_session_response(),
+                    backend_response(
+                        status_code=200,
+                        payload={"suggestion": {"trial_id": "bt-1"}},
+                    ),
                     backend_response(payload={"id": "result-id"}),
                     backend_response(payload={}),
                 ]
@@ -470,12 +498,13 @@ class TestSyncManager:
             self.sync_manager._session.post = original_post
 
         assert result["status"] == "success"
-        assert post_mock.call_count == 3
+        assert post_mock.call_count == 4
 
         calls = post_mock.call_args_list
         base = self.sync_manager.base_url
         assert [call.args[0] for call in calls] == [
             f"{base}/sessions",
+            f"{base}/sessions/sess-id/next-trial",
             f"{base}/sessions/sess-id/results",
             f"{base}/sessions/sess-id/finalize",
         ]
@@ -489,11 +518,13 @@ class TestSyncManager:
         assert ":" not in create_payload["dataset_metadata"]["name"]
         assert create_payload["dataset_metadata"]["privacy_mode"] is True
         assert (
-            create_payload["optimization_strategy"]["tracking_mode"] == "native_local"
+            create_payload["optimization_strategy"]["tracking_mode"] == "backend_guided"
         )
 
-        # Result body: {trial_id, config, status, metrics} with cost measures.
-        result_payload = calls[1].kwargs["json"]
+        # Result body: {trial_id, config, status, metrics} with cost measures,
+        # bound to the backend-minted trial id from /next-trial.
+        result_payload = calls[2].kwargs["json"]
+        assert result_payload["trial_id"] == "bt-1"
         assert result_payload["config"] == {"model": "gpt-test", "temperature": 0.2}
         assert result_payload["status"] == "COMPLETED"
         metrics = result_payload["metrics"]
@@ -505,7 +536,7 @@ class TestSyncManager:
         assert metrics["score"] == 0.88
 
         # Finalize body: content-free reason + experiment_run_id.
-        finalize_payload = calls[2].kwargs["json"]
+        finalize_payload = calls[3].kwargs["json"]
         assert finalize_payload == {
             "reason": "offline_sync_finalization",
             "experiment_run_id": "experiment-run-id",
@@ -580,9 +611,22 @@ class TestSyncManager:
         """Test successfully syncing all sessions."""
         # Create test session for this test
         self.test_session = self._create_test_session()
-        # Every POST (create + results + finalize) succeeds; the create response
-        # carries the session_id used to route results/finalize.
-        mock_post.return_value = create_session_response()
+        # Every POST (create + next-trial + results + finalize) succeeds; the
+        # create response carries the session_id used to route the rest, and each
+        # /next-trial mints a backend trial slot.
+        slots = iter(f"bt-{i}" for i in range(1000))
+
+        def route(url, json=None, timeout=None):
+            if url.endswith("/next-trial"):
+                return backend_response(
+                    status_code=200,
+                    payload={"suggestion": {"trial_id": next(slots)}},
+                )
+            if url.endswith("/sessions"):
+                return create_session_response()
+            return backend_response(payload={})
+
+        mock_post.side_effect = route
 
         result = self.sync_manager.sync_all_sessions(dry_run=False)
 
@@ -603,10 +647,18 @@ class TestSyncManager:
         storage = self.sync_manager.storage
         storage.finalize_session(storage.create_session("failed_function"), "completed")
 
+        slots = iter(f"bt-{i}" for i in range(1000))
+
         def route(url, json=None, timeout=None):
             # Fail only the create POST for the "failed_function" session; every
-            # other POST (creates, results, finalize) succeeds. Keyed off the
-            # request body so it is independent of session iteration order.
+            # other POST (creates, next-trial, results, finalize) succeeds. Keyed
+            # off the request body so it is independent of session iteration
+            # order.
+            if url.endswith("/next-trial"):
+                return backend_response(
+                    status_code=200,
+                    payload={"suggestion": {"trial_id": next(slots)}},
+                )
             if url.endswith("/sessions"):
                 if json.get("function_name") == "failed_function":
                     return backend_response(status_code=400, text="Bad Request")
@@ -717,8 +769,20 @@ class TestSyncManager:
         ]
         recorded: list[tuple[str, str | None]] = []
 
+        slots = iter(["bt-1", "bt-2"])
+
+        def route(url, json=None, timeout=None):
+            # Each trial first allocates a backend slot via /next-trial, then the
+            # result POST binds to that backend-minted id.
+            if url.endswith("/next-trial"):
+                return backend_response(
+                    status_code=200,
+                    payload={"suggestion": {"trial_id": next(slots)}},
+                )
+            return backend_response(payload={"id": "result-x"})
+
         with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_post.return_value = backend_response(payload={"id": "result-x"})
+            mock_post.side_effect = route
 
             result = self.sync_manager._sync_session_results(
                 "sess-id",
@@ -730,20 +794,30 @@ class TestSyncManager:
         assert result["synced"] == 2
         assert result["skipped"] == 0
         assert result["errors"] == []
-        assert mock_post.call_count == 2
+        # 2 trials * (next-trial + result).
+        assert mock_post.call_count == 4
 
-        first_call = mock_post.call_args_list[0]
-        assert (
-            first_call.args[0]
-            == f"{self.sync_manager.base_url}/sessions/sess-id/results"
-        )
-        assert first_call.kwargs["json"] == {
-            "trial_id": "t0",
+        base = self.sync_manager.base_url
+        # Per trial the flow interleaves /next-trial then /results.
+        assert [call.args[0] for call in mock_post.call_args_list] == [
+            f"{base}/sessions/sess-id/next-trial",
+            f"{base}/sessions/sess-id/results",
+            f"{base}/sessions/sess-id/next-trial",
+            f"{base}/sessions/sess-id/results",
+        ]
+        result_calls = [
+            call
+            for call in mock_post.call_args_list
+            if call.args[0].endswith("/results")
+        ]
+        # The first result binds to the backend-minted slot id, not the local id.
+        assert result_calls[0].kwargs["json"] == {
+            "trial_id": "bt-1",
             "config": {"a": 1},
             "status": "COMPLETED",
             "metrics": {"score": 0.5},
         }
-        assert first_call.kwargs["timeout"] == self.sync_manager._request_timeout
+        assert result_calls[0].kwargs["timeout"] == self.sync_manager._request_timeout
         # on_synced is invoked incrementally per successful POST.
         assert recorded == [("cfg_0", "result-x"), ("cfg_1", "result-x")]
 
@@ -764,8 +838,16 @@ class TestSyncManager:
             },
         ]
 
+        def route(url, json=None, timeout=None):
+            if url.endswith("/next-trial"):
+                return backend_response(
+                    status_code=200,
+                    payload={"suggestion": {"trial_id": "bt-1"}},
+                )
+            return backend_response(payload={"id": "result-x"})
+
         with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_post.return_value = backend_response(payload={"id": "result-x"})
+            mock_post.side_effect = route
 
             result = self.sync_manager._sync_session_results(
                 "sess-id", runs, already_synced_keys={"cfg_0"}
@@ -774,7 +856,14 @@ class TestSyncManager:
         assert result["success"] is True
         assert result["synced"] == 1
         assert result["skipped"] == 1
-        assert mock_post.call_count == 1
+        # The skipped trial mints NO slot: only cfg_1's next-trial + result POST.
+        assert mock_post.call_count == 2
+        posted_urls = [call.args[0] for call in mock_post.call_args_list]
+        base = self.sync_manager.base_url
+        assert posted_urls == [
+            f"{base}/sessions/sess-id/next-trial",
+            f"{base}/sessions/sess-id/results",
+        ]
 
     def test_sync_session_results_failure(self):
         """A non-2xx result POST is reported as a per-trial error."""
@@ -787,10 +876,17 @@ class TestSyncManager:
             },
         ]
 
+        def route(url, json=None, timeout=None):
+            # Slot allocation succeeds; the /results POST is what fails with 400.
+            if url.endswith("/next-trial"):
+                return backend_response(
+                    status_code=200,
+                    payload={"suggestion": {"trial_id": "bt-1"}},
+                )
+            return backend_response(status_code=400, text="Bad Request")
+
         with patch.object(self.sync_manager.session, "post") as mock_post:
-            mock_post.return_value = backend_response(
-                status_code=400, text="Bad Request"
-            )
+            mock_post.side_effect = route
 
             result = self.sync_manager._sync_session_results("sess-id", runs)
 
