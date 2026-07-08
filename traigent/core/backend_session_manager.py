@@ -169,7 +169,7 @@ def _bounded_label(value: Any) -> str | None:
     so a prompt/output string cannot ride along in a scalar position either
     (Codex xhigh review round 3).
     """
-    return value if isinstance(value, str) and _LABEL_RE.match(value) else None
+    return value if isinstance(value, str) and _LABEL_RE.fullmatch(value) else None
 
 
 def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
@@ -188,7 +188,7 @@ def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
         key: item
         for key, item in value.items()
         if isinstance(key, str)
-        and _LABEL_RE.match(key)
+        and _LABEL_RE.fullmatch(key)
         and isinstance(item, (int, float))
         and not isinstance(item, bool)
     }
@@ -207,7 +207,7 @@ def _sanitize_significance(raw: Any) -> dict[str, Any] | None:
     for obj_name, entry in raw.items():
         if (
             not isinstance(obj_name, str)
-            or not _LABEL_RE.match(obj_name)
+            or not _LABEL_RE.fullmatch(obj_name)
             or not isinstance(entry, dict)
         ):
             continue
@@ -222,7 +222,7 @@ def _sanitize_significance(raw: Any) -> dict[str, Any] | None:
         if isinstance(n, int) and not isinstance(n, bool):
             clean["n_shared_examples"] = int(n)
         badge = entry.get("badge_name")
-        if isinstance(badge, str) and _SIG_BADGE_LABEL.match(badge):
+        if isinstance(badge, str) and _SIG_BADGE_LABEL.fullmatch(badge):
             clean["badge_name"] = badge
         if clean:
             out[obj_name] = clean
