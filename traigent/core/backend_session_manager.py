@@ -711,6 +711,9 @@ class BackendSessionManager:
         metrics_payload: dict[str, Any],
         metadata: Mapping[str, Any],
     ) -> None:
+        if trial_result.status != TrialStatus.COMPLETED:
+            return
+
         if is_finite_numeric_cost(metrics_payload.get("cost")):
             return
 

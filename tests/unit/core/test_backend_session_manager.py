@@ -918,6 +918,43 @@ class TestBackendSessionManagerTrialSubmission:
         assert "no cost telemetry; backfilling 0.0 for budget accounting" in caplog.text
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [TrialStatus.FAILED, TrialStatus.PRUNED])
+    async def test_submit_trial_budget_session_does_not_backfill_non_completed_cost(
+        self,
+        backend_session_manager,
+        mock_backend_client,
+        mock_dataset,
+        status,
+    ):
+        def func(x):
+            return x
+
+        func.__name__ = "budgeted_non_completed_func"
+        descriptor = resolve_function_descriptor(func)
+        backend_session_manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=5,
+            start_time=1234567890.0,
+            cost_limit=5.0,
+        )
+        trial = self._completed_trial(metrics={"accuracy": 0.9})
+        trial.status = status
+
+        await backend_session_manager.submit_trial(
+            trial_result=trial,
+            session_id="test-session-id",
+        )
+
+        metrics_payload = (
+            mock_backend_client._submit_trial_result_via_session.call_args.kwargs[
+                "metrics"
+            ]
+        )
+        assert "cost" not in metrics_payload
+
+    @pytest.mark.asyncio
     async def test_submit_trial_without_budget_or_telemetry_does_not_add_cost(
         self, backend_session_manager, mock_backend_client
     ):
