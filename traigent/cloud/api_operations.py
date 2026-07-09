@@ -805,10 +805,7 @@ class ApiOperations:
         )
         if isinstance(evaluator_id, str) and evaluator_id.strip():
             payload["evaluator_id"] = evaluator_id.strip()
-        if (
-            isinstance(evaluator_definition_id, str)
-            and evaluator_definition_id.strip()
-        ):
+        if isinstance(evaluator_definition_id, str) and evaluator_definition_id.strip():
             payload["evaluator_definition_id"] = evaluator_definition_id.strip()
 
     @staticmethod

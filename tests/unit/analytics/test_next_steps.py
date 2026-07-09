@@ -429,9 +429,7 @@ class TestGetNextSteps:
         client._client = AsyncMock()
         client._client.get.return_value = response
 
-        result = await client.get_next_steps(
-            "run_123", guidance_variant="policy"
-        )
+        result = await client.get_next_steps("run_123", guidance_variant="policy")
 
         assert result == payload
         client._client.get.assert_awaited_once_with(
@@ -568,7 +566,9 @@ class TestGetNextSteps:
         payload = {
             **valid_next_steps_payload,
             "decision": decision,
-            "next_steps": [{**decision, "category": "improve_evaluator", "priority": 1}],
+            "next_steps": [
+                {**decision, "category": "improve_evaluator", "priority": 1}
+            ],
             "guidance_meta": {
                 "requested_variant": "policy",
                 "served_variant": "policy",
@@ -586,9 +586,7 @@ class TestGetNextSteps:
         client._client.get.return_value = response
 
         with pytest.raises(ValueError, match="empty next_steps"):
-            await client.get_next_steps(
-                "run_123", guidance_variant="policy"
-            )
+            await client.get_next_steps("run_123", guidance_variant="policy")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

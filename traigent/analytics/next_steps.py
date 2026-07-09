@@ -107,10 +107,7 @@ def _normalize_guidance_variant(value: str | None) -> GuidanceVariant | None:
     if not variant:
         return None
     if variant not in _GUIDANCE_VARIANTS:
-        raise ValueError(
-            "guidance_variant must be one of rules|policy; "
-            f"got {value!r}"
-        )
+        raise ValueError(f"guidance_variant must be one of rules|policy; got {value!r}")
     return cast(GuidanceVariant, variant)
 
 
@@ -120,7 +117,9 @@ def _resolve_guidance_variant(
     """Resolve explicit treatment first, then the environment fallback."""
     if explicit is not None:
         if not explicit.strip():
-            raise ValueError("guidance_variant must be one of rules|policy; got a blank value")
+            raise ValueError(
+                "guidance_variant must be one of rules|policy; got a blank value"
+            )
         return _normalize_guidance_variant(explicit)
     return _normalize_guidance_variant(os.environ.get("TRAIGENT_GUIDANCE_VARIANT"))
 
@@ -190,9 +189,7 @@ def _validate_guidance_response(
 
     engine = guidance_meta.get("engine")
     if engine not in {"rules", "policy", "none"}:
-        raise ValueError(
-            f"Guidance integrity error: unsupported engine {engine!r}."
-        )
+        raise ValueError(f"Guidance integrity error: unsupported engine {engine!r}.")
     if strict_experiment and echoed_request != requested_variant:
         raise ValueError(
             "Strict experiment mode requires guidance_meta.requested_variant "
@@ -276,9 +273,13 @@ def _validate_guidance_response(
     if not isinstance(action, dict) or set(action) != {"kind", "command_template"}:
         raise ValueError("Guidance integrity error: decision.action must be an object.")
     if not isinstance(decision.get("rationale"), str):
-        raise ValueError("Guidance integrity error: decision.rationale must be a string.")
+        raise ValueError(
+            "Guidance integrity error: decision.rationale must be a string."
+        )
     if decision.get("evidence_level") not in {"low", "medium", "high"}:
-        raise ValueError("Guidance integrity error: unsupported decision evidence_level.")
+        raise ValueError(
+            "Guidance integrity error: unsupported decision evidence_level."
+        )
     action_kind = action.get("kind")
     command_template = action.get("command_template")
     next_steps = payload.get("next_steps")
@@ -319,36 +320,53 @@ def _validate_guidance_public_shape(
     if not isinstance(summary, dict) or set(summary) - summary_fields:
         raise ValueError("Guidance integrity error: summary fields are invalid.")
     if summary.get("confidence_label") not in {"low", "medium", "high"}:
-        raise ValueError("Guidance integrity error: summary.confidence_label is invalid.")
+        raise ValueError(
+            "Guidance integrity error: summary.confidence_label is invalid."
+        )
     for field in ("winner_config_ref", "trade_off_note"):
         if field in summary and not isinstance(summary[field], str):
-            raise ValueError(f"Guidance integrity error: summary.{field} must be a string.")
+            raise ValueError(
+                f"Guidance integrity error: summary.{field} must be a string."
+            )
 
     if "posture" in payload:
         posture = payload.get("posture")
-        if not isinstance(posture, dict) or set(posture) != {"summary_text", "generated_at"}:
+        if not isinstance(posture, dict) or set(posture) != {
+            "summary_text",
+            "generated_at",
+        }:
             raise ValueError("Guidance integrity error: posture fields are invalid.")
         if not isinstance(posture.get("summary_text"), str):
-            raise ValueError("Guidance integrity error: posture.summary_text must be a string.")
+            raise ValueError(
+                "Guidance integrity error: posture.summary_text must be a string."
+            )
         _parse_rfc3339(posture.get("generated_at"), "posture.generated_at")
 
     if guidance_meta.get("requested_variant") not in _GUIDANCE_VARIANTS:
-        raise ValueError("Guidance integrity error: guidance_meta.requested_variant is invalid.")
+        raise ValueError(
+            "Guidance integrity error: guidance_meta.requested_variant is invalid."
+        )
     if guidance_meta.get("served_variant") not in _GUIDANCE_VARIANTS:
-        raise ValueError("Guidance integrity error: guidance_meta.served_variant is invalid.")
+        raise ValueError(
+            "Guidance integrity error: guidance_meta.served_variant is invalid."
+        )
     if guidance_meta.get("engine") not in {"rules", "policy", "none"}:
         raise ValueError("Guidance integrity error: guidance_meta.engine is invalid.")
     for field in ("policy_table_sha", "smartopt_version", "fallback_reason"):
         value = guidance_meta.get(field)
         if value is not None and not isinstance(value, str):
-            raise ValueError(f"Guidance integrity error: guidance_meta.{field} is invalid.")
+            raise ValueError(
+                f"Guidance integrity error: guidance_meta.{field} is invalid."
+            )
     decision_id = guidance_meta.get("decision_id")
     if decision_id is not None and (
         not isinstance(decision_id, str)
         or len(decision_id) > 128
         or not _DECISION_ID_RE.fullmatch(decision_id)
     ):
-        raise ValueError("Guidance integrity error: guidance_meta.decision_id is invalid.")
+        raise ValueError(
+            "Guidance integrity error: guidance_meta.decision_id is invalid."
+        )
     evidence_hash = guidance_meta.get("evidence_snapshot_hash")
     if evidence_hash is not None and (
         not isinstance(evidence_hash, str) or not evidence_hash
@@ -697,9 +715,7 @@ class NextStepsClient:
                 )
             outcomes[key] = normalized
         if outcomes and normalized_status != "completed":
-            raise ValueError(
-                "holdout/safety-gate outcomes require status='completed'"
-            )
+            raise ValueError("holdout/safety-gate outcomes require status='completed'")
 
         request_payload: dict[str, Any] = {
             "status": normalized_status,
