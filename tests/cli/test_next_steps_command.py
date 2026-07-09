@@ -103,6 +103,51 @@ def test_next_steps_table_mode_prints_posture_summary(
     assert "compare_with_baseline" in result.output
 
 
+def test_next_steps_table_mode_prints_guidance_meta_line(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_with_guidance_meta = {
+        **next_steps_payload,
+        "guidance_meta": {
+            "served_variant": "variant_b",
+            "engine": "smartopt",
+            "policy_table_sha": "abc123",
+            "smartopt_version": "0.90.0",
+            "fallback_reason": None,
+        },
+    }
+    _FakeNextStepsClient.payload = payload_with_guidance_meta
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient",
+        _FakeNextStepsClient,
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123"])
+
+    assert result.exit_code == 0
+    assert "guidance: served=variant_b engine=smartopt" in result.output
+
+
+def test_next_steps_table_mode_without_guidance_meta_omits_guidance_line(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward compat: payloads without guidance_meta print no guidance line."""
+    _FakeNextStepsClient.payload = next_steps_payload
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient",
+        _FakeNextStepsClient,
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123"])
+
+    assert result.exit_code == 0
+    assert "guidance:" not in result.output
+
+
 def test_next_steps_json_mode(
     runner: CliRunner,
     next_steps_payload: dict[str, object],

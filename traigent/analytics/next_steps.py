@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 from typing import Any, cast
 
 from traigent.cloud.auth import _build_api_key_auth_headers
@@ -46,6 +47,21 @@ _REQUIRED_RESPONSE_KEYS = {
     "summary",
     "next_steps",
 }  # matches the contract's required set (next_steps_schema.json)
+
+_GUIDANCE_VARIANT_HEADER = "X-Traigent-Guidance-Variant"
+
+
+def _guidance_variant_headers() -> dict[str, str]:
+    """Build the optional guidance-variant request header.
+
+    Reads ``TRAIGENT_GUIDANCE_VARIANT`` and, when set and non-blank, sends its
+    stripped value to request that guidance variant. No client-side
+    allowlisting is applied beyond stripping; the server allowlists.
+    """
+    variant = os.environ.get("TRAIGENT_GUIDANCE_VARIANT", "").strip()
+    if not variant:
+        return {}
+    return {_GUIDANCE_VARIANT_HEADER: variant}
 
 
 class NextStepsClient:
@@ -139,6 +155,11 @@ class NextStepsClient:
         The backend must include the next-steps feature and expose:
         ``GET /api/v1/analytics/experiments/{experiment_run_id}/next-steps``.
 
+        When the ``TRAIGENT_GUIDANCE_VARIANT`` env var is set to a non-blank
+        value, its stripped value is sent as the ``X-Traigent-Guidance-Variant``
+        request header to request that guidance variant. No client-side
+        allowlisting is applied; the server allowlists.
+
         Args:
             experiment_run_id: Experiment run ID to retrieve recommendations for
 
@@ -146,7 +167,10 @@ class NextStepsClient:
             Dict with the backend next-steps contract payload. The response
             includes a ``caveat`` field that callers should display near the
             recommendations. If the backend includes the optional opaque
-            ``posture`` block, it is returned unchanged.
+            ``posture`` block, it is returned unchanged. If the backend
+            includes the optional ``guidance_meta`` block (served_variant,
+            engine, policy_table_sha, smartopt_version, fallback_reason), it
+            is returned unchanged.
 
         Raises:
             httpx.HTTPError: If request fails. A 404 response is raised as
@@ -156,10 +180,12 @@ class NextStepsClient:
                 next-steps contract keys.
         """
         client = self._get_client()
+        headers = _guidance_variant_headers()
 
         try:
             response = await client.get(
-                f"/api/v1/analytics/experiments/{experiment_run_id}/next-steps"
+                f"/api/v1/analytics/experiments/{experiment_run_id}/next-steps",
+                headers=headers or None,
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

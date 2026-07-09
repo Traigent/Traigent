@@ -146,6 +146,12 @@ def _print_next_steps_table(payload: dict[str, Any]) -> None:
 
     console.print(f"\n[bold]Caveat:[/bold] {payload.get('caveat', '')}")
 
+    guidance_meta = payload.get("guidance_meta")
+    if isinstance(guidance_meta, dict):
+        served_variant = guidance_meta.get("served_variant", "")
+        engine = guidance_meta.get("engine", "")
+        console.print(f"guidance: served={served_variant} engine={engine}")
+
 
 def _priority_sort_key(row: dict[str, Any]) -> tuple[int, str]:
     priority = row.get("priority")
