@@ -820,6 +820,7 @@ class OptimizationOrchestrator:
         self._provider_consecutive_call_failures = 0
         self._provider_failure_first_error: str | None = None
         self._provider_failure_category: str | None = None
+        self._session_finalized = False
         self._logger: OptimizationLogger | None = None
         self._logger_v2: Any | None = None
         self._logger_facade = LoggerFacade()
@@ -2495,6 +2496,7 @@ class OptimizationOrchestrator:
         )
 
         self._status = OptimizationStatus.RUNNING
+        self._session_finalized = False
         self._start_time = time.time()
         self._successful_trials = 0
         self._failed_trials = 0
@@ -3236,12 +3238,18 @@ class OptimizationOrchestrator:
                     )
                 )
 
-                session_summary = self.backend_session_manager.finalize_session(
-                    session_id,
-                    self._status,
-                    certified_selection=self._build_certified_selection_report(),
-                    session_aggregation=agg_payload,
-                )
+                session_summary = None
+                if not getattr(self, "_session_finalized", False):
+                    certified_selection = self._build_certified_selection_report()
+                    try:
+                        session_summary = self.backend_session_manager.finalize_session(
+                            session_id,
+                            self._status,
+                            certified_selection=certified_selection,
+                            session_aggregation=agg_payload,
+                        )
+                    finally:
+                        self._session_finalized = True
                 self.backend_session_manager.attach_session_metadata(
                     result, session_id, session_summary
                 )
@@ -3342,6 +3350,37 @@ class OptimizationOrchestrator:
             f"{'N/A' if result.best_score is None else f'{result.best_score:.4f}'}, "
             f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
         )
+
+    def _finalize_failed_backend_session(
+        self,
+        session_id: str | None,
+        failure: BaseException,
+    ) -> None:
+        """Best-effort terminal finalize for exception exits."""
+        if (
+            getattr(self, "_session_finalized", False)
+            or not self.backend_session_manager.backend_tracking_enabled
+            or backend_egress_disabled(self.traigent_config)
+            or session_id is None
+        ):
+            return
+
+        terminal_reason = self._stop_reason or type(failure).__name__
+        try:
+            self.backend_session_manager.finalize_session(
+                session_id,
+                OptimizationStatus.FAILED,
+            )
+        except Exception as finalize_error:
+            logger.warning(
+                "Failed to finalize backend session %s as FAILED after %s: %s",
+                session_id,
+                terminal_reason,
+                finalize_error,
+                exc_info=True,
+            )
+        finally:
+            self._session_finalized = True
 
     async def _finalize_user_cancelled_optimization(
         self,
@@ -3498,14 +3537,20 @@ class OptimizationOrchestrator:
                 session_id, session_span, interrupt
             )
 
-        except OptimizationError:
+        except OptimizationError as e:
             self._status = OptimizationStatus.FAILED
+            if not self._stop_reason:
+                self._stop_reason = "error"
+            self._finalize_failed_backend_session(session_id, e)
             raise
         except Exception as e:
             from traigent.knobs import ResolutionError
 
             self._status = OptimizationStatus.FAILED
+            if not self._stop_reason:
+                self._stop_reason = "error"
             logger.error(f"Optimization {self._optimization_id} failed: {e}")
+            self._finalize_failed_backend_session(session_id, e)
             if isinstance(e, ResolutionError):
                 # RFC 0001 §3.4: the typed fail-closed governance rejection
                 # IS the public contract — callers distinguish a stale
