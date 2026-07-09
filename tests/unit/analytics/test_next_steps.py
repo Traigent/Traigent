@@ -210,7 +210,8 @@ class TestGetNextSteps:
 
         assert result == valid_next_steps_payload
         mock_http.get.assert_called_once_with(
-            "/api/v1/analytics/experiments/run_123/next-steps"
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers=None,
         )
 
     @pytest.mark.asyncio
@@ -241,6 +242,142 @@ class TestGetNextSteps:
 
         assert result == payload_with_posture
         assert result["posture"] == payload_with_posture["posture"]
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_sends_guidance_variant_header_when_env_set(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        monkeypatch.setenv("TRAIGENT_GUIDANCE_VARIANT", "  variant_b  ")
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        await client.get_next_steps("run_123")
+
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers={"X-Traigent-Guidance-Variant": "variant_b"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_omits_guidance_variant_header_when_env_unset(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        monkeypatch.delenv("TRAIGENT_GUIDANCE_VARIANT", raising=False)
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        await client.get_next_steps("run_123")
+
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_omits_guidance_variant_header_when_env_blank(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        monkeypatch.setenv("TRAIGENT_GUIDANCE_VARIANT", "   ")
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        await client.get_next_steps("run_123")
+
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_preserves_optional_guidance_meta(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        payload_with_guidance_meta = {
+            **valid_next_steps_payload,
+            "guidance_meta": {
+                "served_variant": "variant_b",
+                "engine": "smartopt",
+                "policy_table_sha": "abc123",
+                "smartopt_version": "0.90.0",
+                "fallback_reason": None,
+            },
+        }
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload_with_guidance_meta
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_next_steps("run_123")
+
+        assert result == payload_with_guidance_meta
+        assert result["guidance_meta"] == payload_with_guidance_meta["guidance_meta"]
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_without_guidance_meta_is_unchanged(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        """Backward compat: payloads without guidance_meta behave as before."""
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_next_steps("run_123")
+
+        assert result == valid_next_steps_payload
+        assert "guidance_meta" not in result
 
     @pytest.mark.asyncio
     async def test_get_next_steps_404_mentions_backend_feature(self) -> None:

@@ -53,6 +53,55 @@
         }
       }
     },
+    "guidance_meta": {
+      "type": "object",
+      "description": "Optional metadata about the guidance variant served for this response. Absent when guidance-variant selection is not in effect.",
+      "additionalProperties": false,
+      "properties": {
+        "served_variant": {
+          "type": "string",
+          "enum": [
+            "rules",
+            "policy"
+          ],
+          "description": "The guidance variant that was actually served."
+        },
+        "engine": {
+          "type": "string",
+          "enum": [
+            "rules",
+            "policy",
+            "none"
+          ],
+          "description": "The guidance engine that produced this response."
+        },
+        "policy_table_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "SHA of the policy table used to select this variant."
+        },
+        "smartopt_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Version of traigent-smartopt used to produce this response."
+        },
+        "fallback_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set when the requested variant could not be served and the response fell back to a default."
+        }
+      },
+      "required": [
+        "served_variant",
+        "engine"
+      ]
+    },
     "next_steps": {
       "type": "array",
       "description": "Recommended next actions. May be empty when no safe recommendation is available.",
