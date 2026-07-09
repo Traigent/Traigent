@@ -1,6 +1,20 @@
 """Public observability API for Traigent SDK."""
 
 from traigent.observability.agent_spans import add_agent_span
+from traigent.observability.analytics_dtos import (
+    ObservabilityCohortComparisonDTO,
+    ObservabilityIssueDTO,
+    ObservabilityIssueDetailDTO,
+    ObservabilityIssueListDTO,
+    ObservabilityLineageDTO,
+    ObservabilityToolAnalysisDTO,
+    ObservabilityTraceAnalysisDTO,
+    ObservabilityTraceProjectionDTO,
+    ObservabilityTraceSearchDTO,
+    ObservabilityTraceVariantDTO,
+    ObservabilityVariantDetailDTO,
+    ObservabilityVariantListDTO,
+)
 from traigent.observability.client import ObservabilityClient
 from traigent.observability.config import ObservabilityConfig
 from traigent.observability.decorators import (
@@ -40,9 +54,21 @@ __all__ = [
     "ObservationDTO",
     "ObservationRecord",
     "ObservationType",
+    "ObservabilityCohortComparisonDTO",
     "ObserveContext",
     "ObservabilityClient",
     "ObservabilityConfig",
+    "ObservabilityIssueDTO",
+    "ObservabilityIssueDetailDTO",
+    "ObservabilityIssueListDTO",
+    "ObservabilityLineageDTO",
+    "ObservabilityToolAnalysisDTO",
+    "ObservabilityTraceAnalysisDTO",
+    "ObservabilityTraceProjectionDTO",
+    "ObservabilityTraceSearchDTO",
+    "ObservabilityTraceVariantDTO",
+    "ObservabilityVariantDetailDTO",
+    "ObservabilityVariantListDTO",
     "PaginationInfo",
     "PromptLinkRecord",
     "PromptReferenceDTO",
