@@ -3,19 +3,46 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
-from traigent.utils.env_config import is_backend_offline, resolve_environment_label
+from traigent.utils.env_config import (
+    is_backend_offline,
+    is_truthy,
+    resolve_environment_label,
+)
 
 MAX_BATCH_SIZE = 10_000
 MAX_QUEUE_SIZE = 1_000_000
 MAX_BATCH_BYTES = 10 * 1024 * 1024
 MAX_BUFFER_AGE_SECONDS = 3600.0
 MAX_TIMEOUT_SECONDS = 600.0
+OBSERVABILITY_CONTENT_MODES = frozenset({"metadata", "redacted", "record"})
+
+
+def _read_observability_offline_mode() -> bool:
+    return is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
+
+
+def _read_observability_content_mode() -> str:
+    raw_mode = os.getenv("TRAIGENT_OBSERVABILITY_CONTENT")
+    if raw_mode is None:
+        return (
+            "record"
+            if is_truthy(os.getenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"))
+            else "metadata"
+        )
+
+    mode = raw_mode.strip().lower()
+    if mode not in OBSERVABILITY_CONTENT_MODES:
+        allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
+        raise ValueError(f"TRAIGENT_OBSERVABILITY_CONTENT must be one of: {allowed}")
+    return mode
 
 
 @dataclass
@@ -39,7 +66,9 @@ class ObservabilityConfig:
     flush_timeout: float = 30.0
     request_timeout: float = 10.0
     enable_atexit_flush: bool = True
-    offline_mode: bool = field(default_factory=is_backend_offline)
+    offline_mode: bool = field(default_factory=_read_observability_offline_mode)
+    content_mode: str = field(default_factory=_read_observability_content_mode)
+    health_callback: Callable[[str, dict[str, Any]], None] | None = None
     default_environment: str | None = field(
         default_factory=lambda: resolve_environment_label(default=None)
     )
@@ -96,6 +125,10 @@ class ObservabilityConfig:
             raise ValueError(
                 f"request_timeout must be less than or equal to {MAX_TIMEOUT_SECONDS}"
             )
+        self.content_mode = self.content_mode.strip().lower()
+        if self.content_mode not in OBSERVABILITY_CONTENT_MODES:
+            allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
+            raise ValueError(f"content_mode must be one of: {allowed}")
 
     @property
     def ingest_url(self) -> str:

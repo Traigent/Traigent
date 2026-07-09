@@ -32,6 +32,14 @@ Wired analytics endpoints:
 * ``GET /api/v1/experiment-groups``
 * ``GET /api/v1/experiment-groups/{group_id}``
 * ``GET /api/v1/experiment-groups/{group_id}/configuration-runs``
+* ``GET /api/v1beta/projects/{project_id}/observability/traces`` (safe projection)
+* ``GET /api/v1beta/projects/{project_id}/observability/issues[/{issue_id}]``
+* ``GET /api/v1beta/projects/{project_id}/observability/variants[/{variant_id}]``
+* ``GET /api/v1beta/projects/{project_id}/observability/traces/{trace_id}/analysis``
+* ``GET /api/v1beta/projects/{project_id}/observability/traces/{trace_id}/projection``
+* ``GET /api/v1beta/projects/{project_id}/observability/traces/{trace_id}/lineage``
+* ``GET /api/v1beta/projects/{project_id}/observability/analysis/tools``
+* ``POST /api/v1beta/projects/{project_id}/observability/analysis/cohorts/compare``
 """
 
 # Traceability: CONC-Layer-Infra CONC-Security FUNC-CLOUD-HYBRID FUNC-ANALYTICS REQ-CLOUD-009
@@ -41,7 +49,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
 from traigent.cloud.dtos import (
@@ -52,6 +61,20 @@ from traigent.cloud.dtos import (
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.observability.analytics_dtos import (
+        ObservabilityCohortComparisonDTO,
+        ObservabilityIssueDetailDTO,
+        ObservabilityIssueListDTO,
+        ObservabilityLineageDTO,
+        ObservabilityToolAnalysisDTO,
+        ObservabilityTraceAnalysisDTO,
+        ObservabilityTraceProjectionDTO,
+        ObservabilityTraceSearchDTO,
+        ObservabilityVariantDetailDTO,
+        ObservabilityVariantListDTO,
+    )
 
 logger = get_logger(__name__)
 
@@ -177,6 +200,260 @@ _EXAMPLE_INSIGHTS_COHORT_KEYS: frozenset[str] = frozenset(
 _EXAMPLE_INSIGHTS_RECOMMENDATION_KEYS: frozenset[str] = frozenset({"action", "reason"})
 _EXAMPLE_INSIGHTS_REDACTIONS_KEYS: frozenset[str] = frozenset(
     {"raw_proprietary_signals_hidden", "raw_prompt_text_hidden_by_default"}
+)
+
+# Observability MCP responses are reconstructed from this closed key vocabulary.
+# The backend schemas are content-free already; this second projection prevents a
+# future backend field such as input_data, output_data, metadata, error text, or a
+# comment from silently becoming agent-visible through the SDK.
+_OBSERVABILITY_CONTENT_FREE_KEYS: frozenset[str] = frozenset(
+    {
+        "absolute_delta",
+        "affected_trace_count",
+        "algorithm",
+        "analysis_status",
+        "agent_id",
+        "agent_version",
+        "assessment",
+        "attempt_count",
+        "boundary_trace_ids",
+        "comparison",
+        "canonical_event_count",
+        "collapsed_observation_count",
+        "content_included",
+        "configuration_id",
+        "configuration_run_id",
+        "configuration_version",
+        "cost_usd",
+        "created_at",
+        "critical_path",
+        "code_revision",
+        "completed",
+        "depth",
+        "derivation",
+        "derivation_run_id",
+        "derived_at",
+        "deriver",
+        "deriver_version",
+        "detected_at",
+        "detector_family",
+        "detector_rule_version",
+        "deltas",
+        "deployment_id",
+        "display_label",
+        "duration_ms",
+        "end_observation_id",
+        "end_sequence_index",
+        "end_time",
+        "ended_at",
+        "environment",
+        "evaluator_id",
+        "evaluator_version",
+        "error_category",
+        "evidence",
+        "evidence_type",
+        "execution_context",
+        "experiment_run_id",
+        "failure_code",
+        "failed",
+        "failure_count",
+        "failure_rate",
+        "fallback_count",
+        "fallback_rate",
+        "fingerprint",
+        "fingerprint_spec_version",
+        "first_seen_at",
+        "generated_at",
+        "has_more",
+        "has_next",
+        "id",
+        "input_digest",
+        "input_revision",
+        "input_tokens",
+        "intervention_id",
+        "is_boundary",
+        "is_critical_path",
+        "is_representative",
+        "issue",
+        "issue_id",
+        "issue_ids",
+        "items",
+        "iteration_count",
+        "last_seen_at",
+        "links",
+        "matched_pair_count",
+        "mean",
+        "median",
+        "metric",
+        "metrics",
+        "next_cursor",
+        "normalized_model_id",
+        "normalized_tool_id",
+        "observation_count",
+        "observation_count_per_iteration",
+        "observation_id",
+        "observation_ids",
+        "occurrence_count",
+        "occurrence_page",
+        "occurrences",
+        "occurrences_per_page",
+        "optimization_run_id",
+        "output_tokens",
+        "p50_latency_ms",
+        "p95",
+        "p95_latency_ms",
+        "page",
+        "parent_observation_id",
+        "per_page",
+        "problem_signature",
+        "project_id",
+        "prompt_id",
+        "prompt_version",
+        "projection_mode",
+        "rejected",
+        "relative_delta",
+        "release",
+        "relationship",
+        "release_id",
+        "repeat_count",
+        "repeat_group_id",
+        "repeat_groups",
+        "reopen_count",
+        "representative_trace_id",
+        "reference",
+        "resource_id",
+        "resource_type",
+        "resource_version",
+        "retry_count",
+        "retry_rate",
+        "root_count",
+        "running",
+        "sample_count",
+        "semantic_kind",
+        "schema_version",
+        "sequence_fingerprint",
+        "sequence_index",
+        "severity",
+        "signature_spec_version",
+        "start_observation_id",
+        "start_sequence_index",
+        "start_time",
+        "started_at",
+        "state",
+        "state_changed_at",
+        "status",
+        "status_counts",
+        "success_count",
+        "superseded_by_issue_id",
+        "tool_summaries",
+        "toolset_id",
+        "toolset_version",
+        "total",
+        "total_cost_usd",
+        "total_input_tokens",
+        "total_latency_ms",
+        "total_occurrences",
+        "total_output_tokens",
+        "total_tokens",
+        "total_traces",
+        "trace_count",
+        "trace_id",
+        "trace_page",
+        "traces",
+        "traces_per_page",
+        "updated_at",
+        "value",
+        "variant",
+        "variant_id",
+        "variant_ids",
+        "version",
+        "dataset_id",
+        "dataset_version",
+    }
+)
+
+_OBSERVABILITY_MAX_PAGE_SIZE = 100
+_OBSERVABILITY_MAX_TRACE_SLICE = 500
+_OBSERVABILITY_MAX_WINDOW = timedelta(days=31)
+_OBSERVABILITY_ISSUE_LIST_REQUIRED_KEYS = frozenset(
+    {"items", "page", "per_page", "total", "generated_at"}
+)
+_OBSERVABILITY_ISSUE_DETAIL_REQUIRED_KEYS = frozenset(
+    {
+        "issue",
+        "occurrences",
+        "occurrence_page",
+        "occurrences_per_page",
+        "total_occurrences",
+        "variant_ids",
+        "generated_at",
+    }
+)
+_OBSERVABILITY_VARIANT_LIST_REQUIRED_KEYS = _OBSERVABILITY_ISSUE_LIST_REQUIRED_KEYS
+_OBSERVABILITY_VARIANT_DETAIL_REQUIRED_KEYS = frozenset(
+    {
+        "variant",
+        "traces",
+        "trace_page",
+        "traces_per_page",
+        "total_traces",
+        "generated_at",
+    }
+)
+_OBSERVABILITY_TRACE_ANALYSIS_REQUIRED_KEYS = frozenset(
+    {
+        "project_id",
+        "trace_id",
+        "analysis_status",
+        "failure_code",
+        "fingerprint",
+        "variant_id",
+        "critical_path",
+        "repeat_groups",
+        "tool_summaries",
+        "issue_ids",
+        "derivation",
+    }
+)
+_OBSERVABILITY_TRACE_PROJECTION_REQUIRED_KEYS = frozenset(
+    {
+        "project_id",
+        "trace_id",
+        "projection_mode",
+        "content_included",
+        "items",
+        "next_cursor",
+        "has_more",
+        "generated_at",
+    }
+)
+_OBSERVABILITY_TOOL_ANALYSIS_REQUIRED_KEYS = frozenset(
+    {"project_id", "start_time", "end_time", "items", "generated_at"}
+)
+_OBSERVABILITY_COHORT_COMPARISON_REQUIRED_KEYS = frozenset(
+    {
+        "project_id",
+        "reference",
+        "comparison",
+        "matched_pair_count",
+        "deltas",
+        "generated_at",
+    }
+)
+_OBSERVABILITY_LINEAGE_REQUIRED_KEYS = frozenset(
+    {"project_id", "trace_id", "execution_context", "links", "generated_at"}
+)
+_OBSERVABILITY_COHORT_METRICS = frozenset(
+    {
+        "quality_score",
+        "cost_usd",
+        "latency_ms",
+        "error_rate",
+        "retry_rate",
+        "fallback_rate",
+        "input_tokens",
+        "output_tokens",
+    }
 )
 
 
@@ -369,6 +646,19 @@ def _project_example_insights_cohort(cohort: Any, *, index: int) -> dict[str, An
     return projected
 
 
+def _project_content_free_observability(data: Any) -> Any:
+    """Recursively rebuild an observability payload from aggregate-safe keys."""
+    if isinstance(data, dict):
+        return {
+            key: _project_content_free_observability(value)
+            for key, value in data.items()
+            if key in _OBSERVABILITY_CONTENT_FREE_KEYS
+        }
+    if isinstance(data, list):
+        return [_project_content_free_observability(value) for value in data]
+    return data
+
+
 def _quote_segment(value: str, *, field: str) -> str:
     """URL-encode a path segment, rejecting empty values up front.
 
@@ -540,6 +830,18 @@ class BackendAnalyticsClient:
     ) -> dict[str, Any]:
         client = self._get_client()
         response = await client.get(path, headers=headers, params=params)
+        response.raise_for_status()
+        return _unwrap_success_data(response.json(), what=what)
+
+    async def _post_json(
+        self,
+        path: str,
+        *,
+        what: str,
+        json_body: dict[str, Any],
+    ) -> dict[str, Any]:
+        client = self._get_client()
+        response = await client.post(path, json=json_body)
         response.raise_for_status()
         return _unwrap_success_data(response.json(), what=what)
 
@@ -840,6 +1142,389 @@ class BackendAnalyticsClient:
             ),
         }
 
+    # === Content-free observability analysis readers ===
+
+    async def search_observability_traces(
+        self,
+        project_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        page: int = 1,
+        per_page: int = 50,
+        status: str | None = None,
+        environment: str | None = None,
+        release: str | None = None,
+    ) -> ObservabilityTraceSearchDTO:
+        """Return a bounded, content-free projection of matching trace summaries."""
+        _validate_observability_page(page, per_page)
+        start_time, end_time = _validate_observability_time_window(
+            start_time, end_time
+        )
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/traces",
+            what="observability trace search",
+            params=_without_none(
+                {
+                    "start_time_from": start_time,
+                    "start_time_to": end_time,
+                    "page": str(page),
+                    "per_page": str(per_page),
+                    "status": status,
+                    "environment": environment,
+                    "release": release,
+                }
+            ),
+        )
+        items = _require_bounded_list(
+            payload.get("items"),
+            what="observability trace search items",
+            maximum=per_page,
+        )
+        pagination = payload.get("pagination")
+        if pagination is not None and not isinstance(pagination, dict):
+            raise AnalyticsClientError(
+                "Malformed observability trace search response: pagination must be an object."
+            )
+        page_info = cast(dict[str, Any], pagination or {})
+        safe_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise AnalyticsClientError(
+                    "Malformed observability trace search response: each item must be an object."
+                )
+            safe_items.append(
+                {
+                    key: item[key]
+                    for key in (
+                        "id",
+                        "status",
+                        "environment",
+                        "release",
+                        "started_at",
+                        "ended_at",
+                        "observation_count",
+                        "total_input_tokens",
+                        "total_output_tokens",
+                        "total_tokens",
+                        "total_cost_usd",
+                        "total_latency_ms",
+                    )
+                    if key in item
+                }
+            )
+        return {
+            "items": safe_items,
+            "page": int(page_info.get("page", payload.get("page", page))),
+            "per_page": int(
+                page_info.get("per_page", payload.get("per_page", per_page))
+            ),
+            "total": int(page_info.get("total", payload.get("total", 0))),
+            "has_more": bool(
+                page_info.get("has_next", payload.get("has_more", False))
+            ),
+        }
+
+    async def list_observability_issues(
+        self,
+        project_id: str,
+        *,
+        page: int = 1,
+        per_page: int = 50,
+        state: str | None = None,
+        detector_family: str | None = None,
+        severity: str | None = None,
+        search: str | None = None,
+    ) -> ObservabilityIssueListDTO:
+        """Return a bounded page of durable, content-free issue summaries."""
+        _validate_observability_page(page, per_page)
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/issues",
+            what="observability issues",
+            params=_without_none(
+                {
+                    "page": str(page),
+                    "per_page": str(per_page),
+                    "state": state,
+                    "detector_family": detector_family,
+                    "severity": severity,
+                    "search": search,
+                }
+            ),
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_ISSUE_LIST_REQUIRED_KEYS,
+            what="observability issues",
+        )
+        _require_bounded_list(
+            payload.get("items"), what="observability issue items", maximum=per_page
+        )
+        return cast(
+            "ObservabilityIssueListDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def get_observability_issue(
+        self,
+        project_id: str,
+        issue_id: str,
+        *,
+        occurrence_page: int = 1,
+        occurrences_per_page: int = 50,
+    ) -> ObservabilityIssueDetailDTO:
+        """Return one issue and bounded immutable occurrence evidence."""
+        _validate_observability_page(occurrence_page, occurrences_per_page)
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/issues/"
+            f"{_quote_segment(issue_id, field='issue_id')}",
+            what="observability issue",
+            params={
+                "occurrence_page": str(occurrence_page),
+                "occurrences_per_page": str(occurrences_per_page),
+            },
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_ISSUE_DETAIL_REQUIRED_KEYS,
+            what="observability issue",
+        )
+        _require_bounded_list(
+            payload.get("occurrences"),
+            what="observability issue occurrences",
+            maximum=occurrences_per_page,
+        )
+        return cast(
+            "ObservabilityIssueDetailDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def list_observability_variants(
+        self,
+        project_id: str,
+        *,
+        page: int = 1,
+        per_page: int = 50,
+        search: str | None = None,
+    ) -> ObservabilityVariantListDTO:
+        """Return exact structural trace variants for a project."""
+        _validate_observability_page(page, per_page)
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/variants",
+            what="observability variants",
+            params=_without_none(
+                {"page": str(page), "per_page": str(per_page), "search": search}
+            ),
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_VARIANT_LIST_REQUIRED_KEYS,
+            what="observability variants",
+        )
+        _require_bounded_list(
+            payload.get("items"), what="observability variant items", maximum=per_page
+        )
+        return cast(
+            "ObservabilityVariantListDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def get_observability_variant(
+        self,
+        project_id: str,
+        variant_id: str,
+        *,
+        trace_page: int = 1,
+        traces_per_page: int = 50,
+    ) -> ObservabilityVariantDetailDTO:
+        """Return one exact structural variant and bounded trace references."""
+        _validate_observability_page(trace_page, traces_per_page)
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/variants/"
+            f"{_quote_segment(variant_id, field='variant_id')}",
+            what="observability variant",
+            params={
+                "trace_page": str(trace_page),
+                "traces_per_page": str(traces_per_page),
+            },
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_VARIANT_DETAIL_REQUIRED_KEYS,
+            what="observability variant",
+        )
+        _require_bounded_list(
+            payload.get("traces"),
+            what="observability variant traces",
+            maximum=traces_per_page,
+        )
+        return cast(
+            "ObservabilityVariantDetailDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def get_observability_trace_analysis(
+        self, project_id: str, trace_id: str
+    ) -> ObservabilityTraceAnalysisDTO:
+        """Return server-derived content-free structural analysis for one trace."""
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/traces/"
+            f"{_quote_segment(trace_id, field='trace_id')}/analysis",
+            what="observability trace analysis",
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_TRACE_ANALYSIS_REQUIRED_KEYS,
+            what="observability trace analysis",
+        )
+        return cast(
+            "ObservabilityTraceAnalysisDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def get_observability_trace_slice(
+        self,
+        project_id: str,
+        trace_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> ObservabilityTraceProjectionDTO:
+        """Return a bounded content-free observation projection for one trace."""
+        if not 1 <= limit <= _OBSERVABILITY_MAX_TRACE_SLICE:
+            raise ValueError(
+                f"limit must be between 1 and {_OBSERVABILITY_MAX_TRACE_SLICE}."
+            )
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/traces/"
+            f"{_quote_segment(trace_id, field='trace_id')}/projection",
+            what="observability trace slice",
+            params=_without_none({"cursor": cursor, "limit": str(limit)}),
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_TRACE_PROJECTION_REQUIRED_KEYS,
+            what="observability trace slice",
+        )
+        items = _require_bounded_list(
+            payload.get("items"), what="observability trace slice items", maximum=limit
+        )
+        if payload.get("projection_mode") != "content_free" or payload.get(
+            "content_included"
+        ) is not False:
+            raise AnalyticsClientError(
+                "Malformed observability trace slice response: content-free markers are required."
+            )
+        if any(not isinstance(item, dict) for item in items):
+            raise AnalyticsClientError(
+                "Malformed observability trace slice response: each item must be an object."
+            )
+        return cast(
+            "ObservabilityTraceProjectionDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def get_observability_tool_analysis(
+        self,
+        project_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        limit: int = 50,
+    ) -> ObservabilityToolAnalysisDTO:
+        """Return bounded tool execution aggregates without semantic claims."""
+        if not 1 <= limit <= _OBSERVABILITY_MAX_PAGE_SIZE:
+            raise ValueError(
+                f"limit must be between 1 and {_OBSERVABILITY_MAX_PAGE_SIZE}."
+            )
+        start_time, end_time = _validate_observability_time_window(
+            start_time, end_time
+        )
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/analysis/tools",
+            what="observability tool analysis",
+            params={
+                "start_time": start_time,
+                "end_time": end_time,
+                "limit": str(limit),
+            },
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_TOOL_ANALYSIS_REQUIRED_KEYS,
+            what="observability tool analysis",
+        )
+        _require_bounded_list(
+            payload.get("items"), what="observability tool analysis items", maximum=limit
+        )
+        return cast(
+            "ObservabilityToolAnalysisDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def compare_observability_cohorts(
+        self,
+        project_id: str,
+        *,
+        reference: Mapping[str, object],
+        comparison: Mapping[str, object],
+        metrics: Sequence[str],
+    ) -> ObservabilityCohortComparisonDTO:
+        """Compare two validated, bounded trace cohorts using aggregate metrics."""
+        clean_reference = _validate_observability_cohort(reference, field="reference")
+        clean_comparison = _validate_observability_cohort(
+            comparison, field="comparison"
+        )
+        clean_metrics = [str(metric).strip() for metric in metrics]
+        if not 1 <= len(clean_metrics) <= 8 or len(set(clean_metrics)) != len(
+            clean_metrics
+        ):
+            raise ValueError("metrics must contain 1 to 8 unique values.")
+        unsupported = sorted(
+            set(clean_metrics).difference(_OBSERVABILITY_COHORT_METRICS)
+        )
+        if unsupported:
+            raise ValueError(
+                "metrics contains unsupported value(s): " + ", ".join(unsupported)
+            )
+        payload = await self._post_json(
+            f"{_observability_path(project_id)}/analysis/cohorts/compare",
+            what="observability cohort comparison",
+            json_body={
+                "reference": clean_reference,
+                "comparison": clean_comparison,
+                "metrics": clean_metrics,
+            },
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_COHORT_COMPARISON_REQUIRED_KEYS,
+            what="observability cohort comparison",
+        )
+        return cast(
+            "ObservabilityCohortComparisonDTO",
+            _project_content_free_observability(payload),
+        )
+
+    async def get_observability_related_changes(
+        self, project_id: str, trace_id: str
+    ) -> ObservabilityLineageDTO:
+        """Return content-free lineage links; links are not causal attribution."""
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/traces/"
+            f"{_quote_segment(trace_id, field='trace_id')}/lineage",
+            what="observability related changes",
+        )
+        _require_keys(
+            payload,
+            _OBSERVABILITY_LINEAGE_REQUIRED_KEYS,
+            what="observability related changes",
+        )
+        return cast(
+            "ObservabilityLineageDTO",
+            _project_content_free_observability(payload),
+        )
+
     async def list_experiment_groups(
         self,
         project_id: str,
@@ -906,3 +1591,170 @@ def _require_non_empty(value: str, *, field: str) -> str:
     if not text:
         raise ValueError(f"{field} must be a non-empty string.")
     return text
+
+
+def _observability_path(project_id: str) -> str:
+    return (
+        "/api/v1beta/projects/"
+        f"{_quote_segment(project_id, field='project_id')}/observability"
+    )
+
+
+def _validate_observability_page(page: int, per_page: int) -> None:
+    if page < 1:
+        raise ValueError("page must be at least 1.")
+    if not 1 <= per_page <= _OBSERVABILITY_MAX_PAGE_SIZE:
+        raise ValueError(
+            f"per_page must be between 1 and {_OBSERVABILITY_MAX_PAGE_SIZE}."
+        )
+
+
+def _require_bounded_list(value: Any, *, what: str, maximum: int) -> list[Any]:
+    if not isinstance(value, list):
+        raise AnalyticsClientError(f"Malformed {what} response: expected a list.")
+    if len(value) > maximum:
+        raise AnalyticsClientError(
+            f"Malformed {what} response: expected at most {maximum} items."
+        )
+    return value
+
+
+def _parse_observability_time(value: str, *, field: str) -> datetime:
+    text = _require_non_empty(value, field=field)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO 8601 date-time.") from exc
+    if parsed.utcoffset() is None:
+        raise ValueError(f"{field} must include a UTC offset.")
+    return parsed
+
+
+def _validate_observability_time_window(
+    start_time: str, end_time: str
+) -> tuple[str, str]:
+    start = _parse_observability_time(start_time, field="start_time")
+    end = _parse_observability_time(end_time, field="end_time")
+    if end <= start:
+        raise ValueError("end_time must be later than start_time.")
+    if end - start > _OBSERVABILITY_MAX_WINDOW:
+        raise ValueError("observability time windows cannot exceed 31 days.")
+    return start_time.strip(), end_time.strip()
+
+
+def _validate_identifier_list(value: object, *, field: str) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{field} must be a list.")
+    result = [str(item).strip() for item in value]
+    if len(result) > 100 or len(set(result)) != len(result):
+        raise ValueError(f"{field} must contain at most 100 unique identifiers.")
+    if any(not item or len(item) > 128 for item in result):
+        raise ValueError(f"{field} contains an invalid identifier.")
+    return result
+
+
+def _validate_observability_cohort(
+    cohort: Mapping[str, object], *, field: str
+) -> dict[str, object]:
+    allowed = {
+        "start_time",
+        "end_time",
+        "execution_context",
+        "trace_statuses",
+        "variant_ids",
+        "issue_ids",
+        "environment",
+        "sample_limit",
+    }
+    extra = sorted(set(cohort).difference(allowed))
+    if extra:
+        raise ValueError(f"{field} contains unsupported field(s): {', '.join(extra)}.")
+    start_time, end_time = _validate_observability_time_window(
+        str(cohort.get("start_time") or ""), str(cohort.get("end_time") or "")
+    )
+    statuses = _validate_identifier_list(
+        cohort.get("trace_statuses", []), field=f"{field}.trace_statuses"
+    )
+    allowed_statuses = {"running", "completed", "failed", "rejected"}
+    if len(statuses) > 4 or set(statuses).difference(allowed_statuses):
+        raise ValueError(
+            f"{field}.trace_statuses must use running/completed/failed/rejected."
+        )
+    sample_limit = cohort.get("sample_limit", 5000)
+    if not isinstance(sample_limit, int) or isinstance(sample_limit, bool):
+        raise ValueError(f"{field}.sample_limit must be an integer.")
+    if not 1 <= sample_limit <= 5000:
+        raise ValueError(f"{field}.sample_limit must be between 1 and 5000.")
+    environment = cohort.get("environment")
+    if environment is not None and (
+        not isinstance(environment, str)
+        or not environment.strip()
+        or len(environment.strip()) > 64
+    ):
+        raise ValueError(f"{field}.environment must be null or 1 to 64 characters.")
+
+    result: dict[str, object] = {
+        "start_time": start_time,
+        "end_time": end_time,
+        "trace_statuses": statuses,
+        "variant_ids": _validate_identifier_list(
+            cohort.get("variant_ids", []), field=f"{field}.variant_ids"
+        ),
+        "issue_ids": _validate_identifier_list(
+            cohort.get("issue_ids", []), field=f"{field}.issue_ids"
+        ),
+        "environment": environment.strip() if isinstance(environment, str) else None,
+        "sample_limit": sample_limit,
+    }
+    execution_context = cohort.get("execution_context")
+    if execution_context is not None:
+        if not isinstance(execution_context, Mapping):
+            raise ValueError(f"{field}.execution_context must be an object.")
+        allowed_context = {
+            "schema_version",
+            "agent_id",
+            "agent_version",
+            "release_id",
+            "deployment_id",
+            "code_revision",
+            "configuration_id",
+            "configuration_version",
+            "prompt_id",
+            "prompt_version",
+            "toolset_id",
+            "toolset_version",
+            "evaluator_id",
+            "evaluator_version",
+            "dataset_id",
+            "dataset_version",
+            "experiment_run_id",
+            "configuration_run_id",
+            "optimization_run_id",
+            "intervention_id",
+        }
+        context_extra = sorted(set(execution_context).difference(allowed_context))
+        if context_extra:
+            raise ValueError(
+                f"{field}.execution_context contains unsupported field(s): "
+                + ", ".join(context_extra)
+                + "."
+            )
+        clean_context: dict[str, object] = {"schema_version": "1.0"}
+        for key, value in execution_context.items():
+            if key == "schema_version":
+                if value != "1.0":
+                    raise ValueError(
+                        f"{field}.execution_context.schema_version must be '1.0'."
+                    )
+                continue
+            if value is not None and (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value.strip()) > 128
+            ):
+                raise ValueError(
+                    f"{field}.execution_context.{key} must be null or a bounded identifier."
+                )
+            clean_context[key] = value.strip() if isinstance(value, str) else None
+        result["execution_context"] = clean_context
+    return result

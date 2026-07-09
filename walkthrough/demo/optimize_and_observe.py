@@ -474,7 +474,11 @@ def create_llm_client(model: str, temperature: float) -> Any:
 
 
 def create_demo_agent(runtime: RuntimeSettings, client: ObservabilityClient):
-    @observe(name="record-execution-context", client=client)
+    # Diagnostic span: phase/model/trial_id are operational telemetry, not user
+    # content, so it explicitly opts into content capture. The top-level
+    # answer_question span below stays on the metadata-only default, so user
+    # questions and answers are never captured unless the caller opts in.
+    @observe(name="record-execution-context", client=client, content_mode="record")
     def record_execution_context(
         phase: str,
         model: str,

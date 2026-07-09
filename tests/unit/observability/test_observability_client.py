@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import threading
+import time
 from datetime import UTC, datetime
 from urllib import error
 
@@ -39,6 +40,9 @@ FAKE_TRACE_API_KEY = (
 @pytest.fixture(autouse=True)
 def _clear_observability_offline_mode(monkeypatch, jwt_development_mode):
     del jwt_development_mode
+    monkeypatch.delenv("TRAIGENT_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", raising=False)
+    monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CONTENT", raising=False)
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     monkeypatch.setenv("TRAIGENT_ENV", "development")
 
@@ -63,18 +67,42 @@ def test_observability_config_uses_canonical_environment_resolution(monkeypatch)
     assert config.default_environment == "staging"
 
 
-def test_observability_config_does_not_emit_unknown_environment_content(monkeypatch):
+def test_observability_config_does_not_emit_unknown_environment_content(
+    monkeypatch, caplog
+):
     """Unknown environment aliases should not become trace metadata."""
     sentinel = "alice@example.com"
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
     monkeypatch.setenv("TRAIGENT_ENV", sentinel)
     _mock_public_backend_dns(monkeypatch)
+    caplog.set_level(logging.WARNING)
 
     config = ObservabilityConfig(backend_origin="https://auth.example.com")
 
     assert config.default_environment is None
     assert sentinel not in json.dumps(config.__dict__)
+    assert "Ignoring unknown environment label" in caplog.text
+    assert sentinel not in caplog.text
+
+
+def test_observability_config_defaults_to_metadata_content_mode(monkeypatch):
+    monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CONTENT", raising=False)
+    monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", raising=False)
+    _mock_public_backend_dns(monkeypatch)
+
+    config = ObservabilityConfig(backend_origin="https://auth.example.com")
+
+    assert config.content_mode == "metadata"
+
+
+def test_observability_config_uses_disable_telemetry_as_offline_mode(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_DISABLE_TELEMETRY", "true")
+    _mock_public_backend_dns(monkeypatch)
+
+    config = ObservabilityConfig(backend_origin="https://auth.example.com")
+
+    assert config.offline_mode is True
 
 
 @pytest.mark.parametrize(
@@ -628,6 +656,72 @@ def test_sync_batch_transport_stats_snapshot_includes_locked_diagnostics():
     assert result.warnings == ["warning-1"]
 
 
+def test_sync_batch_transport_batch_size_flush_does_not_block_submit():
+    send_entered = threading.Event()
+    release_send = threading.Event()
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        send_entered.set()
+        assert release_send.wait(timeout=2.0)
+        sent_batches.append(traces)
+
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=2,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+    )
+
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+    started = time.monotonic()
+    assert transport.submit("trace_two", {"id": "trace_two"}) is True
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.2
+    assert send_entered.wait(timeout=2.0)
+    stats = transport.get_stats()
+    assert stats["send_in_progress"] is True
+    assert stats["inflight_items"] == 2
+
+    release_send.set()
+    result = transport.flush()
+    transport.close()
+
+    assert result.success is True
+    assert sent_batches == [[{"id": "trace_one"}, {"id": "trace_two"}]]
+
+
+def test_sync_batch_transport_emits_health_event_for_queue_full():
+    events: list[tuple[str, dict]] = []
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=1,
+        max_batch_bytes=10_000,
+        health_callback=lambda event_type, payload: events.append(
+            (event_type, payload)
+        ),
+    )
+
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+    assert transport.submit("trace_two", {"id": "trace_two"}) is False
+    result = transport.close()
+
+    assert result.items_dropped == 1
+    assert events == [
+        (
+            "queue_full",
+            {
+                "message": "transport queue full; dropped payload for item 'trace_two'",
+                "item_id": "trace_two",
+            },
+        )
+    ]
+
+
 def test_observability_client_chunks_flushes_by_byte_limit():
     sent_batches: list[list[dict]] = []
 
@@ -676,7 +770,7 @@ def test_observability_client_drops_single_payload_over_byte_limit():
         max_batch_bytes=_encoded_trace_batch_size([payload]) - 1,
     )
 
-    assert transport.submit(payload["id"], payload) is True
+    assert transport.submit(payload["id"], payload) is False
 
     result = transport.flush()
     transport.close()
@@ -702,8 +796,11 @@ def test_observability_client_drops_non_json_payload_before_send():
         max_batch_bytes=10_000,
     )
 
-    assert transport.submit("trace_bad", {"id": "trace_bad", "when": datetime.now()})
-    assert transport.submit("trace_good", {"id": "trace_good", "name": "ok"})
+    assert (
+        transport.submit("trace_bad", {"id": "trace_bad", "when": datetime.now()})
+        is False
+    )
+    assert transport.submit("trace_good", {"id": "trace_good", "name": "ok"}) is True
 
     result = transport.flush()
     transport.close()
@@ -760,6 +857,96 @@ def test_observability_client_preserves_existing_usage_fields_on_update():
     assert observation["input_tokens"] == 12
     assert observation["output_tokens"] == 4
     assert observation["cost_usd"] == 0.25
+
+
+def test_observability_client_omits_unknown_generation_usage_fields(caplog):
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    trace_id = client.start_trace("usage-unknown", trace_id="trace_usage_unknown")
+    with caplog.at_level(logging.WARNING):
+        client.record_observation(
+            trace_id,
+            observation_id="obs_usage_unknown",
+            name="llm-call",
+            observation_type=ObservationType.GENERATION,
+            status="completed",
+        )
+        client.record_observation(
+            trace_id,
+            observation_id="obs_usage_unknown_2",
+            name="llm-call-2",
+            observation_type=ObservationType.GENERATION,
+            status="completed",
+        )
+    client.end_trace(trace_id)
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    observation = sent_batches[-1][-1]["observations"][0]
+    assert "input_tokens" not in observation
+    assert "output_tokens" not in observation
+    assert "total_tokens" not in observation
+    assert "cost_usd" not in observation
+    assert caplog.text.count("usage will be reported as unknown") == 1
+
+
+def test_observe_decorator_excludes_sdk_setup_from_latency(monkeypatch):
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+    setup_started_at = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    application_started_at = datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
+    application_ended_at = datetime(2026, 1, 1, 0, 0, 1, 7_000, tzinfo=UTC)
+    utc_now_values = iter(
+        [setup_started_at, application_started_at, application_ended_at]
+    )
+    monkeypatch.setattr(
+        "traigent.observability.decorators.utc_now", lambda: next(utc_now_values)
+    )
+
+    @observe("tight-latency", client=client)
+    def instrumented() -> str:
+        return "ok"
+
+    assert instrumented() == "ok"
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    observation = trace_payload["observations"][0]
+    assert trace_payload["started_at"] == application_started_at.isoformat()
+    assert observation["started_at"] == application_started_at.isoformat()
+    assert observation["ended_at"] == application_ended_at.isoformat()
+    assert observation["latency_ms"] == 7
 
 
 def test_observe_decorator_creates_nested_observations():
@@ -982,6 +1169,76 @@ def test_observe_decorator_can_redact_inputs():
     assert trace_payload["observations"][0]["input_data"] == {"redacted": True}
 
 
+def test_observe_decorator_omits_input_output_by_default():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    @observe("metadata-only", client=client)
+    def sensitive(secret: str) -> dict[str, str]:
+        return {"answer": f"derived from {secret}"}
+
+    assert sensitive("top-secret-value") == {"answer": "derived from top-secret-value"}
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    observation = trace_payload["observations"][0]
+    assert "input_data" not in trace_payload
+    assert "output_data" not in trace_payload
+    assert "input_data" not in observation
+    assert "output_data" not in observation
+
+
+def test_observe_decorator_redacted_content_mode_omits_raw_content():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    @observe("redacted-content-mode", client=client, content_mode="redacted")
+    def sensitive(secret: str) -> dict[str, str]:
+        return {"answer": f"derived from {secret}"}
+
+    assert sensitive("top-secret-value") == {"answer": "derived from top-secret-value"}
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    observation = trace_payload["observations"][0]
+    assert trace_payload["input_data"] == {"redacted": True}
+    assert trace_payload["output_data"] == {"redacted": True}
+    assert observation["input_data"] == {"redacted": True}
+    assert observation["output_data"] == {"redacted": True}
+
+
 @pytest.mark.parametrize(
     ("redact_input", "redact_output"),
     [
@@ -1015,6 +1272,7 @@ def test_observe_decorator_redacts_input_output_combinations(
         client=client,
         redact_input=redact_input,
         redact_output=redact_output,
+        content_mode="record",
     )
     def sensitive(secret: str) -> dict[str, str]:
         return {"answer": f"derived from {secret}"}

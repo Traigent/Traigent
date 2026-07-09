@@ -23,6 +23,7 @@ Design rules enforced here:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 from traigent.cloud.analytics_client import normalize_decision_intent
@@ -52,12 +53,32 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "analytics_get_parameter_insights",
     "analytics_get_example_insights",
     "analytics_render_chart",
+    "observability_search_traces",
+    "observability_list_issues",
+    "observability_get_issue",
+    "observability_get_trace_slice",
+    "observability_get_tool_analysis",
+    "observability_compare_cohorts",
+    "observability_get_related_changes",
     "analytics_list_experiment_groups",
     "analytics_get_experiment_group",
     "analytics_list_experiment_group_configuration_runs",
 )
 
 _SUPPORTED_CHART_KINDS: tuple[str, ...] = ("run_pareto", "run_correlations")
+_OBSERVABILITY_MAX_WINDOW = timedelta(days=31)
+_OBSERVABILITY_METRICS = frozenset(
+    {
+        "quality_score",
+        "cost_usd",
+        "latency_ms",
+        "error_rate",
+        "retry_rate",
+        "fallback_rate",
+        "input_tokens",
+        "output_tokens",
+    }
+)
 
 
 def _failure(
@@ -93,8 +114,201 @@ def _require_identifier(value: str | None, *, field: str) -> str:
     return text
 
 
+def _bounded_identifier(value: str | None, *, field: str) -> str:
+    text = _require_identifier(value, field=field)
+    if len(text) > 128:
+        raise _ToolInputError(f"{field} must be at most 128 characters.")
+    return text
+
+
+def _bounded_page(page: int, per_page: int) -> tuple[int, int]:
+    if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+        raise _ToolInputError("page must be an integer of at least 1.")
+    if (
+        not isinstance(per_page, int)
+        or isinstance(per_page, bool)
+        or not 1 <= per_page <= 100
+    ):
+        raise _ToolInputError("per_page must be an integer between 1 and 100.")
+    return page, per_page
+
+
+def _bounded_limit(limit: int, *, maximum: int) -> int:
+    if (
+        not isinstance(limit, int)
+        or isinstance(limit, bool)
+        or not 1 <= limit <= maximum
+    ):
+        raise _ToolInputError(f"limit must be an integer between 1 and {maximum}.")
+    return limit
+
+
+def _parse_window_time(value: str | None, *, field: str) -> datetime:
+    text = _require_identifier(value, field=field)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise _ToolInputError(f"{field} must be an ISO 8601 date-time.") from exc
+    if parsed.utcoffset() is None:
+        raise _ToolInputError(f"{field} must include a UTC offset.")
+    return parsed
+
+
+def _bounded_time_window(start_time: str, end_time: str) -> tuple[str, str]:
+    start = _parse_window_time(start_time, field="start_time")
+    end = _parse_window_time(end_time, field="end_time")
+    if end <= start:
+        raise _ToolInputError("end_time must be later than start_time.")
+    if end - start > _OBSERVABILITY_MAX_WINDOW:
+        raise _ToolInputError("observability time windows cannot exceed 31 days.")
+    return start_time.strip(), end_time.strip()
+
+
+def _bounded_optional_text(
+    value: str | None, *, field: str, maximum: int
+) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) > maximum:
+        raise _ToolInputError(f"{field} must be at most {maximum} characters.")
+    return text
+
+
 class _ToolInputError(ValueError):
     """Raised for user-correctable analytics MCP tool input errors."""
+
+
+def _bounded_identifier_list(
+    value: object, *, field: str, maximum: int
+) -> list[str]:
+    if not isinstance(value, list):
+        raise _ToolInputError(f"{field} must be a list.")
+    if len(value) > maximum:
+        raise _ToolInputError(f"{field} must contain at most {maximum} values.")
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise _ToolInputError(f"{field} values must be strings.")
+        cleaned.append(_bounded_identifier(item, field=field))
+    if len(set(cleaned)) != len(cleaned):
+        raise _ToolInputError(f"{field} values must be unique.")
+    return cleaned
+
+
+def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise _ToolInputError(f"{field} must be an object.")
+    allowed = {
+        "start_time",
+        "end_time",
+        "execution_context",
+        "trace_statuses",
+        "variant_ids",
+        "issue_ids",
+        "environment",
+        "sample_limit",
+    }
+    extra = sorted(set(value).difference(allowed))
+    if extra:
+        raise _ToolInputError(
+            f"{field} contains unsupported field(s): {', '.join(extra)}."
+        )
+    start_time, end_time = _bounded_time_window(
+        str(value.get("start_time") or ""), str(value.get("end_time") or "")
+    )
+    statuses = _bounded_identifier_list(
+        value.get("trace_statuses", []), field=f"{field}.trace_statuses", maximum=4
+    )
+    if set(statuses).difference({"running", "completed", "failed", "rejected"}):
+        raise _ToolInputError(
+            f"{field}.trace_statuses contains an unsupported status."
+        )
+    sample_limit = value.get("sample_limit", 5000)
+    if (
+        not isinstance(sample_limit, int)
+        or isinstance(sample_limit, bool)
+        or not 1 <= sample_limit <= 5000
+    ):
+        raise _ToolInputError(
+            f"{field}.sample_limit must be an integer between 1 and 5000."
+        )
+    clean: dict[str, object] = {
+        "start_time": start_time,
+        "end_time": end_time,
+        "trace_statuses": statuses,
+        "variant_ids": _bounded_identifier_list(
+            value.get("variant_ids", []),
+            field=f"{field}.variant_ids",
+            maximum=100,
+        ),
+        "issue_ids": _bounded_identifier_list(
+            value.get("issue_ids", []),
+            field=f"{field}.issue_ids",
+            maximum=100,
+        ),
+        "environment": _bounded_optional_text(
+            cast(str | None, value.get("environment")),
+            field=f"{field}.environment",
+            maximum=64,
+        ),
+        "sample_limit": sample_limit,
+    }
+    context = value.get("execution_context")
+    if context is not None:
+        if not isinstance(context, dict):
+            raise _ToolInputError(f"{field}.execution_context must be an object.")
+        allowed_context = {
+            "schema_version",
+            "agent_id",
+            "agent_version",
+            "release_id",
+            "deployment_id",
+            "code_revision",
+            "configuration_id",
+            "configuration_version",
+            "prompt_id",
+            "prompt_version",
+            "toolset_id",
+            "toolset_version",
+            "evaluator_id",
+            "evaluator_version",
+            "dataset_id",
+            "dataset_version",
+            "experiment_run_id",
+            "configuration_run_id",
+            "optimization_run_id",
+            "intervention_id",
+        }
+        context_extra = sorted(set(context).difference(allowed_context))
+        if context_extra:
+            raise _ToolInputError(
+                f"{field}.execution_context contains unsupported field(s): "
+                + ", ".join(context_extra)
+                + "."
+            )
+        clean_context: dict[str, object] = {"schema_version": "1.0"}
+        for key, context_value in context.items():
+            if key == "schema_version":
+                if context_value != "1.0":
+                    raise _ToolInputError(
+                        f"{field}.execution_context.schema_version must be '1.0'."
+                    )
+                continue
+            if context_value is None:
+                clean_context[key] = None
+                continue
+            if not isinstance(context_value, str):
+                raise _ToolInputError(
+                    f"{field}.execution_context.{key} must be an identifier or null."
+                )
+            clean_context[key] = _bounded_identifier(
+                context_value, field=f"{field}.execution_context.{key}"
+            )
+        clean["execution_context"] = clean_context
+    return clean
 
 
 async def _new_analytics_client() -> Any:
@@ -263,6 +477,22 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
         )
 
     return {"ok": True, what.replace(" ", "_"): _to_plain_payload(data)}
+
+
+async def _call_observability_backend(
+    coro_factory: Any, *, what: str
+) -> dict[str, Any]:
+    """Call a reader and reapply the content-free allowlist at the MCP edge."""
+    result = await _call_backend(coro_factory, what=what)
+    if result.get("ok") is not True:
+        return result
+    from traigent.cloud.analytics_client import _project_content_free_observability
+
+    key = what.replace(" ", "_")
+    return {
+        "ok": True,
+        key: _project_content_free_observability(result.get(key)),
+    }
 
 
 def _to_plain_payload(data: Any) -> Any:
@@ -684,4 +914,214 @@ async def analytics_list_experiment_group_configuration_runs_tool(
     return await _call_backend(
         lambda reader: reader.list_experiment_group_configuration_runs(gid, pid),
         what="experiment group configuration runs",
+    )
+
+
+async def observability_search_traces_tool(
+    project_id: str,
+    start_time: str,
+    end_time: str,
+    page: int = 1,
+    per_page: int = 50,
+    status: str | None = None,
+    environment: str | None = None,
+    release: str | None = None,
+) -> dict[str, Any]:
+    """Search trace summaries through a bounded, content-free projection."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        start, end = _bounded_time_window(start_time, end_time)
+        page, per_page = _bounded_page(page, per_page)
+        clean_status = _bounded_optional_text(status, field="status", maximum=32)
+        if clean_status not in {None, "running", "completed", "failed", "rejected"}:
+            raise _ToolInputError("status contains an unsupported trace status.")
+        clean_environment = _bounded_optional_text(
+            environment, field="environment", maximum=64
+        )
+        clean_release = _bounded_optional_text(release, field="release", maximum=128)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.search_observability_traces(
+            pid,
+            start_time=start,
+            end_time=end,
+            page=page,
+            per_page=per_page,
+            status=clean_status,
+            environment=clean_environment,
+            release=clean_release,
+        ),
+        what="observability trace search",
+    )
+
+
+async def observability_list_issues_tool(
+    project_id: str,
+    page: int = 1,
+    per_page: int = 50,
+    state: str | None = None,
+    detector_family: str | None = None,
+    severity: str | None = None,
+    search: str | None = None,
+) -> dict[str, Any]:
+    """List durable recurring issues without raw trace content."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        page, per_page = _bounded_page(page, per_page)
+        clean_state = _bounded_optional_text(state, field="state", maximum=32)
+        clean_detector = _bounded_optional_text(
+            detector_family, field="detector_family", maximum=32
+        )
+        clean_severity = _bounded_optional_text(
+            severity, field="severity", maximum=16
+        )
+        clean_search = _bounded_optional_text(search, field="search", maximum=128)
+        if clean_state not in {None, "open", "acknowledged", "resolved", "ignored"}:
+            raise _ToolInputError("state contains an unsupported issue state.")
+        if clean_detector not in {
+            None,
+            "explicit_error",
+            "loop",
+            "retry",
+            "fallback",
+            "dead_end",
+        }:
+            raise _ToolInputError(
+                "detector_family contains an unsupported detector family."
+            )
+        if clean_severity not in {None, "info", "warning", "error", "critical"}:
+            raise _ToolInputError("severity contains an unsupported severity.")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.list_observability_issues(
+            pid,
+            page=page,
+            per_page=per_page,
+            state=clean_state,
+            detector_family=clean_detector,
+            severity=clean_severity,
+            search=clean_search,
+        ),
+        what="observability issues",
+    )
+
+
+async def observability_get_issue_tool(
+    project_id: str,
+    issue_id: str,
+    occurrence_page: int = 1,
+    occurrences_per_page: int = 50,
+) -> dict[str, Any]:
+    """Get one issue and bounded immutable occurrence evidence."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        iid = _bounded_identifier(issue_id, field="issue_id")
+        occurrence_page, occurrences_per_page = _bounded_page(
+            occurrence_page, occurrences_per_page
+        )
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_issue(
+            pid,
+            iid,
+            occurrence_page=occurrence_page,
+            occurrences_per_page=occurrences_per_page,
+        ),
+        what="observability issue",
+    )
+
+
+async def observability_get_trace_slice_tool(
+    project_id: str,
+    trace_id: str,
+    cursor: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Get a cursor-bounded content-free trace projection."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        tid = _bounded_identifier(trace_id, field="trace_id")
+        clean_cursor = _bounded_optional_text(cursor, field="cursor", maximum=512)
+        limit = _bounded_limit(limit, maximum=500)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_trace_slice(
+            pid, tid, cursor=clean_cursor, limit=limit
+        ),
+        what="observability trace slice",
+    )
+
+
+async def observability_get_tool_analysis_tool(
+    project_id: str,
+    start_time: str,
+    end_time: str,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Get bounded tool execution aggregates without correctness claims."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        start, end = _bounded_time_window(start_time, end_time)
+        limit = _bounded_limit(limit, maximum=100)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_tool_analysis(
+            pid, start_time=start, end_time=end, limit=limit
+        ),
+        what="observability tool analysis",
+    )
+
+
+async def observability_compare_cohorts_tool(
+    project_id: str,
+    reference: dict[str, object],
+    comparison: dict[str, object],
+    metrics: list[str],
+) -> dict[str, Any]:
+    """Compare bounded reference and comparison cohorts using aggregate metrics."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        clean_reference = _bounded_cohort(reference, field="reference")
+        clean_comparison = _bounded_cohort(comparison, field="comparison")
+        clean_metrics = _bounded_identifier_list(
+            metrics, field="metrics", maximum=8
+        )
+        if not clean_metrics:
+            raise _ToolInputError("metrics must contain at least one value.")
+        unsupported = sorted(set(clean_metrics).difference(_OBSERVABILITY_METRICS))
+        if unsupported:
+            raise _ToolInputError(
+                "metrics contains unsupported value(s): " + ", ".join(unsupported)
+            )
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.compare_observability_cohorts(
+            pid,
+            reference=clean_reference,
+            comparison=clean_comparison,
+            metrics=clean_metrics,
+        ),
+        what="observability cohort comparison",
+    )
+
+
+async def observability_get_related_changes_tool(
+    project_id: str,
+    trace_id: str,
+) -> dict[str, Any]:
+    """Get content-free lineage links related to a trace, without causal claims."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        tid = _bounded_identifier(trace_id, field="trace_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_related_changes(pid, tid),
+        what="observability related changes",
     )
