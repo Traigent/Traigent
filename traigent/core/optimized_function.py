@@ -390,6 +390,7 @@ class OptimizedFunction(Generic[_P, _R]):
         custom_evaluator: Callable[..., Any] | None = None,
         scoring_function: Callable[..., Any] | None = None,
         metric_functions: dict[str, Callable[..., Any]] | None = None,
+        evaluator_definition_id: str | None = None,
         effectuation: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -477,6 +478,7 @@ class OptimizedFunction(Generic[_P, _R]):
             custom_evaluator,
             scoring_function,
             metric_functions,
+            evaluator_definition_id,
             effectuation,
         )
 
@@ -516,6 +518,7 @@ class OptimizedFunction(Generic[_P, _R]):
         custom_evaluator,
         scoring_function,
         metric_functions,
+        evaluator_definition_id,
         effectuation,
     ) -> None:
         """Store core initialization parameters."""
@@ -568,6 +571,12 @@ class OptimizedFunction(Generic[_P, _R]):
         self.custom_evaluator = custom_evaluator
         self.scoring_function = scoring_function
         self.metric_functions = metric_functions
+        self.evaluator_definition_id = (
+            evaluator_definition_id.strip()
+            if isinstance(evaluator_definition_id, str)
+            and evaluator_definition_id.strip()
+            else None
+        )
         self.effectuation = bool(effectuation)
 
     def _is_cloud_execution_mode(self) -> bool:
@@ -2017,6 +2026,7 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator.fingerprint_meta = artifact_fingerprint_payload.get(
             "fingerprint_meta"
         )
+        orchestrator.evaluator_definition_id = self.evaluator_definition_id
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -2252,6 +2262,7 @@ class OptimizedFunction(Generic[_P, _R]):
                     "artifact_fingerprints"
                 ),
                 fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
+                evaluator_definition_id=self.evaluator_definition_id,
                 context=traigent_config,
                 **optimizer_kwargs,
             )

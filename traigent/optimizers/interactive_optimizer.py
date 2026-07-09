@@ -198,6 +198,7 @@ class InteractiveOptimizer(BaseOptimizer):
         context: TraigentConfig | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
+        evaluator_definition_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -225,6 +226,7 @@ class InteractiveOptimizer(BaseOptimizer):
         self.optimization_strategy = optimization_strategy
         self.artifact_fingerprints = artifact_fingerprints
         self.fingerprint_meta = fingerprint_meta
+        self.evaluator_definition_id = evaluator_definition_id
         self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
             optimizer_ready_timeout
         )
@@ -272,6 +274,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 billing_tier=billing_tier,
                 artifact_fingerprints=self.artifact_fingerprints,
                 fingerprint_meta=self.fingerprint_meta,
+                evaluator_definition_id=self.evaluator_definition_id,
             )
 
             response = await self._await_optimizer_service(

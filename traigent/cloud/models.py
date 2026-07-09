@@ -240,11 +240,40 @@ class SessionCreationRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
     artifact_fingerprints: dict[str, str | None] | None = None
     fingerprint_meta: dict[str, Any] | None = None
+    # Explicit backend evaluator-definition identity when the caller has one.
+    # Do not synthesize this from a callable: unregistered evaluators remain
+    # content-addressed through artifact_fingerprints.evaluator.
+    evaluator_id: str | None = None
+    evaluator_definition_id: str | None = None
     # Alternative parameter names for test compatibility
     problem_type: str | None = None
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""
+        normalized_evaluator_ids: dict[str, str | None] = {}
+        for field_name, value in {
+            "evaluator_id": self.evaluator_id,
+            "evaluator_definition_id": self.evaluator_definition_id,
+        }.items():
+            if value is None:
+                normalized_evaluator_ids[field_name] = None
+            elif not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} must be a non-blank string")
+            elif len(value.strip()) > 200:
+                raise ValueError(f"{field_name} must be at most 200 characters")
+            else:
+                normalized_evaluator_ids[field_name] = value.strip()
+        if (
+            normalized_evaluator_ids["evaluator_id"] is not None
+            and normalized_evaluator_ids["evaluator_definition_id"] is not None
+        ):
+            raise ValueError(
+                "evaluator_id and evaluator_definition_id are aliases; provide only one"
+            )
+        self.evaluator_id = normalized_evaluator_ids["evaluator_id"]
+        self.evaluator_definition_id = normalized_evaluator_ids[
+            "evaluator_definition_id"
+        ]
         if self.function_name is None:
             self.function_name = "test_function"
         if self.configuration_space is None:

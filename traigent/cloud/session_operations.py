@@ -503,6 +503,8 @@ class SessionOperations:
         smart_pruning: dict[str, Any] | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
+        evaluator_id: str | None = None,
+        evaluator_definition_id: str | None = None,
         cost_limit: float | None = None,
         optimization_strategy: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
@@ -668,6 +670,8 @@ class SessionOperations:
                 metadata=metadata or {},
                 artifact_fingerprints=artifact_fingerprints,
                 fingerprint_meta=fingerprint_meta,
+                evaluator_id=evaluator_id,
+                evaluator_definition_id=evaluator_definition_id,
             )
 
             try:
