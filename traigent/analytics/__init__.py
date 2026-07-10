@@ -121,6 +121,11 @@ except ImportError:
         stacklevel=2,
     )
 
+# Planner V2 is an additive core protocol rather than part of the optional
+# legacy analytics plugin.  Import it independently so availability cannot
+# change according to whether the plugin happens to be installed.
+from .planner import PlannerV2Client
+
 
 def is_plugin_installed() -> bool:
     """Check if the analytics plugin is installed."""
@@ -131,6 +136,7 @@ __all__ = [
     # Example Insights
     "ExampleInsightsClient",
     "NextStepsClient",
+    "PlannerV2Client",
     "OptimizationPlanClient",
     # Historical analytics
     "HistoricalAnalyticsEngine",

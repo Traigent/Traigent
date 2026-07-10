@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Additive SmartOps Planner V2 client and `traigent guidance` CLI with strict
+  treatment/profile provenance, opaque decision execution, signed structured
+  resolution, explicit idempotent receipt submission, and lifecycle reopen
+  commands.
+  The existing `traigent next-steps` v1 surface remains unchanged.
+
 ### Fixed
 
 - Declare `tenacity` as a dependency so litellm's retry helpers
