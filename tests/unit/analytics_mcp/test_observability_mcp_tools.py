@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from unittest.mock import AsyncMock
 
 import pytest
@@ -90,6 +91,407 @@ def _analysis_insights(*, with_signals: bool = False) -> dict[str, object]:
     }
 
 
+def _fingerprint() -> dict[str, object]:
+    return {
+        "value": "a" * 64,
+        "algorithm": "sha256",
+        "fingerprint_spec_version": "1.0",
+        "canonical_event_count": 2,
+        "root_count": 1,
+    }
+
+
+def _derivation() -> dict[str, object]:
+    return {
+        "derivation_run_id": "derivation-1",
+        "deriver": "structural_analysis",
+        "deriver_version": "1.0",
+        "input_revision": 1,
+        "input_digest": "b" * 64,
+        "derived_at": "2026-07-02T00:00:00Z",
+    }
+
+
+def _issue() -> dict[str, object]:
+    return {
+        "id": "issue-1",
+        "project_id": "project-1",
+        "detector_family": "retry",
+        "problem_signature": "c" * 64,
+        "signature_spec_version": "1.0",
+        "state": "open",
+        "severity": "error",
+        "occurrence_count": 1,
+        "affected_trace_count": 1,
+        "reopen_count": 0,
+        "first_seen_at": "2026-07-02T00:00:00Z",
+        "last_seen_at": "2026-07-02T00:00:00Z",
+        "created_at": "2026-07-02T00:00:00Z",
+        "updated_at": "2026-07-02T00:00:00Z",
+        "state_changed_at": "2026-07-02T00:00:00Z",
+        "superseded_by_issue_id": None,
+        "version": 1,
+    }
+
+
+def _issue_list() -> dict[str, object]:
+    return {
+        "items": [],
+        "page": 2,
+        "per_page": 20,
+        "total": 0,
+        "generated_at": "2026-07-02T00:00:00Z",
+    }
+
+
+def _occurrence() -> dict[str, object]:
+    return {
+        "id": "occurrence-1",
+        "issue_id": "issue-1",
+        "project_id": "project-1",
+        "trace_id": "trace-1",
+        "variant_id": "variant-1",
+        "detector_rule_version": "1.0",
+        "detected_at": "2026-07-02T00:00:00Z",
+        "fingerprint": _fingerprint(),
+        "derivation": _derivation(),
+        "evidence": [
+            {
+                "evidence_type": "explicit_error",
+                "trace_id": "trace-1",
+                "observation_id": "obs-1",
+                "start_observation_id": None,
+                "end_observation_id": None,
+                "start_sequence_index": None,
+                "end_sequence_index": None,
+                "repeat_count": None,
+                "error_category": "tool",
+            }
+        ],
+    }
+
+
+def _issue_detail(*, with_occurrence: bool = False) -> dict[str, object]:
+    return {
+        "issue": _issue(),
+        "occurrences": [_occurrence()] if with_occurrence else [],
+        "occurrence_page": 3,
+        "occurrences_per_page": 10,
+        "total_occurrences": 1 if with_occurrence else 0,
+        "variant_ids": [],
+        "generated_at": "2026-07-02T00:00:00Z",
+    }
+
+
+def _trace_analysis(*, with_signals: bool = False) -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "trace_id": "trace-1",
+        "analysis_status": "completed",
+        "failure_code": None,
+        "fingerprint": _fingerprint(),
+        "variant_id": "variant-1",
+        "critical_path": {
+            "observation_ids": ["obs-1"],
+            "duration_ms": 10,
+            "observation_count": 1,
+        },
+        "repeat_groups": (
+            [
+                {
+                    "id": "repeat-1",
+                    "parent_observation_id": None,
+                    "start_sequence_index": 0,
+                    "end_sequence_index": 1,
+                    "sequence_fingerprint": "d" * 64,
+                    "iteration_count": 2,
+                    "observation_count_per_iteration": 1,
+                    "collapsed_observation_count": 2,
+                }
+            ]
+            if with_signals
+            else []
+        ),
+        "tool_summaries": (
+            [
+                {
+                    "normalized_tool_id": "search.lookup",
+                    "attempt_count": 2,
+                    "success_count": 1,
+                    "failure_count": 1,
+                    "retry_count": 1,
+                    "fallback_count": 0,
+                    "total_latency_ms": 10,
+                    "total_cost_usd": 0.0,
+                }
+            ]
+            if with_signals
+            else []
+        ),
+        "issue_ids": ["issue-1"] if with_signals else [],
+        "derivation": _derivation(),
+    }
+
+
+def _trace_slice(*, with_item: bool = False) -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "trace_id": "trace-1",
+        "projection_mode": "content_free",
+        "content_included": False,
+        "items": (
+            [
+                {
+                    "observation_id": "obs-1",
+                    "parent_observation_id": None,
+                    "semantic_kind": "tool_call",
+                    "status": "failed",
+                    "sequence_index": 0,
+                    "depth": 0,
+                    "duration_ms": 10,
+                    "normalized_tool_id": "search.lookup",
+                    "normalized_model_id": None,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost_usd": 0.0,
+                    "is_critical_path": True,
+                    "repeat_group_id": None,
+                }
+            ]
+            if with_item
+            else []
+        ),
+        "next_cursor": None,
+        "has_more": False,
+        "generated_at": "2026-07-02T00:00:00Z",
+    }
+
+
+def _tool_analysis(*, with_item: bool = False) -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "start_time": "2026-07-01T00:00:00Z",
+        "end_time": "2026-07-02T00:00:00Z",
+        "items": (
+            [
+                {
+                    "normalized_tool_id": "search.lookup",
+                    "trace_count": 1,
+                    "attempt_count": 2,
+                    "success_count": 1,
+                    "failure_count": 1,
+                    "retry_count": 1,
+                    "fallback_count": 0,
+                    "failure_rate": 0.5,
+                    "retry_rate": 0.5,
+                    "fallback_rate": 0.0,
+                    "p50_latency_ms": 10.0,
+                    "p95_latency_ms": 10.0,
+                    "total_cost_usd": 0.0,
+                    "issue_ids": ["issue-1"],
+                }
+            ]
+            if with_item
+            else []
+        ),
+        "generated_at": "2026-07-02T00:00:00Z",
+    }
+
+
+def _lineage(*, with_link: bool = False) -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "trace_id": "trace-1",
+        "execution_context": {"schema_version": "1.0", "release_id": "release-2"},
+        "links": (
+            [
+                {
+                    "resource_type": "release",
+                    "resource_id": "release-2",
+                    "resource_version": "v2",
+                    "relationship": "released_as",
+                }
+            ]
+            if with_link
+            else []
+        ),
+        "generated_at": "2026-07-02T00:00:00Z",
+    }
+
+
+def _cohort_comparison(*, matched_pair_count: int = 0) -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "reference": {"trace_count": 10, "metrics": []},
+        "comparison": {"trace_count": 9, "metrics": []},
+        "matched_pair_count": matched_pair_count,
+        "deltas": [],
+        "generated_at": "2026-07-02T00:00:00Z",
+    }
+
+
+def test_endpoint_projectors_reject_allowed_keys_at_wrong_nesting() -> None:
+    from traigent.cloud.analytics_client import (
+        AnalyticsClientError,
+        _project_observability_cohort_comparison,
+        _project_observability_issue_detail,
+        _project_observability_issue_list,
+        _project_observability_lineage,
+        _project_observability_tool_analysis,
+        _project_observability_trace_analysis,
+        _project_observability_trace_search,
+        _project_observability_trace_slice,
+    )
+
+    trace_search = {
+        "items": [{"id": "trace-1", "status": "failed"}],
+        "page": 1,
+        "per_page": 10,
+        "total": 1,
+        "has_more": False,
+    }
+    issue_list = _issue_list()
+    issue_list["items"] = [_issue()]
+    issue_detail = _issue_detail(with_occurrence=True)
+    cases = [
+        (
+            _project_observability_trace_search,
+            trace_search,
+            ("items", 0),
+            "problem_signature",
+        ),
+        (_project_observability_issue_list, issue_list, ("items", 0), "trace_id"),
+        (
+            _project_observability_issue_detail,
+            issue_detail,
+            ("occurrences", 0, "evidence", 0),
+            "status",
+        ),
+        (
+            _project_observability_trace_analysis,
+            _trace_analysis(),
+            ("critical_path",),
+            "status",
+        ),
+        (
+            _project_observability_trace_slice,
+            _trace_slice(with_item=True),
+            ("items", 0),
+            "problem_signature",
+        ),
+        (
+            _project_observability_tool_analysis,
+            _tool_analysis(with_item=True),
+            ("items", 0),
+            "status",
+        ),
+        (
+            _project_observability_cohort_comparison,
+            _cohort_comparison(),
+            ("reference",),
+            "status",
+        ),
+        (
+            _project_observability_lineage,
+            _lineage(with_link=True),
+            ("links", 0),
+            "status",
+        ),
+    ]
+    for projector, original, path, misplaced_key in cases:
+        payload = copy.deepcopy(original)
+        target: object = payload
+        for segment in path:
+            if isinstance(segment, int):
+                assert isinstance(target, list)
+                target = target[segment]
+            else:
+                assert isinstance(target, dict)
+                target = target[segment]
+        assert isinstance(target, dict)
+        target[misplaced_key] = "PRIVACY_CANARY_ALLOWED_KEY_WRONG_NESTING"
+
+        with pytest.raises(AnalyticsClientError) as exc_info:
+            projector(payload)
+
+        assert "PRIVACY_CANARY" not in str(exc_info.value)
+
+
+def test_endpoint_projectors_reject_scalar_object_smuggling() -> None:
+    from traigent.cloud.analytics_client import (
+        AnalyticsClientError,
+        _project_observability_cohort_comparison,
+        _project_observability_issue_detail,
+        _project_observability_lineage,
+        _project_observability_tool_analysis,
+        _project_observability_trace_analysis,
+        _project_observability_trace_search,
+        _project_observability_trace_slice,
+    )
+
+    cases = [
+        (
+            _project_observability_trace_search,
+            {
+                "items": [{"id": "trace-1", "status": "failed"}],
+                "page": 1,
+                "per_page": 10,
+                "total": 1,
+                "has_more": False,
+            },
+            ("items", 0, "status"),
+        ),
+        (
+            _project_observability_issue_detail,
+            _issue_detail(with_occurrence=True),
+            ("occurrences", 0, "evidence", 0, "error_category"),
+        ),
+        (
+            _project_observability_trace_analysis,
+            _trace_analysis(),
+            ("critical_path", "duration_ms"),
+        ),
+        (
+            _project_observability_trace_slice,
+            _trace_slice(with_item=True),
+            ("items", 0, "status"),
+        ),
+        (
+            _project_observability_tool_analysis,
+            _tool_analysis(with_item=True),
+            ("items", 0, "failure_rate"),
+        ),
+        (
+            _project_observability_cohort_comparison,
+            _cohort_comparison(),
+            ("matched_pair_count",),
+        ),
+        (
+            _project_observability_lineage,
+            _lineage(with_link=True),
+            ("links", 0, "resource_id"),
+        ),
+    ]
+    smuggled = {"problem_signature": "PRIVACY_CANARY_SCALAR_OBJECT"}
+    for projector, original, path in cases:
+        payload = copy.deepcopy(original)
+        target: object = payload
+        for segment in path[:-1]:
+            if isinstance(segment, int):
+                assert isinstance(target, list)
+                target = target[segment]
+            else:
+                assert isinstance(target, dict)
+                target = target[segment]
+        assert isinstance(target, dict)
+        target[path[-1]] = smuggled
+
+        with pytest.raises(AnalyticsClientError) as exc_info:
+            projector(payload)
+
+        assert "PRIVACY_CANARY" not in str(exc_info.value)
+
+
 @pytest.mark.asyncio
 async def test_observability_search_requires_project_and_bounded_window(
     monkeypatch,
@@ -126,7 +528,13 @@ async def test_observability_search_propagates_only_bounded_filters(
     from traigent.analytics_mcp.tools import observability_search_traces_tool
 
     reader = AsyncMock()
-    reader.search_observability_traces.return_value = {"items": [], "total": 0}
+    reader.search_observability_traces.return_value = {
+        "items": [],
+        "page": 2,
+        "per_page": 25,
+        "total": 0,
+        "has_more": False,
+    }
     _install_fake_client(monkeypatch, reader)
 
     result = await observability_search_traces_tool(
@@ -161,8 +569,8 @@ async def test_issue_tools_validate_and_propagate(monkeypatch) -> None:
     )
 
     reader = AsyncMock()
-    reader.list_observability_issues.return_value = {"items": []}
-    reader.get_observability_issue.return_value = {"issue": {"id": "issue-1"}}
+    reader.list_observability_issues.return_value = _issue_list()
+    reader.get_observability_issue.return_value = _issue_detail()
     _install_fake_client(monkeypatch, reader)
 
     invalid = await observability_list_issues_tool(
@@ -201,34 +609,22 @@ async def test_issue_tools_validate_and_propagate(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_edge_reapplies_content_free_projection(monkeypatch) -> None:
+async def test_mcp_edge_rejects_allowed_key_at_wrong_issue_nesting(monkeypatch) -> None:
     from traigent.analytics_mcp.tools import observability_get_issue_tool
 
     reader = AsyncMock()
-    reader.get_observability_issue.return_value = {
-        "issue": {
-            "id": "issue-1",
-            "detector_family": "retry",
-            "error_text": "PRIVACY_CANARY_ERROR",
-        },
-        "occurrences": [
-            {
-                "id": "occ-1",
-                "trace_id": "trace-1",
-                "input_data": "PRIVACY_CANARY_INPUT",
-            }
-        ],
-    }
+    payload = _issue_detail()
+    issue = payload["issue"]
+    assert isinstance(issue, dict)
+    issue["trace_id"] = "PRIVACY_CANARY_ALLOWED_KEY_WRONG_NESTING"
+    reader.get_observability_issue.return_value = payload
     _install_fake_client(monkeypatch, reader)
 
     result = await observability_get_issue_tool("project-1", "issue-1")
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["code"] == "malformed_response"
     assert "PRIVACY_CANARY" not in str(result)
-    assert result["observability_issue"] == {
-        "issue": {"id": "issue-1", "detector_family": "retry"},
-        "occurrences": [{"id": "occ-1", "trace_id": "trace-1"}],
-    }
 
 
 @pytest.mark.asyncio
@@ -239,8 +635,8 @@ async def test_trace_slice_and_tool_analysis_enforce_bounds(monkeypatch) -> None
     )
 
     reader = AsyncMock()
-    reader.get_observability_trace_slice.return_value = {"items": []}
-    reader.get_observability_tool_analysis.return_value = {"items": []}
+    reader.get_observability_trace_slice.return_value = _trace_slice()
+    reader.get_observability_tool_analysis.return_value = _tool_analysis()
     _install_fake_client(monkeypatch, reader)
 
     bad_slice = await observability_get_trace_slice_tool(
@@ -339,7 +735,7 @@ async def test_cohort_compare_rejects_content_and_propagates_closed_shape(
     from traigent.analytics_mcp.tools import observability_compare_cohorts_tool
 
     reader = AsyncMock()
-    reader.compare_observability_cohorts.return_value = {"deltas": []}
+    reader.compare_observability_cohorts.return_value = _cohort_comparison()
     _install_fake_client(monkeypatch, reader)
     base = {
         "start_time": "2026-07-01T00:00:00Z",
@@ -378,7 +774,7 @@ async def test_related_changes_calls_lineage_reader(monkeypatch) -> None:
     from traigent.analytics_mcp.tools import observability_get_related_changes_tool
 
     reader = AsyncMock()
-    reader.get_observability_related_changes.return_value = {"links": []}
+    reader.get_observability_related_changes.return_value = _lineage()
     _install_fake_client(monkeypatch, reader)
 
     result = await observability_get_related_changes_tool("project-1", "trace-1")
@@ -396,55 +792,12 @@ async def test_change_brief_composes_projected_evidence_without_causal_claims(
     from traigent.analytics_mcp.tools import observability_build_change_brief_tool
 
     reader = AsyncMock()
-    reader.get_observability_trace_analysis.return_value = {
-        "project_id": "project-1",
-        "trace_id": "trace-1",
-        "analysis_status": "completed",
-        "failure_code": None,
-        "repeat_groups": [{"id": "repeat-1", "input_data": "PRIVACY_CANARY"}],
-        "tool_summaries": [
-            {
-                "normalized_tool_id": "search.lookup",
-                "attempt_count": 2,
-                "failure_count": 1,
-                "retry_count": 1,
-                "fallback_count": 0,
-                "raw_error": "PRIVACY_CANARY",
-            }
-        ],
-        "issue_ids": ["issue-1"],
-    }
-    reader.get_observability_trace_slice.return_value = {
-        "project_id": "project-1",
-        "trace_id": "trace-1",
-        "projection_mode": "content_free",
-        "content_included": False,
-        "items": [
-            {
-                "observation_id": "obs-1",
-                "normalized_tool_id": "search.lookup",
-                "status": "failed",
-                "output_data": "PRIVACY_CANARY",
-            }
-        ],
-    }
-    reader.get_observability_related_changes.return_value = {
-        "project_id": "project-1",
-        "trace_id": "trace-1",
-        "execution_context": {"release_id": "release-2"},
-        "links": [
-            {
-                "resource_type": "release",
-                "resource_id": "release-2",
-                "resource_version": "v2",
-                "metadata": "PRIVACY_CANARY",
-            }
-        ],
-    }
-    reader.get_observability_tool_analysis.return_value = {
-        "project_id": "project-1",
-        "items": [{"normalized_tool_id": "search.lookup", "failure_count": 1}],
-    }
+    reader.get_observability_trace_analysis.return_value = _trace_analysis(
+        with_signals=True
+    )
+    reader.get_observability_trace_slice.return_value = _trace_slice(with_item=True)
+    reader.get_observability_related_changes.return_value = _lineage(with_link=True)
+    reader.get_observability_tool_analysis.return_value = _tool_analysis(with_item=True)
     reader.get_observability_analysis_insights.return_value = _analysis_insights(
         with_signals=True
     )
@@ -499,15 +852,10 @@ async def test_change_brief_handles_missing_evidence_and_validates_comparison(
     from traigent.analytics_mcp.tools import observability_build_change_brief_tool
 
     reader = AsyncMock()
-    reader.get_observability_trace_analysis.return_value = {
-        "analysis_status": "completed",
-        "repeat_groups": [],
-        "tool_summaries": [],
-        "issue_ids": [],
-    }
-    reader.get_observability_trace_slice.return_value = {"items": []}
-    reader.get_observability_related_changes.return_value = {"links": []}
-    reader.get_observability_tool_analysis.return_value = {"items": []}
+    reader.get_observability_trace_analysis.return_value = _trace_analysis()
+    reader.get_observability_trace_slice.return_value = _trace_slice()
+    reader.get_observability_related_changes.return_value = _lineage()
+    reader.get_observability_tool_analysis.return_value = _tool_analysis()
     reader.get_observability_analysis_insights.return_value = _analysis_insights()
     _install_fake_client(monkeypatch, reader)
 
@@ -550,20 +898,14 @@ async def test_change_brief_runs_bounded_before_after_comparison(monkeypatch) ->
     from traigent.analytics_mcp.tools import observability_build_change_brief_tool
 
     reader = AsyncMock()
-    reader.get_observability_trace_analysis.return_value = {
-        "analysis_status": "completed",
-        "repeat_groups": [],
-        "tool_summaries": [],
-        "issue_ids": [],
-    }
-    reader.get_observability_trace_slice.return_value = {"items": [{"id": "obs-1"}]}
-    reader.get_observability_related_changes.return_value = {"links": []}
-    reader.get_observability_tool_analysis.return_value = {"items": []}
+    reader.get_observability_trace_analysis.return_value = _trace_analysis()
+    reader.get_observability_trace_slice.return_value = _trace_slice(with_item=True)
+    reader.get_observability_related_changes.return_value = _lineage()
+    reader.get_observability_tool_analysis.return_value = _tool_analysis()
     reader.get_observability_analysis_insights.return_value = _analysis_insights()
-    reader.compare_observability_cohorts.return_value = {
-        "matched_pair_count": 12,
-        "deltas": [{"metric": "error_rate", "absolute_delta": -0.1}],
-    }
+    reader.compare_observability_cohorts.return_value = _cohort_comparison(
+        matched_pair_count=12
+    )
     _install_fake_client(monkeypatch, reader)
     reference = {
         "start_time": "2026-07-01T00:00:00Z",

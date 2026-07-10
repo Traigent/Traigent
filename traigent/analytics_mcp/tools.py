@@ -28,7 +28,16 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 
 from traigent.cloud.analytics_client import (
+    AnalyticsClientError,
     _project_observability_analysis_insights,
+    _project_observability_cohort_comparison,
+    _project_observability_issue_detail,
+    _project_observability_issue_list,
+    _project_observability_lineage,
+    _project_observability_tool_analysis,
+    _project_observability_trace_analysis,
+    _project_observability_trace_search,
+    _project_observability_trace_slice,
     normalize_decision_intent,
 )
 from traigent.utils.logging import get_logger
@@ -449,7 +458,9 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
     except ImportError as exc:
         return _failure(str(exc), code="dependency_missing")
     except InvalidCredentialsError as exc:
-        logger.debug("Analytics %s authentication failed: %s", what, exc)
+        logger.debug(
+            "Analytics %s authentication failed (%s)", what, type(exc).__name__
+        )
         return _auth_failure()
 
     backend_url = _resolved_backend_url(client)
@@ -463,22 +474,28 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
             backend_url=backend_url,
         )
     except InvalidCredentialsError as exc:
-        logger.debug("Analytics %s authentication failed: %s", what, exc)
+        logger.debug(
+            "Analytics %s authentication failed (%s)", what, type(exc).__name__
+        )
         return _auth_failure(backend_url=backend_url)
     except _HTTP_STATUS_ERRORS as exc:
-        logger.debug("Analytics %s request returned HTTP status", what, exc_info=True)
+        logger.debug(
+            "Analytics %s request returned HTTP status %s",
+            what,
+            exc.response.status_code,
+        )
         return _http_status_failure(exc, what=what, backend_url=backend_url)
     except _HTTP_TRANSPORT_ERRORS as exc:
-        logger.debug("Analytics %s transport failed: %s", what, exc)
+        logger.debug("Analytics %s transport failed (%s)", what, type(exc).__name__)
         return _failure(
             f"Could not retrieve {what} from the backend.",
             code="backend_unavailable",
             backend_url=backend_url,
         )
     except Exception as exc:  # noqa: BLE001 - normalize all transport failures
-        # Do not surface raw exception text: it can contain the backend URL,
-        # auth header echoes, or response bodies. Log at debug for operators.
-        logger.debug("Analytics %s request failed: %s", what, exc)
+        # Exception text can contain backend URLs, auth headers, or response
+        # bodies. Retain only the exception class for operator diagnostics.
+        logger.debug("Analytics %s request failed (%s)", what, type(exc).__name__)
         return _failure(
             f"Could not retrieve {what} from the backend.",
             code="backend_unavailable",
@@ -489,19 +506,21 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
 
 
 async def _call_observability_backend(
-    coro_factory: Any, *, what: str
+    coro_factory: Any, *, what: str, projector: Any
 ) -> dict[str, Any]:
-    """Call a reader and reapply the content-free allowlist at the MCP edge."""
+    """Call a reader and revalidate its exact endpoint contract at the MCP edge."""
     result = await _call_backend(coro_factory, what=what)
     if result.get("ok") is not True:
         return result
-    from traigent.cloud.analytics_client import _project_content_free_observability
-
     key = what.replace(" ", "_")
-    return {
-        "ok": True,
-        key: _project_content_free_observability(result.get(key)),
-    }
+    try:
+        projected = projector(result.get(key))
+    except AnalyticsClientError:
+        return _failure(
+            f"The backend returned a malformed {what} response.",
+            code="malformed_response",
+        )
+    return {"ok": True, key: projected}
 
 
 def _to_plain_payload(data: Any) -> Any:
@@ -962,6 +981,7 @@ async def observability_search_traces_tool(
             release=clean_release,
         ),
         what="observability trace search",
+        projector=_project_observability_trace_search,
     )
 
 
@@ -1012,6 +1032,7 @@ async def observability_list_issues_tool(
             search=clean_search,
         ),
         what="observability issues",
+        projector=_project_observability_issue_list,
     )
 
 
@@ -1038,6 +1059,7 @@ async def observability_get_issue_tool(
             occurrences_per_page=occurrences_per_page,
         ),
         what="observability issue",
+        projector=_project_observability_issue_detail,
     )
 
 
@@ -1060,6 +1082,7 @@ async def observability_get_trace_slice_tool(
             pid, tid, cursor=clean_cursor, limit=limit
         ),
         what="observability trace slice",
+        projector=_project_observability_trace_slice,
     )
 
 
@@ -1081,6 +1104,7 @@ async def observability_get_tool_analysis_tool(
             pid, start_time=start, end_time=end, limit=limit
         ),
         what="observability tool analysis",
+        projector=_project_observability_tool_analysis,
     )
 
 
@@ -1098,15 +1122,14 @@ async def observability_get_analysis_insights_tool(
     except _ToolInputError as exc:
         return _failure(str(exc))
 
-    async def _read_insights(reader: Any) -> dict[str, Any]:
-        payload = await reader.get_observability_analysis_insights(
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_analysis_insights(
             pid, start_time=start, end_time=end, limit=limit
-        )
-        return _project_observability_analysis_insights(payload, for_mcp=True)
-
-    return await _call_backend(
-        _read_insights,
+        ),
         what="observability analysis insights",
+        projector=lambda payload: _project_observability_analysis_insights(
+            payload, for_mcp=True
+        ),
     )
 
 
@@ -1139,6 +1162,7 @@ async def observability_compare_cohorts_tool(
             metrics=clean_metrics,
         ),
         what="observability cohort comparison",
+        projector=_project_observability_cohort_comparison,
     )
 
 
@@ -1155,6 +1179,7 @@ async def observability_get_related_changes_tool(
     return await _call_observability_backend(
         lambda reader: reader.get_observability_related_changes(pid, tid),
         what="observability related changes",
+        projector=_project_observability_lineage,
     )
 
 
@@ -1436,13 +1461,21 @@ async def observability_build_change_brief_tool(
 
     async def _read_evidence(reader: Any) -> dict[str, Any]:
         evidence = {
-            "trace_analysis": await reader.get_observability_trace_analysis(pid, tid),
-            "trace_slice": await reader.get_observability_trace_slice(
-                pid, tid, cursor=None, limit=trace_limit
+            "trace_analysis": _project_observability_trace_analysis(
+                await reader.get_observability_trace_analysis(pid, tid)
             ),
-            "related_changes": await reader.get_observability_related_changes(pid, tid),
-            "tool_analysis": await reader.get_observability_tool_analysis(
-                pid, start_time=start, end_time=end, limit=tool_limit
+            "trace_slice": _project_observability_trace_slice(
+                await reader.get_observability_trace_slice(
+                    pid, tid, cursor=None, limit=trace_limit
+                )
+            ),
+            "related_changes": _project_observability_lineage(
+                await reader.get_observability_related_changes(pid, tid)
+            ),
+            "tool_analysis": _project_observability_tool_analysis(
+                await reader.get_observability_tool_analysis(
+                    pid, start_time=start, end_time=end, limit=tool_limit
+                )
             ),
             "analysis_insights": _project_observability_analysis_insights(
                 await reader.get_observability_analysis_insights(
@@ -1452,19 +1485,19 @@ async def observability_build_change_brief_tool(
             ),
         }
         if clean_reference is not None and clean_comparison is not None:
-            evidence["cohort_comparison"] = await reader.compare_observability_cohorts(
-                pid,
-                reference=clean_reference,
-                comparison=clean_comparison,
-                metrics=clean_metrics,
+            evidence["cohort_comparison"] = _project_observability_cohort_comparison(
+                await reader.compare_observability_cohorts(
+                    pid,
+                    reference=clean_reference,
+                    comparison=clean_comparison,
+                    metrics=clean_metrics,
+                )
             )
         return evidence
 
     result = await _call_backend(_read_evidence, what="observability change evidence")
     if result.get("ok") is not True:
         return result
-    from traigent.cloud.analytics_client import _project_content_free_observability
-
     raw_evidence = result.get("observability_change_evidence")
     if not isinstance(raw_evidence, dict):
         return _failure(
@@ -1472,7 +1505,7 @@ async def observability_build_change_brief_tool(
             code="malformed_response",
         )
     evidence: dict[str, Any] = {
-        key: _project_content_free_observability(raw_evidence.get(key))
+        key: raw_evidence[key]
         for key in (
             "trace_analysis",
             "trace_slice",

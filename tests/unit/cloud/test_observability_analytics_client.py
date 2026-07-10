@@ -135,7 +135,9 @@ async def test_trace_search_uses_canonical_project_route_and_strips_content() ->
 
 
 @pytest.mark.asyncio
-async def test_issue_projection_drops_unknown_nested_content_fields() -> None:
+async def test_issue_projection_fails_closed_on_unknown_nested_content_fields() -> None:
+    from traigent.cloud.analytics_client import AnalyticsClientError
+
     client = _client()
     _install_get(
         client,
@@ -167,19 +169,12 @@ async def test_issue_projection_drops_unknown_nested_content_fields() -> None:
         },
     )
 
-    result = await client.get_observability_issue(
-        "project-1", "issue-1", occurrences_per_page=10
-    )
+    with pytest.raises(AnalyticsClientError) as exc_info:
+        await client.get_observability_issue(
+            "project-1", "issue-1", occurrences_per_page=10
+        )
 
-    assert result["issue"] == {
-        "id": "issue-1",
-        "project_id": "project-1",
-        "detector_family": "explicit_error",
-    }
-    assert result["occurrences"][0]["evidence"] == [
-        {"evidence_type": "explicit_error", "observation_id": "obs-1"}
-    ]
-    assert "PRIVACY_CANARY" not in str(result)
+    assert "PRIVACY_CANARY" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -206,7 +201,9 @@ async def test_trace_slice_requires_server_content_free_markers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cohort_compare_posts_sanitized_closed_contract() -> None:
+async def test_cohort_compare_rejects_unknown_response_fields() -> None:
+    from traigent.cloud.analytics_client import AnalyticsClientError
+
     client = _client()
     response = MagicMock()
     response.json.return_value = {
@@ -233,14 +230,15 @@ async def test_cohort_compare_posts_sanitized_closed_contract() -> None:
         "sample_limit": 100,
     }
 
-    result = await client.compare_observability_cohorts(
-        "project-1",
-        reference=cohort,
-        comparison=cohort,
-        metrics=["error_rate"],
-    )
+    with pytest.raises(AnalyticsClientError) as exc_info:
+        await client.compare_observability_cohorts(
+            "project-1",
+            reference=cohort,
+            comparison=cohort,
+            metrics=["error_rate"],
+        )
 
-    assert "PRIVACY_CANARY" not in str(result)
+    assert "PRIVACY_CANARY" not in str(exc_info.value)
     assert http.post.await_args.args[0].endswith("/analysis/cohorts/compare")
     body = http.post.await_args.kwargs["json"]
     assert set(body) == {"reference", "comparison", "metrics"}
@@ -308,7 +306,7 @@ async def test_analysis_insights_rejects_missing_nested_keys_and_content_marker(
             lambda payload: payload["conformance"].__setitem__(
                 "subject", "PRIVACY_CANARY_ALLOWED_KEY_WRONG_NESTING"
             ),
-            "unsupported key.*subject",
+            "unsupported key",
         ),
         (
             lambda payload: payload["conformance"].__setitem__("alternate_rate", 1.1),
