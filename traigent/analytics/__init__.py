@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import warnings as _warnings
 
+# Planner V2 is a core protocol, independent of the optional analytics plugin.
+from .planner import PlannerV2Client
+
 _PLUGIN_AVAILABLE = False
 
 # Try to import from the plugin first
@@ -120,11 +123,6 @@ except ImportError:
         DeprecationWarning,
         stacklevel=2,
     )
-
-# Planner V2 is an additive core protocol rather than part of the optional
-# legacy analytics plugin.  Import it independently so availability cannot
-# change according to whether the plugin happens to be installed.
-from .planner import PlannerV2Client
 
 
 def is_plugin_installed() -> bool:
