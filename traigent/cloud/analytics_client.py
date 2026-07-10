@@ -211,6 +211,12 @@ _EXAMPLE_INSIGHTS_REDACTIONS_KEYS: frozenset[str] = frozenset(
 _OBSERVABILITY_TRACE_STATUSES = frozenset(
     {"running", "completed", "failed", "rejected"}
 )
+_OBSERVABILITY_TRACE_STATUS_ALIASES = {
+    "success": "completed",
+    "error": "failed",
+    "timeout": "failed",
+    "cancelled": "rejected",
+}
 _OBSERVABILITY_OBSERVATION_KINDS = frozenset(
     {
         "span",
@@ -709,11 +715,18 @@ def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
             )
         _require_safe_observability_identifier(item["id"], what=f"items[{index}].id")
         if "status" in item:
+            raw_status = item["status"]
+            item_status = (
+                _OBSERVABILITY_TRACE_STATUS_ALIASES.get(raw_status, raw_status)
+                if isinstance(raw_status, str)
+                else raw_status
+            )
             _require_observability_enum(
-                item["status"],
+                item_status,
                 _OBSERVABILITY_TRACE_STATUSES,
                 what=f"items[{index}].status",
             )
+            item = {**item, "status": item_status}
         if "environment" in item:
             _require_safe_observability_identifier(
                 item["environment"],
@@ -2398,7 +2411,6 @@ class BackendAnalyticsClient:
         state: str | None = None,
         detector_family: str | None = None,
         severity: str | None = None,
-        search: str | None = None,
     ) -> ObservabilityIssueListDTO:
         """Return a bounded page of durable, content-free issue summaries."""
         _validate_observability_page(page, per_page)
@@ -2412,7 +2424,6 @@ class BackendAnalyticsClient:
                     "state": state,
                     "detector_family": detector_family,
                     "severity": severity,
-                    "search": search,
                 }
             ),
         )
@@ -2451,16 +2462,13 @@ class BackendAnalyticsClient:
         *,
         page: int = 1,
         per_page: int = 50,
-        search: str | None = None,
     ) -> ObservabilityVariantListDTO:
         """Return exact structural trace variants for a project."""
         _validate_observability_page(page, per_page)
         payload = await self._get_json(
             f"{_observability_path(project_id)}/variants",
             what="observability variants",
-            params=_without_none(
-                {"page": str(page), "per_page": str(per_page), "search": search}
-            ),
+            params={"page": str(page), "per_page": str(per_page)},
         )
         return cast(
             "ObservabilityVariantListDTO",
@@ -2736,12 +2744,19 @@ def _require_bounded_list(value: Any, *, what: str, maximum: int) -> list[Any]:
 
 def _validate_observability_analysis_insights_payload(
     payload: dict[str, Any],
+    *,
+    for_mcp: bool = False,
 ) -> None:
     what = "observability analysis insights"
+    required_payload_keys = _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS - (
+        frozenset({"limitations"}) if for_mcp else frozenset()
+    )
+    _require_keys(payload, required_payload_keys, what=what)
     _require_exact_keys(
         payload,
         _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS,
         what=what,
+        require_all=False,
     )
     _require_safe_observability_identifier(payload.get("project_id"), what="project_id")
     _require_observability_datetime(payload.get("start_time"), what="start_time")
@@ -2756,10 +2771,15 @@ def _validate_observability_analysis_insights_payload(
     conformance = _require_object(
         payload.get("conformance"), what=f"{what} conformance"
     )
+    required_conformance_keys = _OBSERVABILITY_CONFORMANCE_REQUIRED_KEYS - (
+        frozenset({"interpretation"}) if for_mcp else frozenset()
+    )
+    _require_keys(conformance, required_conformance_keys, what=f"{what} conformance")
     _require_exact_keys(
         conformance,
         _OBSERVABILITY_CONFORMANCE_REQUIRED_KEYS,
         what=f"{what} conformance",
+        require_all=False,
     )
     if conformance.get("baseline_type") != "observed_dominant_variant":
         raise AnalyticsClientError(
@@ -2797,11 +2817,12 @@ def _validate_observability_analysis_insights_payload(
             "Malformed observability analysis insights response: "
             "conformance.sample_truncated must be a boolean."
         )
-    _require_observability_text(
-        conformance.get("interpretation"),
-        what="conformance.interpretation",
-        maximum=512,
-    )
+    if "interpretation" in conformance:
+        _require_observability_text(
+            conformance["interpretation"],
+            what="conformance.interpretation",
+            maximum=512,
+        )
     deviations = _require_bounded_list(
         conformance.get("deviations"), what=f"{what} deviations", maximum=100
     )
@@ -2848,10 +2869,19 @@ def _validate_observability_analysis_insights_payload(
     )
     for index, value in enumerate(recommendations):
         recommendation = _require_object(value, what=f"{what} recommendations[{index}]")
+        required_recommendation_keys = _OBSERVABILITY_RECOMMENDATION_REQUIRED_KEYS - (
+            frozenset({"suggested_action"}) if for_mcp else frozenset()
+        )
+        _require_keys(
+            recommendation,
+            required_recommendation_keys,
+            what=f"{what} recommendations[{index}]",
+        )
         _require_exact_keys(
             recommendation,
             _OBSERVABILITY_RECOMMENDATION_REQUIRED_KEYS,
             what=f"{what} recommendations[{index}]",
+            require_all=False,
         )
         _require_safe_observability_identifier(
             recommendation.get("id"), what=f"recommendations[{index}].id"
@@ -2875,11 +2905,12 @@ def _validate_observability_analysis_insights_payload(
         _require_safe_observability_identifier(
             recommendation.get("subject"), what=f"recommendations[{index}].subject"
         )
-        _require_observability_text(
-            recommendation.get("suggested_action"),
-            what=f"recommendations[{index}].suggested_action",
-            maximum=512,
-        )
+        if "suggested_action" in recommendation:
+            _require_observability_text(
+                recommendation["suggested_action"],
+                what=f"recommendations[{index}].suggested_action",
+                maximum=512,
+            )
         evidence = _require_object(
             recommendation.get("evidence"),
             what=f"{what} recommendations[{index}] evidence",
@@ -2928,18 +2959,19 @@ def _validate_observability_analysis_insights_payload(
                 "recommendation metrics must contain unique values."
             )
 
-    limitations = _require_bounded_list(
-        payload.get("limitations"), what=f"{what} limitations", maximum=8
-    )
-    if not limitations:
-        raise AnalyticsClientError(
-            "Malformed observability analysis insights response: "
-            "limitations must contain non-empty strings."
+    if "limitations" in payload:
+        limitations = _require_bounded_list(
+            payload["limitations"], what=f"{what} limitations", maximum=8
         )
-    for index, limitation in enumerate(limitations):
-        _require_observability_text(
-            limitation, what=f"limitations[{index}]", maximum=512
-        )
+        if not limitations:
+            raise AnalyticsClientError(
+                "Malformed observability analysis insights response: "
+                "limitations must contain non-empty strings."
+            )
+        for index, limitation in enumerate(limitations):
+            _require_observability_text(
+                limitation, what=f"limitations[{index}]", maximum=512
+            )
 
 
 def _require_exact_keys(
@@ -3147,7 +3179,7 @@ def _project_observability_analysis_insights(
 ) -> dict[str, Any]:
     """Validate and rebuild analysis insights according to their exact nesting."""
     source = _require_object(payload, what="observability analysis insights")
-    _validate_observability_analysis_insights_payload(source)
+    _validate_observability_analysis_insights_payload(source, for_mcp=for_mcp)
     conformance = cast(dict[str, Any], source["conformance"])
     deviations = cast(list[dict[str, Any]], conformance["deviations"])
     projected_conformance = {

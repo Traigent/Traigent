@@ -628,7 +628,10 @@ async def auth_status_tool() -> dict[str, Any]:
         try:
             credential_kwargs = await resolve_analytics_read_client_credentials()
         except InvalidCredentialsError as exc:
-            logger.debug("Analytics JWT credential validation failed: %s", exc)
+            logger.debug(
+                "Analytics JWT credential validation failed (%s)",
+                type(exc).__name__,
+            )
             authenticated = False
         else:
             authenticated = bool(credential_kwargs.get("jwt_token"))
@@ -992,7 +995,6 @@ async def observability_list_issues_tool(
     state: str | None = None,
     detector_family: str | None = None,
     severity: str | None = None,
-    search: str | None = None,
 ) -> dict[str, Any]:
     """List durable recurring issues without raw trace content."""
     try:
@@ -1003,7 +1005,6 @@ async def observability_list_issues_tool(
             detector_family, field="detector_family", maximum=32
         )
         clean_severity = _bounded_optional_text(severity, field="severity", maximum=16)
-        clean_search = _bounded_optional_text(search, field="search", maximum=128)
         if clean_state not in {None, "open", "acknowledged", "resolved", "ignored"}:
             raise _ToolInputError("state contains an unsupported issue state.")
         if clean_detector not in {
@@ -1029,7 +1030,6 @@ async def observability_list_issues_tool(
             state=clean_state,
             detector_family=clean_detector,
             severity=clean_severity,
-            search=clean_search,
         ),
         what="observability issues",
         projector=_project_observability_issue_list,

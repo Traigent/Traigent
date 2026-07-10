@@ -93,7 +93,7 @@ async def test_trace_search_uses_canonical_project_route_and_strips_content() ->
                 {
                     "id": "trace-1",
                     "name": "PRIVACY_CANARY_NAME",
-                    "status": "failed",
+                    "status": "success",
                     "metadata": {"secret": "PRIVACY_CANARY_METADATA"},
                     "input_data": "PRIVACY_CANARY_INPUT",
                     "output_data": "PRIVACY_CANARY_OUTPUT",
@@ -121,7 +121,7 @@ async def test_trace_search_uses_canonical_project_route_and_strips_content() ->
     assert result["items"] == [
         {
             "id": "trace-1",
-            "status": "failed",
+            "status": "completed",
             "started_at": "2026-07-01T12:00:00Z",
             "observation_count": 4,
             "total_tokens": 12,

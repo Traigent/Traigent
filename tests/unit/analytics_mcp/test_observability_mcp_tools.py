@@ -598,7 +598,6 @@ async def test_issue_tools_validate_and_propagate(monkeypatch) -> None:
         state="open",
         detector_family="retry",
         severity="error",
-        search=None,
     )
     reader.get_observability_issue.assert_awaited_once_with(
         "project-1",
@@ -664,6 +663,7 @@ async def test_analysis_insights_tool_enforces_bounds_and_reprojects(
     monkeypatch,
 ) -> None:
     from traigent.analytics_mcp.tools import observability_get_analysis_insights_tool
+    from traigent.cloud.analytics_client import _project_observability_analysis_insights
 
     reader = AsyncMock()
     reader.get_observability_analysis_insights.return_value = _analysis_insights(
@@ -695,6 +695,9 @@ async def test_analysis_insights_tool_enforces_bounds_and_reprojects(
     assert "interpretation" not in projected["conformance"]
     assert "suggested_action" not in projected["recommendations"][0]
     assert "limitations" not in projected
+    assert (
+        _project_observability_analysis_insights(projected, for_mcp=True) == projected
+    )
     reader.get_observability_analysis_insights.assert_awaited_once_with(
         "project-1",
         start_time="2026-07-01T00:00:00Z",

@@ -809,10 +809,12 @@ class TestHealthAndAuthTools:
 
     @pytest.mark.asyncio
     async def test_auth_status_rejects_malformed_jwt_only_credential(
-        self, monkeypatch
+        self, monkeypatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         from traigent.analytics_mcp import tools as tools_mod
+        from traigent.cloud.auth import InvalidCredentialsError
 
+        caplog.set_level(logging.DEBUG, logger="traigent.analytics_mcp.tools")
         monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
         monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
         monkeypatch.setattr(
@@ -845,6 +847,16 @@ class TestHealthAndAuthTools:
             )(),
         )
 
+        async def _raise_invalid_credentials():
+            raise InvalidCredentialsError(
+                "https://secret-host.invalid/auth?token=raw-secret"
+            )
+
+        monkeypatch.setattr(
+            "traigent.cloud.analytics_auth.resolve_analytics_read_client_credentials",
+            _raise_invalid_credentials,
+        )
+
         result = await tools_mod.auth_status_tool()
 
         assert result["ok"] is True
@@ -852,6 +864,8 @@ class TestHealthAndAuthTools:
         assert result["authenticated"] is False
         assert result["auth_type"] == "jwt"
         assert "malformed JWT" not in str(result)
+        assert "secret-host" not in caplog.text
+        assert "raw-secret" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_auth_status_accepts_valid_jwt_only_credential(
