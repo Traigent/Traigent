@@ -83,6 +83,7 @@ def _optional_float(payload: dict[str, Any], name: str) -> float | None:
     value = payload.get(name)
     return None if value is None else float(value)
 
+
 def _validate_observability_status(name: str, value: str) -> None:
     _validate_required_string(name, value, max_length=MAX_STATUS_LENGTH)
     if value not in OBSERVABILITY_STATUSES:
