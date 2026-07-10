@@ -20,7 +20,9 @@ from urllib.parse import urlencode
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.observability.config import ObservabilityConfig
 from traigent.observability.dtos import (
+    OBSERVABILITY_STATUSES,
     CorrelationIds,
+    ExecutionContextDTO,
     FlushResult,
     ObservationDTO,
     ObservationType,
@@ -493,6 +495,7 @@ class ObservabilityClient:
         session: SessionDTO | dict[str, Any] | None = None,
         correlation_ids: CorrelationIds | dict[str, str] | None = None,
         prompt_reference: PromptReferenceDTO | dict[str, Any] | None = None,
+        execution_context: ExecutionContextDTO | dict[str, Any] | None = None,
         status: str = "running",
     ) -> str:
         trace_id = trace_id or _new_trace_id()
@@ -517,6 +520,7 @@ class ObservabilityClient:
             session=session_dto,
             correlation_ids=self._coerce_correlation_ids(correlation_ids),
             prompt_reference=self._coerce_prompt_reference(prompt_reference),
+            execution_context=self._coerce_execution_context(execution_context),
         )
 
         with self._lock:
@@ -530,7 +534,7 @@ class ObservabilityClient:
         trace_id: str,
         *,
         name: str,
-        observation_type: ObservationType | str = ObservationType.SPAN,
+        observation_type: ObservationType | str | None = None,
         observation_id: str | None = None,
         parent_observation_id: str | None = None,
         status: str = "running",
@@ -549,26 +553,37 @@ class ObservabilityClient:
         correlation_ids: CorrelationIds | dict[str, str] | None = None,
         prompt_reference: PromptReferenceDTO | dict[str, Any] | None = None,
     ) -> str:
-        if isinstance(observation_type, str):
-            observation_type = ObservationType(observation_type)
+        requested_type = (
+            ObservationType(observation_type)
+            if isinstance(observation_type, str)
+            else observation_type
+        )
 
         observation_id = observation_id or _new_observation_id()
         with self._lock:
             state = self._trace_states.get(trace_id)
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
+            existing = state.observations.get(observation_id)
+            effective_type = requested_type or (
+                existing.type if existing is not None else ObservationType.SPAN
+            )
+            if tool_name is None and effective_type in {
+                ObservationType.TOOL,
+                ObservationType.TOOL_CALL,
+            }:
+                tool_name = name
             self._validate_observation_relationship(
                 state,
                 observation_id=observation_id,
-                observation_type=observation_type,
+                observation_type=effective_type,
                 parent_observation_id=parent_observation_id,
             )
 
-            existing = state.observations.get(observation_id)
             if existing is None:
                 observation = ObservationDTO(
                     id=observation_id,
-                    type=observation_type,
+                    type=effective_type,
                     name=name,
                     parent_observation_id=parent_observation_id,
                     status=status,
@@ -594,7 +609,7 @@ class ObservabilityClient:
                     merged_metadata.update(metadata)
                 observation = ObservationDTO(
                     id=observation_id,
-                    type=observation_type,
+                    type=effective_type,
                     name=name,
                     parent_observation_id=(
                         parent_observation_id
@@ -675,6 +690,9 @@ class ObservabilityClient:
         started_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        if status not in OBSERVABILITY_STATUSES:
+            allowed = ", ".join(sorted(OBSERVABILITY_STATUSES))
+            raise ValueError(f"status must be one of: {allowed}")
         with self._lock:
             state = self._trace_states.get(trace_id)
             if state is None:
@@ -1319,6 +1337,21 @@ class ObservabilityClient:
         if isinstance(prompt_reference, PromptReferenceDTO):
             return prompt_reference
         return PromptReferenceDTO(**prompt_reference)
+
+    def _coerce_execution_context(
+        self,
+        execution_context: ExecutionContextDTO | dict[str, Any] | None,
+    ) -> ExecutionContextDTO | None:
+        defaults = dict(self.config.default_execution_context)
+        if isinstance(execution_context, ExecutionContextDTO):
+            explicit = execution_context.to_dict()
+        else:
+            explicit = dict(execution_context or {})
+        merged = {**defaults, **explicit}
+        if not merged:
+            return None
+        merged.setdefault("schema_version", "1.0")
+        return ExecutionContextDTO.from_dict(merged)
 
     def _atexit_close(self) -> None:
         with self._lock:

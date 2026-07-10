@@ -122,6 +122,23 @@ token usage from prompts. Pass measured `input_tokens`, `output_tokens`,
 `total_tokens`, or `cost_usd` from the provider response when recording
 generation spans; otherwise usage is reported as unknown, not zero.
 
+### Content-Free Execution Lineage
+
+`ExecutionContextDTO` carries only versioned lineage identifiers. Client and
+environment defaults are merged into each trace; fields omitted from a
+per-trace DTO inherit those defaults. An explicit `None` clears a default and
+is emitted as JSON `null`:
+
+```python
+from traigent.observability import ExecutionContextDTO
+
+context = ExecutionContextDTO(toolset_id=None)
+client.start_trace("agent-run", execution_context=context)
+```
+
+Dictionary inputs have the same explicit-null behavior. Free-form metadata and
+content fields are not accepted in execution context.
+
 ### OpenTelemetry Tracing
 
 OpenTelemetry tracing is opt-in and uses a separate flag from telemetry

@@ -17,7 +17,12 @@ from traigent.config.context import (
 )
 from traigent.observability.client import ObservabilityClient
 from traigent.observability.config import OBSERVABILITY_CONTENT_MODES
-from traigent.observability.dtos import ObservationType, to_jsonable, utc_now
+from traigent.observability.dtos import (
+    ExecutionContextDTO,
+    ObservationType,
+    to_jsonable,
+    utc_now,
+)
 from traigent.security.redaction import is_credential_key_name
 from traigent.utils.logging import get_logger
 
@@ -164,6 +169,7 @@ class ObserveContext:
         name: str,
         client: ObservabilityClient | None = None,
         observation_type: ObservationType | str = ObservationType.SPAN,
+        tool_name: str | None = None,
         input_data: Any = None,
         metadata: dict[str, Any] | None = None,
         session_id: str | None = None,
@@ -171,6 +177,7 @@ class ObserveContext:
         custom_trace_id: str | None = None,
         environment: str | None = None,
         release: str | None = None,
+        execution_context: ExecutionContextDTO | dict[str, Any] | None = None,
         tags: list[str] | None = None,
         redact_input: bool = False,
         redact_output: bool = False,
@@ -183,6 +190,7 @@ class ObserveContext:
             if isinstance(observation_type, ObservationType)
             else ObservationType(observation_type)
         )
+        self.tool_name = tool_name
         self.input_data = input_data
         self.metadata = dict(metadata or {})
         self.session_id = session_id
@@ -190,6 +198,7 @@ class ObserveContext:
         self.custom_trace_id = custom_trace_id
         self.environment = environment
         self.release = release
+        self.execution_context = execution_context
         self.tags = list(tags or [])
         self.redact_input = redact_input
         self.redact_output = redact_output
@@ -242,6 +251,7 @@ class ObserveContext:
                 user_id=self.user_id,
                 environment=self.environment,
                 release=self.release,
+                execution_context=self.execution_context,
                 tags=self.tags,
                 metadata=trace_metadata,
                 started_at=setup_started_at,
@@ -262,6 +272,7 @@ class ObserveContext:
             observation_type=self.observation_type,
             parent_observation_id=parent_observation_id,
             status="running",
+            tool_name=self.tool_name,
             started_at=setup_started_at,
             input_data=self._captured_input(),
             metadata=observation_metadata,
@@ -309,6 +320,7 @@ class ObserveContext:
                 name=self.name,
                 observation_type=self.observation_type,
                 status=status,
+                tool_name=self.tool_name,
                 started_at=started_at,
                 ended_at=ended_at,
                 latency_ms=latency_ms,
@@ -342,12 +354,14 @@ class _ObserveFactory:
         name: str | None,
         client: ObservabilityClient | None,
         observation_type: ObservationType | str,
+        tool_name: str | None,
         metadata: dict[str, Any] | None,
         session_id: str | None = None,
         user_id: str | None = None,
         custom_trace_id: str | None = None,
         environment: str | None = None,
         release: str | None = None,
+        execution_context: ExecutionContextDTO | dict[str, Any] | None = None,
         tags: list[str] | None = None,
         redact_input: bool = False,
         redact_output: bool = False,
@@ -356,12 +370,14 @@ class _ObserveFactory:
         self.name = name
         self.client = client
         self.observation_type = observation_type
+        self.tool_name = tool_name
         self.metadata = metadata
         self.session_id = session_id
         self.user_id = user_id
         self.custom_trace_id = custom_trace_id
         self.environment = environment
         self.release = release
+        self.execution_context = execution_context
         self.tags = tags
         self.redact_input = redact_input
         self.redact_output = redact_output
@@ -391,6 +407,7 @@ class _ObserveFactory:
                     name=observation_name,
                     client=self.client,
                     observation_type=self.observation_type,
+                    tool_name=self.tool_name,
                     input_data=input_data,
                     metadata=self.metadata,
                     session_id=self.session_id,
@@ -398,6 +415,7 @@ class _ObserveFactory:
                     custom_trace_id=self.custom_trace_id,
                     environment=self.environment,
                     release=self.release,
+                    execution_context=self.execution_context,
                     tags=self.tags,
                     redact_input=self.redact_input,
                     redact_output=self.redact_output,
@@ -420,6 +438,7 @@ class _ObserveFactory:
                 name=observation_name,
                 client=self.client,
                 observation_type=self.observation_type,
+                tool_name=self.tool_name,
                 input_data=input_data,
                 metadata=self.metadata,
                 session_id=self.session_id,
@@ -427,6 +446,7 @@ class _ObserveFactory:
                 custom_trace_id=self.custom_trace_id,
                 environment=self.environment,
                 release=self.release,
+                execution_context=self.execution_context,
                 tags=self.tags,
                 redact_input=self.redact_input,
                 redact_output=self.redact_output,
@@ -443,12 +463,14 @@ class _ObserveFactory:
             name=self.name or "observation",
             client=self.client,
             observation_type=self.observation_type,
+            tool_name=self.tool_name,
             metadata=self.metadata,
             session_id=self.session_id,
             user_id=self.user_id,
             custom_trace_id=self.custom_trace_id,
             environment=self.environment,
             release=self.release,
+            execution_context=self.execution_context,
             tags=self.tags,
             redact_input=self.redact_input,
             redact_output=self.redact_output,
@@ -464,12 +486,14 @@ class _ObserveFactory:
             name=self.name or "observation",
             client=self.client,
             observation_type=self.observation_type,
+            tool_name=self.tool_name,
             metadata=self.metadata,
             session_id=self.session_id,
             user_id=self.user_id,
             custom_trace_id=self.custom_trace_id,
             environment=self.environment,
             release=self.release,
+            execution_context=self.execution_context,
             tags=self.tags,
             redact_input=self.redact_input,
             redact_output=self.redact_output,
@@ -486,12 +510,14 @@ def observe(
     *,
     client: ObservabilityClient | None = None,
     observation_type: ObservationType | str = ObservationType.SPAN,
+    tool_name: str | None = None,
     metadata: dict[str, Any] | None = None,
     session_id: str | None = None,
     user_id: str | None = None,
     custom_trace_id: str | None = None,
     environment: str | None = None,
     release: str | None = None,
+    execution_context: ExecutionContextDTO | dict[str, Any] | None = None,
     tags: list[str] | None = None,
     redact_input: bool = False,
     redact_output: bool = False,
@@ -515,12 +541,14 @@ def observe(
         name=name,
         client=client,
         observation_type=observation_type,
+        tool_name=tool_name,
         metadata=metadata,
         session_id=session_id,
         user_id=user_id,
         custom_trace_id=custom_trace_id,
         environment=environment,
         release=release,
+        execution_context=execution_context,
         tags=tags,
         redact_input=redact_input,
         redact_output=redact_output,

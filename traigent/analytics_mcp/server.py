@@ -41,6 +41,8 @@ from traigent.analytics_mcp.tools import (
     auth_status_tool,
     health_check_tool,
     observability_compare_cohorts_tool,
+    observability_build_change_brief_tool,
+    observability_get_analysis_insights_tool,
     observability_get_issue_tool,
     observability_get_related_changes_tool,
     observability_get_tool_analysis_tool,
@@ -430,6 +432,24 @@ def create_server() -> Any:
 
     @server.tool(
         description=(
+            "Fetch content-free structural conformance facts and deterministic "
+            "validation recommendations for a window of at most 31 days. The "
+            "baseline is the dominant observed variant, not an intended workflow, "
+            "and recommendations are hypotheses to test rather than causal claims."
+        )
+    )
+    async def observability_get_analysis_insights(
+        project_id: str,
+        start_time: str,
+        end_time: str,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        return await observability_get_analysis_insights_tool(
+            project_id, start_time, end_time, limit
+        )
+
+    @server.tool(
+        description=(
             "Compare bounded reference and comparison trace cohorts over selected "
             "aggregate metrics. Each cohort requires an explicit window of at most "
             "31 days and permits only structured execution-context filters."
@@ -457,6 +477,40 @@ def create_server() -> Any:
         trace_id: str,
     ) -> dict[str, Any]:
         return await observability_get_related_changes_tool(project_id, trace_id)
+
+    @server.tool(
+        description=(
+            "Build a deterministic, privacy-bounded change brief for one trace. "
+            "Composes structural analysis, a bounded content-free trace slice, "
+            "lineage, aggregate tool outcomes, and an optional before/after cohort "
+            "comparison. Hypotheses are templated and explicitly non-causal; the "
+            "tool never mutates traces, issues, code, or configuration."
+        )
+    )
+    async def observability_build_change_brief(
+        project_id: str,
+        trace_id: str,
+        start_time: str,
+        end_time: str,
+        reference: dict[str, object] | None = None,
+        comparison: dict[str, object] | None = None,
+        metrics: list[str] | None = None,
+        trace_limit: int = 200,
+        tool_limit: int = 50,
+        insights_limit: int = 20,
+    ) -> dict[str, Any]:
+        return await observability_build_change_brief_tool(
+            project_id,
+            trace_id,
+            start_time,
+            end_time,
+            reference,
+            comparison,
+            metrics,
+            trace_limit,
+            tool_limit,
+            insights_limit,
+        )
 
     return server
 

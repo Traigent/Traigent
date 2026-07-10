@@ -26,6 +26,63 @@ def _install_get(client, data: object) -> AsyncMock:
     return http
 
 
+def _analysis_insights_payload() -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "start_time": "2026-07-01T00:00:00Z",
+        "end_time": "2026-07-02T00:00:00Z",
+        "content_included": False,
+        "conformance": {
+            "baseline_type": "observed_dominant_variant",
+            "baseline_variant_id": "variant-1",
+            "analyzed_trace_count": 10,
+            "sampled_trace_count": 10,
+            "total_trace_count": 10,
+            "analysis_coverage": 1.0,
+            "sample_coverage": 1.0,
+            "conforming_trace_count": 8,
+            "conformance_rate": 0.8,
+            "alternate_trace_count": 2,
+            "alternate_rate": 0.2,
+            "alternate_variant_count": 1,
+            "deviations": [
+                {
+                    "variant_id": "variant-2",
+                    "trace_count": 2,
+                    "failed_trace_count": 1,
+                    "representative_trace_id": "trace-2",
+                    "evidence_trace_ids": ["trace-2"],
+                    "share": 0.2,
+                }
+            ],
+            "sample_truncated": False,
+            "interpretation": "Descriptive baseline; not a correctness assertion.",
+        },
+        "recommendations": [
+            {
+                "id": "recommendation-1",
+                "category": "tool_reliability",
+                "priority": "medium",
+                "confidence": 0.7,
+                "subject": "search.lookup",
+                "evidence": {
+                    "normalized_tool_id": "search.lookup",
+                    "attempt_count": 10,
+                    "failure_count": 2,
+                },
+                "suggested_action": "Test timeout and retry changes.",
+                "measurement": {
+                    "comparison": "before_after_cohorts",
+                    "metrics": ["error_rate", "latency_ms"],
+                    "intervention_context_key": "intervention_id",
+                },
+            }
+        ],
+        "limitations": ["Observed structure is not an intended workflow."],
+        "generated_at": "2026-07-02T00:00:00Z",
+    }
+
+
 @pytest.mark.asyncio
 async def test_trace_search_uses_canonical_project_route_and_strips_content() -> None:
     client = _client()
@@ -191,6 +248,112 @@ async def test_cohort_compare_posts_sanitized_closed_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analysis_insights_validates_and_projects_strict_contract() -> None:
+    client = _client()
+    http = _install_get(client, _analysis_insights_payload())
+
+    result = await client.get_observability_analysis_insights(
+        "project/one",
+        start_time="2026-07-01T00:00:00Z",
+        end_time="2026-07-02T00:00:00Z",
+        limit=25,
+    )
+
+    assert result["content_included"] is False
+    assert result["conformance"]["baseline_variant_id"] == "variant-1"
+    assert result["recommendations"][0]["suggested_action"].startswith("Test")
+    assert http.get.await_args.args[0].endswith(
+        "/projects/project%2Fone/observability/analysis/insights"
+    )
+    assert http.get.await_args.kwargs["params"]["limit"] == "25"
+
+
+@pytest.mark.asyncio
+async def test_analysis_insights_rejects_missing_nested_keys_and_content_marker() -> (
+    None
+):
+    from traigent.cloud.analytics_client import AnalyticsClientError
+
+    client = _client()
+    payload = _analysis_insights_payload()
+    payload["content_included"] = True
+    _install_get(client, payload)
+    with pytest.raises(AnalyticsClientError, match="content_included must be false"):
+        await client.get_observability_analysis_insights(
+            "project-1",
+            start_time="2026-07-01T00:00:00Z",
+            end_time="2026-07-02T00:00:00Z",
+        )
+
+    payload = _analysis_insights_payload()
+    conformance = payload["conformance"]
+    assert isinstance(conformance, dict)
+    del conformance["interpretation"]
+    _install_get(client, payload)
+    with pytest.raises(
+        AnalyticsClientError, match="missing required key.*interpretation"
+    ):
+        await client.get_observability_analysis_insights(
+            "project-1",
+            start_time="2026-07-01T00:00:00Z",
+            end_time="2026-07-02T00:00:00Z",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda payload: payload["conformance"].__setitem__(
+                "subject", "PRIVACY_CANARY_ALLOWED_KEY_WRONG_NESTING"
+            ),
+            "unsupported key.*subject",
+        ),
+        (
+            lambda payload: payload["conformance"].__setitem__("alternate_rate", 1.1),
+            "alternate_rate must be a finite number",
+        ),
+        (
+            lambda payload: payload["recommendations"][0].__setitem__(
+                "category", "raw prompt text"
+            ),
+            "category must be one of",
+        ),
+        (
+            lambda payload: payload["recommendations"][0]["measurement"].__setitem__(
+                "metrics", ["error_rate", "error_rate"]
+            ),
+            "metrics must contain unique values",
+        ),
+        (
+            lambda payload: payload["conformance"]["deviations"][0].__setitem__(
+                "evidence_trace_ids", ["trace-2", "trace-2"]
+            ),
+            "evidence_trace_ids must contain unique values",
+        ),
+    ],
+)
+async def test_analysis_insights_fails_closed_on_malformed_aggregate_values(
+    mutate,
+    message: str,
+) -> None:
+    from traigent.cloud.analytics_client import AnalyticsClientError
+
+    client = _client()
+    payload = _analysis_insights_payload()
+    mutate(payload)
+    _install_get(client, payload)
+
+    with pytest.raises(AnalyticsClientError, match=message):
+        await client.get_observability_analysis_insights(
+            "project-1",
+            start_time="2026-07-01T00:00:00Z",
+            end_time="2026-07-02T00:00:00Z",
+        )
+
+
+@pytest.mark.asyncio
 async def test_client_rejects_unbounded_windows_before_transport() -> None:
     client = _client()
     client._client = AsyncMock()
@@ -200,6 +363,14 @@ async def test_client_rejects_unbounded_windows_before_transport() -> None:
             "project-1",
             start_time="2026-05-01T00:00:00Z",
             end_time="2026-07-01T00:00:00Z",
+        )
+
+    with pytest.raises(ValueError, match="between 1 and 100"):
+        await client.get_observability_analysis_insights(
+            "project-1",
+            start_time="2026-07-01T00:00:00Z",
+            end_time="2026-07-02T00:00:00Z",
+            limit=101,
         )
 
     client._client.get.assert_not_called()

@@ -39,6 +39,7 @@ Wired analytics endpoints:
 * ``GET /api/v1beta/projects/{project_id}/observability/traces/{trace_id}/projection``
 * ``GET /api/v1beta/projects/{project_id}/observability/traces/{trace_id}/lineage``
 * ``GET /api/v1beta/projects/{project_id}/observability/analysis/tools``
+* ``GET /api/v1beta/projects/{project_id}/observability/analysis/insights``
 * ``POST /api/v1beta/projects/{project_id}/observability/analysis/cohorts/compare``
 """
 
@@ -47,6 +48,7 @@ Wired analytics endpoints:
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
@@ -64,6 +66,7 @@ from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from traigent.observability.analytics_dtos import (
+        ObservabilityAnalysisInsightsDTO,
         ObservabilityCohortComparisonDTO,
         ObservabilityIssueDetailDTO,
         ObservabilityIssueListDTO,
@@ -442,6 +445,102 @@ _OBSERVABILITY_COHORT_COMPARISON_REQUIRED_KEYS = frozenset(
 )
 _OBSERVABILITY_LINEAGE_REQUIRED_KEYS = frozenset(
     {"project_id", "trace_id", "execution_context", "links", "generated_at"}
+)
+_OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS = frozenset(
+    {
+        "project_id",
+        "start_time",
+        "end_time",
+        "content_included",
+        "conformance",
+        "recommendations",
+        "limitations",
+        "generated_at",
+    }
+)
+_OBSERVABILITY_CONFORMANCE_REQUIRED_KEYS = frozenset(
+    {
+        "baseline_type",
+        "baseline_variant_id",
+        "analyzed_trace_count",
+        "sampled_trace_count",
+        "total_trace_count",
+        "analysis_coverage",
+        "sample_coverage",
+        "conforming_trace_count",
+        "conformance_rate",
+        "alternate_trace_count",
+        "alternate_rate",
+        "alternate_variant_count",
+        "deviations",
+        "sample_truncated",
+        "interpretation",
+    }
+)
+_OBSERVABILITY_DEVIATION_REQUIRED_KEYS = frozenset(
+    {
+        "variant_id",
+        "trace_count",
+        "failed_trace_count",
+        "representative_trace_id",
+        "evidence_trace_ids",
+        "share",
+    }
+)
+_OBSERVABILITY_RECOMMENDATION_REQUIRED_KEYS = frozenset(
+    {
+        "id",
+        "category",
+        "priority",
+        "confidence",
+        "subject",
+        "evidence",
+        "suggested_action",
+        "measurement",
+    }
+)
+_OBSERVABILITY_MEASUREMENT_REQUIRED_KEYS = frozenset(
+    {"comparison", "metrics", "intervention_context_key"}
+)
+_OBSERVABILITY_RECOMMENDATION_EVIDENCE_KEYS = frozenset(
+    {
+        "normalized_tool_id",
+        "trace_count",
+        "attempt_count",
+        "issue_ids",
+        "failure_count",
+        "failure_rate",
+        "retry_count",
+        "retry_rate",
+        "fallback_count",
+        "fallback_rate",
+        "issue_id",
+        "detector_family",
+        "occurrence_count",
+        "affected_trace_count",
+        "baseline_variant_id",
+        "analyzed_trace_count",
+        "sampled_trace_count",
+        "alternate_trace_count",
+        "alternate_rate",
+        "alternate_variant_count",
+    }
+)
+_OBSERVABILITY_RECOMMENDATION_CATEGORIES = frozenset(
+    {
+        "tool_reliability",
+        "retry_policy",
+        "tool_routing",
+        "recurring_issue",
+        "behavioral_variation",
+    }
+)
+_OBSERVABILITY_RECOMMENDATION_PRIORITIES = frozenset({"high", "medium", "low"})
+_OBSERVABILITY_DETECTOR_FAMILIES = frozenset(
+    {"explicit_error", "loop", "retry", "fallback", "dead_end"}
+)
+_OBSERVABILITY_SAFE_IDENTIFIER_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:@/+~-]{0,127}$"
 )
 _OBSERVABILITY_COHORT_METRICS = frozenset(
     {
@@ -1158,9 +1257,7 @@ class BackendAnalyticsClient:
     ) -> ObservabilityTraceSearchDTO:
         """Return a bounded, content-free projection of matching trace summaries."""
         _validate_observability_page(page, per_page)
-        start_time, end_time = _validate_observability_time_window(
-            start_time, end_time
-        )
+        start_time, end_time = _validate_observability_time_window(start_time, end_time)
         payload = await self._get_json(
             f"{_observability_path(project_id)}/traces",
             what="observability trace search",
@@ -1220,9 +1317,7 @@ class BackendAnalyticsClient:
                 page_info.get("per_page", payload.get("per_page", per_page))
             ),
             "total": int(page_info.get("total", payload.get("total", 0))),
-            "has_more": bool(
-                page_info.get("has_next", payload.get("has_more", False))
-            ),
+            "has_more": bool(page_info.get("has_next", payload.get("has_more", False))),
         }
 
     async def list_observability_issues(
@@ -1409,9 +1504,10 @@ class BackendAnalyticsClient:
         items = _require_bounded_list(
             payload.get("items"), what="observability trace slice items", maximum=limit
         )
-        if payload.get("projection_mode") != "content_free" or payload.get(
-            "content_included"
-        ) is not False:
+        if (
+            payload.get("projection_mode") != "content_free"
+            or payload.get("content_included") is not False
+        ):
             raise AnalyticsClientError(
                 "Malformed observability trace slice response: content-free markers are required."
             )
@@ -1437,9 +1533,7 @@ class BackendAnalyticsClient:
             raise ValueError(
                 f"limit must be between 1 and {_OBSERVABILITY_MAX_PAGE_SIZE}."
             )
-        start_time, end_time = _validate_observability_time_window(
-            start_time, end_time
-        )
+        start_time, end_time = _validate_observability_time_window(start_time, end_time)
         payload = await self._get_json(
             f"{_observability_path(project_id)}/analysis/tools",
             what="observability tool analysis",
@@ -1455,11 +1549,43 @@ class BackendAnalyticsClient:
             what="observability tool analysis",
         )
         _require_bounded_list(
-            payload.get("items"), what="observability tool analysis items", maximum=limit
+            payload.get("items"),
+            what="observability tool analysis items",
+            maximum=limit,
         )
         return cast(
             "ObservabilityToolAnalysisDTO",
             _project_content_free_observability(payload),
+        )
+
+    async def get_observability_analysis_insights(
+        self,
+        project_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        limit: int = 20,
+    ) -> ObservabilityAnalysisInsightsDTO:
+        """Return bounded structural conformance facts and non-causal guidance."""
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= 100
+        ):
+            raise ValueError("limit must be between 1 and 100.")
+        start_time, end_time = _validate_observability_time_window(start_time, end_time)
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/analysis/insights",
+            what="observability analysis insights",
+            params={
+                "start_time": start_time,
+                "end_time": end_time,
+                "limit": str(limit),
+            },
+        )
+        return cast(
+            "ObservabilityAnalysisInsightsDTO",
+            _project_observability_analysis_insights(payload),
         )
 
     async def compare_observability_cohorts(
@@ -1617,6 +1743,439 @@ def _require_bounded_list(value: Any, *, what: str, maximum: int) -> list[Any]:
             f"Malformed {what} response: expected at most {maximum} items."
         )
     return value
+
+
+def _validate_observability_analysis_insights_payload(
+    payload: dict[str, Any],
+) -> None:
+    what = "observability analysis insights"
+    _require_exact_keys(
+        payload,
+        _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS,
+        what=what,
+    )
+    _require_safe_observability_identifier(payload.get("project_id"), what="project_id")
+    _require_observability_datetime(payload.get("start_time"), what="start_time")
+    _require_observability_datetime(payload.get("end_time"), what="end_time")
+    _require_observability_datetime(payload.get("generated_at"), what="generated_at")
+    if payload.get("content_included") is not False:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            "content_included must be false."
+        )
+
+    conformance = _require_object(
+        payload.get("conformance"), what=f"{what} conformance"
+    )
+    _require_exact_keys(
+        conformance,
+        _OBSERVABILITY_CONFORMANCE_REQUIRED_KEYS,
+        what=f"{what} conformance",
+    )
+    if conformance.get("baseline_type") != "observed_dominant_variant":
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            "baseline_type must be observed_dominant_variant."
+        )
+    _require_safe_observability_identifier(
+        conformance.get("baseline_variant_id"),
+        what="conformance.baseline_variant_id",
+        nullable=True,
+    )
+    for field in (
+        "analyzed_trace_count",
+        "sampled_trace_count",
+        "total_trace_count",
+        "conforming_trace_count",
+        "alternate_trace_count",
+        "alternate_variant_count",
+    ):
+        _require_observability_integer(
+            conformance.get(field), what=f"conformance.{field}"
+        )
+    for field in ("analysis_coverage", "sample_coverage"):
+        _require_observability_number(
+            conformance.get(field), what=f"conformance.{field}", minimum=0, maximum=1
+        )
+    for field in ("conformance_rate", "alternate_rate"):
+        value = conformance.get(field)
+        if value is not None:
+            _require_observability_number(
+                value, what=f"conformance.{field}", minimum=0, maximum=1
+            )
+    if not isinstance(conformance.get("sample_truncated"), bool):
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            "conformance.sample_truncated must be a boolean."
+        )
+    _require_observability_text(
+        conformance.get("interpretation"),
+        what="conformance.interpretation",
+        maximum=512,
+    )
+    deviations = _require_bounded_list(
+        conformance.get("deviations"), what=f"{what} deviations", maximum=100
+    )
+    for index, value in enumerate(deviations):
+        deviation = _require_object(value, what=f"{what} deviations[{index}]")
+        _require_exact_keys(
+            deviation,
+            _OBSERVABILITY_DEVIATION_REQUIRED_KEYS,
+            what=f"{what} deviations[{index}]",
+        )
+        _require_safe_observability_identifier(
+            deviation.get("variant_id"), what=f"deviations[{index}].variant_id"
+        )
+        _require_observability_integer(
+            deviation.get("trace_count"),
+            what=f"deviations[{index}].trace_count",
+            minimum=1,
+        )
+        _require_observability_integer(
+            deviation.get("failed_trace_count"),
+            what=f"deviations[{index}].failed_trace_count",
+        )
+        _require_safe_observability_identifier(
+            deviation.get("representative_trace_id"),
+            what=f"deviations[{index}].representative_trace_id",
+        )
+        evidence_trace_ids = _require_bounded_list(
+            deviation.get("evidence_trace_ids"),
+            what=f"{what} deviations[{index}] evidence_trace_ids",
+            maximum=3,
+        )
+        _require_unique_observability_identifiers(
+            evidence_trace_ids, what=f"deviations[{index}].evidence_trace_ids"
+        )
+        _require_observability_number(
+            deviation.get("share"),
+            what=f"deviations[{index}].share",
+            minimum=0,
+            maximum=1,
+        )
+
+    recommendations = _require_bounded_list(
+        payload.get("recommendations"), what=f"{what} recommendations", maximum=100
+    )
+    for index, value in enumerate(recommendations):
+        recommendation = _require_object(value, what=f"{what} recommendations[{index}]")
+        _require_exact_keys(
+            recommendation,
+            _OBSERVABILITY_RECOMMENDATION_REQUIRED_KEYS,
+            what=f"{what} recommendations[{index}]",
+        )
+        _require_safe_observability_identifier(
+            recommendation.get("id"), what=f"recommendations[{index}].id"
+        )
+        _require_observability_enum(
+            recommendation.get("category"),
+            _OBSERVABILITY_RECOMMENDATION_CATEGORIES,
+            what=f"recommendations[{index}].category",
+        )
+        _require_observability_enum(
+            recommendation.get("priority"),
+            _OBSERVABILITY_RECOMMENDATION_PRIORITIES,
+            what=f"recommendations[{index}].priority",
+        )
+        _require_observability_number(
+            recommendation.get("confidence"),
+            what=f"recommendations[{index}].confidence",
+            minimum=0,
+            maximum=1,
+        )
+        _require_safe_observability_identifier(
+            recommendation.get("subject"), what=f"recommendations[{index}].subject"
+        )
+        _require_observability_text(
+            recommendation.get("suggested_action"),
+            what=f"recommendations[{index}].suggested_action",
+            maximum=512,
+        )
+        evidence = _require_object(
+            recommendation.get("evidence"),
+            what=f"{what} recommendations[{index}] evidence",
+        )
+        _require_exact_keys(
+            evidence,
+            _OBSERVABILITY_RECOMMENDATION_EVIDENCE_KEYS,
+            what=f"{what} recommendations[{index}] evidence",
+            require_all=False,
+        )
+        _validate_observability_recommendation_evidence(evidence, index=index)
+        measurement = _require_object(
+            recommendation.get("measurement"),
+            what=f"{what} recommendations[{index}] measurement",
+        )
+        _require_exact_keys(
+            measurement,
+            _OBSERVABILITY_MEASUREMENT_REQUIRED_KEYS,
+            what=f"{what} recommendations[{index}] measurement",
+        )
+        if (
+            measurement.get("comparison") != "before_after_cohorts"
+            or measurement.get("intervention_context_key") != "intervention_id"
+        ):
+            raise AnalyticsClientError(
+                "Malformed observability analysis insights response: "
+                "recommendation measurement constants are invalid."
+            )
+        metrics = _require_bounded_list(
+            measurement.get("metrics"),
+            what=f"{what} recommendations[{index}] metrics",
+            maximum=8,
+        )
+        if (
+            not metrics
+            or any(not isinstance(metric, str) for metric in metrics)
+            or set(metrics).difference(_OBSERVABILITY_COHORT_METRICS)
+        ):
+            raise AnalyticsClientError(
+                "Malformed observability analysis insights response: "
+                "recommendation metrics must contain supported values."
+            )
+        if len(set(metrics)) != len(metrics):
+            raise AnalyticsClientError(
+                "Malformed observability analysis insights response: "
+                "recommendation metrics must contain unique values."
+            )
+
+    limitations = _require_bounded_list(
+        payload.get("limitations"), what=f"{what} limitations", maximum=8
+    )
+    if not limitations:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            "limitations must contain non-empty strings."
+        )
+    for index, limitation in enumerate(limitations):
+        _require_observability_text(
+            limitation, what=f"limitations[{index}]", maximum=512
+        )
+
+
+def _require_exact_keys(
+    payload: dict[str, Any],
+    allowed: frozenset[str],
+    *,
+    what: str,
+    require_all: bool = True,
+) -> None:
+    if require_all:
+        _require_keys(payload, allowed, what=what)
+    extra = sorted(payload.keys() - allowed)
+    if extra:
+        raise AnalyticsClientError(
+            f"Malformed {what} response: unsupported key(s): {', '.join(extra)}."
+        )
+
+
+def _require_safe_observability_identifier(
+    value: Any, *, what: str, nullable: bool = False
+) -> str | None:
+    if value is None and nullable:
+        return None
+    if not isinstance(
+        value, str
+    ) or not _OBSERVABILITY_SAFE_IDENTIFIER_PATTERN.fullmatch(value):
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must be a content-free identifier of at most 128 characters."
+        )
+    return value
+
+
+def _require_observability_datetime(value: Any, *, what: str) -> str:
+    if not isinstance(value, str):
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must be an ISO 8601 date-time."
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must be an ISO 8601 date-time."
+        ) from exc
+    if parsed.utcoffset() is None:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must include a UTC offset."
+        )
+    return value
+
+
+def _require_observability_integer(value: Any, *, what: str, minimum: int = 0) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must be an integer greater than or equal to {minimum}."
+        )
+    return value
+
+
+def _require_observability_number(
+    value: Any, *, what: str, minimum: float, maximum: float
+) -> int | float:
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or not minimum <= value <= maximum
+    ):
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must be a finite number between {minimum} and {maximum}."
+        )
+    return value
+
+
+def _require_observability_text(value: Any, *, what: str, maximum: int) -> str:
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must be a non-empty string of at most {maximum} characters."
+        )
+    return value
+
+
+def _require_observability_enum(
+    value: Any, allowed: frozenset[str], *, what: str
+) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must be one of: {', '.join(sorted(allowed))}."
+        )
+    return value
+
+
+def _require_unique_observability_identifiers(values: list[Any], *, what: str) -> None:
+    identifiers = [
+        _require_safe_observability_identifier(value, what=f"{what}[{index}]")
+        for index, value in enumerate(values)
+    ]
+    if len(set(identifiers)) != len(identifiers):
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            f"{what} must contain unique values."
+        )
+
+
+def _validate_observability_recommendation_evidence(
+    evidence: dict[str, Any], *, index: int
+) -> None:
+    prefix = f"recommendations[{index}].evidence"
+    for field in ("normalized_tool_id", "issue_id"):
+        if field in evidence:
+            _require_safe_observability_identifier(
+                evidence[field], what=f"{prefix}.{field}"
+            )
+    if "baseline_variant_id" in evidence:
+        _require_safe_observability_identifier(
+            evidence["baseline_variant_id"],
+            what=f"{prefix}.baseline_variant_id",
+            nullable=True,
+        )
+    if "issue_ids" in evidence:
+        issue_ids = _require_bounded_list(
+            evidence["issue_ids"], what=f"{prefix}.issue_ids", maximum=100
+        )
+        _require_unique_observability_identifiers(issue_ids, what=f"{prefix}.issue_ids")
+    for field in (
+        "trace_count",
+        "attempt_count",
+        "failure_count",
+        "retry_count",
+        "fallback_count",
+        "occurrence_count",
+        "affected_trace_count",
+        "analyzed_trace_count",
+        "sampled_trace_count",
+        "alternate_trace_count",
+        "alternate_variant_count",
+    ):
+        if field in evidence:
+            _require_observability_integer(evidence[field], what=f"{prefix}.{field}")
+    for field in ("failure_rate", "retry_rate", "fallback_rate", "alternate_rate"):
+        if field in evidence:
+            _require_observability_number(
+                evidence[field], what=f"{prefix}.{field}", minimum=0, maximum=1
+            )
+    if "detector_family" in evidence:
+        _require_observability_enum(
+            evidence["detector_family"],
+            _OBSERVABILITY_DETECTOR_FAMILIES,
+            what=f"{prefix}.detector_family",
+        )
+
+
+def _project_observability_analysis_insights(
+    payload: Any, *, for_mcp: bool = False
+) -> dict[str, Any]:
+    """Validate and rebuild analysis insights according to their exact nesting."""
+    source = _require_object(payload, what="observability analysis insights")
+    _validate_observability_analysis_insights_payload(source)
+    conformance = cast(dict[str, Any], source["conformance"])
+    deviations = cast(list[dict[str, Any]], conformance["deviations"])
+    projected_conformance = {
+        key: conformance[key]
+        for key in _OBSERVABILITY_CONFORMANCE_REQUIRED_KEYS
+        if key not in {"deviations", "interpretation"}
+    }
+    projected_conformance["deviations"] = [
+        {
+            **{
+                key: deviation[key]
+                for key in _OBSERVABILITY_DEVIATION_REQUIRED_KEYS
+                if key != "evidence_trace_ids"
+            },
+            "evidence_trace_ids": list(deviation["evidence_trace_ids"]),
+        }
+        for deviation in deviations
+    ]
+    if not for_mcp:
+        projected_conformance["interpretation"] = conformance["interpretation"]
+
+    projected_recommendations: list[dict[str, Any]] = []
+    for recommendation in cast(list[dict[str, Any]], source["recommendations"]):
+        evidence = cast(dict[str, Any], recommendation["evidence"])
+        measurement = cast(dict[str, Any], recommendation["measurement"])
+        projected = {
+            key: recommendation[key]
+            for key in (
+                "id",
+                "category",
+                "priority",
+                "confidence",
+                "subject",
+            )
+        }
+        projected["evidence"] = {
+            key: (list(value) if isinstance(value, list) else value)
+            for key, value in evidence.items()
+        }
+        projected["measurement"] = {
+            "comparison": measurement["comparison"],
+            "metrics": list(measurement["metrics"]),
+            "intervention_context_key": measurement["intervention_context_key"],
+        }
+        if not for_mcp:
+            projected["suggested_action"] = recommendation["suggested_action"]
+        projected_recommendations.append(projected)
+
+    projected_payload = {
+        "project_id": source["project_id"],
+        "start_time": source["start_time"],
+        "end_time": source["end_time"],
+        "content_included": False,
+        "conformance": projected_conformance,
+        "recommendations": projected_recommendations,
+        "generated_at": source["generated_at"],
+    }
+    if not for_mcp:
+        projected_payload["limitations"] = list(source["limitations"])
+    return projected_payload
 
 
 def _parse_observability_time(value: str, *, field: str) -> datetime:

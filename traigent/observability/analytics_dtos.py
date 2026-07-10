@@ -132,7 +132,19 @@ class ObservabilityLineageDTO(TypedDict):
     generated_at: str
 
 
+class ObservabilityAnalysisInsightsDTO(TypedDict):
+    project_id: str
+    start_time: str
+    end_time: str
+    content_included: bool
+    conformance: dict[str, Any]
+    recommendations: list[dict[str, Any]]
+    limitations: list[str]
+    generated_at: str
+
+
 __all__ = [
+    "ObservabilityAnalysisInsightsDTO",
     "ObservabilityCohortComparisonDTO",
     "ObservabilityIssueDTO",
     "ObservabilityIssueDetailDTO",

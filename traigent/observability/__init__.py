@@ -2,6 +2,7 @@
 
 from traigent.observability.agent_spans import add_agent_span
 from traigent.observability.analytics_dtos import (
+    ObservabilityAnalysisInsightsDTO,
     ObservabilityCohortComparisonDTO,
     ObservabilityIssueDTO,
     ObservabilityIssueDetailDTO,
@@ -25,6 +26,7 @@ from traigent.observability.decorators import (
 )
 from traigent.observability.dtos import (
     CorrelationIds,
+    ExecutionContextDTO,
     FlushResult,
     ObservationDTO,
     ObservationRecord,
@@ -50,11 +52,13 @@ from traigent.observability.dtos import (
 
 __all__ = [
     "CorrelationIds",
+    "ExecutionContextDTO",
     "FlushResult",
     "ObservationDTO",
     "ObservationRecord",
     "ObservationType",
     "ObservabilityCohortComparisonDTO",
+    "ObservabilityAnalysisInsightsDTO",
     "ObserveContext",
     "ObservabilityClient",
     "ObservabilityConfig",
