@@ -23,9 +23,23 @@ Design rules enforced here:
 
 from __future__ import annotations
 
+import math
+from datetime import datetime, timedelta
 from typing import Any, cast
 
-from traigent.cloud.analytics_client import normalize_decision_intent
+from traigent.cloud.analytics_client import (
+    AnalyticsClientError,
+    _project_observability_analysis_insights,
+    _project_observability_cohort_comparison,
+    _project_observability_issue_detail,
+    _project_observability_issue_list,
+    _project_observability_lineage,
+    _project_observability_tool_analysis,
+    _project_observability_trace_analysis,
+    _project_observability_trace_search,
+    _project_observability_trace_slice,
+    normalize_decision_intent,
+)
 from traigent.utils.logging import get_logger
 
 try:
@@ -52,12 +66,41 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "analytics_get_parameter_insights",
     "analytics_get_example_insights",
     "analytics_render_chart",
+    "observability_search_traces",
+    "observability_list_issues",
+    "observability_get_issue",
+    "observability_get_trace_slice",
+    "observability_get_tool_analysis",
+    "observability_get_analysis_insights",
+    "observability_compare_cohorts",
+    "observability_get_related_changes",
+    "observability_build_change_brief",
     "analytics_list_experiment_groups",
     "analytics_get_experiment_group",
     "analytics_list_experiment_group_configuration_runs",
 )
 
 _SUPPORTED_CHART_KINDS: tuple[str, ...] = ("run_pareto", "run_correlations")
+_OBSERVABILITY_MAX_WINDOW = timedelta(days=31)
+_OBSERVABILITY_METRICS = frozenset(
+    {
+        "quality_score",
+        "cost_usd",
+        "latency_ms",
+        "error_rate",
+        "retry_rate",
+        "fallback_rate",
+        "input_tokens",
+        "output_tokens",
+    }
+)
+_AGGREGATE_RECOMMENDATION_RATIONALES = {
+    "tool_reliability": "Measured tool failures indicate a reliability change should be tested.",
+    "retry_policy": "Measured retry behavior indicates a bounded retry-policy change should be tested.",
+    "tool_routing": "Measured tool outcomes indicate a routing change should be tested.",
+    "recurring_issue": "Repeated issue evidence indicates a targeted remediation should be tested.",
+    "behavioral_variation": "Observed structural variation indicates a control change should be tested.",
+}
 
 
 def _failure(
@@ -93,8 +136,197 @@ def _require_identifier(value: str | None, *, field: str) -> str:
     return text
 
 
+def _bounded_identifier(value: str | None, *, field: str) -> str:
+    text = _require_identifier(value, field=field)
+    if len(text) > 128:
+        raise _ToolInputError(f"{field} must be at most 128 characters.")
+    return text
+
+
+def _bounded_page(page: int, per_page: int) -> tuple[int, int]:
+    if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+        raise _ToolInputError("page must be an integer of at least 1.")
+    if (
+        not isinstance(per_page, int)
+        or isinstance(per_page, bool)
+        or not 1 <= per_page <= 100
+    ):
+        raise _ToolInputError("per_page must be an integer between 1 and 100.")
+    return page, per_page
+
+
+def _bounded_limit(limit: int, *, maximum: int) -> int:
+    if (
+        not isinstance(limit, int)
+        or isinstance(limit, bool)
+        or not 1 <= limit <= maximum
+    ):
+        raise _ToolInputError(f"limit must be an integer between 1 and {maximum}.")
+    return limit
+
+
+def _parse_window_time(value: str | None, *, field: str) -> datetime:
+    text = _require_identifier(value, field=field)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise _ToolInputError(f"{field} must be an ISO 8601 date-time.") from exc
+    if parsed.utcoffset() is None:
+        raise _ToolInputError(f"{field} must include a UTC offset.")
+    return parsed
+
+
+def _bounded_time_window(start_time: str, end_time: str) -> tuple[str, str]:
+    start = _parse_window_time(start_time, field="start_time")
+    end = _parse_window_time(end_time, field="end_time")
+    if end <= start:
+        raise _ToolInputError("end_time must be later than start_time.")
+    if end - start > _OBSERVABILITY_MAX_WINDOW:
+        raise _ToolInputError("observability time windows cannot exceed 31 days.")
+    return start_time.strip(), end_time.strip()
+
+
+def _bounded_optional_text(
+    value: str | None, *, field: str, maximum: int
+) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) > maximum:
+        raise _ToolInputError(f"{field} must be at most {maximum} characters.")
+    return text
+
+
 class _ToolInputError(ValueError):
     """Raised for user-correctable analytics MCP tool input errors."""
+
+
+def _bounded_identifier_list(value: object, *, field: str, maximum: int) -> list[str]:
+    if not isinstance(value, list):
+        raise _ToolInputError(f"{field} must be a list.")
+    if len(value) > maximum:
+        raise _ToolInputError(f"{field} must contain at most {maximum} values.")
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise _ToolInputError(f"{field} values must be strings.")
+        cleaned.append(_bounded_identifier(item, field=field))
+    if len(set(cleaned)) != len(cleaned):
+        raise _ToolInputError(f"{field} values must be unique.")
+    return cleaned
+
+
+def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise _ToolInputError(f"{field} must be an object.")
+    allowed = {
+        "start_time",
+        "end_time",
+        "execution_context",
+        "trace_statuses",
+        "variant_ids",
+        "issue_ids",
+        "environment",
+        "sample_limit",
+    }
+    extra = sorted(set(value).difference(allowed))
+    if extra:
+        raise _ToolInputError(
+            f"{field} contains unsupported field(s): {', '.join(extra)}."
+        )
+    start_time, end_time = _bounded_time_window(
+        str(value.get("start_time") or ""), str(value.get("end_time") or "")
+    )
+    statuses = _bounded_identifier_list(
+        value.get("trace_statuses", []), field=f"{field}.trace_statuses", maximum=4
+    )
+    if set(statuses).difference({"running", "completed", "failed", "rejected"}):
+        raise _ToolInputError(f"{field}.trace_statuses contains an unsupported status.")
+    sample_limit = value.get("sample_limit", 5000)
+    if (
+        not isinstance(sample_limit, int)
+        or isinstance(sample_limit, bool)
+        or not 1 <= sample_limit <= 5000
+    ):
+        raise _ToolInputError(
+            f"{field}.sample_limit must be an integer between 1 and 5000."
+        )
+    clean: dict[str, object] = {
+        "start_time": start_time,
+        "end_time": end_time,
+        "trace_statuses": statuses,
+        "variant_ids": _bounded_identifier_list(
+            value.get("variant_ids", []),
+            field=f"{field}.variant_ids",
+            maximum=100,
+        ),
+        "issue_ids": _bounded_identifier_list(
+            value.get("issue_ids", []),
+            field=f"{field}.issue_ids",
+            maximum=100,
+        ),
+        "environment": _bounded_optional_text(
+            cast(str | None, value.get("environment")),
+            field=f"{field}.environment",
+            maximum=64,
+        ),
+        "sample_limit": sample_limit,
+    }
+    context = value.get("execution_context")
+    if context is not None:
+        if not isinstance(context, dict):
+            raise _ToolInputError(f"{field}.execution_context must be an object.")
+        allowed_context = {
+            "schema_version",
+            "agent_id",
+            "agent_version",
+            "release_id",
+            "deployment_id",
+            "code_revision",
+            "configuration_id",
+            "configuration_version",
+            "prompt_id",
+            "prompt_version",
+            "toolset_id",
+            "toolset_version",
+            "evaluator_id",
+            "evaluator_version",
+            "dataset_id",
+            "dataset_version",
+            "experiment_run_id",
+            "configuration_run_id",
+            "optimization_run_id",
+            "intervention_id",
+        }
+        context_extra = sorted(set(context).difference(allowed_context))
+        if context_extra:
+            raise _ToolInputError(
+                f"{field}.execution_context contains unsupported field(s): "
+                + ", ".join(context_extra)
+                + "."
+            )
+        clean_context: dict[str, object] = {"schema_version": "1.0"}
+        for key, context_value in context.items():
+            if key == "schema_version":
+                if context_value != "1.0":
+                    raise _ToolInputError(
+                        f"{field}.execution_context.schema_version must be '1.0'."
+                    )
+                continue
+            if context_value is None:
+                clean_context[key] = None
+                continue
+            if not isinstance(context_value, str):
+                raise _ToolInputError(
+                    f"{field}.execution_context.{key} must be an identifier or null."
+                )
+            clean_context[key] = _bounded_identifier(
+                context_value, field=f"{field}.execution_context.{key}"
+            )
+        clean["execution_context"] = clean_context
+    return clean
 
 
 async def _new_analytics_client() -> Any:
@@ -226,7 +458,9 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
     except ImportError as exc:
         return _failure(str(exc), code="dependency_missing")
     except InvalidCredentialsError as exc:
-        logger.debug("Analytics %s authentication failed: %s", what, exc)
+        logger.debug(
+            "Analytics %s authentication failed (%s)", what, type(exc).__name__
+        )
         return _auth_failure()
 
     backend_url = _resolved_backend_url(client)
@@ -240,22 +474,28 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
             backend_url=backend_url,
         )
     except InvalidCredentialsError as exc:
-        logger.debug("Analytics %s authentication failed: %s", what, exc)
+        logger.debug(
+            "Analytics %s authentication failed (%s)", what, type(exc).__name__
+        )
         return _auth_failure(backend_url=backend_url)
     except _HTTP_STATUS_ERRORS as exc:
-        logger.debug("Analytics %s request returned HTTP status", what, exc_info=True)
+        logger.debug(
+            "Analytics %s request returned HTTP status %s",
+            what,
+            exc.response.status_code,
+        )
         return _http_status_failure(exc, what=what, backend_url=backend_url)
     except _HTTP_TRANSPORT_ERRORS as exc:
-        logger.debug("Analytics %s transport failed: %s", what, exc)
+        logger.debug("Analytics %s transport failed (%s)", what, type(exc).__name__)
         return _failure(
             f"Could not retrieve {what} from the backend.",
             code="backend_unavailable",
             backend_url=backend_url,
         )
     except Exception as exc:  # noqa: BLE001 - normalize all transport failures
-        # Do not surface raw exception text: it can contain the backend URL,
-        # auth header echoes, or response bodies. Log at debug for operators.
-        logger.debug("Analytics %s request failed: %s", what, exc)
+        # Exception text can contain backend URLs, auth headers, or response
+        # bodies. Retain only the exception class for operator diagnostics.
+        logger.debug("Analytics %s request failed (%s)", what, type(exc).__name__)
         return _failure(
             f"Could not retrieve {what} from the backend.",
             code="backend_unavailable",
@@ -263,6 +503,24 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
         )
 
     return {"ok": True, what.replace(" ", "_"): _to_plain_payload(data)}
+
+
+async def _call_observability_backend(
+    coro_factory: Any, *, what: str, projector: Any
+) -> dict[str, Any]:
+    """Call a reader and revalidate its exact endpoint contract at the MCP edge."""
+    result = await _call_backend(coro_factory, what=what)
+    if result.get("ok") is not True:
+        return result
+    key = what.replace(" ", "_")
+    try:
+        projected = projector(result.get(key))
+    except AnalyticsClientError:
+        return _failure(
+            f"The backend returned a malformed {what} response.",
+            code="malformed_response",
+        )
+    return {"ok": True, key: projected}
 
 
 def _to_plain_payload(data: Any) -> Any:
@@ -370,7 +628,10 @@ async def auth_status_tool() -> dict[str, Any]:
         try:
             credential_kwargs = await resolve_analytics_read_client_credentials()
         except InvalidCredentialsError as exc:
-            logger.debug("Analytics JWT credential validation failed: %s", exc)
+            logger.debug(
+                "Analytics JWT credential validation failed (%s)",
+                type(exc).__name__,
+            )
             authenticated = False
         else:
             authenticated = bool(credential_kwargs.get("jwt_token"))
@@ -685,3 +946,586 @@ async def analytics_list_experiment_group_configuration_runs_tool(
         lambda reader: reader.list_experiment_group_configuration_runs(gid, pid),
         what="experiment group configuration runs",
     )
+
+
+async def observability_search_traces_tool(
+    project_id: str,
+    start_time: str,
+    end_time: str,
+    page: int = 1,
+    per_page: int = 50,
+    status: str | None = None,
+    environment: str | None = None,
+    release: str | None = None,
+) -> dict[str, Any]:
+    """Search trace summaries through a bounded, content-free projection."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        start, end = _bounded_time_window(start_time, end_time)
+        page, per_page = _bounded_page(page, per_page)
+        clean_status = _bounded_optional_text(status, field="status", maximum=32)
+        if clean_status not in {None, "running", "completed", "failed", "rejected"}:
+            raise _ToolInputError("status contains an unsupported trace status.")
+        clean_environment = _bounded_optional_text(
+            environment, field="environment", maximum=64
+        )
+        clean_release = _bounded_optional_text(release, field="release", maximum=128)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.search_observability_traces(
+            pid,
+            start_time=start,
+            end_time=end,
+            page=page,
+            per_page=per_page,
+            status=clean_status,
+            environment=clean_environment,
+            release=clean_release,
+        ),
+        what="observability trace search",
+        projector=_project_observability_trace_search,
+    )
+
+
+async def observability_list_issues_tool(
+    project_id: str,
+    page: int = 1,
+    per_page: int = 50,
+    state: str | None = None,
+    detector_family: str | None = None,
+    severity: str | None = None,
+) -> dict[str, Any]:
+    """List durable recurring issues without raw trace content."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        page, per_page = _bounded_page(page, per_page)
+        clean_state = _bounded_optional_text(state, field="state", maximum=32)
+        clean_detector = _bounded_optional_text(
+            detector_family, field="detector_family", maximum=32
+        )
+        clean_severity = _bounded_optional_text(severity, field="severity", maximum=16)
+        if clean_state not in {None, "open", "acknowledged", "resolved", "ignored"}:
+            raise _ToolInputError("state contains an unsupported issue state.")
+        if clean_detector not in {
+            None,
+            "explicit_error",
+            "loop",
+            "retry",
+            "fallback",
+            "dead_end",
+        }:
+            raise _ToolInputError(
+                "detector_family contains an unsupported detector family."
+            )
+        if clean_severity not in {None, "info", "warning", "error", "critical"}:
+            raise _ToolInputError("severity contains an unsupported severity.")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.list_observability_issues(
+            pid,
+            page=page,
+            per_page=per_page,
+            state=clean_state,
+            detector_family=clean_detector,
+            severity=clean_severity,
+        ),
+        what="observability issues",
+        projector=_project_observability_issue_list,
+    )
+
+
+async def observability_get_issue_tool(
+    project_id: str,
+    issue_id: str,
+    occurrence_page: int = 1,
+    occurrences_per_page: int = 50,
+) -> dict[str, Any]:
+    """Get one issue and bounded immutable occurrence evidence."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        iid = _bounded_identifier(issue_id, field="issue_id")
+        occurrence_page, occurrences_per_page = _bounded_page(
+            occurrence_page, occurrences_per_page
+        )
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_issue(
+            pid,
+            iid,
+            occurrence_page=occurrence_page,
+            occurrences_per_page=occurrences_per_page,
+        ),
+        what="observability issue",
+        projector=_project_observability_issue_detail,
+    )
+
+
+async def observability_get_trace_slice_tool(
+    project_id: str,
+    trace_id: str,
+    cursor: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Get a cursor-bounded content-free trace projection."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        tid = _bounded_identifier(trace_id, field="trace_id")
+        clean_cursor = _bounded_optional_text(cursor, field="cursor", maximum=512)
+        limit = _bounded_limit(limit, maximum=500)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_trace_slice(
+            pid, tid, cursor=clean_cursor, limit=limit
+        ),
+        what="observability trace slice",
+        projector=_project_observability_trace_slice,
+    )
+
+
+async def observability_get_tool_analysis_tool(
+    project_id: str,
+    start_time: str,
+    end_time: str,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Get bounded tool execution aggregates without correctness claims."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        start, end = _bounded_time_window(start_time, end_time)
+        limit = _bounded_limit(limit, maximum=100)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_tool_analysis(
+            pid, start_time=start, end_time=end, limit=limit
+        ),
+        what="observability tool analysis",
+        projector=_project_observability_tool_analysis,
+    )
+
+
+async def observability_get_analysis_insights_tool(
+    project_id: str,
+    start_time: str,
+    end_time: str,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Get bounded content-free conformance facts and non-causal guidance."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        start, end = _bounded_time_window(start_time, end_time)
+        limit = _bounded_limit(limit, maximum=100)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_analysis_insights(
+            pid, start_time=start, end_time=end, limit=limit
+        ),
+        what="observability analysis insights",
+        projector=lambda payload: _project_observability_analysis_insights(
+            payload, for_mcp=True
+        ),
+    )
+
+
+async def observability_compare_cohorts_tool(
+    project_id: str,
+    reference: dict[str, object],
+    comparison: dict[str, object],
+    metrics: list[str],
+) -> dict[str, Any]:
+    """Compare bounded reference and comparison cohorts using aggregate metrics."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        clean_reference = _bounded_cohort(reference, field="reference")
+        clean_comparison = _bounded_cohort(comparison, field="comparison")
+        clean_metrics = _bounded_identifier_list(metrics, field="metrics", maximum=8)
+        if not clean_metrics:
+            raise _ToolInputError("metrics must contain at least one value.")
+        unsupported = sorted(set(clean_metrics).difference(_OBSERVABILITY_METRICS))
+        if unsupported:
+            raise _ToolInputError(
+                "metrics contains unsupported value(s): " + ", ".join(unsupported)
+            )
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.compare_observability_cohorts(
+            pid,
+            reference=clean_reference,
+            comparison=clean_comparison,
+            metrics=clean_metrics,
+        ),
+        what="observability cohort comparison",
+        projector=_project_observability_cohort_comparison,
+    )
+
+
+async def observability_get_related_changes_tool(
+    project_id: str,
+    trace_id: str,
+) -> dict[str, Any]:
+    """Get content-free lineage links related to a trace, without causal claims."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        tid = _bounded_identifier(trace_id, field="trace_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_observability_backend(
+        lambda reader: reader.get_observability_related_changes(pid, tid),
+        what="observability related changes",
+        projector=_project_observability_lineage,
+    )
+
+
+def _change_brief_guidance(
+    evidence: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build bounded, deterministic guidance from already-projected facts."""
+    hypotheses: list[dict[str, Any]] = []
+    recommendations: list[dict[str, Any]] = []
+
+    def evidence_count(value: object) -> int:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            return 0
+        return max(0, int(value))
+
+    analysis = evidence.get("trace_analysis")
+    if not isinstance(analysis, dict):
+        analysis = {}
+
+    analysis_status = analysis.get("analysis_status")
+    if analysis_status != "completed":
+        hypotheses.append(
+            {
+                "category": "analysis_completeness",
+                "assessment": "unverified",
+                "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+                "evidence": {
+                    "analysis_status": analysis_status,
+                    "failure_code": analysis.get("failure_code"),
+                },
+            }
+        )
+        recommendations.append(
+            {
+                "action": "restore_trace_derivation",
+                "rationale": "Complete structural evidence is required before attributing a failure.",
+                "verification": "Re-run this brief after analysis_status becomes completed.",
+            }
+        )
+
+    tool_summaries = analysis.get("tool_summaries")
+    if isinstance(tool_summaries, list):
+        for summary in tool_summaries[:20]:
+            if not isinstance(summary, dict):
+                continue
+            failures = evidence_count(summary.get("failure_count"))
+            retries = evidence_count(summary.get("retry_count"))
+            fallbacks = evidence_count(summary.get("fallback_count"))
+            if failures + retries + fallbacks == 0:
+                continue
+            tool_id = summary.get("normalized_tool_id")
+            hypotheses.append(
+                {
+                    "category": "tool_execution_reliability",
+                    "assessment": "unverified",
+                    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
+                    "evidence": {
+                        "normalized_tool_id": tool_id,
+                        "attempt_count": evidence_count(summary.get("attempt_count")),
+                        "failure_count": failures,
+                        "retry_count": retries,
+                        "fallback_count": fallbacks,
+                    },
+                }
+            )
+            recommendations.append(
+                {
+                    "action": "test_tool_contract_change",
+                    "target_id": tool_id,
+                    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+                    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change.",
+                }
+            )
+
+    repeat_groups = analysis.get("repeat_groups")
+    if isinstance(repeat_groups, list) and repeat_groups:
+        hypotheses.append(
+            {
+                "category": "loop_control",
+                "assessment": "unverified",
+                "statement": "Repeated structural subsequences may indicate ineffective retry or planning control.",
+                "evidence": {
+                    "repeat_group_ids": [
+                        group.get("id")
+                        for group in repeat_groups[:20]
+                        if isinstance(group, dict)
+                    ]
+                },
+            }
+        )
+        recommendations.append(
+            {
+                "action": "test_loop_guard",
+                "rationale": "The trace contains server-derived repeated subsequences.",
+                "verification": "Compare retry_rate, latency_ms, cost_usd, and quality_score on matched cohorts.",
+            }
+        )
+
+    issue_ids = analysis.get("issue_ids")
+    if isinstance(issue_ids, list) and issue_ids:
+        recommendations.append(
+            {
+                "action": "inspect_recurring_issues",
+                "target_ids": issue_ids[:20],
+                "rationale": "Durable issue occurrences connect this trace to repeated behavior.",
+                "verification": "Use observability_get_issue for immutable occurrence evidence before changing code.",
+            }
+        )
+
+    lineage = evidence.get("related_changes")
+    links = lineage.get("links") if isinstance(lineage, dict) else None
+    if isinstance(links, list) and links:
+        hypotheses.append(
+            {
+                "category": "change_attribution",
+                "assessment": "unverified",
+                "statement": "Linked releases, prompts, configurations, or toolsets are candidate variables, not established causes.",
+                "evidence": {
+                    "candidate_changes": [
+                        {
+                            key: link.get(key)
+                            for key in (
+                                "resource_type",
+                                "resource_id",
+                                "resource_version",
+                            )
+                        }
+                        for link in links[:20]
+                        if isinstance(link, dict)
+                    ]
+                },
+            }
+        )
+
+    aggregate_insights = evidence.get("analysis_insights")
+    if isinstance(aggregate_insights, dict):
+        conformance = aggregate_insights.get("conformance")
+        if isinstance(conformance, dict) and evidence_count(
+            conformance.get("alternate_trace_count")
+        ):
+            hypotheses.append(
+                {
+                    "category": "structural_conformance",
+                    "assessment": "descriptive_non_causal",
+                    "statement": "Alternate structures differ from the dominant observed variant; the baseline is descriptive, not an intended-workflow assertion.",
+                    "evidence": {
+                        key: conformance.get(key)
+                        for key in (
+                            "baseline_type",
+                            "baseline_variant_id",
+                            "sampled_trace_count",
+                            "conformance_rate",
+                            "alternate_trace_count",
+                            "alternate_rate",
+                            "alternate_variant_count",
+                            "sample_truncated",
+                        )
+                    },
+                }
+            )
+        aggregate_recommendations = aggregate_insights.get("recommendations")
+        if isinstance(aggregate_recommendations, list):
+            for recommendation in aggregate_recommendations[:20]:
+                if not isinstance(recommendation, dict):
+                    continue
+                category = recommendation.get("category")
+                if not isinstance(category, str):
+                    continue
+                rationale = _AGGREGATE_RECOMMENDATION_RATIONALES.get(category)
+                if rationale is None:
+                    continue
+                recommendations.append(
+                    {
+                        "action": "evaluate_aggregate_recommendation",
+                        "target_id": recommendation.get("id"),
+                        "category": category,
+                        "priority": recommendation.get("priority"),
+                        "confidence": recommendation.get("confidence"),
+                        "subject": recommendation.get("subject"),
+                        "rationale": rationale,
+                        "evidence": recommendation.get("evidence"),
+                        "verification": recommendation.get("measurement"),
+                        "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change.",
+                    }
+                )
+
+    cohort = evidence.get("cohort_comparison")
+    if isinstance(cohort, dict):
+        recommendations.append(
+            {
+                "action": "review_measured_cohort_deltas",
+                "rationale": "A bounded before/after comparison is included in this brief.",
+                "verification": "Accept a change only when selected quality/reliability metrics improve without violating cost or latency constraints.",
+            }
+        )
+
+    projection = evidence.get("trace_slice")
+    projection_items = projection.get("items") if isinstance(projection, dict) else None
+    if not projection_items:
+        recommendations.append(
+            {
+                "action": "improve_trace_instrumentation",
+                "rationale": "No content-free observation projection was available for this trace.",
+                "verification": "Emit typed observations with terminal status and stable tool_name, then rebuild the brief.",
+            }
+        )
+    if not hypotheses:
+        hypotheses.append(
+            {
+                "category": "insufficient_evidence",
+                "assessment": "unverified",
+                "statement": "The available content-free evidence does not identify a concrete failure mechanism.",
+                "evidence": {},
+            }
+        )
+    return hypotheses[:25], recommendations[:25]
+
+
+async def observability_build_change_brief_tool(
+    project_id: str,
+    trace_id: str,
+    start_time: str,
+    end_time: str,
+    reference: dict[str, object] | None = None,
+    comparison: dict[str, object] | None = None,
+    metrics: list[str] | None = None,
+    trace_limit: int = 200,
+    tool_limit: int = 50,
+    insights_limit: int = 20,
+) -> dict[str, Any]:
+    """Compose a privacy-bounded, explicitly non-causal change brief."""
+    try:
+        pid = _bounded_identifier(project_id, field="project_id")
+        tid = _bounded_identifier(trace_id, field="trace_id")
+        start, end = _bounded_time_window(start_time, end_time)
+        trace_limit = _bounded_limit(trace_limit, maximum=500)
+        tool_limit = _bounded_limit(tool_limit, maximum=100)
+        insights_limit = _bounded_limit(insights_limit, maximum=100)
+        if (reference is None) != (comparison is None):
+            raise _ToolInputError(
+                "reference and comparison must either both be provided or both be omitted."
+            )
+        clean_reference = (
+            _bounded_cohort(reference, field="reference")
+            if reference is not None
+            else None
+        )
+        clean_comparison = (
+            _bounded_cohort(comparison, field="comparison")
+            if comparison is not None
+            else None
+        )
+        clean_metrics = _bounded_identifier_list(
+            metrics or [], field="metrics", maximum=8
+        )
+        if clean_reference is not None and not clean_metrics:
+            clean_metrics = [
+                "error_rate",
+                "retry_rate",
+                "fallback_rate",
+                "latency_ms",
+                "cost_usd",
+            ]
+        unsupported = sorted(set(clean_metrics).difference(_OBSERVABILITY_METRICS))
+        if unsupported:
+            raise _ToolInputError(
+                "metrics contains unsupported value(s): " + ", ".join(unsupported)
+            )
+        if clean_reference is None and clean_metrics:
+            raise _ToolInputError(
+                "metrics require both reference and comparison cohorts."
+            )
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+
+    async def _read_evidence(reader: Any) -> dict[str, Any]:
+        evidence = {
+            "trace_analysis": _project_observability_trace_analysis(
+                await reader.get_observability_trace_analysis(pid, tid)
+            ),
+            "trace_slice": _project_observability_trace_slice(
+                await reader.get_observability_trace_slice(
+                    pid, tid, cursor=None, limit=trace_limit
+                )
+            ),
+            "related_changes": _project_observability_lineage(
+                await reader.get_observability_related_changes(pid, tid)
+            ),
+            "tool_analysis": _project_observability_tool_analysis(
+                await reader.get_observability_tool_analysis(
+                    pid, start_time=start, end_time=end, limit=tool_limit
+                )
+            ),
+            "analysis_insights": _project_observability_analysis_insights(
+                await reader.get_observability_analysis_insights(
+                    pid, start_time=start, end_time=end, limit=insights_limit
+                ),
+                for_mcp=True,
+            ),
+        }
+        if clean_reference is not None and clean_comparison is not None:
+            evidence["cohort_comparison"] = _project_observability_cohort_comparison(
+                await reader.compare_observability_cohorts(
+                    pid,
+                    reference=clean_reference,
+                    comparison=clean_comparison,
+                    metrics=clean_metrics,
+                )
+            )
+        return evidence
+
+    result = await _call_backend(_read_evidence, what="observability change evidence")
+    if result.get("ok") is not True:
+        return result
+    raw_evidence = result.get("observability_change_evidence")
+    if not isinstance(raw_evidence, dict):
+        return _failure(
+            "The backend returned malformed observability change evidence.",
+            code="malformed_response",
+        )
+    evidence: dict[str, Any] = {
+        key: raw_evidence[key]
+        for key in (
+            "trace_analysis",
+            "trace_slice",
+            "related_changes",
+            "tool_analysis",
+            "cohort_comparison",
+        )
+        if key in raw_evidence
+    }
+    if "analysis_insights" in raw_evidence:
+        evidence["analysis_insights"] = raw_evidence["analysis_insights"]
+    hypotheses, recommendations = _change_brief_guidance(evidence)
+    return {
+        "ok": True,
+        "observability_change_brief": {
+            "project_id": pid,
+            "trace_id": tid,
+            "assessment": "evidence_only_non_causal",
+            "evidence": evidence,
+            "hypotheses": hypotheses,
+            "recommendations": recommendations,
+        },
+    }

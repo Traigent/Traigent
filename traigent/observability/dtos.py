@@ -12,6 +12,8 @@ MAX_NAME_LENGTH = 255
 MAX_ENVIRONMENT_LENGTH = 64
 MAX_LABEL_LENGTH = 64
 MAX_STATUS_LENGTH = 64
+OBSERVABILITY_STATUSES = frozenset({"running", "completed", "failed", "rejected"})
+_EXECUTION_CONTEXT_UNSET: Any = object()
 
 
 def utc_now() -> datetime:
@@ -82,13 +84,27 @@ def _optional_float(payload: dict[str, Any], name: str) -> float | None:
     return None if value is None else float(value)
 
 
+def _validate_observability_status(name: str, value: str) -> None:
+    _validate_required_string(name, value, max_length=MAX_STATUS_LENGTH)
+    if value not in OBSERVABILITY_STATUSES:
+        allowed = ", ".join(sorted(OBSERVABILITY_STATUSES))
+        raise ValueError(f"{name} must be one of: {allowed}")
+
+
 class ObservationType(StrEnum):
-    """Frozen Wave 1 observation types."""
+    """Observation kinds accepted by the observability ingest contract."""
 
     SPAN = "span"
     GENERATION = "generation"
     EVENT = "event"
     TOOL_CALL = "tool_call"
+    AGENT = "agent"
+    CHAIN = "chain"
+    TOOL = "tool"
+    RETRIEVER = "retriever"
+    EVALUATOR = "evaluator"
+    EMBEDDING = "embedding"
+    GUARDRAIL = "guardrail"
 
 
 class ThumbRating(StrEnum):
@@ -121,6 +137,135 @@ class PromptReferenceDTO:
             "variables": to_jsonable(self.variables),
         }
         return {key: value for key, value in payload.items() if value is not None}
+
+
+@dataclass(frozen=True, init=False)
+class ExecutionContextDTO:
+    """Versioned, content-free trace lineage accepted by the backend.
+
+    Omitted identifier fields inherit client defaults. An explicitly supplied
+    ``None`` is retained by :meth:`to_dict` so a per-trace context can clear a
+    default, for example ``ExecutionContextDTO(toolset_id=None)``.
+    """
+
+    schema_version: str = "1.0"
+    agent_id: str | None = None
+    agent_version: str | None = None
+    release_id: str | None = None
+    deployment_id: str | None = None
+    code_revision: str | None = None
+    configuration_id: str | None = None
+    configuration_version: str | None = None
+    prompt_id: str | None = None
+    prompt_version: str | None = None
+    toolset_id: str | None = None
+    toolset_version: str | None = None
+    evaluator_id: str | None = None
+    evaluator_version: str | None = None
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+    experiment_run_id: str | None = None
+    configuration_run_id: str | None = None
+    optimization_run_id: str | None = None
+    intervention_id: str | None = None
+    _provided_fields: frozenset[str] = field(
+        default_factory=frozenset, init=False, repr=False, compare=False
+    )
+
+    def __init__(
+        self,
+        schema_version: str = "1.0",
+        agent_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        agent_version: str | None = _EXECUTION_CONTEXT_UNSET,
+        release_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        deployment_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        code_revision: str | None = _EXECUTION_CONTEXT_UNSET,
+        configuration_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        configuration_version: str | None = _EXECUTION_CONTEXT_UNSET,
+        prompt_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        prompt_version: str | None = _EXECUTION_CONTEXT_UNSET,
+        toolset_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        toolset_version: str | None = _EXECUTION_CONTEXT_UNSET,
+        evaluator_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        evaluator_version: str | None = _EXECUTION_CONTEXT_UNSET,
+        dataset_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        dataset_version: str | None = _EXECUTION_CONTEXT_UNSET,
+        experiment_run_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        configuration_run_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        optimization_run_id: str | None = _EXECUTION_CONTEXT_UNSET,
+        intervention_id: str | None = _EXECUTION_CONTEXT_UNSET,
+    ) -> None:
+        values = {
+            "agent_id": agent_id,
+            "agent_version": agent_version,
+            "release_id": release_id,
+            "deployment_id": deployment_id,
+            "code_revision": code_revision,
+            "configuration_id": configuration_id,
+            "configuration_version": configuration_version,
+            "prompt_id": prompt_id,
+            "prompt_version": prompt_version,
+            "toolset_id": toolset_id,
+            "toolset_version": toolset_version,
+            "evaluator_id": evaluator_id,
+            "evaluator_version": evaluator_version,
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "experiment_run_id": experiment_run_id,
+            "configuration_run_id": configuration_run_id,
+            "optimization_run_id": optimization_run_id,
+            "intervention_id": intervention_id,
+        }
+        object.__setattr__(self, "schema_version", schema_version)
+        object.__setattr__(
+            self,
+            "_provided_fields",
+            frozenset(
+                name
+                for name, value in values.items()
+                if value is not _EXECUTION_CONTEXT_UNSET
+            ),
+        )
+        for name, value in values.items():
+            object.__setattr__(
+                self,
+                name,
+                None if value is _EXECUTION_CONTEXT_UNSET else value,
+            )
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "1.0":
+            raise ValueError("schema_version must be '1.0'")
+        for name, value in self.__dict__.items():
+            if name in {"schema_version", "_provided_fields"}:
+                continue
+            _validate_optional_string(name, value, max_length=MAX_IDENTIFIER_LENGTH)
+            if value == "":
+                raise ValueError(f"{name} must not be empty")
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ExecutionContextDTO:
+        allowed = {
+            name for name in cls.__dataclass_fields__ if not name.startswith("_")
+        }
+        unsupported = sorted(set(payload).difference(allowed))
+        if unsupported:
+            raise ValueError(
+                "execution_context contains unsupported field(s): "
+                + ", ".join(unsupported)
+            )
+        context = cls(**payload)
+        object.__setattr__(context, "_provided_fields", frozenset(payload))
+        return context
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {
+            key: value
+            for key, value in self.__dict__.items()
+            if not key.startswith("_")
+            and (value is not None or key in self._provided_fields)
+        }
 
 
 @dataclass
@@ -207,7 +352,7 @@ class ObservationDTO:
     def __post_init__(self) -> None:
         _validate_required_string("id", self.id, max_length=MAX_IDENTIFIER_LENGTH)
         _validate_required_string("name", self.name, max_length=MAX_NAME_LENGTH)
-        _validate_required_string("status", self.status, max_length=MAX_STATUS_LENGTH)
+        _validate_observability_status("status", self.status)
         _validate_optional_string(
             "parent_observation_id",
             self.parent_observation_id,
@@ -283,13 +428,14 @@ class TraceDTO:
     ended_at: datetime | None = None
     correlation_ids: CorrelationIds | None = None
     prompt_reference: PromptReferenceDTO | None = None
+    execution_context: ExecutionContextDTO | None = None
     session: SessionDTO | None = None
     observations: list[ObservationDTO] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         _validate_required_string("id", self.id, max_length=MAX_IDENTIFIER_LENGTH)
         _validate_required_string("name", self.name, max_length=MAX_NAME_LENGTH)
-        _validate_required_string("status", self.status, max_length=MAX_STATUS_LENGTH)
+        _validate_observability_status("status", self.status)
         _validate_optional_string(
             "session_id", self.session_id, max_length=MAX_IDENTIFIER_LENGTH
         )
@@ -332,6 +478,8 @@ class TraceDTO:
             payload["correlation_ids"] = self.correlation_ids.to_dict()
         if self.prompt_reference is not None:
             payload["prompt_reference"] = self.prompt_reference.to_dict()
+        if self.execution_context is not None:
+            payload["execution_context"] = self.execution_context.to_dict()
         return {key: value for key, value in payload.items() if value is not None}
 
 
@@ -599,6 +747,7 @@ class TraceRecord:
     published_at: datetime | None = None
     published_by: str | None = None
     prompt_links: list[PromptLinkRecord] = field(default_factory=list)
+    execution_context: dict[str, Any] | None = None
     session: SessionRecord | None = None
     collaboration: TraceCollaborationState | None = None
 
@@ -646,6 +795,11 @@ class TraceRecord:
                 PromptLinkRecord.from_dict(item)
                 for item in payload.get("prompt_links") or []
             ],
+            execution_context=(
+                dict(payload["execution_context"])
+                if isinstance(payload.get("execution_context"), dict)
+                else None
+            ),
             session=(
                 SessionRecord.from_dict(session_payload, include_traces=False)
                 if include_session and isinstance(session_payload, dict)
