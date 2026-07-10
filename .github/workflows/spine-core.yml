@@ -1,0 +1,30 @@
+name: Spine Core (advisory)
+
+# Additive rollout: this check is intentionally not branch-required yet. It
+# complements, and does not replace, required-pr-gate or the Spine Trail Gate.
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+    branches: [develop, main]
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spine-core-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  spine-core:
+    uses: Traigent/traigent-validation-spine/.github/workflows/spine-core-reusable.yml@0144cdc8d6e3fb6a7a08d27e1b6caafbe87a28ca
+    with:
+      repo_id: Traigent
+      base_ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_ref || github.event.pull_request.base.ref }}
+      head_ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_ref || github.event.pull_request.head.ref }}
+      head_sha: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+      mode: advisory
+    secrets:
+      VALIDATION_CI_PAT: ${{ secrets.VALIDATION_CI_PAT }}
