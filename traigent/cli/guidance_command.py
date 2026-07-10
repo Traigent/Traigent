@@ -210,6 +210,18 @@ def receipt(
     type=click.Choice(["new_artifact", "budget", "operator"]),
     required=True,
 )
+@click.option(
+    "--expected-treatment",
+    type=click.Choice(["rules_control", "policy_override"]),
+    required=True,
+    help="Stopped parent's precommitted treatment; fail if inheritance drifts.",
+)
+@click.option(
+    "--expected-profile",
+    type=click.Choice(["quality_first", "balanced", "cost_first"]),
+    required=True,
+    help="Stopped parent's utility profile; fail if inheritance drifts.",
+)
 @click.option("--json", "output_json", is_flag=True, default=False)
 @click.option(
     "--backend-url",
@@ -221,6 +233,8 @@ def receipt(
 def reopen(
     lifecycle_id: str,
     reason: str,
+    expected_treatment: str,
+    expected_profile: str,
     output_json: bool,
     backend_url: str | None,
     api_key: str | None,
@@ -231,6 +245,8 @@ def reopen(
             _reopen_lifecycle(
                 lifecycle_id,
                 reason=reason,
+                expected_treatment=expected_treatment,
+                expected_profile=expected_profile,
                 backend_url=_resolve_backend_url(backend_url),
                 api_key=_resolve_api_key(api_key),
             )
@@ -302,11 +318,18 @@ async def _reopen_lifecycle(
     lifecycle_id: str,
     *,
     reason: str,
+    expected_treatment: str,
+    expected_profile: str,
     backend_url: str,
     api_key: str | None,
 ) -> dict[str, Any]:
     async with PlannerV2Client(backend_url=backend_url, api_key=api_key) as client:
-        return await client.reopen_lifecycle(lifecycle_id, reason=reason)
+        return await client.reopen_lifecycle(
+            lifecycle_id,
+            reason=reason,
+            expected_treatment=expected_treatment,
+            expected_profile=expected_profile,
+        )
 
 
 def _print_decision(payload: dict[str, Any]) -> None:

@@ -105,9 +105,19 @@ class _FakePlannerClient:
         return self.payload
 
     async def reopen_lifecycle(
-        self, lifecycle_id: str, *, reason: str
+        self,
+        lifecycle_id: str,
+        *,
+        reason: str,
+        expected_treatment: str,
+        expected_profile: str,
     ) -> dict[str, object]:
-        self.captured.update(lifecycle_id=lifecycle_id, reason=reason)
+        self.captured.update(
+            lifecycle_id=lifecycle_id,
+            reason=reason,
+            expected_treatment=expected_treatment,
+            expected_profile=expected_profile,
+        )
         return self.payload
 
 
@@ -335,6 +345,10 @@ def test_guidance_reopen_preserves_server_assigned_arm_and_profile(
             "lifecycle_0123456789abcdef",
             "--reason",
             "new_artifact",
+            "--expected-treatment",
+            "policy_override",
+            "--expected-profile",
+            "balanced",
             "--backend-url",
             "https://backend.example.test",
             "--api-key",
@@ -350,4 +364,6 @@ def test_guidance_reopen_preserves_server_assigned_arm_and_profile(
         "api_key": "test-key",
         "lifecycle_id": "lifecycle_0123456789abcdef",
         "reason": "new_artifact",
+        "expected_treatment": "policy_override",
+        "expected_profile": "balanced",
     }
