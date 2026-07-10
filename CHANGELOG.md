@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Declare `tenacity` as a dependency so litellm's retry helpers
+  (`completion_with_retries`) work on a clean install (#1824).
+
 ## [0.21.0] - 2026-07-07
 
 Observability hardening release. Enterprise-grade privacy posture for the
