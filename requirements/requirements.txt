@@ -11,5 +11,6 @@ claude-code-sdk>=0.0.14
 mcp>=1.27.0
 backoff>=2.2.0
 litellm>=1.87.1,<2
+tenacity>=8.1.0
 rank-bm25
 psutil>=5.8.0

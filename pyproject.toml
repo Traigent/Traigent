@@ -44,6 +44,7 @@ dependencies = [
     "PyJWT[crypto]>=2.13.0,<3.0.0",  # >=2.13.0: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
     "litellm>=1.87.1,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. The demo (TraigentDemo) requires 1.88.0; this range admits it. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
+    "tenacity>=8.1.0",  # tenacity completes litellm's retry surface: litellm imports it lazily in its public *_with_retries helpers (and the retry path exercised on litellm 1.91.0, #1824) but doesn't declare it — declare it so litellm's retry path works on a clean install
     "rank-bm25",
     "psutil>=5.8.0",
     # Required by API decorators and config validation
