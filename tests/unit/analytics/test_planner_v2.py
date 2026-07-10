@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from traigent.analytics.planner import PlannerV2Client
@@ -123,6 +124,31 @@ async def test_get_next_decision_uses_additive_v2_endpoint(
             "requested_variant": "policy_override",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_get_next_decision_rejects_missing_planner_payload() -> None:
+    client, _ = _client_with_response({})
+
+    with pytest.raises(ValueError, match="missing"):
+        await client.get_next_decision("run_123")
+
+
+@pytest.mark.asyncio
+async def test_get_next_decision_propagates_old_backend_404() -> None:
+    client, _ = _client_with_response({"message": "not found"})
+    request = httpx.Request("POST", "https://backend.test/api/v2/next-decision")
+    response = httpx.Response(404, request=request)
+    client._client.post.return_value.raise_for_status.side_effect = (
+        httpx.HTTPStatusError(
+            "Planner V2 endpoint is unavailable",
+            request=request,
+            response=response,
+        )
+    )
+
+    with pytest.raises(httpx.HTTPStatusError, match="endpoint is unavailable"):
+        await client.get_next_decision("run_123")
 
 
 @pytest.mark.asyncio
@@ -470,6 +496,35 @@ async def test_receipt_preserves_pending_verification_semantics() -> None:
         },
         headers={"Idempotency-Key": "receipt-af8d666b308e43f5ec1f452653c11485"},
     )
+
+
+@pytest.mark.asyncio
+async def test_receipt_accepts_explicit_idempotent_replay() -> None:
+    payload = {
+        "schema_version": "2.0.0",
+        "receipt_id": "receipt_0123456789abcdef",
+        "lifecycle_id": "lifecycle_0123456789abcdef",
+        "decision_id": "decision_0123456789abcdef",
+        "attempt_id": "attempt_0123456789abcdef",
+        "status": "submitted",
+        "verification_status": "pending",
+        "idempotent_replay": True,
+        "successor_run_id": "run_456",
+        "result_ref": "result_0123456789abcdef",
+        "updated_at": "2026-07-10T09:00:01Z",
+    }
+    client, _ = _client_with_response(payload)
+
+    result = await client.record_receipt(
+        "lifecycle_0123456789abcdef",
+        "decision_0123456789abcdef",
+        status="submitted",
+        attempt_id="attempt_0123456789abcdef",
+        successor_run_id="run_456",
+        result_ref="result_0123456789abcdef",
+    )
+
+    assert result["idempotent_replay"] is True
 
 
 @pytest.mark.asyncio

@@ -121,6 +121,21 @@ class _FakePlannerClient:
         return self.payload
 
 
+def test_execute_resolved_binding_token_fails_closed() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "guidance",
+            "execute-resolved",
+            "--attempt",
+            "attempt_0123456789abcdef",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "binding token, not a shell command" in result.output
+
+
 def test_guidance_next_json_forwards_precommitted_assignment(
     payload: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -147,6 +147,21 @@ def execute_decision(
     )
 
 
+@guidance.command("execute-resolved", hidden=True)
+@click.option("--attempt", "attempt_id", required=True)
+def reject_direct_resolved_execution(attempt_id: str) -> None:
+    """Fail closed if a binding-only resolved argv is invoked directly.
+
+    The backend emits this static argv to bind the private execution spec to an
+    attempt. It is deliberately not an executable optimization command: coding
+    agents dispatch the typed operation through the matching installed skill.
+    """
+    raise click.ClickException(
+        f"attempt {attempt_id} is a binding token, not a shell command; "
+        "dispatch the typed execution_spec through the matching Traigent skill"
+    )
+
+
 @guidance.command("receipt")
 @click.option("--lifecycle", "lifecycle_id", required=True)
 @click.option("--decision", "decision_id", required=True)
