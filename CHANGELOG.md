@@ -9,12 +9,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Additive SmartOps Planner V2 client and `traigent guidance` CLI with strict
-  treatment/profile provenance, opaque decision execution, signed structured
+  treatment/profile provenance, opaque decision execution, server-integrity-tagged structured
   resolution, explicit idempotent receipt submission, and lifecycle reopen
   commands.
   The existing `traigent next-steps` v1 surface remains unchanged.
 
 ### Fixed
+
+- Enforce Planner V2 treatment isolation even outside strict experiment mode;
+  strict mode additionally rejects fallback and incomplete context.
+- Validate exact action economics, implementation hash, attempt-bound argv,
+  receipt scope, and live equal execution/lease expiries before presenting a
+  resolved operation. The server integrity tag remains opaque to public clients.
+- Describe rule parity and certified session-utility advantage without implying
+  policy agreement or a product KPI guarantee, and validate reopen/receipt
+  lifecycle transitions fail-closed.
 
 - Declare `tenacity` as a dependency so litellm's retry helpers
   (`completion_with_retries`) work on a clean install (#1824).

@@ -133,6 +133,8 @@ def execute_decision(
     console.print(f"[bold]Operation:[/bold] {spec['operation_kind']}")
     console.print(f"[bold]Variant:[/bold] {spec['variant']}")
     console.print(f"[bold]Attempt:[/bold] {spec['attempt_id']}")
+    console.print(f"[bold]Receipt URL:[/bold] {spec['receipt_url']}")
+    console.print(f"[bold]Lease expires:[/bold] {spec['lease_expires_at']}")
     if spec.get("sample_limit") is not None:
         console.print(f"[bold]Sample limit:[/bold] {spec['sample_limit']}")
     if spec.get("max_trials") is not None:
@@ -314,6 +316,7 @@ def _print_decision(payload: dict[str, Any]) -> None:
     console.print(
         f"\n[bold blue]Planner V2 decision for {payload['run_id']}[/bold blue]\n"
     )
+    console.print(f"[bold]Lifecycle:[/bold] {payload['lifecycle_id']}")
     console.print(f"[bold]Category:[/bold] {decision['category']}")
     console.print(f"[bold]Mode:[/bold] {decision['mode']}")
     console.print(f"[bold]Variant:[/bold] {action['variant']}")

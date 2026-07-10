@@ -25,9 +25,9 @@ def payload() -> dict[str, object]:
             "baseline_rule_category": "audit_evaluator_quality",
             "utility_profile": "balanced",
             "certificate_ref": "certificate_0123456789abcdef",
-            "advantage_label": "model_certified_positive",
+            "advantage_label": "certified_session_utility_advantage_no_kpi_guarantee",
             "evidence_snapshot_hash": "ev_0123456789abcdefghijklmnopqrstuv",
-            "rationale": "policy selected a model-certified improvement over rules",
+            "rationale": "certified session-utility advantage selected; no product KPI guarantee",
             "action": {
                 "kind": "cli",
                 "variant": "optimize_probe",
@@ -170,7 +170,8 @@ def test_guidance_next_table_presents_opaque_command_without_rewriting(
 
     assert result.exit_code == 0, result.output
     assert "policy_override" in result.output
-    assert "model_certified_positive" in result.output
+    assert "certified_session_utility_advantage_no_kpi_guarantee" in result.output
+    assert "lifecycle_0123456789abcdef" in result.output
     assert (
         "traigent guidance execute --decision decision_0123456789abcdef"
         in result.output
@@ -193,18 +194,38 @@ def test_guidance_execute_resolves_typed_spec_without_shell(
     _FakePlannerClient.payload = {
         "schema_version": "2.0.0",
         "decision_id": decision_id,
-        "argv": ["traigent", "guidance", "execute-resolved"],
+        "argv": [
+            "traigent",
+            "guidance",
+            "execute-resolved",
+            "--attempt",
+            "attempt_0123456789abcdef",
+        ],
         "execution_spec": {
             "operation_kind": "run_optimization",
             "variant": "optimize_probe",
+            "target": "agent",
+            "cost_units": 2,
+            "reservation_units": 2,
+            "max_budget_fraction": 0.15,
+            "sample_limit": None,
+            "action_signature": (
+                "run_optimization:optimize_probe:agent:2:2:0.15:4:None"
+            ),
+            "economics_hash": (
+                "df7d6d7c95e61716a55eec42f829c7ca2bb66c285ce4013e66f5dc1cac956d02"
+            ),
             "attempt_id": "attempt_0123456789abcdef",
-            "receipt_url": "opaque",
-            "lease_expires_at": "2026-07-10T10:30:00Z",
+            "receipt_url": (
+                "/api/v2/lifecycles/lifecycle_0123456789abcdef/decisions/"
+                f"{decision_id}/receipts"
+            ),
+            "lease_expires_at": "2099-07-10T10:30:00Z",
             "max_trials": 4,
             "reserved_cost_usd": "1.250000",
         },
         "signature": "sig_" + "A" * 43,
-        "expires_at": "2026-07-10T10:30:00Z",
+        "expires_at": "2099-07-10T10:30:00Z",
     }
     _FakePlannerClient.captured = {}
     monkeypatch.setattr(
@@ -223,6 +244,9 @@ def test_guidance_execute_resolves_typed_spec_without_shell(
     assert result.exit_code == 0, result.output
     assert "run_optimization" in result.output
     assert "optimize_probe" in result.output
+    assert "Receipt URL" in result.output
+    assert "lifecycle_0123456789abcdef" in result.output
+    assert "Lease expires" in result.output
     assert "Do not run server data through a shell" in result.output
     assert _FakePlannerClient.captured["decision_id"] == decision_id
 

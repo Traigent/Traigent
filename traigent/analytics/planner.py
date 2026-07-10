@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from traigent.cloud.auth import _build_api_key_auth_headers
@@ -31,6 +31,9 @@ except ImportError:
 
 
 PLANNER_SCHEMA_VERSION = "2.0.0"
+PLANNER_V2_ECONOMICS_HASH = (
+    "df7d6d7c95e61716a55eec42f829c7ca2bb66c285ce4013e66f5dc1cac956d02"
+)
 _OPAQUE_ID_RE = re.compile(r"^[a-z][a-z0-9_]{2,31}_[A-Za-z0-9_-]{16,160}$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _EVIDENCE_HASH_RE = re.compile(r"^ev_[A-Za-z0-9_-]{32,96}$")
@@ -48,7 +51,12 @@ _DECISION_MODES = frozenset(
     }
 )
 _ADVANTAGE_LABELS = frozenset(
-    {"model_certified_positive", "parity", "unavailable", "not_applicable"}
+    {
+        "certified_session_utility_advantage_no_kpi_guarantee",
+        "no_certified_override",
+        "unavailable",
+        "not_applicable",
+    }
 )
 _SELECTOR_ENGINES = frozenset({"rules", "policy", "safety"})
 _SOURCE_ENGINES = frozenset({"rules", "policy", "safety"})
@@ -73,12 +81,23 @@ _CATEGORIES = frozenset(
 _RECEIPT_STATUSES = frozenset({"started", "submitted", "failed", "skipped"})
 _VERIFICATION_STATUSES = frozenset({"pending", "verified", "rejected"})
 _REOPEN_REASONS = frozenset({"new_artifact", "budget", "operator"})
-_FALLBACK_REASONS = frozenset({"policy_unavailable", "calibration_unavailable"})
+_FALLBACK_REASONS = frozenset(
+    {
+        "policy_unavailable",
+        "calibration_unavailable",
+        "artifact_invalid",
+        "certificate_drift",
+        "exact_support_mismatch",
+        "override_denied",
+    }
+)
 _RATIONALES_BY_MODE = {
     "rules_control": "rules control selected the next safe lifecycle action",
-    "policy_override": "policy selected a model-certified improvement over rules",
-    "rules_parity": "policy agreed with the safe rule action",
-    "rules_fallback": "policy or calibration was unavailable; safe rules were used",
+    "policy_override": (
+        "certified session-utility advantage selected; no product KPI guarantee"
+    ),
+    "rules_parity": "no certified override applies; safe rule action retained",
+    "rules_fallback": "policy artifact or certificate unavailable; safe rules were used",
     "pending_wait": "an operation is already active; wait for its authoritative result",
     "safety_stop": "no positive affordable safe action remains",
 }
@@ -118,8 +137,51 @@ _CATEGORY_TO_VARIANTS = {
     "wait": _EXECUTION_VARIANTS["wait"],
     "stop": _EXECUTION_VARIANTS["stop"],
 }
-_EXECUTION_TOKEN_RE = re.compile(r"^[A-Za-z0-9._:/=-]{1,192}$")
 _SIGNATURE_RE = re.compile(r"^sig_[A-Za-z0-9_-]{43,128}$")
+_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+_RECEIPT_URL_RE = re.compile(
+    r"^/api/v2/lifecycles/(?P<lifecycle>[a-z][a-z0-9_]{2,31}_"
+    r"[A-Za-z0-9_-]{16,160})/decisions/(?P<decision>[a-z][a-z0-9_]{2,31}_"
+    r"[A-Za-z0-9_-]{16,160})/receipts$"
+)
+
+_ACTION_SPECS: dict[
+    str, tuple[str, str, int, int, float | None, int | None, int | None]
+] = {
+    "score_probe_32": ("score_examples", "dataset", 1, 1, None, None, 32),
+    "score_full": ("score_examples", "dataset", 2, 2, None, None, None),
+    "curate_invalid": ("synth_harder_examples", "dataset", 2, 2, None, None, None),
+    "deduplicate": ("synth_harder_examples", "dataset", 1, 1, None, None, None),
+    "expand_coverage": ("synth_harder_examples", "dataset", 2, 2, None, None, None),
+    "synthesize_hard": ("synth_harder_examples", "dataset", 2, 2, None, None, None),
+    "audit_probe_32": ("audit_evaluator", "evaluator", 1, 1, None, None, 32),
+    "audit_full": ("audit_evaluator", "evaluator", 2, 2, None, None, None),
+    "fix_parser": ("refine_metric", "evaluator", 1, 1, None, None, None),
+    "calibrate_threshold": ("refine_metric", "evaluator", 1, 1, None, None, None),
+    "reduce_bias": ("refine_metric", "evaluator", 2, 2, None, None, None),
+    "stabilize": ("refine_metric", "evaluator", 2, 2, None, None, None),
+    "optimize_probe": ("run_optimization", "agent", 2, 2, 0.15, 4, None),
+    "optimize_standard": ("run_optimization", "agent", 3, 3, 0.4, 12, None),
+    "optimize_deep": ("run_optimization", "agent", 5, 5, 0.75, 30, None),
+    "config_expand": ("adjust_configuration_space", "agent", 2, 2, None, None, None),
+    "config_prune": ("adjust_configuration_space", "agent", 1, 1, None, None, None),
+    "config_fix_inactive": (
+        "adjust_configuration_space",
+        "agent",
+        1,
+        1,
+        None,
+        None,
+        None,
+    ),
+    "compare_probe_64": ("compare_baseline", "agent", 1, 1, None, None, 64),
+    "compare_full": ("compare_baseline", "agent", 2, 2, None, None, None),
+    "holdout_full": ("run_holdout", "agent", 2, 2, None, None, None),
+    "safety_gate": ("add_safety_gate", "agent", 0, 0, None, None, None),
+    "promote": ("promote_winner", "agent", 0, 0, None, None, None),
+    "wait": ("wait", "session", 0, 0, None, None, None),
+    "stop": ("stop", "session", 0, 0, None, None, None),
+}
 
 UtilityProfile = Literal["quality_first", "balanced", "cost_first"]
 PlannerTreatment = Literal["rules_control", "policy_override"]
@@ -159,16 +221,36 @@ def _normalize_enum(value: Any, field: str, allowed: frozenset[str]) -> str:
     return value
 
 
-def _parse_rfc3339(value: Any, field: str) -> None:
+def _parse_rfc3339(value: Any, field: str) -> datetime:
     if not isinstance(value, str) or len(value) > 40 or not value.endswith("Z"):
         raise ValueError(f"{field} must be an RFC3339 UTC date-time ending in Z")
     candidate = value[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(candidate)
     except ValueError as exc:
-        raise ValueError(f"{field} must be an RFC3339 UTC date-time ending in Z") from exc
-    if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
+        raise ValueError(
+            f"{field} must be an RFC3339 UTC date-time ending in Z"
+        ) from exc
+    offset = parsed.utcoffset()
+    if offset is None or offset.total_seconds() != 0:
         raise ValueError(f"{field} must be UTC")
+    return parsed
+
+
+def _expected_action_signature(
+    operation_kind: str,
+    variant: str,
+    target: str,
+    cost_units: int,
+    reservation_units: int,
+    max_budget_fraction: float | None,
+    max_trials: int | None,
+    sample_limit: int | None,
+) -> str:
+    return (
+        f"{operation_kind}:{variant}:{target}:{cost_units}:{reservation_units}:"
+        f"{max_budget_fraction}:{max_trials}:{sample_limit}"
+    )
 
 
 def _validate_execution_spec(payload: Any, *, decision_id: str) -> dict[str, Any]:
@@ -192,19 +274,16 @@ def _validate_execution_spec(payload: Any, *, decision_id: str) -> dict[str, Any
         root["signature"]
     ):
         raise ValueError("Planner V2 execution signature is malformed")
-    _parse_rfc3339(root["expires_at"], "expires_at")
+    expires_at = _parse_rfc3339(root["expires_at"], "expires_at")
 
     argv = root["argv"]
     if (
         not isinstance(argv, list)
-        or not 3 <= len(argv) <= 12
-        or argv[:3] != ["traigent", "guidance", "execute-resolved"]
-        or any(
-            not isinstance(token, str) or not _EXECUTION_TOKEN_RE.fullmatch(token)
-            for token in argv
-        )
+        or len(argv) != 5
+        or argv[:4] != ["traigent", "guidance", "execute-resolved", "--attempt"]
     ):
         raise ValueError("Planner V2 execution argv is not allowlisted")
+    _validate_opaque_id(argv[4], "argv attempt_id")
 
     spec = _require_exact_keys(
         root["execution_spec"],
@@ -212,11 +291,19 @@ def _validate_execution_spec(payload: Any, *, decision_id: str) -> dict[str, Any
         required={
             "operation_kind",
             "variant",
+            "target",
+            "cost_units",
+            "reservation_units",
+            "max_budget_fraction",
+            "max_trials",
+            "sample_limit",
+            "action_signature",
+            "economics_hash",
             "attempt_id",
             "receipt_url",
             "lease_expires_at",
         },
-        optional={"sample_limit", "max_trials", "reserved_cost_usd"},
+        optional={"reserved_cost_usd"},
     )
     operation_kind = spec["operation_kind"]
     if operation_kind not in _EXECUTION_VARIANTS:
@@ -226,49 +313,77 @@ def _validate_execution_spec(payload: Any, *, decision_id: str) -> dict[str, Any
             f"unsupported execution variant {spec['variant']!r} for {operation_kind!r}"
         )
     _validate_opaque_id(spec["attempt_id"], "execution_spec.attempt_id")
+    if argv[4] != spec["attempt_id"]:
+        raise ValueError(
+            "Planner V2 execution argv attempt does not match execution_spec"
+        )
     receipt_url = spec["receipt_url"]
-    expected_suffix = f"/decisions/{decision_id}/receipts"
-    if (
-        not isinstance(receipt_url, str)
-        or len(receipt_url) > 512
-        or not receipt_url.startswith("/api/v2/lifecycles/")
-        or not receipt_url.endswith(expected_suffix)
-        or ".." in receipt_url
-        or "?" in receipt_url
-        or "#" in receipt_url
-    ):
+    receipt_match = (
+        _RECEIPT_URL_RE.fullmatch(receipt_url)
+        if isinstance(receipt_url, str) and len(receipt_url) <= 512
+        else None
+    )
+    if receipt_match is None or receipt_match.group("decision") != decision_id:
         raise ValueError("execution_spec.receipt_url is not a scoped relative path")
-    _parse_rfc3339(spec["lease_expires_at"], "execution_spec.lease_expires_at")
-    for field in ("sample_limit", "max_trials"):
-        value = spec.get(field)
-        if value is not None and (
-            not isinstance(value, int) or isinstance(value, bool) or value < 1
+    _validate_opaque_id(
+        receipt_match.group("lifecycle"), "execution_spec receipt lifecycle"
+    )
+    lease_expires_at = _parse_rfc3339(
+        spec["lease_expires_at"], "execution_spec.lease_expires_at"
+    )
+    if lease_expires_at != expires_at:
+        raise ValueError("Planner V2 execution and lease expiries must match")
+    if expires_at <= datetime.now(UTC):
+        raise ValueError("Planner V2 execution lease is expired")
+
+    for field in ("cost_units", "reservation_units"):
+        if not isinstance(spec[field], int) or isinstance(spec[field], bool):
+            raise ValueError(f"execution_spec.{field} must be an integer")
+    for field in ("max_trials", "sample_limit"):
+        if spec[field] is not None and (
+            not isinstance(spec[field], int) or isinstance(spec[field], bool)
         ):
-            raise ValueError(
-                f"execution_spec.{field} must be a positive integer or null"
-            )
-    trial_caps = {
-        "optimize_probe": 4,
-        "optimize_standard": 12,
-        "optimize_deep": 30,
-    }
-    max_trials = spec.get("max_trials")
-    if spec["variant"] in trial_caps:
-        if max_trials is None or max_trials > trial_caps[spec["variant"]]:
-            raise ValueError("execution_spec.max_trials exceeds the variant cap")
-    elif max_trials is not None:
-        raise ValueError("execution_spec.max_trials is valid only for optimization")
-    exact_probe_samples = {
-        "score_probe_32": 32,
-        "audit_probe_32": 32,
-        "compare_probe_64": 64,
-    }
-    sample_limit = spec.get("sample_limit")
-    if spec["variant"] in exact_probe_samples:
-        if sample_limit != exact_probe_samples[spec["variant"]]:
-            raise ValueError("execution_spec.sample_limit does not match probe variant")
-    elif sample_limit is not None:
-        raise ValueError("execution_spec.sample_limit is valid only for a probe")
+            raise ValueError(f"execution_spec.{field} must be an integer or null")
+    if spec["max_budget_fraction"] is not None and (
+        not isinstance(spec["max_budget_fraction"], (int, float))
+        or isinstance(spec["max_budget_fraction"], bool)
+    ):
+        raise ValueError("execution_spec.max_budget_fraction must be numeric or null")
+
+    expected = _ACTION_SPECS[spec["variant"]]
+    actual = (
+        spec["operation_kind"],
+        spec["target"],
+        spec["cost_units"],
+        spec["reservation_units"],
+        spec["max_budget_fraction"],
+        spec["max_trials"],
+        spec["sample_limit"],
+    )
+    if actual != expected:
+        raise ValueError(
+            "execution_spec action economics do not match the exact variant"
+        )
+    expected_signature = _expected_action_signature(
+        spec["operation_kind"],
+        spec["variant"],
+        spec["target"],
+        spec["cost_units"],
+        spec["reservation_units"],
+        spec["max_budget_fraction"],
+        spec["max_trials"],
+        spec["sample_limit"],
+    )
+    if spec["action_signature"] != expected_signature:
+        raise ValueError(
+            "execution_spec.action_signature does not match exact economics"
+        )
+    if (
+        not isinstance(spec["economics_hash"], str)
+        or not _SHA256_RE.fullmatch(spec["economics_hash"])
+        or spec["economics_hash"] != PLANNER_V2_ECONOMICS_HASH
+    ):
+        raise ValueError("execution_spec.economics_hash is unsupported")
     reserved = spec.get("reserved_cost_usd")
     if reserved is not None and (
         not isinstance(reserved, str)
@@ -436,7 +551,10 @@ def _validate_decision_response(
             )
 
     if mode == "policy_override":
-        if advantage != "model_certified_positive" or certificate_ref is None:
+        if (
+            advantage != "certified_session_utility_advantage_no_kpi_guarantee"
+            or certificate_ref is None
+        ):
             raise ValueError(
                 "policy_override requires a certified-positive opaque certificate"
             )
@@ -444,8 +562,10 @@ def _validate_decision_response(
             raise ValueError("policy_override requires source_engine='policy'")
         if decision["evidence_level"] != "high":
             raise ValueError("policy_override requires high evidence")
-    elif advantage == "model_certified_positive":
-        raise ValueError("Only policy_override may claim model_certified_positive")
+    elif advantage == "certified_session_utility_advantage_no_kpi_guarantee":
+        raise ValueError(
+            "Only policy_override may claim certified session utility advantage"
+        )
     elif certificate_ref is not None:
         raise ValueError("Only policy_override may expose a certificate_ref")
     if mode == "pending_wait" and (
@@ -476,7 +596,7 @@ def _validate_decision_response(
 
     expected_semantics = {
         "rules_control": ("rules", "not_applicable", "medium"),
-        "rules_parity": ("rules", "parity", "medium"),
+        "rules_parity": ("rules", "no_certified_override", "medium"),
         "rules_fallback": ("rules", "unavailable", "low"),
         "pending_wait": ("rules", "not_applicable", "low"),
         "safety_stop": ("safety", "not_applicable", "high"),
@@ -502,16 +622,23 @@ def _validate_decision_response(
     if meta["selector_engine"] != expected_selector:
         raise ValueError(f"{mode} has an inconsistent selector_engine")
 
-    if strict_experiment:
-        allowed_modes = (
-            {"rules_control", "pending_wait", "safety_stop"}
-            if requested_treatment == "rules_control"
-            else {"policy_override", "rules_parity", "pending_wait", "safety_stop"}
-        )
-        if mode not in allowed_modes:
-            raise ValueError(
-                "Strict experiment rejects treatment contamination or fallback"
-            )
+    treatment_modes = (
+        {"rules_control", "pending_wait", "safety_stop"}
+        if requested_treatment == "rules_control"
+        else {
+            "policy_override",
+            "rules_parity",
+            "rules_fallback",
+            "pending_wait",
+            "safety_stop",
+        }
+    )
+    if mode not in treatment_modes:
+        raise ValueError("Planner V2 response contaminates the requested treatment")
+    if strict_experiment and (
+        mode == "rules_fallback" or meta["context_status"] == "incomplete"
+    ):
+        raise ValueError("Strict experiment rejects fallback or incomplete context")
     return root
 
 
@@ -685,6 +812,16 @@ class PlannerV2Client:
             "verification_status",
             _VERIFICATION_STATUSES,
         )
+        expected_verification = {
+            "started": {"pending"},
+            "submitted": {"pending", "verified", "rejected"},
+            "failed": {"rejected"},
+            "skipped": {"rejected"},
+        }[normalized_status]
+        if payload["verification_status"] not in expected_verification:
+            raise ValueError(
+                "Planner V2 receipt status and verification_status are inconsistent"
+            )
         if not isinstance(payload["idempotent_replay"], bool):
             raise ValueError("Planner V2 receipt idempotent_replay must be boolean")
         if payload.get("successor_run_id") != request.get("successor_run_id"):
@@ -697,7 +834,13 @@ class PlannerV2Client:
         return payload
 
     async def resolve_decision(self, decision_id: str) -> dict[str, Any]:
-        """Resolve an opaque decision to a private, signed, shell-free spec."""
+        """Resolve an opaque decision to a server-tagged, shell-free private spec.
+
+        The integrity tag is verified by the service; this public client has no
+        server signing key and therefore treats authenticated HTTPS plus the
+        fail-closed structural, economics, scope, and expiry checks as its trust
+        boundary.
+        """
         decision = _validate_opaque_id(decision_id, "decision_id")
         response = await self._get_client().post(
             f"/api/v2/guidance/decisions/{decision}/resolve",
@@ -710,6 +853,8 @@ class PlannerV2Client:
         lifecycle_id: str,
         *,
         reason: ReopenReason | str,
+        expected_treatment: PlannerTreatment | str | None = None,
+        expected_profile: UtilityProfile | str | None = None,
     ) -> dict[str, Any]:
         """Create a child lifecycle after an explicit reopen event."""
         lifecycle = _validate_opaque_id(lifecycle_id, "lifecycle_id")
@@ -746,12 +891,30 @@ class PlannerV2Client:
             raise ValueError("predecessor_lifecycle_id does not match the request")
         if payload["reason"] != normalized_reason or payload["status"] != "active":
             raise ValueError("reopen response does not describe an active child")
-        _normalize_enum(payload["requested_variant"], "requested_variant", _TREATMENTS)
-        _normalize_enum(
+        inherited_treatment = _normalize_enum(
+            payload["requested_variant"], "requested_variant", _TREATMENTS
+        )
+        inherited_profile = _normalize_enum(
             payload["utility_profile"], "utility_profile", _UTILITY_PROFILES
         )
         if not isinstance(payload["idempotent_replay"], bool):
             raise ValueError("reopen idempotent_replay must be boolean")
-        _validate_opaque_id(payload["lifecycle_id"], "lifecycle_id")
+        child = _validate_opaque_id(payload["lifecycle_id"], "lifecycle_id")
+        if child == lifecycle:
+            raise ValueError("reopen response must create a distinct child lifecycle")
+        if expected_treatment is not None:
+            expected = _normalize_enum(
+                expected_treatment, "expected_treatment", _TREATMENTS
+            )
+            if inherited_treatment != expected:
+                raise ValueError("reopen response changed the inherited treatment")
+        if expected_profile is not None:
+            expected = _normalize_enum(
+                expected_profile, "expected_profile", _UTILITY_PROFILES
+            )
+            if inherited_profile != expected:
+                raise ValueError(
+                    "reopen response changed the inherited utility profile"
+                )
         _parse_rfc3339(payload["created_at"], "created_at")
         return payload

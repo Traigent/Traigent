@@ -30,9 +30,9 @@ def decision_payload() -> dict[str, object]:
             "baseline_rule_category": "audit_evaluator_quality",
             "utility_profile": "balanced",
             "certificate_ref": "certificate_0123456789abcdef",
-            "advantage_label": "model_certified_positive",
+            "advantage_label": "certified_session_utility_advantage_no_kpi_guarantee",
             "evidence_snapshot_hash": "ev_0123456789abcdefghijklmnopqrstuv",
-            "rationale": "policy selected a model-certified improvement over rules",
+            "rationale": "certified session-utility advantage selected; no product KPI guarantee",
             "action": {
                 "kind": "cli",
                 "variant": "optimize_probe",
@@ -65,6 +65,46 @@ def _client_with_response(payload: object) -> tuple[PlannerV2Client, AsyncMock]:
     transport.post.return_value = response
     client._client = transport
     return client, transport
+
+
+def _execution_payload() -> dict[str, object]:
+    decision_id = "decision_0123456789abcdef"
+    attempt_id = "attempt_0123456789abcdef"
+    return {
+        "schema_version": "2.0.0",
+        "decision_id": decision_id,
+        "argv": [
+            "traigent",
+            "guidance",
+            "execute-resolved",
+            "--attempt",
+            attempt_id,
+        ],
+        "execution_spec": {
+            "operation_kind": "run_optimization",
+            "variant": "optimize_probe",
+            "target": "agent",
+            "cost_units": 2,
+            "reservation_units": 2,
+            "max_budget_fraction": 0.15,
+            "max_trials": 4,
+            "sample_limit": None,
+            "action_signature": (
+                "run_optimization:optimize_probe:agent:2:2:0.15:4:None"
+            ),
+            "economics_hash": (
+                "df7d6d7c95e61716a55eec42f829c7ca2bb66c285ce4013e66f5dc1cac956d02"
+            ),
+            "attempt_id": attempt_id,
+            "receipt_url": (
+                "/api/v2/lifecycles/lifecycle_0123456789abcdef/decisions/"
+                f"{decision_id}/receipts"
+            ),
+            "lease_expires_at": "2099-07-10T10:30:00Z",
+        },
+        "signature": "sig_" + "A" * 43,
+        "expires_at": "2099-07-10T10:30:00Z",
+    }
 
 
 @pytest.mark.asyncio
@@ -167,7 +207,7 @@ async def test_policy_override_requires_certificate_and_positive_label(
     decision = payload["decision"]
     assert isinstance(decision, dict)
     decision["certificate_ref"] = None
-    decision["advantage_label"] = "parity"
+    decision["advantage_label"] = "no_certified_override"
     client, _ = _client_with_response(payload)
 
     with pytest.raises(ValueError, match="certified-positive"):
@@ -264,7 +304,7 @@ async def test_strict_policy_experiment_rejects_fallback(
             "certificate_ref": None,
             "advantage_label": "unavailable",
             "evidence_level": "low",
-            "rationale": "policy or calibration was unavailable; safe rules were used",
+            "rationale": "policy artifact or certificate unavailable; safe rules were used",
         }
     )
     meta["selector_engine"] = "rules"
@@ -288,9 +328,9 @@ async def test_strict_policy_experiment_accepts_certified_rules_parity(
             "baseline_rule_category": "run_optimization",
             "source_engine": "rules",
             "certificate_ref": None,
-            "advantage_label": "parity",
+            "advantage_label": "no_certified_override",
             "evidence_level": "medium",
-            "rationale": "policy agreed with the safe rule action",
+            "rationale": "no certified override applies; safe rule action retained",
         }
     )
     client, _ = _client_with_response(payload)
@@ -298,6 +338,36 @@ async def test_strict_policy_experiment_accepts_certified_rules_parity(
     result = await client.get_next_decision("run_123", strict_experiment=True)
 
     assert result["decision"]["mode"] == "rules_parity"
+
+
+@pytest.mark.asyncio
+async def test_treatment_mode_isolation_is_unconditional(
+    decision_payload: dict[str, object],
+) -> None:
+    payload = deepcopy(decision_payload)
+    meta = payload["meta"]
+    assert isinstance(meta, dict)
+    meta.update(requested_variant="rules_control", served_variant="rules_control")
+    client, _ = _client_with_response(payload)
+
+    with pytest.raises(ValueError, match="contaminates the requested treatment"):
+        await client.get_next_decision(
+            "run_123", treatment="rules_control", strict_experiment=False
+        )
+
+
+@pytest.mark.asyncio
+async def test_strict_experiment_rejects_incomplete_context(
+    decision_payload: dict[str, object],
+) -> None:
+    payload = deepcopy(decision_payload)
+    meta = payload["meta"]
+    assert isinstance(meta, dict)
+    meta["context_status"] = "incomplete"
+    client, _ = _client_with_response(payload)
+
+    with pytest.raises(ValueError, match="fallback or incomplete context"):
+        await client.get_next_decision("run_123", strict_experiment=True)
 
 
 @pytest.mark.asyncio
@@ -312,16 +382,15 @@ async def test_rules_parity_cannot_change_the_baseline_category(
             "mode": "rules_parity",
             "source_engine": "rules",
             "certificate_ref": None,
-            "advantage_label": "parity",
+            "advantage_label": "no_certified_override",
             "evidence_level": "medium",
-            "rationale": "policy agreed with the safe rule action",
+            "rationale": "no certified override applies; safe rule action retained",
             "category": "adjust_configuration_space",
             "action": {
                 "kind": "cli",
                 "variant": "config_prune",
                 "command_template": (
-                    "traigent guidance execute --decision "
-                    "decision_0123456789abcdef"
+                    "traigent guidance execute --decision decision_0123456789abcdef"
                 ),
             },
         }
@@ -404,27 +473,77 @@ async def test_receipt_preserves_pending_verification_semantics() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "verification_status"),
+    [
+        ("started", "verified"),
+        ("failed", "pending"),
+        ("failed", "verified"),
+        ("skipped", "pending"),
+    ],
+)
+async def test_receipt_rejects_inconsistent_verification_transition(
+    status: str, verification_status: str
+) -> None:
+    payload = {
+        "schema_version": "2.0.0",
+        "receipt_id": "receipt_0123456789abcdef",
+        "lifecycle_id": "lifecycle_0123456789abcdef",
+        "decision_id": "decision_0123456789abcdef",
+        "attempt_id": "attempt_0123456789abcdef",
+        "status": status,
+        "verification_status": verification_status,
+        "idempotent_replay": False,
+        "updated_at": "2026-07-10T09:00:01Z",
+    }
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="status and verification_status"):
+        await client.record_receipt(
+            "lifecycle_0123456789abcdef",
+            "decision_0123456789abcdef",
+            status=status,
+            attempt_id="attempt_0123456789abcdef",
+        )
+
+
+@pytest.mark.asyncio
 async def test_resolve_decision_accepts_only_scoped_shell_free_spec() -> None:
     decision_id = "decision_0123456789abcdef"
     payload = {
         "schema_version": "2.0.0",
         "decision_id": decision_id,
-        "argv": ["traigent", "guidance", "execute-resolved", "--attempt=opaque_1"],
+        "argv": [
+            "traigent",
+            "guidance",
+            "execute-resolved",
+            "--attempt",
+            "attempt_0123456789abcdef",
+        ],
         "execution_spec": {
             "operation_kind": "run_optimization",
             "variant": "optimize_probe",
+            "target": "agent",
+            "cost_units": 2,
+            "reservation_units": 2,
+            "max_budget_fraction": 0.15,
+            "max_trials": 4,
+            "sample_limit": None,
+            "action_signature": (
+                "run_optimization:optimize_probe:agent:2:2:0.15:4:None"
+            ),
+            "economics_hash": (
+                "df7d6d7c95e61716a55eec42f829c7ca2bb66c285ce4013e66f5dc1cac956d02"
+            ),
             "attempt_id": "attempt_0123456789abcdef",
             "receipt_url": (
                 "/api/v2/lifecycles/lifecycle_0123456789abcdef/decisions/"
                 f"{decision_id}/receipts"
             ),
-            "lease_expires_at": "2026-07-10T10:30:00Z",
-            "sample_limit": None,
-            "max_trials": 4,
+            "lease_expires_at": "2099-07-10T10:30:00Z",
             "reserved_cost_usd": "1.250000",
         },
         "signature": "sig_" + "A" * 43,
-        "expires_at": "2026-07-10T10:30:00Z",
+        "expires_at": "2099-07-10T10:30:00Z",
     }
     client, transport = _client_with_response(payload)
 
@@ -452,19 +571,37 @@ async def test_resolve_decision_rejects_unscoped_or_unknown_execution(
     payload: dict[str, object] = {
         "schema_version": "2.0.0",
         "decision_id": decision_id,
-        "argv": ["traigent", "guidance", "execute-resolved"],
+        "argv": [
+            "traigent",
+            "guidance",
+            "execute-resolved",
+            "--attempt",
+            "attempt_0123456789abcdef",
+        ],
         "execution_spec": {
             "operation_kind": "run_optimization",
             "variant": "optimize_probe",
+            "target": "agent",
+            "cost_units": 2,
+            "reservation_units": 2,
+            "max_budget_fraction": 0.15,
+            "max_trials": 4,
+            "sample_limit": None,
+            "action_signature": (
+                "run_optimization:optimize_probe:agent:2:2:0.15:4:None"
+            ),
+            "economics_hash": (
+                "df7d6d7c95e61716a55eec42f829c7ca2bb66c285ce4013e66f5dc1cac956d02"
+            ),
             "attempt_id": "attempt_0123456789abcdef",
             "receipt_url": (
                 "/api/v2/lifecycles/lifecycle_0123456789abcdef/decisions/"
                 f"{decision_id}/receipts"
             ),
-            "lease_expires_at": "2026-07-10T10:30:00Z",
+            "lease_expires_at": "2099-07-10T10:30:00Z",
         },
         "signature": "sig_" + "A" * 43,
-        "expires_at": "2026-07-10T10:30:00Z",
+        "expires_at": "2099-07-10T10:30:00Z",
     }
     field, value = mutation
     if field == "argv":
@@ -477,6 +614,72 @@ async def test_resolve_decision_rejects_unscoped_or_unknown_execution(
 
     with pytest.raises(ValueError, match=message):
         await client.resolve_decision(decision_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (("max_trials", 1), "exact variant"),
+        (("sample_limit", 32), "exact variant"),
+        (("economics_hash", "a" * 64), "economics_hash"),
+        (("action_signature", "run_optimization:wrong"), "action_signature"),
+    ],
+)
+async def test_resolve_decision_requires_exact_action_economics(
+    mutation: tuple[str, object], message: str
+) -> None:
+    payload = _execution_payload()
+    spec = payload["execution_spec"]
+    assert isinstance(spec, dict)
+    field, value = mutation
+    spec[field] = value
+    client, _ = _client_with_response(payload)
+
+    with pytest.raises(ValueError, match=message):
+        await client.resolve_decision("decision_0123456789abcdef")
+
+
+@pytest.mark.asyncio
+async def test_resolve_decision_rejects_expired_or_mismatched_lease() -> None:
+    payload = _execution_payload()
+    payload["expires_at"] = "2020-01-01T00:00:00Z"
+    spec = payload["execution_spec"]
+    assert isinstance(spec, dict)
+    spec["lease_expires_at"] = "2020-01-01T00:00:00Z"
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="expired"):
+        await client.resolve_decision("decision_0123456789abcdef")
+
+    payload = _execution_payload()
+    spec = payload["execution_spec"]
+    assert isinstance(spec, dict)
+    spec["lease_expires_at"] = "2099-07-10T10:31:00Z"
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="expiries must match"):
+        await client.resolve_decision("decision_0123456789abcdef")
+
+
+@pytest.mark.asyncio
+async def test_resolve_decision_binds_exact_argv_attempt_and_receipt_path() -> None:
+    payload = _execution_payload()
+    argv = payload["argv"]
+    assert isinstance(argv, list)
+    argv[-1] = "attempt_abcdef0123456789"
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="argv attempt"):
+        await client.resolve_decision("decision_0123456789abcdef")
+
+    payload = _execution_payload()
+    spec = payload["execution_spec"]
+    assert isinstance(spec, dict)
+    spec["receipt_url"] = (
+        "/api/v2/lifecycles/lifecycle_0123456789abcdef/extra/decisions/"
+        "decision_0123456789abcdef/receipts"
+    )
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="receipt_url"):
+        await client.resolve_decision("decision_0123456789abcdef")
 
 
 @pytest.mark.asyncio
@@ -504,3 +707,41 @@ async def test_reopen_creates_joined_active_child_lifecycle() -> None:
         json={"reason": "new_artifact"},
         headers={"Idempotency-Key": "reopen-6d33ebdb297158ed652304060927e50d"},
     )
+
+
+@pytest.mark.asyncio
+async def test_reopen_rejects_same_lifecycle_or_inherited_assignment_drift() -> None:
+    payload = {
+        "schema_version": "2.0.0",
+        "lifecycle_id": "lifecycle_0123456789abcdef",
+        "predecessor_lifecycle_id": "lifecycle_0123456789abcdef",
+        "reason": "new_artifact",
+        "requested_variant": "policy_override",
+        "utility_profile": "balanced",
+        "status": "active",
+        "idempotent_replay": False,
+        "created_at": "2026-07-10T09:00:00Z",
+    }
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="distinct child"):
+        await client.reopen_lifecycle(
+            "lifecycle_0123456789abcdef", reason="new_artifact"
+        )
+
+    payload["lifecycle_id"] = "lifecycle_abcdef0123456789"
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="inherited treatment"):
+        await client.reopen_lifecycle(
+            "lifecycle_0123456789abcdef",
+            reason="new_artifact",
+            expected_treatment="rules_control",
+        )
+
+    client, _ = _client_with_response(payload)
+    with pytest.raises(ValueError, match="inherited utility profile"):
+        await client.reopen_lifecycle(
+            "lifecycle_0123456789abcdef",
+            reason="new_artifact",
+            expected_treatment="policy_override",
+            expected_profile="cost_first",
+        )
