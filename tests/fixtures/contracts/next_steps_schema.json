@@ -53,54 +53,111 @@
         }
       }
     },
-    "guidance_meta": {
+    "posture": {
       "type": "object",
-      "description": "Optional metadata about the guidance variant served for this response. Absent when guidance-variant selection is not in effect.",
       "additionalProperties": false,
+      "required": [
+        "summary_text",
+        "generated_at"
+      ],
       "properties": {
-        "served_variant": {
+        "summary_text": {
+          "type": "string",
+          "description": "Server-generated, redacted prose posture summary. Contains NO internal state vocabulary."
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "description": "Optional single authoritative lifecycle decision. Present when the lifecycle guidance lane is enabled. Internal lifecycle state and operation vocabulary remain server-private; category is the public one-to-one action label.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "source_engine",
+        "evidence_snapshot_hash",
+        "rationale",
+        "action",
+        "evidence_level"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$",
+          "description": "Stable identifier used to join execution receipts to this decision."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "score_evaluation_set",
+            "curate_evaluation_set",
+            "audit_evaluator_quality",
+            "improve_evaluator",
+            "adjust_configuration_space",
+            "run_optimization",
+            "validate_holdout",
+            "compare_with_baseline",
+            "add_safety_gate",
+            "promote_winner",
+            "wait"
+          ],
+          "description": "Client-safe one-to-one action category."
+        },
+        "source_engine": {
           "type": "string",
           "enum": [
             "rules",
             "policy"
           ],
-          "description": "The guidance variant that was actually served."
+          "description": "Actual engine that selected this authoritative decision."
         },
-        "engine": {
+        "evidence_snapshot_hash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Opaque content hash joining the decision to its redacted evidence snapshot."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Templated category-level rationale without proprietary state or signal values."
+        },
+        "action": {
+          "type": "object",
+          "required": [
+            "kind",
+            "command_template"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "none",
+                "cli",
+                "sdk",
+                "skill"
+              ]
+            },
+            "command_template": {
+              "type": "string"
+            }
+          }
+        },
+        "evidence_level": {
           "type": "string",
           "enum": [
-            "rules",
-            "policy",
-            "none"
-          ],
-          "description": "The guidance engine that produced this response."
-        },
-        "policy_table_sha": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "SHA of the policy table used to select this variant."
-        },
-        "smartopt_version": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Version of traigent-smartopt used to produce this response."
-        },
-        "fallback_reason": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Set when the requested variant could not be served and the response fell back to a default."
+            "low",
+            "medium",
+            "high"
+          ]
         }
-      },
-      "required": [
-        "served_variant",
-        "engine"
-      ]
+      }
     },
     "next_steps": {
       "type": "array",
@@ -130,7 +187,15 @@
               "rerun_larger_sample",
               "add_safety_gate",
               "compare_with_baseline",
-              "promote_winner"
+              "promote_winner",
+              "score_evaluation_set",
+              "curate_evaluation_set",
+              "audit_evaluator_quality",
+              "improve_evaluator",
+              "adjust_configuration_space",
+              "run_optimization",
+              "validate_holdout",
+              "wait"
             ],
             "description": "Safe recommendation category."
           },
@@ -154,6 +219,7 @@
               "kind": {
                 "type": "string",
                 "enum": [
+                  "none",
                   "cli",
                   "sdk",
                   "skill"
@@ -174,9 +240,177 @@
               "high"
             ],
             "description": "Coarse evidence level supporting this recommendation."
+          },
+          "source_engine": {
+            "type": "string",
+            "enum": [
+              "rules",
+              "policy"
+            ],
+            "description": "Actual engine provenance on lifecycle-derived singleton steps. Omitted on legacy flag-off responses."
+          },
+          "evidence_snapshot_hash": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Opaque evidence join hash on lifecycle-derived singleton steps. Omitted on legacy flag-off responses."
+          }
+        }
+      }
+    },
+    "guidance_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional provenance of the server-side guidance engine that produced lifecycle-derived steps. Present only when the deployment enables the lifecycle guidance lane (ENABLE_LIFECYCLE_POLICY_PLANNER). Echoes which engine actually served the request so clients and experiment harnesses can audit rules-vs-policy treatment.",
+      "required": [
+        "requested_variant",
+        "served_variant",
+        "engine"
+      ],
+      "properties": {
+        "requested_variant": {
+          "type": "string",
+          "enum": [
+            "rules",
+            "policy"
+          ],
+          "description": "Normalized rules-vs-policy treatment requested by the client, defaulting to rules when the header is omitted."
+        },
+        "served_variant": {
+          "type": "string",
+          "enum": [
+            "rules",
+            "policy"
+          ],
+          "description": "The variant the request resolved to (header-selected; default rules)."
+        },
+        "engine": {
+          "type": "string",
+          "enum": [
+            "rules",
+            "policy",
+            "none"
+          ],
+          "description": "The engine that actually computed the lane ('rules' when the policy path fell back; 'none' when the lane errored)."
+        },
+        "policy_table_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Content hash of the deployed policy table, when available."
+        },
+        "smartopt_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Version of the traigent-smartopt package serving the guidance."
+        },
+        "fallback_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the policy path fell back to rules (e.g. drift, unmapped state, policy_unavailable), null when no fallback."
+        },
+        "decision_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$",
+          "description": "Join identifier of the authoritative decision, null when no lifecycle decision was produced."
+        },
+        "evidence_snapshot_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Opaque evidence join hash for the authoritative decision, null when unavailable."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "next_steps": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "required": [
+              "category"
+            ],
+            "properties": {
+              "category": {
+                "const": "wait"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "decision": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "kind": {
+                    "const": "none"
+                  },
+                  "command_template": {
+                    "const": ""
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "if": {
+          "required": [
+            "decision"
+          ]
+        },
+        "then": {
+          "properties": {
+            "decision": {
+              "properties": {
+                "action": {
+                  "properties": {
+                    "kind": {
+                      "not": {
+                        "const": "none"
+                      }
+                    },
+                    "command_template": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
     }
-  }
+  ]
 }

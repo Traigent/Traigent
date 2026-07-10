@@ -140,6 +140,12 @@ class EvaluationOptions(BaseModel):
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
+    #: Optional identity of an evaluator definition already registered with the
+    #: backend. ``evaluator_id`` is a compatibility alias; provide only one of
+    #: the two names. Unregistered callable evaluators should omit both and
+    #: remain content-addressed by their evaluator fingerprint.
+    evaluator_id: str | None = None
+    evaluator_definition_id: str | None = None
     #: Optional cheap "surrogate" (pre-screen) scorer applied to the SAME outputs
     #: the primary evaluator already produced, per example. It scores captured
     #: outputs only and NEVER re-executes the decorated function. Same calling
@@ -154,6 +160,20 @@ class EvaluationOptions(BaseModel):
     #: anonymous scorers). A runtime ``optimize(surrogate_evaluator_name=...)``
     #: overrides this decorator value.
     surrogate_evaluator_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_evaluator_identity(self) -> EvaluationOptions:
+        values = [self.evaluator_id, self.evaluator_definition_id]
+        for value in values:
+            if value is not None and not value.strip():
+                raise ValueError("evaluator identity must be a non-blank string")
+            if value is not None and len(value.strip()) > 200:
+                raise ValueError("evaluator identity must be at most 200 characters")
+        if all(values):
+            raise ValueError(
+                "evaluator_id and evaluator_definition_id are aliases; provide only one"
+            )
+        return self
 
 
 class InjectionOptions(BaseModel):
@@ -2784,6 +2804,11 @@ def optimize(  # NOSONAR(S107)
         if evaluation_bundle is not None
         else None
     )
+    evaluator_definition_id = (
+        evaluation_bundle.evaluator_definition_id or evaluation_bundle.evaluator_id
+        if evaluation_bundle is not None
+        else None
+    )
     if surrogate_evaluator is not None:
         _validate_surrogate_evaluator_signature(surrogate_evaluator)
 
@@ -3076,6 +3101,7 @@ def optimize(  # NOSONAR(S107)
             custom_evaluator=custom_evaluator,
             scoring_function=scoring_function,
             metric_functions=metric_functions,
+            evaluator_definition_id=evaluator_definition_id,
             requested_execution_mode=requested_execution_mode,
             execution_policy=execution_policy,
             # Multi-agent configuration

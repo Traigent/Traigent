@@ -125,6 +125,10 @@ class TestPrivacyCompliance:
             # independently prove content-freeness.
             "artifact_fingerprints",
             "fingerprint_meta",
+            # Bounded registry identifiers only. These contain no evaluator
+            # implementation, prompt, dataset content, or credentials.
+            "evaluator_id",
+            "evaluator_definition_id",
         }
 
         for req in dummy_server.received_data:

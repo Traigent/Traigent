@@ -62,6 +62,23 @@ def reset_deprecation_warning_state():
 
 
 class TestContractGate:
+    def test_session_request_normalizes_evaluator_identity(self):
+        request = _request(evaluator_definition_id=" evaluator-1 ")
+
+        assert request.evaluator_id is None
+        assert request.evaluator_definition_id == "evaluator-1"
+
+    def test_session_request_rejects_both_evaluator_identity_aliases(self):
+        with pytest.raises(ValueError, match="provide only one"):
+            _request(
+                evaluator_id="evaluator-1",
+                evaluator_definition_id="evaluator-1",
+            )
+
+    def test_session_request_rejects_overlong_evaluator_identity(self):
+        with pytest.raises(ValueError, match="at most 200"):
+            _request(evaluator_definition_id="x" * 201)
+
     def test_default_contract_builds_typed_payload(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         payload = _ops()._build_session_payload(
@@ -200,6 +217,25 @@ class TestContractGate:
         blob = json.dumps(payload)
         assert "raw evaluator source" not in blob
         assert "SECRET_PROMPT_b7e1" not in blob
+
+    def test_explicit_evaluator_definition_identity_is_preserved(self, monkeypatch):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(
+            _request(evaluator_definition_id="eval_registered_1"),
+            5,
+        )
+
+        assert "evaluator_id" not in payload
+        assert payload["evaluator_definition_id"] == "eval_registered_1"
+
+    def test_unregistered_evaluator_does_not_fabricate_definition_identity(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(_request(), 5)
+
+        assert "evaluator_id" not in payload
+        assert "evaluator_definition_id" not in payload
 
 
 class TestAutoFallback:
