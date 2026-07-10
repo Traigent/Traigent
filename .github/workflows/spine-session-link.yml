@@ -1,0 +1,107 @@
+name: Spine Policy-Surface Link (advisory)
+
+# Additive visibility for policy-surface changes. This status is intentionally
+# not branch-required during rollout and preserves the existing accepted
+# promoted session, Spine-Session, and explicit-waiver forms. A Spine-Trail is
+# useful trace evidence, but is not itself a policy-surface governance link.
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  merge_group:
+    branches: [develop, main]
+    types: [checks_requested]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: spine-policy-link-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  policy-surface-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      POLICY_SURFACE_GLOBS: |
+        traigent/security/**
+        traigent/cloud/*auth*.py
+        traigent/cloud/*session*.py
+        traigent/cloud/privacy_operations.py
+        traigent/cloud/url_security.py
+        traigent/config/api_keys.py
+        traigent/config/backend_config.py
+        traigent/config/tenant.py
+        traigent/core/*session*.py
+        traigent/core/cost_enforcement.py
+        traigent/hybrid/**
+        traigent/observability/**
+        traigent/tvl/**
+    steps:
+      - name: Pass through merge-queue candidate
+        if: ${{ github.event_name == 'merge_group' }}
+        run: echo "Policy-surface link was evaluated on the constituent PR; reporting on the merge-group SHA."
+
+      - name: Check policy-surface Spine link
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          set -euo pipefail
+          changed_files="$(mktemp)"
+          current_body="$(mktemp)"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+            --jq '.[].filename' > "$changed_files"
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '.body // ""' > "$current_body"
+
+          python - "$changed_files" "$current_body" <<'PY'
+          from __future__ import annotations
+
+          import fnmatch
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          changed = [line for line in Path(sys.argv[1]).read_text().splitlines() if line]
+          body = Path(sys.argv[2]).read_text()
+          labels = {
+              str(label.get("name", "")).strip()
+              for label in json.loads(os.environ.get("EVENT_PR_LABELS") or "[]")
+              if isinstance(label, dict)
+          }
+          patterns = [line for line in os.environ["POLICY_SURFACE_GLOBS"].splitlines() if line]
+          policy_files = [
+              path for path in changed if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+          ]
+          if not policy_files:
+              print("No policy-surface paths touched; no additional Spine link evidence needed.")
+              raise SystemExit(0)
+
+          session = re.search(r"(?mi)^\s*Spine(?:-Session)?:\s*cs_[0-9a-z]{6,}\s*$", body)
+          waiver = re.search(r"(?mi)^\s*Spine:\s*none\s*\(reason:.+\)\s*$", body)
+          trail = re.search(r"(?mi)^\s*Spine-Trail:\s*st_[0-9a-f]{12}\s*$", body)
+          if session:
+              print("Policy-surface paths touched and linked or promoted ChangeSession found.")
+              raise SystemExit(0)
+          if waiver or "spine-exempt" in labels:
+              print("::warning::Explicit Spine waiver accepted for policy-surface change.")
+              raise SystemExit(0)
+
+          detail = (
+              "A Spine-Trail is present, but a linked/promoted ChangeSession is also required."
+              if trail else "No linked or promoted ChangeSession was found."
+          )
+          print(f"::error::spine-policy-link: {detail}")
+          for path in policy_files[:50]:
+              print(f"- {path}")
+          print("Add Spine-Session: cs_<id> or Spine: cs_<id>.")
+          print("An owner-approved waiver remains Spine: none (reason: ...) or the spine-exempt label.")
+          raise SystemExit(1)
+          PY
