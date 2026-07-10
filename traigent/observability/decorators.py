@@ -354,7 +354,7 @@ class _ObserveFactory:
         name: str | None,
         client: ObservabilityClient | None,
         observation_type: ObservationType | str,
-        tool_name: str | None,
+        tool_name: str | None = None,
         metadata: dict[str, Any] | None,
         session_id: str | None = None,
         user_id: str | None = None,
