@@ -967,3 +967,185 @@ async def test_all_observability_tools_are_registered() -> None:
     assert expected.issubset(ANALYTICS_TOOL_NAMES)
     registered = {tool.name for tool in await create_server().list_tools()}
     assert expected.issubset(registered)
+
+
+@pytest.mark.asyncio
+async def test_registered_issue_list_tool_matches_helper_contract(monkeypatch) -> None:
+    pytest.importorskip("mcp")
+    from traigent.analytics_mcp import server as server_module
+
+    helper = AsyncMock(return_value={"ok": True, "items": []})
+    monkeypatch.setattr(server_module, "observability_list_issues_tool", helper)
+
+    result = await server_module.create_server().call_tool(
+        "observability_list_issues",
+        {
+            "project_id": "project-1",
+            "page": 2,
+            "per_page": 20,
+            "state": "open",
+            "detector_family": "retry",
+            "severity": "error",
+        },
+    )
+
+    assert result
+    helper.assert_awaited_once_with(
+        "project-1",
+        2,
+        20,
+        "open",
+        "retry",
+        "error",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "helper_name", "arguments", "expected"),
+    [
+        (
+            "observability_search_traces",
+            "observability_search_traces_tool",
+            {
+                "project_id": "project-1",
+                "start_time": "2026-07-01T00:00:00Z",
+                "end_time": "2026-07-02T00:00:00Z",
+                "page": 2,
+                "per_page": 20,
+                "status": "completed",
+                "environment": "prod",
+                "release": "release-1",
+            },
+            (
+                "project-1",
+                "2026-07-01T00:00:00Z",
+                "2026-07-02T00:00:00Z",
+                2,
+                20,
+                "completed",
+                "prod",
+                "release-1",
+            ),
+        ),
+        (
+            "observability_get_issue",
+            "observability_get_issue_tool",
+            {
+                "project_id": "project-1",
+                "issue_id": "issue-1",
+                "occurrence_page": 2,
+                "occurrences_per_page": 20,
+            },
+            ("project-1", "issue-1", 2, 20),
+        ),
+        (
+            "observability_get_trace_slice",
+            "observability_get_trace_slice_tool",
+            {
+                "project_id": "project-1",
+                "trace_id": "trace-1",
+                "cursor": "cursor-1",
+                "limit": 25,
+            },
+            ("project-1", "trace-1", "cursor-1", 25),
+        ),
+        (
+            "observability_get_tool_analysis",
+            "observability_get_tool_analysis_tool",
+            {
+                "project_id": "project-1",
+                "start_time": "2026-07-01T00:00:00Z",
+                "end_time": "2026-07-02T00:00:00Z",
+                "limit": 25,
+            },
+            (
+                "project-1",
+                "2026-07-01T00:00:00Z",
+                "2026-07-02T00:00:00Z",
+                25,
+            ),
+        ),
+        (
+            "observability_get_analysis_insights",
+            "observability_get_analysis_insights_tool",
+            {
+                "project_id": "project-1",
+                "start_time": "2026-07-01T00:00:00Z",
+                "end_time": "2026-07-02T00:00:00Z",
+                "limit": 10,
+            },
+            (
+                "project-1",
+                "2026-07-01T00:00:00Z",
+                "2026-07-02T00:00:00Z",
+                10,
+            ),
+        ),
+        (
+            "observability_compare_cohorts",
+            "observability_compare_cohorts_tool",
+            {
+                "project_id": "project-1",
+                "reference": {"release": "release-1"},
+                "comparison": {"release": "release-2"},
+                "metrics": ["error_rate"],
+            },
+            (
+                "project-1",
+                {"release": "release-1"},
+                {"release": "release-2"},
+                ["error_rate"],
+            ),
+        ),
+        (
+            "observability_get_related_changes",
+            "observability_get_related_changes_tool",
+            {"project_id": "project-1", "trace_id": "trace-1"},
+            ("project-1", "trace-1"),
+        ),
+        (
+            "observability_build_change_brief",
+            "observability_build_change_brief_tool",
+            {
+                "project_id": "project-1",
+                "trace_id": "trace-1",
+                "start_time": "2026-07-01T00:00:00Z",
+                "end_time": "2026-07-02T00:00:00Z",
+                "reference": {"release": "release-1"},
+                "comparison": {"release": "release-2"},
+                "metrics": ["error_rate"],
+                "trace_limit": 25,
+                "tool_limit": 10,
+                "insights_limit": 5,
+            },
+            (
+                "project-1",
+                "trace-1",
+                "2026-07-01T00:00:00Z",
+                "2026-07-02T00:00:00Z",
+                {"release": "release-1"},
+                {"release": "release-2"},
+                ["error_rate"],
+                25,
+                10,
+                5,
+            ),
+        ),
+    ],
+)
+async def test_registered_observability_wrappers_match_helper_contracts(
+    monkeypatch,
+    tool_name: str,
+    helper_name: str,
+    arguments: dict[str, object],
+    expected: tuple[object, ...],
+) -> None:
+    pytest.importorskip("mcp")
+    from traigent.analytics_mcp import server as server_module
+
+    helper = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(server_module, helper_name, helper)
+
+    assert await server_module.create_server().call_tool(tool_name, arguments)
+    helper.assert_awaited_once_with(*expected)

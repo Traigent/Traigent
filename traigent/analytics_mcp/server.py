@@ -365,7 +365,6 @@ def create_server() -> Any:
         state: str | None = None,
         detector_family: str | None = None,
         severity: str | None = None,
-        search: str | None = None,
     ) -> dict[str, Any]:
         return await observability_list_issues_tool(
             project_id,
@@ -374,7 +373,6 @@ def create_server() -> Any:
             state,
             detector_family,
             severity,
-            search,
         )
 
     @server.tool(
