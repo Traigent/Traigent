@@ -2753,6 +2753,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#content-free-execution-lineage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Content-Free Execution Lineage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#opentelemetry-tracing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4269,6 +4280,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#content-free-execution-lineage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Content-Free Execution Lineage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#opentelemetry-tracing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4713,6 +4735,18 @@ net, not the content-egress policy.</p>
 token usage from prompts. Pass measured <code>input_tokens</code>, <code>output_tokens</code>,
 <code>total_tokens</code>, or <code>cost_usd</code> from the provider response when recording
 generation spans; otherwise usage is reported as unknown, not zero.</p>
+<h3 id="content-free-execution-lineage">Content-Free Execution Lineage<a class="headerlink" href="#content-free-execution-lineage" title="Permanent link">&para;</a></h3>
+<p><code>ExecutionContextDTO</code> carries only versioned lineage identifiers. Client and
+environment defaults are merged into each trace; fields omitted from a
+per-trace DTO inherit those defaults. An explicit <code>None</code> clears a default and
+is emitted as JSON <code>null</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.observability</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionContextDTO</span>
+
+<span class="n">context</span> <span class="o">=</span> <span class="n">ExecutionContextDTO</span><span class="p">(</span><span class="n">toolset_id</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">start_trace</span><span class="p">(</span><span class="s2">&quot;agent-run&quot;</span><span class="p">,</span> <span class="n">execution_context</span><span class="o">=</span><span class="n">context</span><span class="p">)</span>
+</code></pre></div>
+<p>Dictionary inputs have the same explicit-null behavior. Free-form metadata and
+content fields are not accepted in execution context.</p>
 <h3 id="opentelemetry-tracing">OpenTelemetry Tracing<a class="headerlink" href="#opentelemetry-tracing" title="Permanent link">&para;</a></h3>
 <p>OpenTelemetry tracing is opt-in and uses a separate flag from telemetry
 opt-out:</p>
