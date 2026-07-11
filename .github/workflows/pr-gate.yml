@@ -141,11 +141,32 @@ jobs:
         # pyproject addopts already include -n auto --dist loadgroup (xdist).
         run: pytest tests/unit -q --tb=short
 
+  mcp-contract:
+    name: mcp-contract
+    if: ${{ !cancelled() && needs.changes.outputs.code_changed == 'true' && needs.preflight.result == 'success' && (github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [changes, preflight]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install MCP contract dependencies
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[dev,mcp]"
+      - name: Run MCP contract tests
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest tests/unit/mcp/test_local_server.py \
+            tests/unit/analytics_mcp/test_observability_mcp_tools.py -q --tb=short
+
   required-pr-gate:
     name: required-pr-gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, preflight, unit]
+    needs: [changes, preflight, unit, mcp-contract]
     if: ${{ !cancelled() }}
     steps:
       - name: Verify required gate jobs
@@ -155,7 +176,8 @@ jobs:
           for result in \
             "${{ needs.changes.result }}" \
             "${{ needs.preflight.result }}" \
-            "${{ needs.unit.result }}"; do
+            "${{ needs.unit.result }}" \
+            "${{ needs.mcp-contract.result }}"; do
             case "$result" in
               success|skipped) ;;
               *)

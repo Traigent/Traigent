@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.3] - 2026-07-11
+
 ### Added
 
 - Additive SmartOps Planner V2 client and `traigent guidance` CLI with strict
@@ -16,6 +18,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Correct the registered observability issue-list MCP wrapper so it matches the
+  six-argument helper contract instead of raising a runtime ``TypeError``.
 - Enforce Planner V2 treatment isolation even outside strict experiment mode;
   strict mode additionally rejects fallback and incomplete context.
 - Validate exact action economics, implementation hash, attempt-bound argv,
