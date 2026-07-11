@@ -24,6 +24,28 @@ MAX_BUFFER_AGE_SECONDS = 3600.0
 MAX_TIMEOUT_SECONDS = 600.0
 OBSERVABILITY_CONTENT_MODES = frozenset({"metadata", "redacted", "record"})
 
+_EXECUTION_CONTEXT_ENV_VARS = {
+    "agent_id": "TRAIGENT_AGENT_ID",
+    "agent_version": "TRAIGENT_AGENT_VERSION",
+    "release_id": "TRAIGENT_RELEASE_ID",
+    "deployment_id": "TRAIGENT_DEPLOYMENT_ID",
+    "code_revision": "TRAIGENT_CODE_REVISION",
+    "configuration_id": "TRAIGENT_CONFIGURATION_ID",
+    "configuration_version": "TRAIGENT_CONFIGURATION_VERSION",
+    "prompt_id": "TRAIGENT_PROMPT_ID",
+    "prompt_version": "TRAIGENT_PROMPT_VERSION",
+    "toolset_id": "TRAIGENT_TOOLSET_ID",
+    "toolset_version": "TRAIGENT_TOOLSET_VERSION",
+    "evaluator_id": "TRAIGENT_EVALUATOR_ID",
+    "evaluator_version": "TRAIGENT_EVALUATOR_VERSION",
+    "dataset_id": "TRAIGENT_DATASET_ID",
+    "dataset_version": "TRAIGENT_DATASET_VERSION",
+    "experiment_run_id": "TRAIGENT_EXPERIMENT_RUN_ID",
+    "configuration_run_id": "TRAIGENT_CONFIGURATION_RUN_ID",
+    "optimization_run_id": "TRAIGENT_OPTIMIZATION_RUN_ID",
+    "intervention_id": "TRAIGENT_INTERVENTION_ID",
+}
+
 
 def _read_observability_offline_mode() -> bool:
     return is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
@@ -43,6 +65,20 @@ def _read_observability_content_mode() -> str:
         allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
         raise ValueError(f"TRAIGENT_OBSERVABILITY_CONTENT must be one of: {allowed}")
     return mode
+
+
+def _read_default_execution_context() -> dict[str, str | None]:
+    """Read only explicit Traigent lineage identifiers from the environment."""
+    context: dict[str, str | None] = {}
+    for field_name, environment_name in _EXECUTION_CONTEXT_ENV_VARS.items():
+        raw_value = os.getenv(environment_name)
+        if raw_value is not None and raw_value.strip():
+            context[field_name] = raw_value.strip()
+    if "release_id" not in context:
+        release = os.getenv("TRAIGENT_RELEASE")
+        if release is not None and release.strip():
+            context["release_id"] = release.strip()
+    return context
 
 
 @dataclass
@@ -74,6 +110,9 @@ class ObservabilityConfig:
     )
     default_release: str | None = field(
         default_factory=lambda: os.getenv("TRAIGENT_RELEASE")
+    )
+    default_execution_context: dict[str, str | None] = field(
+        default_factory=_read_default_execution_context
     )
     extra_headers: dict[str, str] = field(default_factory=dict)
 

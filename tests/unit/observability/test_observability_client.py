@@ -14,6 +14,7 @@ import pytest
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.config.context import ConfigurationContext, TrialContext
 from traigent.observability import (
+    ExecutionContextDTO,
     FlushResult,
     ObservabilityClient,
     ObservabilityConfig,
@@ -220,6 +221,132 @@ def test_observability_client_flushes_trace_payloads():
     assert (
         sent_trace["observations"][0]["children"][0]["prompt_reference"]["version"] == 1
     )
+
+
+def test_observability_client_merges_content_free_lineage_defaults(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_AGENT_ID", "agent-from-env")
+    monkeypatch.setenv("TRAIGENT_TOOLSET_ID", "toolset-from-env")
+    sent_batches: list[list[dict]] = []
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            enable_atexit_flush=False,
+        ),
+        sender=sent_batches.append,
+    )
+
+    client.start_trace(
+        "lineage-defaults",
+        trace_id="trace_lineage_defaults",
+        execution_context={
+            "release_id": "release-explicit",
+            "toolset_id": None,
+            "prompt_id": "prompt-7",
+        },
+    )
+    client.flush()
+    client.close()
+
+    execution_context = sent_batches[-1][-1]["execution_context"]
+    assert execution_context["schema_version"] == "1.0"
+    assert execution_context["agent_id"] == "agent-from-env"
+    assert execution_context["release_id"] == "release-explicit"
+    assert execution_context["prompt_id"] == "prompt-7"
+    assert execution_context["toolset_id"] is None
+
+
+def test_execution_context_rejects_content_and_invalid_identifiers():
+    with pytest.raises(ValueError, match="unsupported field.*metadata"):
+        ExecutionContextDTO.from_dict({"metadata": {"prompt": "must not leak"}})
+    with pytest.raises(ValueError, match="agent_id must not be empty"):
+        ExecutionContextDTO(agent_id="")
+
+
+def test_execution_context_dto_explicit_null_clears_client_default():
+    context = ExecutionContextDTO(toolset_id=None)
+    assert context.to_dict() == {"schema_version": "1.0", "toolset_id": None}
+
+    sent_batches: list[list[dict]] = []
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            enable_atexit_flush=False,
+            default_execution_context={
+                "agent_id": "agent-default",
+                "toolset_id": "toolset-default",
+            },
+        ),
+        sender=sent_batches.append,
+    )
+    client.start_trace(
+        "lineage-explicit-null",
+        trace_id="trace_lineage_explicit_null",
+        execution_context=context,
+    )
+    client.flush()
+    client.close()
+
+    execution_context = sent_batches[-1][-1]["execution_context"]
+    assert execution_context["agent_id"] == "agent-default"
+    assert execution_context["toolset_id"] is None
+
+
+def test_tool_observation_infers_stable_tool_name_and_failure_status():
+    sent_batches: list[list[dict]] = []
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            enable_atexit_flush=False,
+        ),
+        sender=sent_batches.append,
+    )
+    trace_id = client.start_trace("tool-failure", trace_id="trace_tool_failure")
+    client.record_observation(
+        trace_id,
+        name="search.lookup",
+        observation_type=ObservationType.TOOL_CALL,
+        status="failed",
+    )
+    client.end_trace(trace_id, status="failed")
+    client.flush()
+    client.close()
+
+    observation = sent_batches[-1][-1]["observations"][0]
+    assert observation["tool_name"] == "search.lookup"
+    assert observation["status"] == "failed"
+
+
+def test_observe_propagates_tool_identity_and_execution_context():
+    sent_batches: list[list[dict]] = []
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            enable_atexit_flush=False,
+        ),
+        sender=sent_batches.append,
+    )
+
+    with observe(
+        "search.lookup",
+        client=client,
+        observation_type=ObservationType.TOOL_CALL,
+        tool_name="search.lookup.v2",
+        execution_context={
+            "agent_id": "agent-1",
+            "release_id": "release-2",
+            "prompt_id": "prompt-3",
+            "toolset_id": "toolset-4",
+        },
+    ):
+        pass
+    client.flush()
+    client.close()
+
+    trace = sent_batches[-1][-1]
+    assert trace["execution_context"]["agent_id"] == "agent-1"
+    assert trace["execution_context"]["release_id"] == "release-2"
+    assert trace["observations"][0]["tool_name"] == "search.lookup.v2"
+    assert trace["observations"][0]["status"] == "completed"
 
 
 def test_observability_client_offline_mode_does_not_attempt_ingest(monkeypatch, caplog):
@@ -939,6 +1066,42 @@ def test_observability_client_preserves_existing_usage_fields_on_update():
     assert observation["cost_usd"] == 0.25
 
 
+def test_observability_client_preserves_tool_type_on_lifecycle_update():
+    sent_batches: list[list[dict]] = []
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: sent_batches.append(traces),
+    )
+
+    trace_id = client.start_trace("tool-lifecycle", trace_id="trace_tool_lifecycle")
+    observation_id = client.record_observation(
+        trace_id,
+        observation_id="obs_tool_lifecycle",
+        name="search.lookup",
+        observation_type=ObservationType.TOOL_CALL,
+    )
+    client.record_observation(
+        trace_id,
+        observation_id=observation_id,
+        name="search.lookup",
+        status="completed",
+    )
+    client.end_trace(trace_id)
+    client.flush()
+    client.close()
+
+    observation = sent_batches[-1][-1]["observations"][0]
+    assert observation["type"] == "tool_call"
+    assert observation["tool_name"] == "search.lookup"
+    assert observation["status"] == "completed"
+
+
 def test_observability_client_omits_unknown_generation_usage_fields(caplog):
     sent_batches: list[list[dict]] = []
 
@@ -1479,7 +1642,7 @@ def test_observation_dto_rejects_negative_values():
         )
 
 
-@pytest.mark.parametrize("status", ["", "x" * 65])
+@pytest.mark.parametrize("status", ["", "cancelled", "x" * 65])
 def test_observation_dto_rejects_invalid_status(status):
     with pytest.raises(ValueError, match="status"):
         ObservationDTO(
@@ -1490,7 +1653,7 @@ def test_observation_dto_rejects_invalid_status(status):
         )
 
 
-@pytest.mark.parametrize("status", ["", "x" * 65])
+@pytest.mark.parametrize("status", ["", "cancelled", "x" * 65])
 def test_trace_dto_rejects_invalid_status(status):
     with pytest.raises(ValueError, match="status"):
         TraceDTO(id="trace_bad_status", name="bad-trace", status=status)

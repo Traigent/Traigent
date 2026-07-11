@@ -210,7 +210,8 @@ class TestGetNextSteps:
 
         assert result == valid_next_steps_payload
         mock_http.get.assert_called_once_with(
-            "/api/v1/analytics/experiments/run_123/next-steps"
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers=None,
         )
 
     @pytest.mark.asyncio
@@ -243,6 +244,744 @@ class TestGetNextSteps:
         assert result["posture"] == payload_with_posture["posture"]
 
     @pytest.mark.asyncio
+    async def test_get_next_steps_sends_guidance_variant_header_when_env_set(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        monkeypatch.setenv("TRAIGENT_GUIDANCE_VARIANT", "  policy  ")
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        decision = {
+            "id": "decision_123",
+            "category": "run_optimization",
+            "source_engine": "policy",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Run optimization.",
+            "action": {"kind": "skill", "command_template": "traigent-optimize-run"},
+            "evidence_level": "high",
+        }
+        mock_response.json.return_value = {
+            **valid_next_steps_payload,
+            "decision": decision,
+            "next_steps": [],
+            "guidance_meta": {
+                "requested_variant": "policy",
+                "served_variant": "policy",
+                "engine": "policy",
+                "fallback_reason": None,
+                "decision_id": "decision_123",
+                "evidence_snapshot_hash": "abc123",
+            },
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        await client.get_next_steps("run_123")
+
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers={"X-Traigent-Guidance-Variant": "policy"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_omits_guidance_variant_header_when_env_unset(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        monkeypatch.delenv("TRAIGENT_GUIDANCE_VARIANT", raising=False)
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        await client.get_next_steps("run_123")
+
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_omits_guidance_variant_header_when_env_blank(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        monkeypatch.setenv("TRAIGENT_GUIDANCE_VARIANT", "   ")
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        await client.get_next_steps("run_123")
+
+        mock_http.get.assert_called_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_preserves_optional_guidance_meta(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        decision = {
+            "id": "decision_123",
+            "category": "run_optimization",
+            "source_engine": "rules",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Run optimization.",
+            "action": {"kind": "skill", "command_template": "traigent-optimize-run"},
+            "evidence_level": "high",
+        }
+        payload_with_guidance_meta = {
+            **valid_next_steps_payload,
+            "decision": decision,
+            "next_steps": [],
+            "guidance_meta": {
+                "requested_variant": "rules",
+                "served_variant": "rules",
+                "engine": "rules",
+                "policy_table_sha": "abc123",
+                "smartopt_version": "0.90.0",
+                "fallback_reason": None,
+                "decision_id": "decision_123",
+                "evidence_snapshot_hash": "abc123",
+            },
+        }
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload_with_guidance_meta
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_next_steps("run_123")
+
+        assert result == payload_with_guidance_meta
+        assert result["guidance_meta"] == payload_with_guidance_meta["guidance_meta"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_guidance_variant_overrides_env_and_validates_response(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        monkeypatch.setenv("TRAIGENT_GUIDANCE_VARIANT", "rules")
+        decision = {
+            "id": "decision_123",
+            "category": "run_optimization",
+            "source_engine": "policy",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Run optimization.",
+            "action": {"kind": "skill", "command_template": "traigent-optimize-run"},
+            "evidence_level": "high",
+        }
+        payload = {
+            **valid_next_steps_payload,
+            "decision": decision,
+            "next_steps": [],
+            "guidance_meta": {
+                "requested_variant": "policy",
+                "served_variant": "policy",
+                "engine": "policy",
+                "fallback_reason": None,
+                "decision_id": "decision_123",
+                "evidence_snapshot_hash": "abc123",
+            },
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        result = await client.get_next_steps("run_123", guidance_variant="policy")
+
+        assert result == payload
+        client._client.get.assert_awaited_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps",
+            headers={"X-Traigent-Guidance-Variant": "policy"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_invalid_guidance_variant_fails_before_http(
+        self,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        client._client = AsyncMock()
+
+        with pytest.raises(ValueError, match=r"rules\|policy"):
+            await client.get_next_steps("run_123", guidance_variant="variant_b")
+
+        client._client.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_blank_guidance_variant_fails_before_http(self) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        client._client = AsyncMock()
+
+        with pytest.raises(ValueError, match=r"rules\|policy"):
+            await client.get_next_steps("run_123", guidance_variant="   ")
+
+        client._client.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_rejects_unsafe_run_id_before_http(self) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        client._client = AsyncMock()
+
+        with pytest.raises(ValueError, match="experiment_run_id"):
+            await client.get_next_steps("run/unsafe")
+
+        client._client.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_requested_variant_rejects_mismatched_served_variant(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = {
+            **valid_next_steps_payload,
+            "guidance_meta": {
+                "requested_variant": "policy",
+                "served_variant": "rules",
+                "engine": "rules",
+                "fallback_reason": None,
+            },
+        }
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(ValueError, match="does not match requested"):
+            await client.get_next_steps("run_123", guidance_variant="policy")
+
+    @pytest.mark.asyncio
+    async def test_strict_experiment_validates_engine_and_decision_joins(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        decision = {
+            "id": "decision_123",
+            "category": "run_optimization",
+            "source_engine": "policy",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Run the next optimization.",
+            "action": {
+                "kind": "skill",
+                "command_template": "traigent-optimize-run",
+            },
+            "evidence_level": "high",
+        }
+        payload = {
+            **valid_next_steps_payload,
+            "decision": decision,
+            "next_steps": [],
+            "guidance_meta": {
+                "requested_variant": "policy",
+                "served_variant": "policy",
+                "engine": "policy",
+                "policy_table_sha": "table-1",
+                "smartopt_version": "1.0.0",
+                "fallback_reason": None,
+                "decision_id": "decision_123",
+                "evidence_snapshot_hash": "abc123",
+            },
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        result = await client.get_next_steps(
+            "run_123", guidance_variant="policy", strict_experiment=True
+        )
+
+        assert result["decision"] == decision
+
+    @pytest.mark.asyncio
+    async def test_authoritative_decision_rejects_nonempty_compatibility_steps(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        decision = {
+            "id": "decision_123",
+            "category": "run_optimization",
+            "source_engine": "policy",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Run optimization.",
+            "action": {"kind": "skill", "command_template": "traigent-optimize-run"},
+            "evidence_level": "high",
+        }
+        payload = {
+            **valid_next_steps_payload,
+            "decision": decision,
+            "next_steps": [
+                {**decision, "category": "improve_evaluator", "priority": 1}
+            ],
+            "guidance_meta": {
+                "requested_variant": "policy",
+                "served_variant": "policy",
+                "engine": "policy",
+                "fallback_reason": None,
+                "decision_id": "decision_123",
+                "evidence_snapshot_hash": "abc123",
+            },
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(ValueError, match="empty next_steps"):
+            await client.get_next_steps("run_123", guidance_variant="policy")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("engine", "decision_extra", "message"),
+        [
+            ("none", {}, "cannot produce"),
+            ("rules", {"internal_state": "secret"}, "decision fields"),
+        ],
+    )
+    async def test_authoritative_decision_rejects_engine_none_and_extra_fields(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        engine: str,
+        decision_extra: dict[str, object],
+        message: str,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        decision = {
+            "id": "decision_123",
+            "category": "run_optimization",
+            "source_engine": engine,
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Run optimization.",
+            "action": {"kind": "skill", "command_template": "traigent-optimize-run"},
+            "evidence_level": "high",
+            **decision_extra,
+        }
+        payload = {
+            **valid_next_steps_payload,
+            "decision": decision,
+            "next_steps": [],
+            "guidance_meta": {
+                "requested_variant": "rules",
+                "served_variant": "rules",
+                "engine": engine,
+                "fallback_reason": "lane_error" if engine == "none" else None,
+                "decision_id": "decision_123",
+                "evidence_snapshot_hash": "abc123",
+            },
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(ValueError, match=message):
+            await client.get_next_steps("run_123", guidance_variant="rules")
+
+    @pytest.mark.asyncio
+    async def test_authoritative_decision_requires_guidance_metadata(
+        self, valid_next_steps_payload: dict[str, object]
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        payload = {
+            **valid_next_steps_payload,
+            "decision": {
+                "id": "decision_123",
+                "category": "run_optimization",
+                "source_engine": "rules",
+                "evidence_snapshot_hash": "abc123",
+                "rationale": "Run optimization.",
+                "action": {
+                    "kind": "skill",
+                    "command_template": "traigent-optimize-run",
+                },
+                "evidence_level": "high",
+            },
+            "next_steps": [],
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(ValueError, match="omitted guidance_meta"):
+            await client.get_next_steps("run_123")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("payload_override", "meta_override", "message"),
+        [
+            ({"internal_signal": 0.991}, {}, "top-level"),
+            ({}, {"internal_state": "secret"}, "guidance_meta"),
+            ({}, {"requested_variant": "__missing__"}, "requested_variant"),
+            ({}, {"requested_variant": None}, "requested_variant"),
+            (
+                {"summary": {"confidence_label": "medium", "internal_signal": 0.99}},
+                {},
+                "summary",
+            ),
+            (
+                {
+                    "posture": {
+                        "summary_text": "Opaque posture.",
+                        "generated_at": "2026-07-10T00:00:00Z",
+                        "internal_state": "secret",
+                    }
+                },
+                {},
+                "posture",
+            ),
+            ({}, {"policy_table_sha": {"secret": 1}}, "policy_table_sha"),
+            ({"schema_version": 1}, {}, "schema_version"),
+            ({"caveat": {"secret": 1}}, {}, "caveat"),
+            ({"posture": None}, {}, "posture"),
+            ({"decision": None}, {}, "decision"),
+        ],
+    )
+    async def test_guidance_response_rejects_non_public_or_missing_metadata(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        payload_override: dict[str, object],
+        meta_override: dict[str, object],
+        message: str,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        meta = {
+            "requested_variant": "rules",
+            "served_variant": "rules",
+            "engine": "none",
+            "policy_table_sha": None,
+            "smartopt_version": "test",
+            "fallback_reason": "lane_error",
+            "decision_id": None,
+            "evidence_snapshot_hash": None,
+            **meta_override,
+        }
+        if meta_override.get("requested_variant") == "__missing__":
+            meta.pop("requested_variant")
+        payload = {
+            **valid_next_steps_payload,
+            "next_steps": [],
+            "guidance_meta": meta,
+            **payload_override,
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(ValueError, match=message):
+            await client.get_next_steps("run_123")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("response_run_id", ["other_run", "../admin", ""])
+    async def test_response_run_id_must_be_safe_and_join_request(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        response_run_id: str,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        payload = {**valid_next_steps_payload, "experiment_run_id": response_run_id}
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(ValueError, match="experiment_run_id"):
+            await client.get_next_steps("run_123")
+
+    @pytest.mark.asyncio
+    async def test_strict_experiment_accepts_non_executable_wait(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        decision = {
+            "id": "decision_wait",
+            "category": "wait",
+            "source_engine": "rules",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Wait for more evidence.",
+            "action": {"kind": "none", "command_template": ""},
+            "evidence_level": "low",
+        }
+        payload = {
+            **valid_next_steps_payload,
+            "decision": decision,
+            "next_steps": [],
+            "guidance_meta": {
+                "requested_variant": "rules",
+                "served_variant": "rules",
+                "engine": "rules",
+                "fallback_reason": None,
+                "decision_id": "decision_wait",
+                "evidence_snapshot_hash": "abc123",
+            },
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        result = await client.get_next_steps(
+            "run_123", guidance_variant="rules", strict_experiment=True
+        )
+
+        assert result["decision"] == decision
+
+    @pytest.mark.asyncio
+    async def test_strict_experiment_rejects_policy_fallback(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = {
+            **valid_next_steps_payload,
+            "guidance_meta": {
+                "requested_variant": "policy",
+                "served_variant": "policy",
+                "engine": "rules",
+                "fallback_reason": "unmapped_state",
+            },
+        }
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(ValueError, match="actual guidance engine"):
+            await client.get_next_steps(
+                "run_123", guidance_variant="policy", strict_experiment=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_record_decision_receipt_posts_idempotent_outcome_contract(
+        self,
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = {
+            "receipt_id": "receipt_1",
+            "decision_id": "decision_1",
+            "attempt_id": "attempt_1",
+            "status": "completed",
+            "successor_run_id": "run_456",
+            "outcomes": {"holdout_status": "passed"},
+            "created_at": "2026-07-09T11:59:00Z",
+            "updated_at": "2026-07-09T12:00:00Z",
+        }
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.post.return_value = response
+
+        result = await client.record_decision_receipt(
+            "run_123",
+            decision_id="decision_1",
+            attempt_id="attempt_1",
+            status="completed",
+            successor_run_id="run_456",
+            holdout_status="passed",
+        )
+
+        assert result["receipt_id"] == "receipt_1"
+        client._client.post.assert_awaited_once_with(
+            "/api/v1/analytics/experiments/run_123/next-steps/decision_1/receipt",
+            json={
+                "status": "completed",
+                "attempt_id": "attempt_1",
+                "successor_run_id": "run_456",
+                "outcomes": {"holdout_status": "passed"},
+            },
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("override", "message"),
+        [
+            ({"receipt_id": "x" * 201}, "receipt_id"),
+            ({"decision_id": "decision_other"}, "decision_id"),
+            ({"attempt_id": "attempt_other"}, "attempt_id"),
+            ({"status": "failed"}, "status"),
+            ({"successor_run_id": "run_other"}, "successor_run_id"),
+            ({"outcomes": {"holdout_status": "passed"}}, "outcomes"),
+            ({"created_at": "not-a-date"}, "created_at"),
+            ({"updated_at": "2026-07-09T12:00:00"}, "timezone"),
+            ({"unexpected": "field"}, "unexpected key"),
+        ],
+    )
+    async def test_receipt_response_fails_closed_on_invalid_or_unjoined_fields(
+        self, override: dict[str, object], message: str
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        payload = {
+            "receipt_id": "receipt_1",
+            "decision_id": "decision_1",
+            "attempt_id": "attempt_1",
+            "status": "completed",
+            "successor_run_id": None,
+            "outcomes": {},
+            "created_at": "2026-07-09T11:59:00Z",
+            "updated_at": "2026-07-09T12:00:00Z",
+            **override,
+        }
+        client = NextStepsClient(api_key="test")
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        client._client = AsyncMock()
+        client._client.post.return_value = response
+
+        with pytest.raises(ValueError, match=message):
+            await client.record_decision_receipt(
+                "run_123",
+                decision_id="decision_1",
+                attempt_id="attempt_1",
+                status="completed",
+            )
+
+    @pytest.mark.asyncio
+    async def test_receipt_rejects_outcomes_before_completion(self) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        client._client = AsyncMock()
+
+        with pytest.raises(ValueError, match="require status='completed'"):
+            await client.record_decision_receipt(
+                "run_123",
+                decision_id="decision_1",
+                attempt_id="attempt_1",
+                status="started",
+                safety_gate_status="passed",
+            )
+        client._client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("run_id", "decision_id", "message"),
+        [
+            ("run/unsafe", "decision_1", "experiment_run_id"),
+            ("run_123", "decision/unsafe", "decision_id"),
+        ],
+    )
+    async def test_receipt_rejects_unsafe_path_ids(
+        self, run_id: str, decision_id: str, message: str
+    ) -> None:
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        client._client = AsyncMock()
+
+        with pytest.raises(ValueError, match=message):
+            await client.record_decision_receipt(
+                run_id,
+                decision_id=decision_id,
+                attempt_id="attempt_1",
+                status="started",
+            )
+        client._client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_without_guidance_meta_is_unchanged(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        """Backward compat: payloads without guidance_meta behave as before."""
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_next_steps("run_123")
+
+        assert result == valid_next_steps_payload
+        assert "guidance_meta" not in result
+
+    @pytest.mark.asyncio
     async def test_get_next_steps_404_mentions_backend_feature(self) -> None:
         from traigent.analytics.next_steps import NextStepsClient
 
@@ -265,6 +1004,29 @@ class TestGetNextSteps:
 
         with pytest.raises(httpx.HTTPStatusError, match="may predate"):
             await client.get_next_steps("run_123")
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_surfaces_variant_assignment_conflict(self) -> None:
+        from traigent.analytics.next_steps import (
+            GuidanceVariantConflictError,
+            NextStepsClient,
+        )
+
+        client = NextStepsClient(api_key="test")
+        conflict_response = MagicMock()
+        conflict_response.status_code = 409
+        error = httpx.HTTPStatusError(
+            "Conflict",
+            request=MagicMock(),
+            response=conflict_response,
+        )
+        response = MagicMock()
+        response.raise_for_status.side_effect = error
+        client._client = AsyncMock()
+        client._client.get.return_value = response
+
+        with pytest.raises(GuidanceVariantConflictError, match="already pinned"):
+            await client.get_next_steps("run_123", guidance_variant="policy")
 
     @pytest.mark.asyncio
     async def test_get_next_steps_malformed_payload_loud_error(

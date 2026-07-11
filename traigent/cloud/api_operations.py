@@ -739,6 +739,7 @@ class ApiOperations:
         wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
         if wire_smart_pruning:
             payload["smart_pruning"] = wire_smart_pruning
+        self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
 
@@ -789,8 +790,23 @@ class ApiOperations:
         wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
         if wire_smart_pruning:
             payload["smart_pruning"] = wire_smart_pruning
+        self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
         return payload
+
+    @staticmethod
+    def _attach_evaluator_identity(
+        payload: dict[str, Any], session_request: SessionCreationRequest
+    ) -> None:
+        """Attach only explicit evaluator registry identifiers."""
+        evaluator_id = getattr(session_request, "evaluator_id", None)
+        evaluator_definition_id = getattr(
+            session_request, "evaluator_definition_id", None
+        )
+        if isinstance(evaluator_id, str) and evaluator_id.strip():
+            payload["evaluator_id"] = evaluator_id.strip()
+        if isinstance(evaluator_definition_id, str) and evaluator_definition_id.strip():
+            payload["evaluator_definition_id"] = evaluator_definition_id.strip()
 
     @staticmethod
     def _attach_artifact_fingerprint_payload(

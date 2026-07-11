@@ -74,6 +74,7 @@ jobs:
         run: |
           pip install -e ".[mcp]"
           pytest tests/unit/mcp/test_local_server.py \
+            tests/unit/analytics_mcp/test_observability_mcp_tools.py \
             --cov=traigent \
             --cov-append \
             --cov-report=xml \

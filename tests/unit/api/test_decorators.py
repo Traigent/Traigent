@@ -1501,3 +1501,40 @@ class TestExperimentName:
         )
         # Must still respect the hard length cap.
         assert len(name) <= 120, f"Name exceeds max length: {len(name)} > 120"
+
+    def test_registered_evaluator_definition_identity_reaches_optimized_function(self):
+        @optimize(
+            evaluation={"evaluator_definition_id": "eval_registered_1"},
+            configuration_space={"temperature": [0.1, 0.9]},
+        )
+        def answer(question: str) -> str:
+            return question
+
+        assert answer.evaluator_definition_id == "eval_registered_1"
+
+    def test_evaluator_id_compatibility_alias_is_supported(self):
+        @optimize(
+            evaluation={"evaluator_id": "eval_registered_1"},
+            configuration_space={"temperature": [0.1, 0.9]},
+        )
+        def answer(question: str) -> str:
+            return question
+
+        assert answer.evaluator_definition_id == "eval_registered_1"
+
+    def test_both_evaluator_identity_aliases_fail(self):
+        with pytest.raises(ValueError, match="provide only one"):
+            optimize(
+                evaluation={
+                    "evaluator_id": "eval_a",
+                    "evaluator_definition_id": "eval_a",
+                },
+                configuration_space={"temperature": [0.1, 0.9]},
+            )
+
+    def test_overlong_evaluator_identity_fails(self):
+        with pytest.raises(ValueError, match="at most 200"):
+            optimize(
+                evaluation={"evaluator_definition_id": "x" * 201},
+                configuration_space={"temperature": [0.1, 0.9]},
+            )

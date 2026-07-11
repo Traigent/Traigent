@@ -50,8 +50,16 @@ class _FakeNextStepsClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         return None
 
-    async def get_next_steps(self, experiment_run_id: str) -> dict[str, object]:
+    async def get_next_steps(
+        self,
+        experiment_run_id: str,
+        *,
+        guidance_variant: str | None = None,
+        strict_experiment: bool = False,
+    ) -> dict[str, object]:
         assert experiment_run_id == "run_123"
+        self.guidance_variant = guidance_variant
+        self.strict_experiment = strict_experiment
         return _FakeNextStepsClient.payload
 
 
@@ -101,6 +109,166 @@ def test_next_steps_table_mode_prints_posture_summary(
     assert "Posture:" in result.output
     assert "Evidence is sufficient for a cautious promotion." in result.output
     assert "compare_with_baseline" in result.output
+
+
+def test_next_steps_table_mode_prints_guidance_meta_line(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_with_guidance_meta = {
+        **next_steps_payload,
+        "guidance_meta": {
+            "requested_variant": "policy",
+            "served_variant": "policy",
+            "engine": "policy",
+            "policy_table_sha": "abc123",
+            "smartopt_version": "0.90.0",
+            "fallback_reason": None,
+        },
+    }
+    _FakeNextStepsClient.payload = payload_with_guidance_meta
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient",
+        _FakeNextStepsClient,
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123"])
+
+    assert result.exit_code == 0
+    assert "guidance: requested=policy served=policy engine=policy" in result.output
+    assert "fallback=none" in result.output
+
+
+def test_next_steps_table_mode_prints_non_executable_wait_decision(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeNextStepsClient.payload = {
+        **next_steps_payload,
+        "next_steps": [],
+        "decision": {
+            "id": "decision_wait",
+            "category": "wait",
+            "source_engine": "rules",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Wait for more evidence.",
+            "action": {"kind": "none", "command_template": ""},
+            "evidence_level": "low",
+        },
+    }
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient", _FakeNextStepsClient
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123"])
+
+    assert result.exit_code == 0
+    assert "Decision:" in result.output
+    assert "wait" in result.output
+    assert "no action" in result.output
+
+
+def test_next_steps_table_mode_prefers_authoritative_decision_over_legacy_rows(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeNextStepsClient.payload = {
+        **next_steps_payload,
+        "decision": {
+            "id": "decision_1",
+            "category": "audit_evaluator_quality",
+            "source_engine": "rules",
+            "evidence_snapshot_hash": "abc123",
+            "rationale": "Audit the evaluator.",
+            "action": {"kind": "skill", "command_template": "traigent-eval-audit"},
+            "evidence_level": "high",
+        },
+    }
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient", _FakeNextStepsClient
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123"])
+
+    assert result.exit_code == 0
+    assert "audit_evaluator_quality" in result.output
+    assert "traigent-eval-audit" in result.output
+    assert "compare_with_baseline" not in result.output
+
+
+def test_next_steps_forwards_guidance_variant_and_strict_mode(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeNextStepsClient.payload = next_steps_payload
+    captured: dict[str, object] = {}
+
+    class _CapturingClient(_FakeNextStepsClient):
+        async def get_next_steps(
+            self,
+            experiment_run_id: str,
+            *,
+            guidance_variant: str | None = None,
+            strict_experiment: bool = False,
+        ) -> dict[str, object]:
+            captured["guidance_variant"] = guidance_variant
+            captured["strict_experiment"] = strict_experiment
+            return await super().get_next_steps(
+                experiment_run_id,
+                guidance_variant=guidance_variant,
+                strict_experiment=strict_experiment,
+            )
+
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient", _CapturingClient
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "next-steps",
+            "run_123",
+            "--guidance-variant",
+            "policy",
+            "--strict-experiment",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured == {"guidance_variant": "policy", "strict_experiment": True}
+
+
+def test_next_steps_rejects_invalid_guidance_variant_locally(
+    runner: CliRunner,
+) -> None:
+    result = runner.invoke(
+        cli,
+        ["next-steps", "run_123", "--guidance-variant", "variant_b"],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--guidance-variant'" in result.output
+
+
+def test_next_steps_table_mode_without_guidance_meta_omits_guidance_line(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward compat: payloads without guidance_meta print no guidance line."""
+    _FakeNextStepsClient.payload = next_steps_payload
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient",
+        _FakeNextStepsClient,
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123"])
+
+    assert result.exit_code == 0
+    assert "guidance:" not in result.output
 
 
 def test_next_steps_json_mode(

@@ -1672,6 +1672,8 @@ class TraigentCloudClient(BaseTraigentClient):
         billing_tier: str = "standard",
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
+        evaluator_id: str | None = None,
+        evaluator_definition_id: str | None = None,
     ) -> SessionCreationResponse:
         """Create a new optimization session for interactive optimization.
 
@@ -1715,6 +1717,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 billing_tier=billing_tier,
                 artifact_fingerprints=artifact_fingerprints,
                 fingerprint_meta=fingerprint_meta,
+                evaluator_id=evaluator_id,
+                evaluator_definition_id=evaluator_definition_id,
             )
 
         if self._aio_session is None:
@@ -1984,6 +1988,12 @@ class TraigentCloudClient(BaseTraigentClient):
         )
         if fingerprint_meta is not None:
             payload["fingerprint_meta"] = fingerprint_meta
+        evaluator_id = getattr(request, "evaluator_id", None)
+        if isinstance(evaluator_id, str) and evaluator_id.strip():
+            payload["evaluator_id"] = evaluator_id.strip()
+        evaluator_definition_id = getattr(request, "evaluator_definition_id", None)
+        if isinstance(evaluator_definition_id, str) and evaluator_definition_id.strip():
+            payload["evaluator_definition_id"] = evaluator_definition_id.strip()
         return payload
 
     @staticmethod

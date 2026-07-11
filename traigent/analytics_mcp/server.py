@@ -40,6 +40,15 @@ from traigent.analytics_mcp.tools import (
     analytics_render_chart_tool,
     auth_status_tool,
     health_check_tool,
+    observability_compare_cohorts_tool,
+    observability_build_change_brief_tool,
+    observability_get_analysis_insights_tool,
+    observability_get_issue_tool,
+    observability_get_related_changes_tool,
+    observability_get_tool_analysis_tool,
+    observability_get_trace_slice_tool,
+    observability_list_issues_tool,
+    observability_search_traces_tool,
 )
 from traigent.cloud.analytics_client import SUPPORTED_DECISION_INTENTS
 
@@ -313,6 +322,192 @@ def create_server() -> Any:
         return await analytics_list_experiment_group_configuration_runs_tool(
             project_id,
             group_id,
+        )
+
+    @server.tool(
+        description=(
+            "Search traces in an explicit window of at most 31 days. Returns "
+            "only bounded content-free summaries; names, user/session IDs, "
+            "tags, metadata, inputs, outputs, comments, and error text are excluded."
+        )
+    )
+    async def observability_search_traces(
+        project_id: str,
+        start_time: str,
+        end_time: str,
+        page: int = 1,
+        per_page: int = 50,
+        status: str | None = None,
+        environment: str | None = None,
+        release: str | None = None,
+    ) -> dict[str, Any]:
+        return await observability_search_traces_tool(
+            project_id,
+            start_time,
+            end_time,
+            page,
+            per_page,
+            status,
+            environment,
+            release,
+        )
+
+    @server.tool(
+        description=(
+            "List durable recurring observability issues for an explicit project. "
+            "Results are paginated to at most 100 aggregate-safe issue records."
+        )
+    )
+    async def observability_list_issues(
+        project_id: str,
+        page: int = 1,
+        per_page: int = 50,
+        state: str | None = None,
+        detector_family: str | None = None,
+        severity: str | None = None,
+    ) -> dict[str, Any]:
+        return await observability_list_issues_tool(
+            project_id,
+            page,
+            per_page,
+            state,
+            detector_family,
+            severity,
+        )
+
+    @server.tool(
+        description=(
+            "Fetch one durable issue with bounded occurrence evidence. Evidence "
+            "contains immutable trace/span references and closed signal taxonomy, "
+            "never copied trace content."
+        )
+    )
+    async def observability_get_issue(
+        project_id: str,
+        issue_id: str,
+        occurrence_page: int = 1,
+        occurrences_per_page: int = 50,
+    ) -> dict[str, Any]:
+        return await observability_get_issue_tool(
+            project_id,
+            issue_id,
+            occurrence_page,
+            occurrences_per_page,
+        )
+
+    @server.tool(
+        description=(
+            "Fetch a cursor-bounded content-free trace slice of at most 500 "
+            "observations. No raw content option exists in this MCP."
+        )
+    )
+    async def observability_get_trace_slice(
+        project_id: str,
+        trace_id: str,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        return await observability_get_trace_slice_tool(
+            project_id, trace_id, cursor, limit
+        )
+
+    @server.tool(
+        description=(
+            "Fetch aggregate tool attempts, failures, retries, fallbacks, latency, "
+            "and cost for a window of at most 31 days. This reports execution "
+            "outcomes and does not claim the selected tool was semantically correct."
+        )
+    )
+    async def observability_get_tool_analysis(
+        project_id: str,
+        start_time: str,
+        end_time: str,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return await observability_get_tool_analysis_tool(
+            project_id, start_time, end_time, limit
+        )
+
+    @server.tool(
+        description=(
+            "Fetch content-free structural conformance facts and deterministic "
+            "validation recommendations for a window of at most 31 days. The "
+            "baseline is the dominant observed variant, not an intended workflow, "
+            "and recommendations are hypotheses to test rather than causal claims."
+        )
+    )
+    async def observability_get_analysis_insights(
+        project_id: str,
+        start_time: str,
+        end_time: str,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        return await observability_get_analysis_insights_tool(
+            project_id, start_time, end_time, limit
+        )
+
+    @server.tool(
+        description=(
+            "Compare bounded reference and comparison trace cohorts over selected "
+            "aggregate metrics. Each cohort requires an explicit window of at most "
+            "31 days and permits only structured execution-context filters."
+        )
+    )
+    async def observability_compare_cohorts(
+        project_id: str,
+        reference: dict[str, object],
+        comparison: dict[str, object],
+        metrics: list[str],
+    ) -> dict[str, Any]:
+        return await observability_compare_cohorts_tool(
+            project_id, reference, comparison, metrics
+        )
+
+    @server.tool(
+        description=(
+            "Fetch content-free platform lineage related to a trace, including "
+            "releases, revisions, configurations, experiments, and interventions. "
+            "Relationships are provenance links, not causal attribution."
+        )
+    )
+    async def observability_get_related_changes(
+        project_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        return await observability_get_related_changes_tool(project_id, trace_id)
+
+    @server.tool(
+        description=(
+            "Build a deterministic, privacy-bounded change brief for one trace. "
+            "Composes structural analysis, a bounded content-free trace slice, "
+            "lineage, aggregate tool outcomes, and an optional before/after cohort "
+            "comparison. Hypotheses are templated and explicitly non-causal; the "
+            "tool never mutates traces, issues, code, or configuration."
+        )
+    )
+    async def observability_build_change_brief(
+        project_id: str,
+        trace_id: str,
+        start_time: str,
+        end_time: str,
+        reference: dict[str, object] | None = None,
+        comparison: dict[str, object] | None = None,
+        metrics: list[str] | None = None,
+        trace_limit: int = 200,
+        tool_limit: int = 50,
+        insights_limit: int = 20,
+    ) -> dict[str, Any]:
+        return await observability_build_change_brief_tool(
+            project_id,
+            trace_id,
+            start_time,
+            end_time,
+            reference,
+            comparison,
+            metrics,
+            trace_limit,
+            tool_limit,
+            insights_limit,
         )
 
     return server

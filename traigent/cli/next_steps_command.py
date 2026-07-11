@@ -71,11 +71,32 @@ def _resolve_api_key(explicit: str | None) -> str | None:
     default=None,
     help="API key (else TRAIGENT_API_KEY env var, then stored CLI credentials).",
 )
+@click.option(
+    "--guidance-variant",
+    type=click.Choice(["rules", "policy"], case_sensitive=False),
+    default=None,
+    envvar="TRAIGENT_GUIDANCE_VARIANT",
+    help=(
+        "Request the rules or policy guidance treatment. Invalid values fail "
+        "locally. (env: TRAIGENT_GUIDANCE_VARIANT)"
+    ),
+)
+@click.option(
+    "--strict-experiment",
+    is_flag=True,
+    default=False,
+    help=(
+        "Fail unless the requested variant, actual engine, and authoritative "
+        "decision provenance all match. Requires --guidance-variant or its env var."
+    ),
+)
 def next_steps(
     experiment_run_id: str,
     output_json: bool,
     backend_url: str | None,
     api_key: str | None,
+    guidance_variant: str | None,
+    strict_experiment: bool,
 ) -> None:
     """Show next-step recommendations from a backend that supports them.
 
@@ -93,7 +114,13 @@ def next_steps(
 
     try:
         payload = asyncio.run(
-            _fetch_next_steps(experiment_run_id, resolved_backend_url, resolved_api_key)
+            _fetch_next_steps(
+                experiment_run_id,
+                resolved_backend_url,
+                resolved_api_key,
+                guidance_variant=guidance_variant,
+                strict_experiment=strict_experiment,
+            )
         )
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
@@ -109,9 +136,16 @@ async def _fetch_next_steps(
     experiment_run_id: str,
     backend_url: str,
     api_key: str | None,
+    *,
+    guidance_variant: str | None = None,
+    strict_experiment: bool = False,
 ) -> dict[str, Any]:
     async with NextStepsClient(backend_url=backend_url, api_key=api_key) as client:
-        return await client.get_next_steps(experiment_run_id)
+        return await client.get_next_steps(
+            experiment_run_id,
+            guidance_variant=guidance_variant,
+            strict_experiment=strict_experiment,
+        )
 
 
 def _print_next_steps_table(payload: dict[str, Any]) -> None:
@@ -124,8 +158,17 @@ def _print_next_steps_table(payload: dict[str, Any]) -> None:
         if summary_text:
             console.print(f"[bold]Posture:[/bold] {summary_text}\n")
 
+    decision = payload.get("decision")
     rows = payload.get("next_steps") or []
-    if rows:
+    if isinstance(decision, dict):
+        action = decision.get("action") or {}
+        command = action.get("command_template") or "no action"
+        console.print(
+            "[bold]Decision:[/bold] "
+            f"{decision.get('category', '')} — {decision.get('rationale', '')} "
+            f"([dim]{command}[/dim])"
+        )
+    elif rows:
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Priority", justify="right", no_wrap=True)
         table.add_column("Category", style="cyan", no_wrap=True)
@@ -145,6 +188,18 @@ def _print_next_steps_table(payload: dict[str, Any]) -> None:
         console.print("[yellow]No next steps were returned by the backend.[/yellow]")
 
     console.print(f"\n[bold]Caveat:[/bold] {payload.get('caveat', '')}")
+
+    guidance_meta = payload.get("guidance_meta")
+    if isinstance(guidance_meta, dict):
+        requested_variant = guidance_meta.get("requested_variant", "")
+        served_variant = guidance_meta.get("served_variant", "")
+        engine = guidance_meta.get("engine", "")
+        fallback_reason = guidance_meta.get("fallback_reason")
+        console.print(
+            f"guidance: requested={requested_variant} "
+            f"served={served_variant} engine={engine} "
+            f"fallback={fallback_reason or 'none'}"
+        )
 
 
 def _priority_sort_key(row: dict[str, Any]) -> tuple[int, str]:

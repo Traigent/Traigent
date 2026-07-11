@@ -431,6 +431,112 @@ class AnalyticsNamespace:
                 await reader.get_example_insights(project_id, run_id),
             )
 
+    async def search_observability_traces(
+        self, project_id: str, **filters: Any
+    ) -> dict[str, Any]:
+        """Return bounded content-free trace summaries for an explicit window."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.search_observability_traces(project_id, **filters),
+            )
+
+    async def list_observability_issues(
+        self, project_id: str, **filters: Any
+    ) -> dict[str, Any]:
+        """Return recurring observability issues for a project."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.list_observability_issues(project_id, **filters),
+            )
+
+    async def get_observability_issue(
+        self, project_id: str, issue_id: str, **pagination: Any
+    ) -> dict[str, Any]:
+        """Return one issue with bounded content-free occurrence evidence."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_observability_issue(
+                    project_id, issue_id, **pagination
+                ),
+            )
+
+    async def list_observability_variants(
+        self, project_id: str, **filters: Any
+    ) -> dict[str, Any]:
+        """Return exact structural trace variants for a project."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.list_observability_variants(project_id, **filters),
+            )
+
+    async def get_observability_variant(
+        self, project_id: str, variant_id: str, **pagination: Any
+    ) -> dict[str, Any]:
+        """Return one structural variant and bounded trace references."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_observability_variant(
+                    project_id, variant_id, **pagination
+                ),
+            )
+
+    async def get_observability_trace_analysis(
+        self, project_id: str, trace_id: str
+    ) -> dict[str, Any]:
+        """Return server-derived structural analysis for one trace."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_observability_trace_analysis(project_id, trace_id),
+            )
+
+    async def get_observability_trace_slice(
+        self, project_id: str, trace_id: str, **projection: Any
+    ) -> dict[str, Any]:
+        """Return a bounded content-free slice of one trace."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_observability_trace_slice(
+                    project_id, trace_id, **projection
+                ),
+            )
+
+    async def get_observability_tool_analysis(
+        self, project_id: str, **query: Any
+    ) -> dict[str, Any]:
+        """Return content-free aggregate tool execution analysis."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_observability_tool_analysis(project_id, **query),
+            )
+
+    async def compare_observability_cohorts(
+        self, project_id: str, **comparison: Any
+    ) -> dict[str, Any]:
+        """Compare bounded reference and comparison trace cohorts."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.compare_observability_cohorts(project_id, **comparison),
+            )
+
+    async def get_observability_related_changes(
+        self, project_id: str, trace_id: str
+    ) -> dict[str, Any]:
+        """Return lineage links related to a trace without causal attribution."""
+        async with await self._new_read_client() as reader:
+            return cast(
+                dict[str, Any],
+                await reader.get_observability_related_changes(project_id, trace_id),
+            )
+
     async def list_experiment_groups(
         self,
         project_id: str,
@@ -1523,6 +1629,8 @@ class BackendIntegratedClient:
         warm_start_from: str | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
+        evaluator_id: str | None = None,
+        evaluator_definition_id: str | None = None,
         smart_pruning: dict[str, Any] | None = None,
         cost_limit: float | None = None,
         optimization_strategy: dict[str, Any] | None = None,
@@ -1543,6 +1651,8 @@ class BackendIntegratedClient:
             warm_start_from=warm_start_from,
             artifact_fingerprints=artifact_fingerprints,
             fingerprint_meta=fingerprint_meta,
+            evaluator_id=evaluator_id,
+            evaluator_definition_id=evaluator_definition_id,
             smart_pruning=smart_pruning,
             cost_limit=cost_limit,
             optimization_strategy=optimization_strategy,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -110,9 +111,12 @@ class TestRunReportTool:
         reader.get_run_report.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_backend_failure_is_structured(self, monkeypatch) -> None:
+    async def test_backend_failure_is_structured(
+        self, monkeypatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from traigent.analytics_mcp.tools import analytics_get_run_report_tool
 
+        caplog.set_level(logging.DEBUG, logger="traigent.analytics_mcp.tools")
         reader = AsyncMock()
         reader.get_run_report.side_effect = RuntimeError(
             "https://secret-host/internal leaked"
@@ -125,6 +129,7 @@ class TestRunReportTool:
         assert result["code"] == "backend_unavailable"
         # The raw exception text (which embedded a URL) must NOT leak.
         assert "secret-host" not in result["message"]
+        assert "secret-host" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_malformed_response_is_structured(self, monkeypatch) -> None:
@@ -142,10 +147,12 @@ class TestRunReportTool:
 
     @pytest.mark.asyncio
     async def test_client_construction_auth_failure_is_structured(
-        self, monkeypatch
+        self, monkeypatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         from traigent.analytics_mcp import tools as tools_mod
         from traigent.cloud.auth import InvalidCredentialsError
+
+        caplog.set_level(logging.DEBUG, logger="traigent.analytics_mcp.tools")
 
         async def _raise_invalid_credentials():
             raise InvalidCredentialsError("https://secret-host rejected the token")
@@ -159,6 +166,7 @@ class TestRunReportTool:
         assert result["ok"] is False
         assert result["code"] == "authentication_failed"
         assert "secret-host" not in result["message"]
+        assert "secret-host" not in caplog.text
 
 
 @pytest.mark.skipif(not HTTPX_AVAILABLE, reason="httpx not installed")
@@ -222,11 +230,14 @@ class TestBackendErrorTaxonomy:
         _assert_failure_context(result, http_status=status_code)
 
     @pytest.mark.asyncio
-    async def test_connect_error_maps_to_backend_unavailable(self, monkeypatch) -> None:
+    async def test_connect_error_maps_to_backend_unavailable(
+        self, monkeypatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import httpx
 
         from traigent.analytics_mcp.tools import analytics_get_run_report_tool
 
+        caplog.set_level(logging.DEBUG, logger="traigent.analytics_mcp.tools")
         request = httpx.Request(
             "GET",
             "https://secret-host.invalid/internal/run?api_key=raw-secret",
@@ -246,6 +257,8 @@ class TestBackendErrorTaxonomy:
         assert result["ok"] is False
         assert result["code"] == "backend_unavailable"
         _assert_failure_context(result, http_status=None)
+        assert "secret-host" not in caplog.text
+        assert "raw-secret" not in caplog.text
 
 
 class TestProjectOverviewTool:
@@ -796,10 +809,12 @@ class TestHealthAndAuthTools:
 
     @pytest.mark.asyncio
     async def test_auth_status_rejects_malformed_jwt_only_credential(
-        self, monkeypatch
+        self, monkeypatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         from traigent.analytics_mcp import tools as tools_mod
+        from traigent.cloud.auth import InvalidCredentialsError
 
+        caplog.set_level(logging.DEBUG, logger="traigent.analytics_mcp.tools")
         monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
         monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
         monkeypatch.setattr(
@@ -832,6 +847,16 @@ class TestHealthAndAuthTools:
             )(),
         )
 
+        async def _raise_invalid_credentials():
+            raise InvalidCredentialsError(
+                "https://secret-host.invalid/auth?token=raw-secret"
+            )
+
+        monkeypatch.setattr(
+            "traigent.cloud.analytics_auth.resolve_analytics_read_client_credentials",
+            _raise_invalid_credentials,
+        )
+
         result = await tools_mod.auth_status_tool()
 
         assert result["ok"] is True
@@ -839,6 +864,8 @@ class TestHealthAndAuthTools:
         assert result["authenticated"] is False
         assert result["auth_type"] == "jwt"
         assert "malformed JWT" not in str(result)
+        assert "secret-host" not in caplog.text
+        assert "raw-secret" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_auth_status_accepts_valid_jwt_only_credential(
