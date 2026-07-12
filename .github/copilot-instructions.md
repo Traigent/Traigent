@@ -215,3 +215,7 @@ work, call traigent-ops before planning edits:
 
 The Spine is advisory navigation and governance. It never grants write,
 approval, waiver, or release authority and never replaces product verification.
+
+The traigent-ops MCP client is provisioned by the shared workspace/user-profile
+agent bootstrap, not by a repository-local MCP config file. Do not commit
+editor or agent MCP configuration into this repository.
