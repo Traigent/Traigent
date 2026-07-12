@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "traigent-ops": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/../traigent-validation-spine",
+        "validation-mcp"
+      ],
+      "env": {
+        "TRAIGENT_SPINE_MCP_PROFILE": "core"
+      }
+    }
+  }
+}

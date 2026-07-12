@@ -6,7 +6,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
-SPINE_SHA = "0144cdc8d6e3fb6a7a08d27e1b6caafbe87a28ca"
+SPINE_SHA = "e14f105c876a30b270d4939088d8361b720af555"
 
 
 def _load(name: str) -> dict:
