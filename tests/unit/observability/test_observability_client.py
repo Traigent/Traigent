@@ -734,6 +734,8 @@ def test_timed_out_sender_remains_single_flight_until_it_reconciles():
     send_started = threading.Event()
     first_flush_returned = threading.Event()
     release_first_send = threading.Event()
+    second_flush_reached_orphan_wait = threading.Event()
+    release_second_flush = threading.Event()
     second_flush_finished = threading.Event()
     active_lock = threading.Lock()
     active_senders = 0
@@ -758,7 +760,7 @@ def test_timed_out_sender_remains_single_flight_until_it_reconciles():
 
     transport = _SyncBatchTransport(
         sender=sender,
-        batch_size=1,
+        batch_size=2,
         max_buffer_age=999.0,
         max_queue_size=10,
         max_batch_bytes=10_000,
@@ -785,17 +787,31 @@ def test_timed_out_sender_remains_single_flight_until_it_reconciles():
 
     assert transport.submit("trace_two", {"id": "trace_two"}) is True
 
+    original_wait_for_active_send = transport._wait_for_active_send
+
+    def wait_for_active_send(deadline: float | None) -> bool:
+        with transport._lock:
+            active_send_completion = transport._active_send_completion
+        if active_send_completion is None:
+            return original_wait_for_active_send(deadline)
+        second_flush_reached_orphan_wait.set()
+        assert release_second_flush.wait(timeout=2.0)
+        return original_wait_for_active_send(deadline)
+
+    transport._wait_for_active_send = wait_for_active_send  # type: ignore[method-assign]
+
     def second_flush() -> None:
         transport.flush(timeout=1.0)
         second_flush_finished.set()
 
     second_thread = threading.Thread(target=second_flush)
     second_thread.start()
-    assert not second_flush_finished.wait(timeout=0.02)
+    assert second_flush_reached_orphan_wait.wait(timeout=1.0)
     with active_lock:
         assert max_active_senders == 1
 
     release_first_send.set()
+    release_second_flush.set()
     assert second_flush_finished.wait(timeout=1.0)
     first_thread.join(timeout=1.0)
     second_thread.join(timeout=1.0)
@@ -1092,6 +1108,68 @@ def test_sync_batch_transport_emits_health_event_for_queue_full():
             },
         )
     ]
+
+
+@pytest.mark.timeout(3)
+def test_sync_batch_transport_delivers_health_events_in_snapshot_order():
+    callback_one_started = threading.Event()
+    release_callback_one = threading.Event()
+    second_drop_snapshotted = threading.Event()
+    delivered_dropped_items: list[int] = []
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        assert event_type == "queue_full"
+        if payload["dropped_items"] == 1:
+            callback_one_started.set()
+            assert release_callback_one.wait(timeout=2.0)
+        delivered_dropped_items.append(payload["dropped_items"])
+
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=1,
+        max_batch_bytes=10_000,
+        health_callback=health_callback,
+    )
+    original_record_drop_locked = transport._record_drop_locked
+
+    def record_drop_locked(
+        event_type: str, message: str, **details: object
+    ) -> tuple[str, dict[str, object]]:
+        event = original_record_drop_locked(event_type, message, **details)
+        if event[1]["dropped_items"] == 2:
+            second_drop_snapshotted.set()
+        return event
+
+    transport._record_drop_locked = record_drop_locked  # type: ignore[method-assign]
+
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+
+    first_drop = threading.Thread(
+        target=lambda: transport.submit("trace_two", {"id": "trace_two"})
+    )
+    first_drop.start()
+    assert callback_one_started.wait(timeout=1.0)
+
+    second_drop = threading.Thread(
+        target=lambda: transport.submit("trace_three", {"id": "trace_three"})
+    )
+    second_drop.start()
+    assert second_drop_snapshotted.wait(timeout=1.0)
+
+    release_callback_one.set()
+    first_drop.join(timeout=1.0)
+    second_drop.join(timeout=1.0)
+    assert not first_drop.is_alive()
+    assert not second_drop.is_alive()
+    assert delivered_dropped_items == [1, 2]
+    assert all(
+        earlier <= later
+        for earlier, later in zip(
+            delivered_dropped_items, delivered_dropped_items[1:], strict=False
+        )
+    )
 
 
 def test_health_callback_get_stats_runs_after_submit_state_is_complete():

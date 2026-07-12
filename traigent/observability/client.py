@@ -9,7 +9,7 @@ import json
 import threading
 import time
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -141,9 +141,11 @@ class _SyncBatchTransport:
     """Thread-safe batch transport that avoids cross-thread asyncio coordination.
 
     ``health_callback`` receives snapshots after transport state has been
-    updated and after transport locks have been released. It can run on a caller,
-    flush-worker, or bounded-send completion thread; callback exceptions are
-    swallowed so observability delivery is never disrupted.
+    updated and after transport locks have been released. Snapshots are delivered
+    in state-update order and callbacks are serialized with each other, but never
+    with transport progress. They can run on a caller, flush-worker, or
+    bounded-send completion thread; callback exceptions are swallowed so
+    observability delivery is never disrupted.
     """
 
     def __init__(
@@ -168,6 +170,9 @@ class _SyncBatchTransport:
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
+        self._dispatch_lock = threading.RLock()
+        self._health_event_queue: deque[tuple[int, str, dict[str, Any]]] = deque()
+        self._next_health_event_sequence = 0
         self._timer: threading.Timer | None = None
         self._flush_thread: threading.Thread | None = None
         self._closed = False
@@ -262,7 +267,7 @@ class _SyncBatchTransport:
                 self._ensure_timer_locked()
 
         if drop_event is not None:
-            self._emit_health_event(drop_event[0], **drop_event[1])
+            self._emit_health_events([drop_event])
             return False
 
         return True
@@ -516,11 +521,14 @@ class _SyncBatchTransport:
         with self._lock:
             remaining = len(self._buffer) + self._inflight_items
             self._stats["pending_items"] = remaining
-        message = (
-            "Observability transport flush deadline exceeded with "
-            f"{remaining} items remaining"
-        )
-        event = self._append_warning(message)
+            message = (
+                "Observability transport flush deadline exceeded with "
+                f"{remaining} items remaining"
+            )
+            self._warnings.append(message)
+            if len(self._warnings) > 50:
+                self._warnings = self._warnings[-50:]
+            event = self._queue_health_event_locked("warning", {"message": message})
         logger.warning(message)
         return event
 
@@ -571,10 +579,7 @@ class _SyncBatchTransport:
             )
             dropped_items = self._stats["dropped_items"]
             queue_depth = len(self._buffer)
-        self._append_error(str(result.error or "batch delivery failed"))
-        trace_ids = [item_id for item_id, _ in batch_items[:20]]
-        events.append(
-            (
+            event = self._queue_health_event_locked(
                 "batch_delivery_failed",
                 {
                     "drop_reason": "batch_delivery_failed",
@@ -582,11 +587,12 @@ class _SyncBatchTransport:
                     "queue_depth": queue_depth,
                     "message": str(result.error or "batch delivery failed"),
                     "item_count": len(payloads),
-                    "trace_ids": trace_ids,
-                    "trace_ids_truncated": len(batch_items) > len(trace_ids),
+                    "trace_ids": [item_id for item_id, _ in batch_items[:20]],
+                    "trace_ids_truncated": len(batch_items) > 20,
                 },
             )
-        )
+        self._append_error(str(result.error or "batch delivery failed"))
+        events.append(event)
         logger.warning(
             "Observability transport dropped %d payloads after retries: %s",
             len(payloads),
@@ -620,12 +626,12 @@ class _SyncBatchTransport:
             self._warnings.append(message)
             if len(self._warnings) > 50:
                 self._warnings = self._warnings[-50:]
-        return ("warning", {"message": message})
+            return self._queue_health_event_locked("warning", {"message": message})
 
     def _record_drop(self, event_type: str, message: str, **details: Any) -> None:
         with self._lock:
             event = self._record_drop_locked(event_type, message, **details)
-        self._emit_health_event(event[0], **event[1])
+        self._emit_health_events([event])
 
     def _record_drop_locked(
         self, event_type: str, message: str, **details: Any
@@ -637,7 +643,7 @@ class _SyncBatchTransport:
         self._errors.append(message)
         if len(self._errors) > 20:
             self._errors = self._errors[-20:]
-        return (
+        return self._queue_health_event_locked(
             event_type,
             {
                 "drop_reason": event_type,
@@ -653,17 +659,33 @@ class _SyncBatchTransport:
         with self._lock:
             self._stats["retry_attempts"] += 1
 
-    def _emit_health_event(self, event_type: str, **payload: Any) -> None:
+    def _queue_health_event_locked(
+        self, event_type: str, payload: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Queue a state snapshot while holding ``_lock`` for ordered dispatch."""
+        event = (event_type, payload)
         if self._health_callback is None:
-            return
-        try:
-            self._health_callback(event_type, payload)
-        except Exception:
-            logger.debug("Observability health callback failed", exc_info=True)
+            return event
+        self._next_health_event_sequence += 1
+        self._health_event_queue.append(
+            (self._next_health_event_sequence, event_type, payload)
+        )
+        return event
 
     def _emit_health_events(self, events: list[tuple[str, dict[str, Any]]]) -> None:
-        for event_type, payload in events:
-            self._emit_health_event(event_type, **payload)
+        del events
+        if self._health_callback is None:
+            return
+        with self._dispatch_lock:
+            while True:
+                with self._lock:
+                    if not self._health_event_queue:
+                        return
+                    _, event_type, payload = self._health_event_queue.popleft()
+                try:
+                    self._health_callback(event_type, payload)
+                except Exception:
+                    logger.debug("Observability health callback failed", exc_info=True)
 
 
 class ObservabilityClient:
