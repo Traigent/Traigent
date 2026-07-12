@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   spine-core:
-    uses: Traigent/traigent-validation-spine/.github/workflows/spine-core-reusable.yml@0144cdc8d6e3fb6a7a08d27e1b6caafbe87a28ca
+    uses: Traigent/traigent-validation-spine/.github/workflows/spine-core-reusable.yml@e14f105c876a30b270d4939088d8361b720af555
     with:
       repo_id: Traigent
       base_ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_ref || github.event.pull_request.base.ref }}
@@ -32,7 +32,7 @@ jobs:
 
   spine-impact-receipt:
     if: github.event_name == 'pull_request'
-    uses: Traigent/traigent-validation-spine/.github/workflows/spine-impact-receipt-reusable.yml@c2ccb90e4124b12e7a773605571a45f0e185c712
+    uses: Traigent/traigent-validation-spine/.github/workflows/spine-impact-receipt-reusable.yml@e14f105c876a30b270d4939088d8361b720af555
     with:
       repo_id: Traigent
       pr_number: "${{ github.event.pull_request.number }}"

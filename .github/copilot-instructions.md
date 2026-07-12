@@ -196,3 +196,12 @@ Before submitting PRs:
 - Include Examples section in docstrings
 - Update README.md when adding user-facing features
 - Keep examples/ up to date with API changes
+
+
+## Traigent Spine workflow
+
+For feature, cross-repository, unfamiliar, release-impacting, or high-risk work,
+call `traigent-ops` before planning edits. Orient first, ground the relevant
+feature or change set, and treat stale or unresolved anchors as things to verify.
+The Spine is advisory: complete product verification against current code, tests,
+and effective runtime state before claiming completion.
