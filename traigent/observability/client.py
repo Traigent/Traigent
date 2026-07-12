@@ -141,11 +141,10 @@ class _SyncBatchTransport:
     """Thread-safe batch transport that avoids cross-thread asyncio coordination.
 
     ``health_callback`` receives snapshots after transport state has been
-    updated and after transport locks have been released. Snapshots are delivered
-    in state-update order and callbacks are serialized with each other, but never
-    with transport progress. They can run on a caller, flush-worker, or
-    bounded-send completion thread; callback exceptions are swallowed so
-    observability delivery is never disrupted.
+    updated and after transport locks have been released. A dedicated daemon
+    dispatcher delivers snapshots in state-update order. Callback exceptions are
+    swallowed so observability delivery is never disrupted, and user callbacks
+    never extend a caller's flush or close deadline.
     """
 
     def __init__(
@@ -170,9 +169,10 @@ class _SyncBatchTransport:
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
-        self._dispatch_lock = threading.RLock()
         self._health_event_queue: deque[tuple[int, str, dict[str, Any]]] = deque()
+        self._health_event_condition = threading.Condition(self._lock)
         self._next_health_event_sequence = 0
+        self._dropped_health_events = 0
         self._timer: threading.Timer | None = None
         self._flush_thread: threading.Thread | None = None
         self._closed = False
@@ -192,6 +192,14 @@ class _SyncBatchTransport:
             "retry_attempts": 0,
         }
         self._dropped_by_reason: dict[str, int] = {}
+        self._health_dispatcher_thread: threading.Thread | None = None
+        if self._health_callback is not None:
+            self._health_dispatcher_thread = threading.Thread(
+                target=self._dispatch_health_events,
+                name="traigent-observability-health-dispatcher",
+                daemon=True,
+            )
+            self._health_dispatcher_thread.start()
 
     def submit(self, item_id: str, payload: dict[str, Any]) -> bool:
         try:
@@ -321,6 +329,7 @@ class _SyncBatchTransport:
                 else max(0.0, time.monotonic() - self._oldest_inflight_started_at)
             )
             snapshot["dropped_by_reason"] = dict(self._dropped_by_reason)
+            snapshot["dropped_health_events"] = self._dropped_health_events
             snapshot["errors"] = list(self._errors)
             snapshot["warnings"] = list(self._warnings)
         return snapshot
@@ -667,6 +676,9 @@ class _SyncBatchTransport:
         if self._health_callback is None:
             return event
         self._next_health_event_sequence += 1
+        if len(self._health_event_queue) >= 256:
+            self._health_event_queue.popleft()
+            self._dropped_health_events += 1
         self._health_event_queue.append(
             (self._next_health_event_sequence, event_type, payload)
         )
@@ -676,16 +688,21 @@ class _SyncBatchTransport:
         del events
         if self._health_callback is None:
             return
-        with self._dispatch_lock:
-            while True:
-                with self._lock:
-                    if not self._health_event_queue:
-                        return
-                    _, event_type, payload = self._health_event_queue.popleft()
-                try:
-                    self._health_callback(event_type, payload)
-                except Exception:
-                    logger.debug("Observability health callback failed", exc_info=True)
+        with self._health_event_condition:
+            self._health_event_condition.notify()
+
+    def _dispatch_health_events(self) -> None:
+        """Deliver health events from one daemon thread, preserving queue order."""
+        while True:
+            with self._health_event_condition:
+                while not self._health_event_queue:
+                    self._health_event_condition.wait()
+                _, event_type, payload = self._health_event_queue.popleft()
+            try:
+                assert self._health_callback is not None
+                self._health_callback(event_type, payload)
+            except Exception:
+                logger.debug("Observability health callback failed", exc_info=True)
 
 
 class ObservabilityClient:
@@ -711,7 +728,8 @@ class ObservabilityClient:
         self._request_sender_override = request_sender
         self._trace_states: dict[str, _TraceState] = {}
         self._lock = threading.RLock()
-        self._snapshot_submission_condition = threading.Condition(self._lock)
+        self._snapshot_submission_complete = threading.Event()
+        self._snapshot_submission_complete.set()
         self._inflight_snapshot_submissions = 0
         self._closed = False
         self._offline_notice_logged = False
@@ -961,39 +979,45 @@ class ObservabilityClient:
         Supplying ``timeout`` bounds delivery with a monotonic deadline. Omitting
         it preserves the historical synchronous flush behavior; ``timeout=0`` is
         an immediate poll that does not emit a deadline warning.
+        Health callbacks are asynchronous, so this can return before callbacks
+        for delivery events from this flush have run.
         """
         deadline = self._flush_deadline(timeout)
         if self.config.offline_mode and not self._has_custom_trace_sender:
             self._log_offline_mode_once()
             return self._offline_flush_result()
-        with self._lock:
-            trace_ids = list(self._trace_states.keys())
-        for trace_id in trace_ids:
-            self._queue_trace_snapshot(trace_id)
+        if not self._acquire_client_lock_until(deadline):
+            return self._flush_transport_until(deadline)
+        try:
+            trace_payloads = [
+                (
+                    trace_id,
+                    cast(
+                        dict[str, Any],
+                        redact_sensitive_data(
+                            state.to_payload(), redact_credential_keys=True
+                        ),
+                    ),
+                )
+                for trace_id, state in self._trace_states.items()
+            ]
+        finally:
+            self._lock.release()
 
-        result = self._transport.flush(
-            timeout=self._remaining_flush_time(deadline),
-        )
-        return FlushResult(
-            success=result.success,
-            items_sent=result.items_sent,
-            items_pending=result.items_pending,
-            items_dropped=result.items_dropped,
-            successful_batches=result.successful_batches,
-            failed_batches=result.failed_batches,
-            errors=result.errors,
-            warnings=result.warnings,
-        )
+        for trace_id, payload in trace_payloads:
+            self._submit_trace_snapshot(trace_id, payload)
+        return self._flush_transport_until(deadline)
 
     def get_stats(self) -> dict[str, Any]:
         """Return a snapshot of transport delivery and local-drop health.
 
-        The snapshot includes ``dropped_by_reason``, ``queue_depth``,
-        ``inflight_items``, ``oldest_inflight_age_seconds``, and
-        ``retry_attempts``. Configure :attr:`ObservabilityConfig.health_callback`
-        to receive structured batch-level drop events as they occur. Callbacks
-        run after internal transport locks are released, can run on background
-        threads, and have their exceptions swallowed.
+        The snapshot includes ``dropped_by_reason``, ``dropped_health_events``,
+        ``queue_depth``, ``inflight_items``, ``oldest_inflight_age_seconds``,
+        and ``retry_attempts``. Configure
+        :attr:`ObservabilityConfig.health_callback` to receive structured
+        batch-level drop events. They run on one daemon dispatcher thread after
+        internal transport locks are released; a bounded flush or close can
+        return before callbacks for its events have run.
         """
         stats = cast(dict[str, Any], self._transport.get_stats())
         with self._lock:
@@ -1007,28 +1031,32 @@ class ObservabilityClient:
         warning-free poll. The atexit handler explicitly uses
         :attr:`ObservabilityConfig.flush_timeout` so interpreter shutdown stays
         bounded even though a normal no-argument close remains synchronous.
+        Health callbacks are asynchronous, so this can return before callbacks
+        for delivery events from this close have run.
         """
         deadline = self._flush_deadline(timeout)
-        with self._lock:
-            if self._closed:
-                return FlushResult(
-                    success=True,
-                    items_sent=0,
-                    items_pending=0,
-                    items_dropped=0,
-                    successful_batches=0,
-                    failed_batches=0,
-                    errors=[],
-                    warnings=[],
-                )
+        if not self._acquire_client_lock_until(deadline):
+            return self._flush_transport_until(deadline)
+        try:
+            already_closed = self._closed
+        finally:
+            self._lock.release()
+        if already_closed:
+            return self._flush_transport_until(deadline)
 
         if self.config.offline_mode and not self._has_custom_trace_sender:
             self._log_offline_mode_once()
-            with self._lock:
+            if not self._acquire_client_lock_until(deadline):
+                return self._flush_transport_until(deadline)
+            try:
                 self._closed = True
+            finally:
+                self._lock.release()
             return self._offline_flush_result()
 
-        with self._lock:
+        if not self._acquire_client_lock_until(deadline):
+            return self._flush_transport_until(deadline)
+        try:
             trace_payloads = [
                 (
                     trace_id,
@@ -1042,22 +1070,28 @@ class ObservabilityClient:
                 for trace_id, state in self._trace_states.items()
             ]
             self._closed = True
-            while self._inflight_snapshot_submissions:
-                remaining = self._remaining_flush_time(deadline)
-                if remaining is not None and remaining <= 0:
-                    logger.warning(
-                        "Observability close deadline expired while waiting for "
-                        "%d snapshot submissions",
-                        self._inflight_snapshot_submissions,
-                    )
-                    break
-                self._snapshot_submission_condition.wait(timeout=remaining)
+            inflight_snapshot_submissions = self._inflight_snapshot_submissions
+        finally:
+            self._lock.release()
+
+        if inflight_snapshot_submissions:
+            remaining = self._remaining_flush_time(deadline)
+            if remaining is not None and not self._snapshot_submission_complete.wait(
+                timeout=remaining
+            ):
+                logger.warning(
+                    "Observability close deadline expired while waiting for "
+                    "%d snapshot submissions",
+                    inflight_snapshot_submissions,
+                )
 
         for trace_id, payload in trace_payloads:
             self._submit_trace_snapshot(trace_id, payload)
-        result = self._transport.close(
-            timeout=self._remaining_flush_time(deadline),
-        )
+        result = self._transport.close(timeout=self._remaining_flush_time(deadline))
+        return self._flush_result_from_transport(result)
+
+    @staticmethod
+    def _flush_result_from_transport(result: BatchFlushResult) -> FlushResult:
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -1068,6 +1102,11 @@ class ObservabilityClient:
             errors=result.errors,
             warnings=result.warnings,
         )
+
+    def _flush_transport_until(self, deadline: float | None) -> FlushResult:
+        """Return the current transport truth without waiting past ``deadline``."""
+        result = self._transport.flush(timeout=self._remaining_flush_time(deadline))
+        return self._flush_result_from_transport(result)
 
     def list_comments(self, trace_id: str) -> TraceCommentsResponse:
         payload = self._request_json("GET", f"/traces/{trace_id}/comments")
@@ -1495,13 +1534,14 @@ class ObservabilityClient:
                 redact_sensitive_data(state.to_payload(), redact_credential_keys=True),
             )
             self._inflight_snapshot_submissions += 1
+            self._snapshot_submission_complete.clear()
         try:
             self._submit_trace_snapshot(trace_id, payload)
         finally:
             with self._lock:
                 self._inflight_snapshot_submissions -= 1
                 if self._inflight_snapshot_submissions == 0:
-                    self._snapshot_submission_condition.notify_all()
+                    self._snapshot_submission_complete.set()
 
     def _submit_trace_snapshot(self, trace_id: str, payload: dict[str, Any]) -> None:
         submitted = self._transport.submit(trace_id, payload)
@@ -1646,6 +1686,12 @@ class ObservabilityClient:
         if timeout is None:
             return None
         return time.monotonic() + max(0.0, timeout)
+
+    def _acquire_client_lock_until(self, deadline: float | None) -> bool:
+        """Acquire client state without allowing a bounded call to exceed its budget."""
+        if deadline is None:
+            return self._lock.acquire()
+        return self._lock.acquire(timeout=max(0.0, deadline - time.monotonic()))
 
     @staticmethod
     def _remaining_flush_time(deadline: float | None) -> float | None:

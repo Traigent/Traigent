@@ -880,6 +880,93 @@ def test_observability_client_timeout_zero_is_warning_free_poll():
     assert not any("flush deadline exceeded" in warning for warning in result.warnings)
 
 
+@pytest.mark.timeout(3)
+def test_observability_client_bounded_flush_covers_client_state_lock():
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+    sender_calls: list[list[dict]] = []
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        ),
+        sender=lambda traces: sender_calls.append(traces),
+    )
+    trace_id = client.start_trace("locked-flush", trace_id="trace_locked_flush")
+    client.end_trace(trace_id)
+
+    def hold_lock() -> None:
+        with client._lock:
+            lock_held.set()
+            assert release_lock.wait(timeout=2.0)
+
+    lock_holder = threading.Thread(target=hold_lock)
+    lock_holder.start()
+    assert lock_held.wait(timeout=1.0)
+    try:
+        started = time.monotonic()
+        result = client.flush(timeout=0.05)
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 0.15
+        assert result.success is False
+        assert result.items_pending == 1
+        assert sender_calls == []
+    finally:
+        release_lock.set()
+        lock_holder.join(timeout=1.0)
+    assert not lock_holder.is_alive()
+    assert client.flush().success is True
+
+
+@pytest.mark.timeout(3)
+def test_observability_client_repeated_close_reports_orphan_until_reconciled():
+    send_started = threading.Event()
+    release_send = threading.Event()
+    send_completed = threading.Event()
+
+    def sender(traces: list[dict]) -> None:
+        del traces
+        send_started.set()
+        assert release_send.wait(timeout=2.0)
+        send_completed.set()
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+    )
+    trace_id = client.start_trace("orphan-close", trace_id="trace_orphan_close")
+    client.end_trace(trace_id)
+
+    first = client.close(timeout=0.03)
+    assert send_started.wait(timeout=1.0)
+    second = client.close(timeout=0)
+
+    assert first.success is False
+    assert first.items_pending == 1
+    assert second.success is False
+    assert second.items_pending == 1
+
+    release_send.set()
+    assert send_completed.wait(timeout=1.0)
+    third = client.close(timeout=0)
+
+    assert third.success is True
+    assert third.items_pending == 0
+    assert client.get_stats()["inflight_items"] == 0
+
+
 def test_observability_client_atexit_uses_configured_flush_deadline(monkeypatch):
     client = ObservabilityClient(
         ObservabilityConfig(
@@ -1080,15 +1167,19 @@ def test_sync_batch_transport_keeps_age_timer_armed_on_batch_size_path():
 
 def test_sync_batch_transport_emits_health_event_for_queue_full():
     events: list[tuple[str, dict]] = []
+    callback_finished = threading.Event()
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        events.append((event_type, payload))
+        callback_finished.set()
+
     transport = _SyncBatchTransport(
         sender=lambda traces: None,
         batch_size=100,
         max_buffer_age=999.0,
         max_queue_size=1,
         max_batch_bytes=10_000,
-        health_callback=lambda event_type, payload: events.append(
-            (event_type, payload)
-        ),
+        health_callback=health_callback,
     )
 
     assert transport.submit("trace_one", {"id": "trace_one"}) is True
@@ -1096,6 +1187,7 @@ def test_sync_batch_transport_emits_health_event_for_queue_full():
     result = transport.close()
 
     assert result.items_dropped == 1
+    assert callback_finished.wait(timeout=1.0)
     assert events == [
         (
             "queue_full",
@@ -1115,6 +1207,7 @@ def test_sync_batch_transport_delivers_health_events_in_snapshot_order():
     callback_one_started = threading.Event()
     release_callback_one = threading.Event()
     second_drop_snapshotted = threading.Event()
+    delivery_complete = threading.Event()
     delivered_dropped_items: list[int] = []
 
     def health_callback(event_type: str, payload: dict) -> None:
@@ -1123,6 +1216,8 @@ def test_sync_batch_transport_delivers_health_events_in_snapshot_order():
             callback_one_started.set()
             assert release_callback_one.wait(timeout=2.0)
         delivered_dropped_items.append(payload["dropped_items"])
+        if len(delivered_dropped_items) == 2:
+            delivery_complete.set()
 
     transport = _SyncBatchTransport(
         sender=lambda traces: None,
@@ -1163,6 +1258,7 @@ def test_sync_batch_transport_delivers_health_events_in_snapshot_order():
     second_drop.join(timeout=1.0)
     assert not first_drop.is_alive()
     assert not second_drop.is_alive()
+    assert delivery_complete.wait(timeout=1.0)
     assert delivered_dropped_items == [1, 2]
     assert all(
         earlier <= later
@@ -1170,6 +1266,46 @@ def test_sync_batch_transport_delivers_health_events_in_snapshot_order():
             delivered_dropped_items, delivered_dropped_items[1:], strict=False
         )
     )
+
+
+@pytest.mark.timeout(3)
+def test_blocking_health_callback_does_not_extend_flush_deadline():
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    events_delivered = threading.Event()
+    delivered_dropped_items: list[int] = []
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        assert event_type == "queue_full"
+        if payload["dropped_items"] == 1:
+            callback_started.set()
+            assert release_callback.wait(timeout=2.0)
+        delivered_dropped_items.append(payload["dropped_items"])
+        if len(delivered_dropped_items) == 2:
+            events_delivered.set()
+
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=1,
+        max_batch_bytes=10_000,
+        health_callback=health_callback,
+    )
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+    assert transport.submit("trace_two", {"id": "trace_two"}) is False
+    assert callback_started.wait(timeout=1.0)
+    assert transport.submit("trace_three", {"id": "trace_three"}) is False
+
+    started = time.monotonic()
+    result = transport.flush(timeout=0.05)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.15
+    assert result.success is True
+    release_callback.set()
+    assert events_delivered.wait(timeout=1.0)
+    assert delivered_dropped_items == [1, 2]
 
 
 def test_health_callback_get_stats_runs_after_submit_state_is_complete():
@@ -1200,7 +1336,7 @@ def test_health_callback_get_stats_runs_after_submit_state_is_complete():
     assert transport.submit("trace_one", {"id": "trace_one"}) is True
     assert transport.submit("trace_two", {"id": "trace_two"}) is False
 
-    assert callback_finished.is_set()
+    assert callback_finished.wait(timeout=1.0)
     assert len(callback_stats) == 1
     assert callback_stats[0]["dropped_items"] == 1
     assert callback_stats[0]["queue_depth"] == 1
@@ -1241,7 +1377,7 @@ def test_health_callback_can_flush_after_batch_delivery_failure():
     flush_thread = threading.Thread(target=flush)
     flush_thread.start()
     assert flush_finished.wait(timeout=1.0)
-    assert callback_finished.is_set()
+    assert callback_finished.wait(timeout=1.0)
     flush_thread.join(timeout=1.0)
     assert not flush_thread.is_alive()
     assert callback_results[0].items_pending == 0
@@ -1249,10 +1385,15 @@ def test_health_callback_can_flush_after_batch_delivery_failure():
 
 def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
     events: list[tuple[str, dict]] = []
+    callback_finished = threading.Event()
 
     def sender(traces):
         del traces
         raise AuthenticationError("invalid credentials")
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        events.append((event_type, payload))
+        callback_finished.set()
 
     transport = _SyncBatchTransport(
         sender=sender,
@@ -1260,9 +1401,7 @@ def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
         max_buffer_age=999.0,
         max_queue_size=10,
         max_batch_bytes=10_000,
-        health_callback=lambda event_type, payload: events.append(
-            (event_type, payload)
-        ),
+        health_callback=health_callback,
     )
     assert transport.submit("trace_one", {"id": "trace_one"}) is True
     assert transport.submit("trace_two", {"id": "trace_two"}) is True
@@ -1272,6 +1411,7 @@ def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
 
     assert result.items_dropped == 2
     assert stats["dropped_by_reason"] == {"batch_delivery_failed": 2}
+    assert callback_finished.wait(timeout=1.0)
     assert events == [
         (
             "batch_delivery_failed",
