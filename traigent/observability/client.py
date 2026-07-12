@@ -138,7 +138,13 @@ class _BufferedPayload:
 
 
 class _SyncBatchTransport:
-    """Thread-safe batch transport that avoids cross-thread asyncio coordination."""
+    """Thread-safe batch transport that avoids cross-thread asyncio coordination.
+
+    ``health_callback`` receives snapshots after transport state has been
+    updated and after transport locks have been released. It can run on a caller,
+    flush-worker, or bounded-send completion thread; callback exceptions are
+    swallowed so observability delivery is never disrupted.
+    """
 
     def __init__(
         self,
@@ -168,6 +174,8 @@ class _SyncBatchTransport:
         self._errors: list[str] = []
         self._warnings: list[str] = []
         self._inflight_items = 0
+        self._oldest_inflight_started_at: float | None = None
+        self._active_send_completion: threading.Event | None = None
         self._stats: dict[str, int] = {
             "submitted_items": 0,
             "sent_items": 0,
@@ -220,54 +228,73 @@ class _SyncBatchTransport:
             )
             return False
 
+        drop_event: tuple[str, dict[str, Any]] | None = None
         with self._lock:
             if self._closed:
-                self._record_drop_locked(
+                drop_event = self._record_drop_locked(
                     "transport_closed",
                     f"transport closed; dropped payload for item '{item_id}'",
                     item_id=item_id,
                 )
-                return False
-
-            if item_id in self._buffer:
-                self._buffer.pop(item_id, None)
-            elif len(self._buffer) >= self.max_queue_size:
-                self._record_drop_locked(
+            elif (
+                item_id not in self._buffer and len(self._buffer) >= self.max_queue_size
+            ):
+                drop_event = self._record_drop_locked(
                     "queue_full",
                     f"transport queue full; dropped payload for item '{item_id}'",
                     item_id=item_id,
                 )
-                return False
+            else:
+                self._buffer.pop(item_id, None)
+                self._buffer[item_id] = buffered_payload
+                self._stats["submitted_items"] += 1
+                self._stats["pending_items"] = len(self._buffer)
 
-            self._buffer[item_id] = buffered_payload
-            self._stats["submitted_items"] += 1
-            self._stats["pending_items"] = len(self._buffer)
+                if len(self._buffer) >= self.batch_size:
+                    self._ensure_flush_thread_locked()
+                # Always keep an age timer armed while the buffer is non-empty. On the
+                # batch-size path this is a backstop: if the flush thread is between its
+                # buffer-empty check and exit when this item arrives, is_alive() still
+                # reads True so _ensure_flush_thread_locked spawns nothing — the timer
+                # then guarantees the tail item is not stranded until the next
+                # submit/close. When the thread does drain everything, the leftover
+                # timer fires once, finds an empty buffer, and returns harmlessly.
+                self._ensure_timer_locked()
 
-            if len(self._buffer) >= self.batch_size:
-                self._ensure_flush_thread_locked()
-            # Always keep an age timer armed while the buffer is non-empty. On the
-            # batch-size path this is a backstop: if the flush thread is between its
-            # buffer-empty check and exit when this item arrives, is_alive() still
-            # reads True so _ensure_flush_thread_locked spawns nothing — the timer
-            # then guarantees the tail item is not stranded until the next
-            # submit/close. When the thread does drain everything, the leftover
-            # timer fires once, finds an empty buffer, and returns harmlessly.
-            self._ensure_timer_locked()
+        if drop_event is not None:
+            self._emit_health_event(drop_event[0], **drop_event[1])
+            return False
 
         return True
 
-    def flush(self, timeout: float | None = None) -> BatchFlushResult:
+    def flush(
+        self,
+        timeout: float | None = None,
+        *,
+        warn_on_deadline_expiry: bool | None = None,
+    ) -> BatchFlushResult:
         """Flush queued payloads, waiting no longer than ``timeout`` seconds."""
         self._cancel_timer()
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
-        self._send_available(deadline=deadline)
+        if warn_on_deadline_expiry is None:
+            warn_on_deadline_expiry = timeout != 0
+        self._send_available(
+            deadline=deadline, warn_on_deadline_expiry=warn_on_deadline_expiry
+        )
         return self._build_result()
 
-    def close(self, timeout: float | None = None) -> BatchFlushResult:
+    def close(
+        self,
+        timeout: float | None = None,
+        *,
+        warn_on_deadline_expiry: bool | None = None,
+    ) -> BatchFlushResult:
         """Prevent new submissions and flush within the supplied deadline."""
         with self._lock:
             self._closed = True
-        return self.flush(timeout=timeout)
+        return self.flush(
+            timeout=timeout, warn_on_deadline_expiry=warn_on_deadline_expiry
+        )
 
     def get_stats(self) -> dict[str, Any]:
         """Return a thread-safe transport health snapshot.
@@ -280,7 +307,14 @@ class _SyncBatchTransport:
             snapshot: dict[str, Any] = dict(self._stats)
             snapshot["queue_depth"] = len(self._buffer)
             snapshot["inflight_items"] = self._inflight_items
-            snapshot["send_in_progress"] = self._send_lock.locked()
+            snapshot["send_in_progress"] = (
+                self._active_send_completion is not None or self._send_lock.locked()
+            )
+            snapshot["oldest_inflight_age_seconds"] = (
+                None
+                if self._oldest_inflight_started_at is None
+                else max(0.0, time.monotonic() - self._oldest_inflight_started_at)
+            )
             snapshot["dropped_by_reason"] = dict(self._dropped_by_reason)
             snapshot["errors"] = list(self._errors)
             snapshot["warnings"] = list(self._warnings)
@@ -326,7 +360,14 @@ class _SyncBatchTransport:
         except Exception as exc:
             self._append_error(f"background flush failed: {exc}")
 
-    def _send_available(self, *, deadline: float | None = None) -> None:
+    def _send_available(
+        self,
+        *,
+        deadline: float | None = None,
+        warn_on_deadline_expiry: bool = True,
+    ) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        caller_released = threading.Event()
         if deadline is None:
             acquired = self._send_lock.acquire()
         else:
@@ -334,13 +375,20 @@ class _SyncBatchTransport:
                 timeout=max(0.0, deadline - time.monotonic())
             )
         if not acquired:
-            self._record_deadline_expiry()
+            if warn_on_deadline_expiry:
+                events.append(self._record_deadline_expiry())
+            self._emit_health_events(events)
             return
 
         try:
             while True:
+                if not self._wait_for_active_send(deadline):
+                    if warn_on_deadline_expiry:
+                        events.append(self._record_deadline_expiry())
+                    return
                 if deadline is not None and time.monotonic() >= deadline:
-                    self._record_deadline_expiry()
+                    if warn_on_deadline_expiry:
+                        events.append(self._record_deadline_expiry())
                     return
                 with self._lock:
                     if not self._buffer:
@@ -363,6 +411,8 @@ class _SyncBatchTransport:
                         batch_items.append((item_id, buffered.payload))
                         batch_body_bytes = projected_body_bytes
                     self._inflight_items += len(batch_items)
+                    if self._oldest_inflight_started_at is None:
+                        self._oldest_inflight_started_at = time.monotonic()
                     self._stats["pending_items"] = (
                         len(self._buffer) + self._inflight_items
                     )
@@ -371,29 +421,44 @@ class _SyncBatchTransport:
                     continue
                 if deadline is None:
                     try:
-                        self._send_batch(batch_items)
+                        events.extend(self._send_batch(batch_items))
                     finally:
                         self._complete_inflight_batch(len(batch_items))
-                elif not self._send_batch_until(batch_items, deadline):
-                    self._record_deadline_expiry()
-                    return
+                else:
+                    batch_events = self._send_batch_until(
+                        batch_items, deadline, caller_released
+                    )
+                    if batch_events is None:
+                        if warn_on_deadline_expiry:
+                            events.append(self._record_deadline_expiry())
+                        return
+                    events.extend(batch_events)
         finally:
             self._send_lock.release()
+            caller_released.set()
+            self._emit_health_events(events)
 
     def _send_batch_until(
-        self, batch_items: list[tuple[str, dict[str, Any]]], deadline: float
-    ) -> bool:
+        self,
+        batch_items: list[tuple[str, dict[str, Any]]],
+        deadline: float,
+        caller_released: threading.Event,
+    ) -> list[tuple[str, dict[str, Any]]] | None:
         completed = threading.Event()
+        events: list[tuple[str, dict[str, Any]]] = []
+
+        with self._lock:
+            self._active_send_completion = completed
 
         def send() -> None:
             try:
-                self._send_batch(batch_items)
+                events.extend(self._send_batch(batch_items))
             except Exception as exc:
                 # Flush and close are best effort; background sender failures must
                 # be visible in the result but must never escape user code.
                 self._append_error(f"batch delivery failed unexpectedly: {exc}")
             finally:
-                self._complete_inflight_batch(len(batch_items))
+                self._complete_inflight_batch(len(batch_items), completed)
                 completed.set()
 
         threading.Thread(
@@ -401,14 +466,53 @@ class _SyncBatchTransport:
             name="traigent-observability-send",
             daemon=True,
         ).start()
-        return completed.wait(timeout=max(0.0, deadline - time.monotonic()))
+        if completed.wait(timeout=max(0.0, deadline - time.monotonic())):
+            return events
 
-    def _complete_inflight_batch(self, item_count: int) -> None:
+        threading.Thread(
+            target=self._emit_orphan_health_events,
+            args=(completed, caller_released, events),
+            name="traigent-observability-send-events",
+            daemon=True,
+        ).start()
+        return None
+
+    def _wait_for_active_send(self, deadline: float | None) -> bool:
+        """Wait for a timed-out sender without ever starting a concurrent sender."""
+        while True:
+            with self._lock:
+                completion = self._active_send_completion
+            if completion is None:
+                return True
+            if deadline is None:
+                completion.wait()
+                continue
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0 or not completion.wait(timeout=remaining):
+                return False
+
+    def _emit_orphan_health_events(
+        self,
+        completed: threading.Event,
+        caller_released: threading.Event,
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> None:
+        completed.wait()
+        caller_released.wait()
+        self._emit_health_events(events)
+
+    def _complete_inflight_batch(
+        self, item_count: int, completion: threading.Event | None = None
+    ) -> None:
         with self._lock:
             self._inflight_items -= item_count
+            if self._inflight_items == 0:
+                self._oldest_inflight_started_at = None
             self._stats["pending_items"] = len(self._buffer) + self._inflight_items
+            if completion is not None and self._active_send_completion is completion:
+                self._active_send_completion = None
 
-    def _record_deadline_expiry(self) -> None:
+    def _record_deadline_expiry(self) -> tuple[str, dict[str, Any]]:
         with self._lock:
             remaining = len(self._buffer) + self._inflight_items
             self._stats["pending_items"] = remaining
@@ -416,8 +520,9 @@ class _SyncBatchTransport:
             "Observability transport flush deadline exceeded with "
             f"{remaining} items remaining"
         )
-        self._append_warning(message)
+        event = self._append_warning(message)
         logger.warning(message)
+        return event
 
     def _prepare_payload(self, payload: dict[str, Any]) -> _BufferedPayload:
         # Direct transport callers bypass ObservabilityClient's trace redaction.
@@ -442,18 +547,21 @@ class _SyncBatchTransport:
     def _batch_payload_size_from_body(body_bytes: int) -> int:
         return _TRACE_BATCH_PREFIX_BYTES + body_bytes + _TRACE_BATCH_SUFFIX_BYTES
 
-    def _send_batch(self, batch_items: list[tuple[str, dict[str, Any]]]) -> None:
+    def _send_batch(
+        self, batch_items: list[tuple[str, dict[str, Any]]]
+    ) -> list[tuple[str, dict[str, Any]]]:
+        events: list[tuple[str, dict[str, Any]]] = []
         payloads = [payload for _, payload in batch_items]
         result = self._retry_handler.execute_with_result(self._sender, payloads)
 
         if result.success:
             if isinstance(result.result, dict):
                 for warning in result.result.get("warnings") or []:
-                    self._append_warning(str(warning))
+                    events.append(self._append_warning(str(warning)))
             with self._lock:
                 self._stats["successful_batches"] += 1
                 self._stats["sent_items"] += len(payloads)
-            return
+            return events
 
         with self._lock:
             self._stats["failed_batches"] += 1
@@ -464,19 +572,27 @@ class _SyncBatchTransport:
             dropped_items = self._stats["dropped_items"]
             queue_depth = len(self._buffer)
         self._append_error(str(result.error or "batch delivery failed"))
-        self._emit_health_event(
-            "batch_delivery_failed",
-            drop_reason="batch_delivery_failed",
-            dropped_items=dropped_items,
-            queue_depth=queue_depth,
-            message=str(result.error or "batch delivery failed"),
-            item_count=len(payloads),
+        trace_ids = [item_id for item_id, _ in batch_items[:20]]
+        events.append(
+            (
+                "batch_delivery_failed",
+                {
+                    "drop_reason": "batch_delivery_failed",
+                    "dropped_items": dropped_items,
+                    "queue_depth": queue_depth,
+                    "message": str(result.error or "batch delivery failed"),
+                    "item_count": len(payloads),
+                    "trace_ids": trace_ids,
+                    "trace_ids_truncated": len(batch_items) > len(trace_ids),
+                },
+            )
         )
         logger.warning(
             "Observability transport dropped %d payloads after retries: %s",
             len(payloads),
             result.error,
         )
+        return events
 
     def _build_result(self) -> BatchFlushResult:
         with self._lock:
@@ -499,20 +615,21 @@ class _SyncBatchTransport:
             if len(self._errors) > 20:
                 self._errors = self._errors[-20:]
 
-    def _append_warning(self, message: str) -> None:
+    def _append_warning(self, message: str) -> tuple[str, dict[str, Any]]:
         with self._lock:
             self._warnings.append(message)
             if len(self._warnings) > 50:
                 self._warnings = self._warnings[-50:]
-        self._emit_health_event("warning", message=message)
+        return ("warning", {"message": message})
 
     def _record_drop(self, event_type: str, message: str, **details: Any) -> None:
         with self._lock:
-            self._record_drop_locked(event_type, message, **details)
+            event = self._record_drop_locked(event_type, message, **details)
+        self._emit_health_event(event[0], **event[1])
 
     def _record_drop_locked(
         self, event_type: str, message: str, **details: Any
-    ) -> None:
+    ) -> tuple[str, dict[str, Any]]:
         self._stats["dropped_items"] += 1
         self._dropped_by_reason[event_type] = (
             self._dropped_by_reason.get(event_type, 0) + 1
@@ -520,13 +637,15 @@ class _SyncBatchTransport:
         self._errors.append(message)
         if len(self._errors) > 20:
             self._errors = self._errors[-20:]
-        self._emit_health_event(
+        return (
             event_type,
-            drop_reason=event_type,
-            dropped_items=self._stats["dropped_items"],
-            queue_depth=len(self._buffer),
-            message=message,
-            **details,
+            {
+                "drop_reason": event_type,
+                "dropped_items": self._stats["dropped_items"],
+                "queue_depth": len(self._buffer),
+                "message": message,
+                **details,
+            },
         )
 
     def _record_retry(self, error: Exception, attempt: int) -> None:
@@ -541,6 +660,10 @@ class _SyncBatchTransport:
             self._health_callback(event_type, payload)
         except Exception:
             logger.debug("Observability health callback failed", exc_info=True)
+
+    def _emit_health_events(self, events: list[tuple[str, dict[str, Any]]]) -> None:
+        for event_type, payload in events:
+            self._emit_health_event(event_type, **payload)
 
 
 class ObservabilityClient:
@@ -811,6 +934,12 @@ class ObservabilityClient:
         self._queue_trace_snapshot(trace_id)
 
     def flush(self, timeout: float | None = None) -> FlushResult:
+        """Flush queued traces.
+
+        Supplying ``timeout`` bounds delivery with a monotonic deadline. Omitting
+        it preserves the historical synchronous flush behavior; ``timeout=0`` is
+        an immediate poll that does not emit a deadline warning.
+        """
         deadline = self._flush_deadline(timeout)
         if self.config.offline_mode and not self._has_custom_trace_sender:
             self._log_offline_mode_once()
@@ -820,7 +949,9 @@ class ObservabilityClient:
         for trace_id in trace_ids:
             self._queue_trace_snapshot(trace_id)
 
-        result = self._transport.flush(timeout=self._remaining_flush_time(deadline))
+        result = self._transport.flush(
+            timeout=self._remaining_flush_time(deadline),
+        )
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -836,9 +967,11 @@ class ObservabilityClient:
         """Return a snapshot of transport delivery and local-drop health.
 
         The snapshot includes ``dropped_by_reason``, ``queue_depth``,
-        ``inflight_items``, and ``retry_attempts``. Configure
-        :attr:`ObservabilityConfig.health_callback` to receive a structured
-        callback for every local drop as it occurs.
+        ``inflight_items``, ``oldest_inflight_age_seconds``, and
+        ``retry_attempts``. Configure :attr:`ObservabilityConfig.health_callback`
+        to receive structured batch-level drop events as they occur. Callbacks
+        run after internal transport locks are released, can run on background
+        threads, and have their exceptions swallowed.
         """
         stats = cast(dict[str, Any], self._transport.get_stats())
         with self._lock:
@@ -846,6 +979,13 @@ class ObservabilityClient:
         return stats
 
     def close(self, timeout: float | None = None) -> FlushResult:
+        """Stop submissions and flush queued traces.
+
+        An explicit ``timeout`` bounds delivery; ``timeout=0`` is an immediate,
+        warning-free poll. The atexit handler explicitly uses
+        :attr:`ObservabilityConfig.flush_timeout` so interpreter shutdown stays
+        bounded even though a normal no-argument close remains synchronous.
+        """
         deadline = self._flush_deadline(timeout)
         with self._lock:
             if self._closed:
@@ -882,7 +1022,7 @@ class ObservabilityClient:
             self._closed = True
             while self._inflight_snapshot_submissions:
                 remaining = self._remaining_flush_time(deadline)
-                if remaining <= 0:
+                if remaining is not None and remaining <= 0:
                     logger.warning(
                         "Observability close deadline expired while waiting for "
                         "%d snapshot submissions",
@@ -893,7 +1033,9 @@ class ObservabilityClient:
 
         for trace_id, payload in trace_payloads:
             self._submit_trace_snapshot(trace_id, payload)
-        result = self._transport.close(timeout=self._remaining_flush_time(deadline))
+        result = self._transport.close(
+            timeout=self._remaining_flush_time(deadline),
+        )
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -1478,10 +1620,13 @@ class ObservabilityClient:
         except Exception as exc:
             logger.warning("Observability atexit flush failed: %s", exc)
 
-    def _flush_deadline(self, timeout: float | None) -> float:
-        effective_timeout = self.config.flush_timeout if timeout is None else timeout
-        return time.monotonic() + max(0.0, effective_timeout)
+    def _flush_deadline(self, timeout: float | None) -> float | None:
+        if timeout is None:
+            return None
+        return time.monotonic() + max(0.0, timeout)
 
     @staticmethod
-    def _remaining_flush_time(deadline: float) -> float:
+    def _remaining_flush_time(deadline: float | None) -> float | None:
+        if deadline is None:
+            return None
         return max(0.0, deadline - time.monotonic())

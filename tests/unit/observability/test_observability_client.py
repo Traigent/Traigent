@@ -730,16 +730,94 @@ def test_observability_client_close_flushes_active_trace_payloads_without_explic
 
 
 @pytest.mark.timeout(3)
-def test_observability_client_flush_deadline_returns_with_hung_sender():
+def test_timed_out_sender_remains_single_flight_until_it_reconciles():
     send_started = threading.Event()
-    release_send = threading.Event()
-    send_finished = threading.Event()
+    first_flush_returned = threading.Event()
+    release_first_send = threading.Event()
+    second_flush_finished = threading.Event()
+    active_lock = threading.Lock()
+    active_senders = 0
+    max_active_senders = 0
+    send_count = 0
 
     def sender(traces):
         del traces
-        send_started.set()
-        assert release_send.wait(timeout=2.0)
-        send_finished.set()
+        nonlocal active_senders, max_active_senders, send_count
+        with active_lock:
+            active_senders += 1
+            max_active_senders = max(max_active_senders, active_senders)
+            send_count += 1
+            call_number = send_count
+        try:
+            if call_number == 1:
+                send_started.set()
+                assert release_first_send.wait(timeout=2.0)
+        finally:
+            with active_lock:
+                active_senders -= 1
+
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=1,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+    )
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+
+    first_results: list[BatchFlushResult] = []
+
+    def first_flush() -> None:
+        first_results.append(transport.flush(timeout=0.05))
+        first_flush_returned.set()
+
+    first_thread = threading.Thread(target=first_flush)
+    first_thread.start()
+    assert send_started.wait(timeout=1.0)
+    assert first_flush_returned.wait(timeout=1.0)
+
+    assert first_results[0].success is False
+    assert first_results[0].items_pending == 1
+    stats_while_hung = transport.get_stats()
+    assert stats_while_hung["send_in_progress"] is True
+    assert stats_while_hung["inflight_items"] == 1
+    assert stats_while_hung["oldest_inflight_age_seconds"] is not None
+
+    assert transport.submit("trace_two", {"id": "trace_two"}) is True
+
+    def second_flush() -> None:
+        transport.flush(timeout=1.0)
+        second_flush_finished.set()
+
+    second_thread = threading.Thread(target=second_flush)
+    second_thread.start()
+    assert not second_flush_finished.wait(timeout=0.02)
+    with active_lock:
+        assert max_active_senders == 1
+
+    release_first_send.set()
+    assert second_flush_finished.wait(timeout=1.0)
+    first_thread.join(timeout=1.0)
+    second_thread.join(timeout=1.0)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    result = transport.flush()
+
+    assert result.success is True
+    assert result.items_sent == 2
+    assert result.items_pending == 0
+    assert transport.get_stats()["send_in_progress"] is False
+    assert transport.get_stats()["inflight_items"] == 0
+    with active_lock:
+        assert max_active_senders == 1
+
+
+def test_observability_client_default_flush_sends_on_calling_thread():
+    sender_threads: list[int] = []
+
+    def sender(traces):
+        del traces
+        sender_threads.append(threading.get_ident())
 
     client = ObservabilityClient(
         ObservabilityConfig(
@@ -752,37 +830,18 @@ def test_observability_client_flush_deadline_returns_with_hung_sender():
         ),
         sender=sender,
     )
-    client.start_trace("deadline", trace_id="trace_flush_deadline")
+    trace_id = client.start_trace("prompt", trace_id="trace_prompt_flush")
+    client.end_trace(trace_id)
 
-    started = time.monotonic()
-    result = client.flush(timeout=0.5)
-    elapsed = time.monotonic() - started
+    result = client.flush()
 
-    assert send_started.is_set()
-    assert 0.4 <= elapsed < 1.2
-    assert result.success is False
-    assert result.items_sent == 0
-    assert result.items_pending == 1
-    assert any(
-        "flush deadline exceeded with 1 items remaining" in w for w in result.warnings
-    )
-
-    release_send.set()
-    assert send_finished.wait(timeout=2.0)
+    assert result.success is True
+    assert result.items_sent == 1
+    assert sender_threads == [threading.get_ident()]
 
 
-@pytest.mark.timeout(3)
-def test_observability_client_close_deadline_returns_with_hung_sender():
-    send_started = threading.Event()
-    release_send = threading.Event()
-    send_finished = threading.Event()
-
-    def sender(traces):
-        del traces
-        send_started.set()
-        assert release_send.wait(timeout=2.0)
-        send_finished.set()
-
+def test_observability_client_timeout_zero_is_warning_free_poll():
+    sender_calls: list[list[dict]] = []
     client = ObservabilityClient(
         ObservabilityConfig(
             backend_origin="http://localhost:5000",
@@ -792,63 +851,39 @@ def test_observability_client_close_deadline_returns_with_hung_sender():
             max_queue_size=10,
             enable_atexit_flush=False,
         ),
-        sender=sender,
+        sender=lambda traces: sender_calls.append(traces),
     )
-    client.start_trace("deadline", trace_id="trace_close_deadline")
+    trace_id = client.start_trace("poll", trace_id="trace_poll_flush")
+    client.end_trace(trace_id)
 
-    started = time.monotonic()
-    result = client.close(timeout=0.5)
-    elapsed = time.monotonic() - started
+    result = client.flush(timeout=0)
 
-    assert send_started.is_set()
-    assert 0.4 <= elapsed < 1.2
     assert result.success is False
-    assert result.items_sent == 0
     assert result.items_pending == 1
-    assert any(
-        "flush deadline exceeded with 1 items remaining" in w for w in result.warnings
-    )
-
-    release_send.set()
-    assert send_finished.wait(timeout=2.0)
+    assert sender_calls == []
+    assert not any("flush deadline exceeded" in warning for warning in result.warnings)
 
 
-@pytest.mark.timeout(3)
-def test_observability_client_atexit_uses_configured_flush_deadline():
-    send_started = threading.Event()
-    release_send = threading.Event()
-    send_finished = threading.Event()
-
-    def sender(traces):
-        del traces
-        send_started.set()
-        assert release_send.wait(timeout=2.0)
-        send_finished.set()
-
+def test_observability_client_atexit_uses_configured_flush_deadline(monkeypatch):
     client = ObservabilityClient(
         ObservabilityConfig(
             backend_origin="http://localhost:5000",
             api_key="test-key",  # pragma: allowlist secret
-            batch_size=100,
-            max_buffer_age=999.0,
-            max_queue_size=10,
             flush_timeout=0.5,
             enable_atexit_flush=False,
-        ),
-        sender=sender,
+        )
     )
-    client.start_trace("deadline", trace_id="trace_atexit_deadline")
+    timeouts: list[float | None] = []
 
-    started = time.monotonic()
+    def close(*, timeout: float | None = None) -> FlushResult:
+        timeouts.append(timeout)
+        return FlushResult(True, 0, 0, 0, 0, 0, [], [])
+
+    monkeypatch.setattr(client, "close", close)
+
     client._atexit_close()
-    elapsed = time.monotonic() - started
 
-    assert send_started.is_set()
-    assert 0.4 <= elapsed < 1.2
-    assert client.get_stats()["inflight_items"] == 1
-
-    release_send.set()
-    assert send_finished.wait(timeout=2.0)
+    assert timeouts == [0.5]
 
 
 def test_observability_client_close_waits_for_inflight_snapshot_submission(monkeypatch):
@@ -1059,6 +1094,81 @@ def test_sync_batch_transport_emits_health_event_for_queue_full():
     ]
 
 
+def test_health_callback_get_stats_runs_after_submit_state_is_complete():
+    callback_finished = threading.Event()
+    callback_stats: list[dict] = []
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        del event_type, payload
+
+        def read_stats() -> None:
+            callback_stats.append(transport.get_stats())
+            callback_finished.set()
+
+        reader = threading.Thread(target=read_stats)
+        reader.start()
+        reader.join(timeout=1.0)
+        assert not reader.is_alive()
+
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=1,
+        max_batch_bytes=10_000,
+        health_callback=health_callback,
+    )
+
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+    assert transport.submit("trace_two", {"id": "trace_two"}) is False
+
+    assert callback_finished.is_set()
+    assert len(callback_stats) == 1
+    assert callback_stats[0]["dropped_items"] == 1
+    assert callback_stats[0]["queue_depth"] == 1
+    assert callback_stats[0]["pending_items"] == 1
+
+
+@pytest.mark.timeout(3)
+def test_health_callback_can_flush_after_batch_delivery_failure():
+    callback_finished = threading.Event()
+    callback_results: list[BatchFlushResult] = []
+
+    def sender(traces):
+        del traces
+        raise AuthenticationError("invalid credentials")
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        del payload
+        if event_type == "batch_delivery_failed":
+            callback_results.append(transport.flush())
+            callback_finished.set()
+
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+        health_callback=health_callback,
+    )
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+
+    flush_finished = threading.Event()
+
+    def flush() -> None:
+        transport.flush()
+        flush_finished.set()
+
+    flush_thread = threading.Thread(target=flush)
+    flush_thread.start()
+    assert flush_finished.wait(timeout=1.0)
+    assert callback_finished.is_set()
+    flush_thread.join(timeout=1.0)
+    assert not flush_thread.is_alive()
+    assert callback_results[0].items_pending == 0
+
+
 def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
     events: list[tuple[str, dict]] = []
 
@@ -1077,21 +1187,24 @@ def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
         ),
     )
     assert transport.submit("trace_one", {"id": "trace_one"}) is True
+    assert transport.submit("trace_two", {"id": "trace_two"}) is True
 
     result = transport.flush()
     stats = transport.get_stats()
 
-    assert result.items_dropped == 1
-    assert stats["dropped_by_reason"] == {"batch_delivery_failed": 1}
+    assert result.items_dropped == 2
+    assert stats["dropped_by_reason"] == {"batch_delivery_failed": 2}
     assert events == [
         (
             "batch_delivery_failed",
             {
                 "drop_reason": "batch_delivery_failed",
-                "dropped_items": 1,
+                "dropped_items": 2,
                 "queue_depth": 0,
                 "message": "invalid credentials",
-                "item_count": 1,
+                "item_count": 2,
+                "trace_ids": ["trace_one", "trace_two"],
+                "trace_ids_truncated": False,
             },
         )
     ]
