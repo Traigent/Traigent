@@ -1108,6 +1108,54 @@ def test_observability_client_bounded_close_covers_client_state_lock():
 
 
 @pytest.mark.timeout(3)
+def test_observability_client_retries_pending_transport_close_after_lock_timeout():
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            enable_atexit_flush=False,
+            offline_mode=True,
+            health_callback=lambda event_type, payload: None,
+        ),
+        sender=lambda traces: None,
+    )
+    transport = client._transport
+    dispatcher = transport._health_dispatcher_thread
+    assert dispatcher is not None
+
+    def hold_transport_lock() -> None:
+        with transport._lock:
+            lock_held.set()
+            assert release_lock.wait(timeout=2.0)
+
+    lock_holder = threading.Thread(target=hold_transport_lock)
+    lock_holder.start()
+    assert lock_held.wait(timeout=1.0)
+    try:
+        started = time.monotonic()
+        first = client.close(timeout=0.05)
+
+        assert time.monotonic() - started < 0.15
+        assert first.success is False
+        assert client._closed is False
+        assert client._close_pending is True
+        assert transport._closed is False
+    finally:
+        release_lock.set()
+        lock_holder.join(timeout=1.0)
+    assert not lock_holder.is_alive()
+
+    second = client.close(timeout=0.1)
+
+    assert second.success is True
+    assert client._closed is True
+    assert transport._closed is True
+    assert dispatcher not in threading.enumerate()
+
+
+@pytest.mark.timeout(3)
 def test_observability_client_repeated_close_reports_orphan_until_reconciled():
     send_started = threading.Event()
     release_send = threading.Event()

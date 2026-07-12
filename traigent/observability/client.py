@@ -921,6 +921,10 @@ class ObservabilityClient:
         self._snapshot_submission_complete.set()
         self._inflight_snapshot_submissions = 0
         self._closing = False
+        # A close may stop new snapshot submissions before the transport can
+        # acquire its own state lock. Keep that recoverable state separate
+        # from a completed close so a later close() can retry transport.close().
+        self._close_pending = False
         self._close_complete = threading.Event()
         self._close_complete.set()
         self._closed = False
@@ -1244,10 +1248,21 @@ class ObservabilityClient:
                 trace_payloads = []
                 inflight_snapshot_submissions = 0
                 offline_close = False
+            elif self._close_pending:
+                close_in_progress = False
+                already_closed = False
+                self._closing = True
+                self._close_complete.clear()
+                offline_close = (
+                    self.config.offline_mode and not self._has_custom_trace_sender
+                )
+                trace_payloads = []
+                inflight_snapshot_submissions = 0
             else:
                 close_in_progress = False
                 already_closed = False
                 self._closing = True
+                self._close_pending = True
                 self._close_complete.clear()
                 offline_close = (
                     self.config.offline_mode and not self._has_custom_trace_sender
@@ -1269,7 +1284,6 @@ class ObservabilityClient:
                         for trace_id, state in self._trace_states.items()
                     ]
                     inflight_snapshot_submissions = self._inflight_snapshot_submissions
-                self._closed = True
         finally:
             self._lock.release()
         if close_in_progress:
@@ -1278,15 +1292,16 @@ class ObservabilityClient:
             return self._flush_transport_until(deadline)
 
         result: FlushResult | None = None
+        transport_close_completed = False
         finalizer_completed = False
         try:
             if offline_close:
                 self._log_offline_mode_once()
-                self._transport.close(
+                transport_result = self._transport.close(
                     timeout=self._remaining_flush_time(deadline),
                     warn_on_deadline_expiry=timeout != 0,
                 )
-                result = self._offline_flush_result()
+                result = self._flush_result_from_transport(transport_result)
             else:
                 if inflight_snapshot_submissions:
                     remaining = self._remaining_flush_time(deadline)
@@ -1308,11 +1323,15 @@ class ObservabilityClient:
                     timeout=self._remaining_flush_time(deadline)
                 )
                 result = self._flush_result_from_transport(transport_result)
+            transport_close_completed = self._transport_close_completed(
+                transport_result
+            )
+            if not transport_close_completed:
+                result = self._transport_close_pending_result(result)
         finally:
             if self._acquire_client_lock_until(deadline):
                 try:
-                    self._closing = False
-                    self._close_complete.set()
+                    self._finalize_close_state(transport_close_completed)
                     finalizer_completed = True
                 finally:
                     self._lock.release()
@@ -1323,6 +1342,7 @@ class ObservabilityClient:
                 )
                 threading.Thread(
                     target=self._finalize_close_when_client_lock_releases,
+                    args=(transport_close_completed,),
                     name="traigent-observability-close-finalizer",
                     daemon=True,
                 ).start()
@@ -1348,6 +1368,33 @@ class ObservabilityClient:
         """Return the current transport truth without waiting past ``deadline``."""
         result = self._transport.flush(timeout=self._remaining_flush_time(deadline))
         return self._flush_result_from_transport(result)
+
+    def _transport_close_completed(self, result: BatchFlushResult) -> bool:
+        """Whether transport close finished delivery and dispatcher teardown."""
+        if not result.success:
+            return False
+        if not getattr(self._transport, "_closed", True):
+            return False
+        dispatcher = getattr(self._transport, "_health_dispatcher_thread", None)
+        return dispatcher is None or not dispatcher.is_alive()
+
+    @staticmethod
+    def _transport_close_pending_result(result: FlushResult) -> FlushResult:
+        """Keep a partial transport close visibly retryable to callers."""
+        warning = (
+            "Observability transport close is pending; the client remains closed "
+            "to new snapshots until a later close completes teardown"
+        )
+        return FlushResult(
+            success=False,
+            items_sent=result.items_sent,
+            items_pending=result.items_pending,
+            items_dropped=result.items_dropped,
+            successful_batches=result.successful_batches,
+            failed_batches=result.failed_batches,
+            errors=result.errors,
+            warnings=[*result.warnings, warning],
+        )
 
     def _flush_lock_timeout_result(self, deadline: float | None) -> FlushResult:
         """Report that flush never inspected client state or submitted snapshots."""
@@ -1405,11 +1452,19 @@ class ObservabilityClient:
             warnings=[*stats["warnings"], warning],
         )
 
-    def _finalize_close_when_client_lock_releases(self) -> None:
+    def _finalize_close_state(self, transport_close_completed: bool) -> None:
+        """Record whether transport teardown completed while holding client state."""
+        self._closing = False
+        self._close_pending = not transport_close_completed
+        self._closed = transport_close_completed
+        self._close_complete.set()
+
+    def _finalize_close_when_client_lock_releases(
+        self, transport_close_completed: bool
+    ) -> None:
         """Complete state cleanup after a bounded close returned its partial result."""
         with self._lock:
-            self._closing = False
-            self._close_complete.set()
+            self._finalize_close_state(transport_close_completed)
 
     def _wait_for_concurrent_close(self, deadline: float | None) -> FlushResult:
         remaining = self._remaining_flush_time(deadline)
@@ -1756,7 +1811,7 @@ class ObservabilityClient:
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
-            if self._closed:
+            if self._closed or self._close_pending:
                 raise ClientError("Observability client is closed")
         if self.config.offline_mode:
             self._log_offline_mode_once()
@@ -1854,7 +1909,7 @@ class ObservabilityClient:
             return
         with self._lock:
             state = self._trace_states.get(trace_id)
-            if state is None or self._closed:
+            if state is None or self._closed or self._close_pending:
                 return
             payload = cast(
                 dict[str, Any],
