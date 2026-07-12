@@ -21,7 +21,7 @@ def test_spine_core_is_immutable_explicit_and_merge_group_safe() -> None:
     assert trigger["pull_request"]["branches"] == ["develop", "main"]
     assert "edited" in trigger["pull_request"]["types"]
     assert trigger["merge_group"]["branches"] == ["develop", "main"]
-    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["permissions"] == {"contents": "read", "pull-requests": "read"}
     assert job["uses"].endswith(f"spine-core-reusable.yml@{SPINE_SHA}")
     assert job["with"] == {
         "repo_id": "Traigent",

@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: spine-core-${{ github.event.pull_request.number || github.run_id }}
@@ -28,3 +29,16 @@ jobs:
       mode: advisory
     secrets:
       VALIDATION_CI_PAT: ${{ secrets.VALIDATION_CI_PAT }}
+
+  spine-impact-receipt:
+    if: github.event_name == 'pull_request'
+    uses: Traigent/traigent-validation-spine/.github/workflows/spine-impact-receipt-reusable.yml@c2ccb90e4124b12e7a773605571a45f0e185c712
+    with:
+      repo_id: Traigent
+      pr_number: "${{ github.event.pull_request.number }}"
+      base_ref: "${{ github.event.pull_request.base.ref }}"
+      base_sha: "${{ github.event.pull_request.base.sha }}"
+      head_ref: "${{ github.event.pull_request.head.ref }}"
+      head_sha: "${{ github.event.pull_request.head.sha }}"
+    secrets:
+      VALIDATION_CI_PAT: "${{ secrets.VALIDATION_CI_PAT }}"
