@@ -7,6 +7,7 @@ import copy
 import io
 import json
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
@@ -251,15 +252,18 @@ class _SyncBatchTransport:
 
         return True
 
-    def flush(self) -> BatchFlushResult:
+    def flush(self, timeout: float | None = None) -> BatchFlushResult:
+        """Flush queued payloads, waiting no longer than ``timeout`` seconds."""
         self._cancel_timer()
-        self._send_available()
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+        self._send_available(deadline=deadline)
         return self._build_result()
 
-    def close(self) -> BatchFlushResult:
+    def close(self, timeout: float | None = None) -> BatchFlushResult:
+        """Prevent new submissions and flush within the supplied deadline."""
         with self._lock:
             self._closed = True
-        return self.flush()
+        return self.flush(timeout=timeout)
 
     def get_stats(self) -> dict[str, Any]:
         with self._lock:
@@ -310,12 +314,25 @@ class _SyncBatchTransport:
         except Exception as exc:
             self._append_error(f"background flush failed: {exc}")
 
-    def _send_available(self) -> None:
-        with self._send_lock:
+    def _send_available(self, *, deadline: float | None = None) -> None:
+        if deadline is None:
+            acquired = self._send_lock.acquire()
+        else:
+            acquired = self._send_lock.acquire(
+                timeout=max(0.0, deadline - time.monotonic())
+            )
+        if not acquired:
+            self._record_deadline_expiry()
+            return
+
+        try:
             while True:
+                if deadline is not None and time.monotonic() >= deadline:
+                    self._record_deadline_expiry()
+                    return
                 with self._lock:
                     if not self._buffer:
-                        self._stats["pending_items"] = 0
+                        self._stats["pending_items"] = self._inflight_items
                         return
 
                     batch_items: list[tuple[str, dict[str, Any]]] = []
@@ -333,16 +350,62 @@ class _SyncBatchTransport:
                         self._buffer.popitem(last=False)
                         batch_items.append((item_id, buffered.payload))
                         batch_body_bytes = projected_body_bytes
-                    self._stats["pending_items"] = len(self._buffer)
                     self._inflight_items += len(batch_items)
+                    self._stats["pending_items"] = (
+                        len(self._buffer) + self._inflight_items
+                    )
 
                 if not batch_items:
                     continue
-                try:
-                    self._send_batch(batch_items)
-                finally:
-                    with self._lock:
-                        self._inflight_items -= len(batch_items)
+                if deadline is None:
+                    try:
+                        self._send_batch(batch_items)
+                    finally:
+                        self._complete_inflight_batch(len(batch_items))
+                elif not self._send_batch_until(batch_items, deadline):
+                    self._record_deadline_expiry()
+                    return
+        finally:
+            self._send_lock.release()
+
+    def _send_batch_until(
+        self, batch_items: list[tuple[str, dict[str, Any]]], deadline: float
+    ) -> bool:
+        completed = threading.Event()
+
+        def send() -> None:
+            try:
+                self._send_batch(batch_items)
+            except Exception as exc:
+                # Flush and close are best effort; background sender failures must
+                # be visible in the result but must never escape user code.
+                self._append_error(f"batch delivery failed unexpectedly: {exc}")
+            finally:
+                self._complete_inflight_batch(len(batch_items))
+                completed.set()
+
+        threading.Thread(
+            target=send,
+            name="traigent-observability-send",
+            daemon=True,
+        ).start()
+        return completed.wait(timeout=max(0.0, deadline - time.monotonic()))
+
+    def _complete_inflight_batch(self, item_count: int) -> None:
+        with self._lock:
+            self._inflight_items -= item_count
+            self._stats["pending_items"] = len(self._buffer) + self._inflight_items
+
+    def _record_deadline_expiry(self) -> None:
+        with self._lock:
+            remaining = len(self._buffer) + self._inflight_items
+            self._stats["pending_items"] = remaining
+        message = (
+            "Observability transport flush deadline exceeded with "
+            f"{remaining} items remaining"
+        )
+        self._append_warning(message)
+        logger.warning(message)
 
     def _prepare_payload(self, payload: dict[str, Any]) -> _BufferedPayload:
         # Direct transport callers bypass ObservabilityClient's trace redaction.
@@ -397,10 +460,12 @@ class _SyncBatchTransport:
 
     def _build_result(self) -> BatchFlushResult:
         with self._lock:
+            remaining = len(self._buffer) + self._inflight_items
+            self._stats["pending_items"] = remaining
             return BatchFlushResult(
-                success=self._stats["failed_batches"] == 0,
+                success=self._stats["failed_batches"] == 0 and remaining == 0,
                 items_sent=self._stats["sent_items"],
-                items_pending=self._stats["pending_items"],
+                items_pending=remaining,
                 items_dropped=self._stats["dropped_items"],
                 successful_batches=self._stats["successful_batches"],
                 failed_batches=self._stats["failed_batches"],
@@ -711,7 +776,7 @@ class ObservabilityClient:
         self._queue_trace_snapshot(trace_id)
 
     def flush(self, timeout: float | None = None) -> FlushResult:
-        timeout = timeout or self.config.flush_timeout
+        deadline = self._flush_deadline(timeout)
         if self.config.offline_mode and not self._has_custom_trace_sender:
             self._log_offline_mode_once()
             return self._offline_flush_result()
@@ -720,7 +785,7 @@ class ObservabilityClient:
         for trace_id in trace_ids:
             self._queue_trace_snapshot(trace_id)
 
-        result = self._transport.flush()
+        result = self._transport.flush(timeout=self._remaining_flush_time(deadline))
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -739,6 +804,7 @@ class ObservabilityClient:
         return stats
 
     def close(self, timeout: float | None = None) -> FlushResult:
+        deadline = self._flush_deadline(timeout)
         with self._lock:
             if self._closed:
                 return FlushResult(
@@ -773,11 +839,19 @@ class ObservabilityClient:
             ]
             self._closed = True
             while self._inflight_snapshot_submissions:
-                self._snapshot_submission_condition.wait()
+                remaining = self._remaining_flush_time(deadline)
+                if remaining <= 0:
+                    logger.warning(
+                        "Observability close deadline expired while waiting for "
+                        "%d snapshot submissions",
+                        self._inflight_snapshot_submissions,
+                    )
+                    break
+                self._snapshot_submission_condition.wait(timeout=remaining)
 
         for trace_id, payload in trace_payloads:
             self._submit_trace_snapshot(trace_id, payload)
-        result = self._transport.close()
+        result = self._transport.close(timeout=self._remaining_flush_time(deadline))
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -1361,3 +1435,11 @@ class ObservabilityClient:
             self.close(timeout=self.config.flush_timeout)
         except Exception as exc:
             logger.warning("Observability atexit flush failed: %s", exc)
+
+    def _flush_deadline(self, timeout: float | None) -> float:
+        effective_timeout = self.config.flush_timeout if timeout is None else timeout
+        return time.monotonic() + max(0.0, effective_timeout)
+
+    @staticmethod
+    def _remaining_flush_time(deadline: float) -> float:
+        return max(0.0, deadline - time.monotonic())

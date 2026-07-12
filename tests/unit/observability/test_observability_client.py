@@ -531,7 +531,8 @@ def test_observability_client_logs_trace_snapshot_submit_failure(caplog):
         def get_stats(self):
             return {"errors": ["queue full for api-secret_123456789012345"]}
 
-        def close(self):
+        def close(self, timeout=None):
+            del timeout
             return BatchFlushResult(
                 success=True,
                 items_sent=0,
@@ -722,6 +723,128 @@ def test_observability_client_close_flushes_active_trace_payloads_without_explic
     assert result.success is True
     assert result.items_sent == 1
     assert sent_batches[-1][-1]["id"] == "trace_close_flush"
+
+
+@pytest.mark.timeout(3)
+def test_observability_client_flush_deadline_returns_with_hung_sender():
+    send_started = threading.Event()
+    release_send = threading.Event()
+    send_finished = threading.Event()
+
+    def sender(traces):
+        del traces
+        send_started.set()
+        assert release_send.wait(timeout=2.0)
+        send_finished.set()
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+    )
+    client.start_trace("deadline", trace_id="trace_flush_deadline")
+
+    started = time.monotonic()
+    result = client.flush(timeout=0.5)
+    elapsed = time.monotonic() - started
+
+    assert send_started.is_set()
+    assert 0.4 <= elapsed < 1.2
+    assert result.success is False
+    assert result.items_sent == 0
+    assert result.items_pending == 1
+    assert any(
+        "flush deadline exceeded with 1 items remaining" in w for w in result.warnings
+    )
+
+    release_send.set()
+    assert send_finished.wait(timeout=2.0)
+
+
+@pytest.mark.timeout(3)
+def test_observability_client_close_deadline_returns_with_hung_sender():
+    send_started = threading.Event()
+    release_send = threading.Event()
+    send_finished = threading.Event()
+
+    def sender(traces):
+        del traces
+        send_started.set()
+        assert release_send.wait(timeout=2.0)
+        send_finished.set()
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+    )
+    client.start_trace("deadline", trace_id="trace_close_deadline")
+
+    started = time.monotonic()
+    result = client.close(timeout=0.5)
+    elapsed = time.monotonic() - started
+
+    assert send_started.is_set()
+    assert 0.4 <= elapsed < 1.2
+    assert result.success is False
+    assert result.items_sent == 0
+    assert result.items_pending == 1
+    assert any(
+        "flush deadline exceeded with 1 items remaining" in w for w in result.warnings
+    )
+
+    release_send.set()
+    assert send_finished.wait(timeout=2.0)
+
+
+@pytest.mark.timeout(3)
+def test_observability_client_atexit_uses_configured_flush_deadline():
+    send_started = threading.Event()
+    release_send = threading.Event()
+    send_finished = threading.Event()
+
+    def sender(traces):
+        del traces
+        send_started.set()
+        assert release_send.wait(timeout=2.0)
+        send_finished.set()
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            flush_timeout=0.5,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+    )
+    client.start_trace("deadline", trace_id="trace_atexit_deadline")
+
+    started = time.monotonic()
+    client._atexit_close()
+    elapsed = time.monotonic() - started
+
+    assert send_started.is_set()
+    assert 0.4 <= elapsed < 1.2
+    assert client.get_stats()["inflight_items"] == 1
+
+    release_send.set()
+    assert send_finished.wait(timeout=2.0)
 
 
 def test_observability_client_close_waits_for_inflight_snapshot_submission(monkeypatch):
