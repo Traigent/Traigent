@@ -161,6 +161,18 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
     }
 )
 _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
+# Issue #1832: a declared, weighted, matched objective whose value is uniformly
+# constant across the ranking-eligible trials cannot influence ``best_config`` —
+# its weight is a silent no-op (e.g. cost/latency = 0 on a no-LLM-scored or
+# free/unpriceable model run). Sibling of _OBJECTIVE_UNMATCHED_WARNING_CODE
+# (#1691): same register/append/consume mechanism, warning-only (never fatal).
+_OBJECTIVE_INERT_CONSTANT_WARNING_CODE = "OBJECTIVE_INERT_CONSTANT"
+# Zero-span tolerance mirroring normalize_value()'s normative epsilon in
+# objectives.py (``abs(max - min) < 1e-9``): an objective whose observed span is
+# below this normalizes to a constant 0.5 on every trial, so its weight becomes a
+# fixed additive term that cannot change the argmax. Using selection's OWN span
+# test makes the #1832 inertness warning provably equivalent to actual inertness.
+_OBJECTIVE_ZERO_SPAN_EPSILON = 1e-9
 
 
 def _successful_trial_metric_names(trials: Sequence[TrialResult]) -> list[str]:
@@ -207,6 +219,77 @@ def _format_unmatched_objective_warning(
         "successful trial; best_config is None. "
         f"Available metrics: {available}.{suggestion_text}",
         suggestion,
+    )
+
+
+def _detect_inert_constant_objectives(
+    eligible_trials: Sequence[TrialResult],
+    schema: ObjectiveSchema,
+) -> list[str]:
+    """Return declared weighted objectives that are inert because constant (#1832).
+
+    An objective is inert when it is (a) declared with a nonzero normalized
+    weight, (b) matched/measured — present and finite on *every* ranking-eligible
+    trial — and (c) uniformly constant across that set (every trial's value equal
+    within float tolerance). Such an objective's weight cannot change which config
+    ranks best, so weighted selection silently collapses onto the remaining
+    objective(s).
+
+    ``eligible_trials`` MUST be the exact ranking-eligible set that selection
+    ranked over (``SelectionResult.ranking_eligible_trial_ids``), not a re-derived
+    set. Runs with fewer than two eligible trials are degenerate — every objective
+    is trivially "constant" when there was no choice to make — and never warn.
+
+    Constancy uses selection's OWN zero-span criterion — ``abs(max - min) < 1e-9``
+    (``_OBJECTIVE_ZERO_SPAN_EPSILON``), the same absolute span test
+    ``normalize_value`` (objectives.py) uses to collapse an objective to a constant
+    0.5. This makes the warning provably equivalent to the objective being inert in
+    selection: exact ``0.0``-valued objectives (the motivating case) are flagged,
+    and a relatively-close-but-large-span objective is never falsely flagged.
+    """
+    if len(eligible_trials) < 2:
+        return []
+    inert: list[str] = []
+    for obj in schema.objectives:
+        if schema.get_normalized_weight(obj.name) <= 0:
+            continue
+        values: list[float] = []
+        fully_matched = True
+        for trial in eligible_trials:
+            value = coerce_finite_objective_score(trial.get_metric(obj.name))
+            if value is None:
+                fully_matched = False
+                break
+            values.append(value)
+        if not fully_matched or len(values) < 2:
+            continue
+        if abs(max(values) - min(values)) < _OBJECTIVE_ZERO_SPAN_EPSILON:
+            inert.append(obj.name)
+    return inert
+
+
+def _format_inert_objective_warning(
+    inert_objectives: Sequence[str],
+    all_objective_names: Sequence[str],
+    constant_value: float,
+) -> str:
+    inert_list = ", ".join(f"'{name}'" for name in inert_objectives)
+    remaining = [name for name in all_objective_names if name not in inert_objectives]
+    remaining_text = (
+        ", ".join(f"'{name}'" for name in remaining)
+        if remaining
+        else "no other objectives"
+    )
+    plural = "objectives" if len(inert_objectives) > 1 else "objective"
+    were = "were" if len(inert_objectives) > 1 else "was"
+    return (
+        f"Weighted {plural} {inert_list} {were} uniformly constant "
+        f"(value {constant_value:g}) across every ranking-eligible trial, so the "
+        "declared weight had no effect on best_config: the run effectively "
+        f"optimized only {remaining_text}. This happens when an objective binds "
+        "to a genuinely uniform measurement — e.g. cost/latency = 0 on a "
+        "no-LLM-scored, free, or unpriceable-model run. Real priced runs whose "
+        "cost/latency varies across configs are unaffected."
     )
 
 
@@ -3983,6 +4066,47 @@ class OptimizationOrchestrator:
             if result_status == OptimizationStatus.COMPLETED:
                 result_status = OptimizationStatus.FAILED
                 self._status = result_status
+
+        # Issue #1832 (sibling of #1691): warn when a declared, weighted,
+        # matched objective is uniformly constant across the ranking-eligible
+        # trials so its weight is a silent no-op. Warning-only — selection math,
+        # status, and cost/latency binding are untouched; real priced runs with
+        # varying cost/latency never trigger this.
+        weighted_selection_schema = resolve_weighted_selection_schema(
+            self.objective_schema
+        )
+        if (
+            weighted_selection_schema is not None
+            and selection.ranking_eligible_trial_ids
+        ):
+            eligible_ids = set(selection.ranking_eligible_trial_ids)
+            eligible_trials = [
+                trial for trial in self._trials if trial.trial_id in eligible_ids
+            ]
+            inert_objectives = _detect_inert_constant_objectives(
+                eligible_trials, weighted_selection_schema
+            )
+            if inert_objectives:
+                all_objective_names = [
+                    obj.name for obj in weighted_selection_schema.objectives
+                ]
+                constant_value = (
+                    coerce_finite_objective_score(
+                        eligible_trials[0].get_metric(inert_objectives[0])
+                    )
+                    or 0.0
+                )
+                inert_warning = _format_inert_objective_warning(
+                    inert_objectives, all_objective_names, constant_value
+                )
+                result_warnings.append(inert_warning)
+                result_warning_codes.append(_OBJECTIVE_INERT_CONSTANT_WARNING_CODE)
+                logger.warning(inert_warning)
+                if session_summary is None:
+                    session_summary = {}
+                else:
+                    session_summary = dict(session_summary)
+                session_summary["inert_constant_objectives"] = list(inert_objectives)
         preset_selection = (
             select_strategy_preset(self.strategy_preset, self._trials)
             if self.strategy_preset is not None

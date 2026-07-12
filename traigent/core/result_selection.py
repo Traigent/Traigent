@@ -44,6 +44,10 @@ class SelectionResult:
     session_summary: dict[str, Any] | None
     reason_code: str | None = None
     best_trial_id: str | None = None
+    # Trial ids of the exact ranking-eligible set the winner was chosen over
+    # (issue #1832). Lets the orchestrator run the inert-constant-objective
+    # check over precisely the trials selection ranked, not a re-derived set.
+    ranking_eligible_trial_ids: list[str] | None = None
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -1125,6 +1129,11 @@ def select_best_configuration(
 
     tie_breakers = tie_breakers or {}
 
+    # Trial ids of the exact ranking-eligible set (issue #1832). Attached to
+    # whichever selection path wins so the orchestrator can run its
+    # inert-constant-objective check over precisely these trials.
+    eligible_trial_ids = [trial.trial_id for trial in eligible_trials]
+
     weighted_schema = resolve_weighted_selection_schema(objective_schema)
     if weighted_schema is not None:
         weighted_result = _select_best_weighted(
@@ -1138,12 +1147,13 @@ def select_best_configuration(
             config_space_keys=set(config_space_keys),
         )
         if weighted_result is not None:
+            weighted_result.ranking_eligible_trial_ids = eligible_trial_ids
             return weighted_result
         # Defensive: no computable weighted score on any eligible trial —
         # fall back to legacy primary-objective ranking below.
 
     if not aggregate_configs:
-        return _select_best_single_trial(
+        single_result = _select_best_single_trial(
             eligible_trials,
             primary_objective,
             tie_breakers,
@@ -1152,9 +1162,11 @@ def select_best_configuration(
             objective_order,
             objective_orientations=objective_orientations,
         )
+        single_result.ranking_eligible_trial_ids = eligible_trial_ids
+        return single_result
 
     aggregated = _aggregate_trials(eligible_trials, set(config_space_keys))
-    return _select_best_aggregated(
+    aggregated_result = _select_best_aggregated(
         aggregated,
         primary_objective,
         tie_breakers,
@@ -1163,3 +1175,5 @@ def select_best_configuration(
         objective_order,
         objective_orientations=objective_orientations,
     )
+    aggregated_result.ranking_eligible_trial_ids = eligible_trial_ids
+    return aggregated_result
