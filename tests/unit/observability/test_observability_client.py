@@ -924,6 +924,41 @@ def test_observability_client_bounded_flush_covers_client_state_lock():
 
 
 @pytest.mark.timeout(3)
+def test_observability_client_bounded_close_covers_client_state_lock():
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            enable_atexit_flush=False,
+        )
+    )
+
+    def hold_lock() -> None:
+        with client._lock:
+            lock_held.set()
+            assert release_lock.wait(timeout=2.0)
+
+    lock_holder = threading.Thread(target=hold_lock)
+    lock_holder.start()
+    assert lock_held.wait(timeout=1.0)
+    try:
+        result = client.close(timeout=0.05)
+
+        assert result.success is False
+        assert result.items_pending == client._transport.get_stats()["pending_items"]
+        assert any("client state lock" in warning for warning in result.warnings)
+        assert client._closed is False
+        assert client._transport._closed is False
+    finally:
+        release_lock.set()
+        lock_holder.join(timeout=1.0)
+    assert not lock_holder.is_alive()
+    assert client.close().success is True
+
+
+@pytest.mark.timeout(3)
 def test_observability_client_repeated_close_reports_orphan_until_reconciled():
     send_started = threading.Event()
     release_send = threading.Event()
@@ -989,6 +1024,7 @@ def test_observability_client_atexit_uses_configured_flush_deadline(monkeypatch)
     assert timeouts == [0.5]
 
 
+@pytest.mark.timeout(3)
 def test_observability_client_close_waits_for_inflight_snapshot_submission(monkeypatch):
     sent_batches: list[list[dict]] = []
 
@@ -1010,10 +1046,15 @@ def test_observability_client_close_waits_for_inflight_snapshot_submission(monke
     submit_entered = threading.Event()
     release_submit = threading.Event()
     original_submit = client._submit_trace_snapshot
+    delayed_submission_thread: list[int] = []
 
     def delayed_submit(trace_id: str, payload: dict) -> None:
-        submit_entered.set()
-        assert release_submit.wait(timeout=2.0)
+        if not delayed_submission_thread:
+            delayed_submission_thread.append(threading.get_ident())
+            submit_entered.set()
+            assert release_submit.wait(timeout=2.0)
+        else:
+            assert threading.get_ident() != delayed_submission_thread[0]
         original_submit(trace_id, payload)
 
     monkeypatch.setattr(client, "_submit_trace_snapshot", delayed_submit)
@@ -1051,6 +1092,102 @@ def test_observability_client_close_waits_for_inflight_snapshot_submission(monke
         for error in close_result[0].errors
     )
     assert sent_batches[-1][-1]["id"] == "trace_close_race"
+
+
+@pytest.mark.timeout(3)
+def test_observability_client_concurrent_close_has_single_initial_closer(monkeypatch):
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        ),
+        sender=lambda traces: None,
+    )
+    trace_id = client.start_trace("concurrent-close", trace_id="trace_concurrent_close")
+    client.end_trace(trace_id)
+
+    initial_releases = threading.Barrier(2)
+    release_counts: dict[int, int] = {}
+    original_client_lock = client._lock
+
+    class CoordinatedInitialReleaseLock:
+        def acquire(self, *args, **kwargs):
+            return original_client_lock.acquire(*args, **kwargs)
+
+        def release(self) -> None:
+            original_client_lock.release()
+            if threading.current_thread().name not in {
+                "initial-closer",
+                "competing-closer",
+            }:
+                return
+            thread_id = threading.get_ident()
+            release_count = release_counts.get(thread_id, 0)
+            release_counts[thread_id] = release_count + 1
+            if release_count == 0:
+                initial_releases.wait(timeout=1.0)
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.release()
+
+    client._lock = CoordinatedInitialReleaseLock()  # type: ignore[assignment]
+
+    first_submit_entered = threading.Event()
+    release_first_submit = threading.Event()
+    competing_reached_transport_close = threading.Event()
+    submission_claim_lock = threading.Lock()
+    submission_claimed = False
+    original_submit = client._submit_trace_snapshot
+    original_transport_close = client._transport.close
+
+    def delayed_first_submit(trace_id: str, payload: dict) -> None:
+        nonlocal submission_claimed
+        with submission_claim_lock:
+            is_first_submission = not submission_claimed
+            submission_claimed = True
+        if is_first_submission:
+            first_submit_entered.set()
+            assert release_first_submit.wait(timeout=2.0)
+        original_submit(trace_id, payload)
+
+    def observed_transport_close(*args, **kwargs):
+        if not release_first_submit.is_set():
+            competing_reached_transport_close.set()
+        return original_transport_close(*args, **kwargs)
+
+    monkeypatch.setattr(client, "_submit_trace_snapshot", delayed_first_submit)
+    monkeypatch.setattr(client._transport, "close", observed_transport_close)
+
+    first_results: list[FlushResult] = []
+    second_results: list[FlushResult] = []
+    first = threading.Thread(
+        target=lambda: first_results.append(client.close()), name="initial-closer"
+    )
+    second = threading.Thread(
+        target=lambda: second_results.append(client.close()), name="competing-closer"
+    )
+    first.start()
+    second.start()
+    assert first_submit_entered.wait(timeout=1.0)
+
+    assert not competing_reached_transport_close.wait(timeout=0.1)
+    release_first_submit.set()
+    first.join(timeout=1.0)
+    second.join(timeout=1.0)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert first_results[0].items_dropped == 0
+    assert second_results[0].items_dropped == 0
+    assert client.get_stats()["dropped_by_reason"].get("transport_closed", 0) == 0
 
 
 def test_sync_batch_transport_records_closed_transport_drops():
@@ -1265,6 +1402,108 @@ def test_sync_batch_transport_delivers_health_events_in_snapshot_order():
         for earlier, later in zip(
             delivered_dropped_items, delivered_dropped_items[1:], strict=False
         )
+    )
+    transport.close()
+
+
+@pytest.mark.timeout(3)
+def test_sync_batch_transport_health_queue_drops_oldest_on_overflow():
+    first_callback_started = threading.Event()
+    release_first_callback = threading.Event()
+    delivered: list[int] = []
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        assert event_type == "queue_full"
+        if payload["dropped_items"] == 1:
+            first_callback_started.set()
+            assert release_first_callback.wait(timeout=2.0)
+        delivered.append(payload["dropped_items"])
+
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=1,
+        max_batch_bytes=10_000,
+        health_callback=health_callback,
+    )
+    assert transport.submit("accepted", {"id": "accepted"}) is True
+    assert transport.submit("drop_1", {"id": "drop_1"}) is False
+    assert first_callback_started.wait(timeout=1.0)
+    for index in range(2, 259):
+        assert transport.submit(f"drop_{index}", {"id": f"drop_{index}"}) is False
+
+    assert transport.get_stats()["dropped_health_events"] == 1
+    release_first_callback.set()
+    transport.close()
+
+    assert delivered == [1, *range(3, 259)]
+
+
+@pytest.mark.timeout(3)
+def test_sync_batch_transport_close_drains_health_events_before_dispatcher_stops():
+    first_callback_started = threading.Event()
+    release_first_callback = threading.Event()
+    delivered: list[int] = []
+
+    def health_callback(event_type: str, payload: dict) -> None:
+        assert event_type == "queue_full"
+        if payload["dropped_items"] == 1:
+            first_callback_started.set()
+            assert release_first_callback.wait(timeout=2.0)
+        delivered.append(payload["dropped_items"])
+
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=1,
+        max_batch_bytes=10_000,
+        health_callback=health_callback,
+    )
+    assert transport.submit("accepted", {"id": "accepted"}) is True
+    assert transport.submit("drop_1", {"id": "drop_1"}) is False
+    assert first_callback_started.wait(timeout=1.0)
+    assert transport.submit("drop_2", {"id": "drop_2"}) is False
+
+    close_thread = threading.Thread(target=transport.close)
+    close_thread.start()
+    close_thread.join(timeout=0.1)
+    assert close_thread.is_alive()
+
+    release_first_callback.set()
+    close_thread.join(timeout=1.0)
+    assert not close_thread.is_alive()
+    assert delivered == [1, 2]
+    assert transport._health_dispatcher_thread is not None
+    assert not transport._health_dispatcher_thread.is_alive()
+
+    assert transport.submit("after_close", {"id": "after_close"}) is False
+    assert delivered == [1, 2]
+    assert transport.get_stats()["dropped_health_events"] == 1
+
+
+def test_observability_client_close_does_not_leak_health_dispatchers():
+    thread_name = "traigent-observability-health-dispatcher"
+    baseline = sum(thread.name == thread_name for thread in threading.enumerate())
+    clients = [
+        ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                enable_atexit_flush=False,
+                health_callback=lambda event_type, payload: None,
+            ),
+            sender=lambda traces: None,
+        )
+        for _ in range(5)
+    ]
+
+    for client in clients:
+        client.close()
+
+    assert (
+        sum(thread.name == thread_name for thread in threading.enumerate()) == baseline
     )
 
 

@@ -57,6 +57,7 @@ logger = get_logger(__name__)
 _TRACE_BATCH_PREFIX_BYTES = len(b'{"traces": [')
 _TRACE_BATCH_SUFFIX_BYTES = len(b"]}")
 _TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
+_HEALTH_DISPATCH_STOP = object()
 
 
 class _NoRedirectHandler(request.HTTPRedirectHandler):
@@ -144,7 +145,9 @@ class _SyncBatchTransport:
     updated and after transport locks have been released. A dedicated daemon
     dispatcher delivers snapshots in state-update order. Callback exceptions are
     swallowed so observability delivery is never disrupted, and user callbacks
-    never extend a caller's flush or close deadline.
+    never extend a caller's flush or close deadline. Close drains snapshots
+    accepted before dispatcher shutdown; later snapshots increment
+    ``dropped_health_events``.
     """
 
     def __init__(
@@ -169,10 +172,13 @@ class _SyncBatchTransport:
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
-        self._health_event_queue: deque[tuple[int, str, dict[str, Any]]] = deque()
+        self._health_event_queue: deque[
+            tuple[int, str, dict[str, Any]] | threading.Event | object
+        ] = deque()
         self._health_event_condition = threading.Condition(self._lock)
         self._next_health_event_sequence = 0
         self._dropped_health_events = 0
+        self._health_dispatch_closed = False
         self._timer: threading.Timer | None = None
         self._flush_thread: threading.Thread | None = None
         self._closed = False
@@ -302,17 +308,23 @@ class _SyncBatchTransport:
         *,
         warn_on_deadline_expiry: bool | None = None,
     ) -> BatchFlushResult:
-        """Prevent new submissions and flush within the supplied deadline."""
+        """Prevent new submissions, flush, and stop health-event dispatch."""
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         with self._lock:
             self._closed = True
-        return self.flush(
-            timeout=timeout, warn_on_deadline_expiry=warn_on_deadline_expiry
+        result = self.flush(
+            timeout=self._remaining_time(deadline),
+            warn_on_deadline_expiry=warn_on_deadline_expiry,
         )
+        self._stop_health_dispatcher(deadline)
+        return result
 
     def get_stats(self) -> dict[str, Any]:
         """Return a thread-safe transport health snapshot.
 
-        ``dropped_by_reason`` identifies local data loss, ``queue_depth`` is the
+        ``dropped_by_reason`` identifies local data loss,
+        ``dropped_health_events`` counts callback snapshots discarded because
+        the dispatch queue overflowed or had stopped, ``queue_depth`` is the
         number of buffered payloads, and ``inflight_items`` covers payloads that
         have left the queue but whose sender has not completed.
         """
@@ -675,6 +687,9 @@ class _SyncBatchTransport:
         event = (event_type, payload)
         if self._health_callback is None:
             return event
+        if self._health_dispatch_closed:
+            self._dropped_health_events += 1
+            return event
         self._next_health_event_sequence += 1
         if len(self._health_event_queue) >= 256:
             self._health_event_queue.popleft()
@@ -697,12 +712,39 @@ class _SyncBatchTransport:
             with self._health_event_condition:
                 while not self._health_event_queue:
                     self._health_event_condition.wait()
-                _, event_type, payload = self._health_event_queue.popleft()
+                queued = self._health_event_queue.popleft()
+            if queued is _HEALTH_DISPATCH_STOP:
+                return
+            if isinstance(queued, threading.Event):
+                queued.set()
+                continue
+            _, event_type, payload = queued
             try:
                 assert self._health_callback is not None
                 self._health_callback(event_type, payload)
             except Exception:
                 logger.debug("Observability health callback failed", exc_info=True)
+
+    def _stop_health_dispatcher(self, deadline: float | None) -> None:
+        """Drain accepted events, then stop the per-transport dispatcher."""
+        dispatcher = self._health_dispatcher_thread
+        if dispatcher is None:
+            return
+        with self._health_event_condition:
+            if not self._health_dispatch_closed:
+                self._health_dispatch_closed = True
+                final_drain = threading.Event()
+                self._health_event_queue.append(final_drain)
+                self._health_event_queue.append(_HEALTH_DISPATCH_STOP)
+                self._health_event_condition.notify_all()
+        if dispatcher is not threading.current_thread():
+            dispatcher.join(timeout=self._remaining_time(deadline))
+
+    @staticmethod
+    def _remaining_time(deadline: float | None) -> float | None:
+        if deadline is None:
+            return None
+        return max(0.0, deadline - time.monotonic())
 
 
 class ObservabilityClient:
@@ -731,6 +773,9 @@ class ObservabilityClient:
         self._snapshot_submission_complete = threading.Event()
         self._snapshot_submission_complete.set()
         self._inflight_snapshot_submissions = 0
+        self._closing = False
+        self._close_complete = threading.Event()
+        self._close_complete.set()
         self._closed = False
         self._offline_notice_logged = False
         self._missing_generation_usage_notice_logged = False
@@ -1031,64 +1076,91 @@ class ObservabilityClient:
         warning-free poll. The atexit handler explicitly uses
         :attr:`ObservabilityConfig.flush_timeout` so interpreter shutdown stays
         bounded even though a normal no-argument close remains synchronous.
-        Health callbacks are asynchronous, so this can return before callbacks
-        for delivery events from this close have run.
+        Queued health callbacks accepted before an unbounded close are drained
+        before it returns. A bounded close stops waiting at its deadline. Health
+        events produced after dispatcher shutdown are counted in
+        ``dropped_health_events``.
         """
         deadline = self._flush_deadline(timeout)
         if not self._acquire_client_lock_until(deadline):
-            return self._flush_transport_until(deadline)
+            return self._close_lock_timeout_result()
         try:
-            already_closed = self._closed
+            if self._closing:
+                close_in_progress = True
+                already_closed = False
+                trace_payloads: list[tuple[str, dict[str, Any]]] = []
+                inflight_snapshot_submissions = 0
+                offline_close = False
+            elif self._closed:
+                close_in_progress = False
+                already_closed = True
+                trace_payloads = []
+                inflight_snapshot_submissions = 0
+                offline_close = False
+            else:
+                close_in_progress = False
+                already_closed = False
+                self._closing = True
+                self._close_complete.clear()
+                offline_close = (
+                    self.config.offline_mode and not self._has_custom_trace_sender
+                )
+                if offline_close:
+                    trace_payloads = []
+                    inflight_snapshot_submissions = 0
+                else:
+                    trace_payloads = [
+                        (
+                            trace_id,
+                            cast(
+                                dict[str, Any],
+                                redact_sensitive_data(
+                                    state.to_payload(), redact_credential_keys=True
+                                ),
+                            ),
+                        )
+                        for trace_id, state in self._trace_states.items()
+                    ]
+                    inflight_snapshot_submissions = self._inflight_snapshot_submissions
+                self._closed = True
         finally:
             self._lock.release()
+        if close_in_progress:
+            return self._wait_for_concurrent_close(deadline)
         if already_closed:
             return self._flush_transport_until(deadline)
 
-        if self.config.offline_mode and not self._has_custom_trace_sender:
-            self._log_offline_mode_once()
-            if not self._acquire_client_lock_until(deadline):
-                return self._flush_transport_until(deadline)
-            try:
-                self._closed = True
-            finally:
-                self._lock.release()
-            return self._offline_flush_result()
-
-        if not self._acquire_client_lock_until(deadline):
-            return self._flush_transport_until(deadline)
         try:
-            trace_payloads = [
-                (
-                    trace_id,
-                    cast(
-                        dict[str, Any],
-                        redact_sensitive_data(
-                            state.to_payload(), redact_credential_keys=True
-                        ),
-                    ),
+            if offline_close:
+                self._log_offline_mode_once()
+                self._transport.close(
+                    timeout=self._remaining_flush_time(deadline),
+                    warn_on_deadline_expiry=timeout != 0,
                 )
-                for trace_id, state in self._trace_states.items()
-            ]
-            self._closed = True
-            inflight_snapshot_submissions = self._inflight_snapshot_submissions
+                return self._offline_flush_result()
+
+            if inflight_snapshot_submissions:
+                remaining = self._remaining_flush_time(deadline)
+                completed = (
+                    self._snapshot_submission_complete.wait()
+                    if remaining is None
+                    else self._snapshot_submission_complete.wait(timeout=remaining)
+                )
+                if not completed:
+                    logger.warning(
+                        "Observability close deadline expired while waiting for "
+                        "%d snapshot submissions",
+                        inflight_snapshot_submissions,
+                    )
+
+            for trace_id, payload in trace_payloads:
+                self._submit_trace_snapshot(trace_id, payload)
+            result = self._transport.close(timeout=self._remaining_flush_time(deadline))
+            return self._flush_result_from_transport(result)
         finally:
-            self._lock.release()
-
-        if inflight_snapshot_submissions:
-            remaining = self._remaining_flush_time(deadline)
-            if remaining is not None and not self._snapshot_submission_complete.wait(
-                timeout=remaining
-            ):
-                logger.warning(
-                    "Observability close deadline expired while waiting for "
-                    "%d snapshot submissions",
-                    inflight_snapshot_submissions,
-                )
-
-        for trace_id, payload in trace_payloads:
-            self._submit_trace_snapshot(trace_id, payload)
-        result = self._transport.close(timeout=self._remaining_flush_time(deadline))
-        return self._flush_result_from_transport(result)
+            with self._lock:
+                self._closing = False
+                self._close_complete.set()
 
     @staticmethod
     def _flush_result_from_transport(result: BatchFlushResult) -> FlushResult:
@@ -1107,6 +1179,48 @@ class ObservabilityClient:
         """Return the current transport truth without waiting past ``deadline``."""
         result = self._transport.flush(timeout=self._remaining_flush_time(deadline))
         return self._flush_result_from_transport(result)
+
+    def _close_lock_timeout_result(self) -> FlushResult:
+        """Report that close never acquired client state and changed nothing."""
+        stats = self._transport.get_stats()
+        warning = (
+            "Observability close deadline exceeded while acquiring the client "
+            "state lock; client and transport remain open"
+        )
+        return FlushResult(
+            success=False,
+            items_sent=int(stats["sent_items"]),
+            items_pending=int(stats["pending_items"]),
+            items_dropped=int(stats["dropped_items"]),
+            successful_batches=int(stats["successful_batches"]),
+            failed_batches=int(stats["failed_batches"]),
+            errors=list(stats["errors"]),
+            warnings=[*stats["warnings"], warning],
+        )
+
+    def _wait_for_concurrent_close(self, deadline: float | None) -> FlushResult:
+        remaining = self._remaining_flush_time(deadline)
+        completed = (
+            self._close_complete.wait()
+            if remaining is None
+            else self._close_complete.wait(timeout=remaining)
+        )
+        result = self._flush_transport_until(deadline)
+        if completed:
+            return result
+        warning = (
+            "Observability close deadline exceeded while another close was running"
+        )
+        return FlushResult(
+            success=False,
+            items_sent=result.items_sent,
+            items_pending=result.items_pending,
+            items_dropped=result.items_dropped,
+            successful_batches=result.successful_batches,
+            failed_batches=result.failed_batches,
+            errors=result.errors,
+            warnings=[*result.warnings, warning],
+        )
 
     def list_comments(self, trace_id: str) -> TraceCommentsResponse:
         payload = self._request_json("GET", f"/traces/{trace_id}/comments")
