@@ -6,16 +6,15 @@ name: SonarQube Local Gate
 # has the sonarqube-scaler Role), waits for status=UP, runs coverage on natively
 # installed postgres/redis (no dind), scans, then scales SonarQube back to 0.
 #
-# Policy: REQUIRED on `main`, OPTIONAL (informational) on `develop`.
+# Policy: trusted `main` commits only. PR analysis is enforced by SonarCloud;
+# this privileged self-hosted workflow must never execute pull-request code.
 
-# Develop-PR trigger removed (CI-rationalization plan): this gate scales a
-# single shared in-cluster SonarQube StatefulSet under a GLOBAL lock and is the
-# slowest check (up to ~45m). It is REQUIRED on `main` only; the local pre-push
-# gate already runs it for main-bound work. Keep it on main + release/hotfix PRs
-# + main push + nightly; it no longer runs on develop PRs.
+# PR triggers are intentionally prohibited: this privileged workflow scales an
+# in-cluster service, receives SONAR_TOKEN, and executes checked-out code on the
+# self-hosted `large` runner. PR analysis is enforced by the unprivileged
+# SonarCloud workflow instead. Local Sonar runs only for trusted main commits,
+# nightly, or an explicit dispatch of a trusted ref.
 on:
-  pull_request:
-    branches: [main, "release/**", "hotfix/**"]
   push:
     branches: [main]
   schedule:
@@ -51,10 +50,12 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: Checkout repository
+      - name: Checkout trusted event ref
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Install kubectl + sonar-scanner (arm64)
         run: |
@@ -111,18 +112,13 @@ jobs:
 
       - name: Analyze and enforce quality gate
         run: |
-          # release/hotfix sync PRs: analyze but do not block on new-code metrics (issue #217)
-          WAIT=true
-          case "${{ github.head_ref }}" in
-            develop|release/*|hotfix/*) WAIT=false ;;
-          esac
           sonar-scanner \
             -Dsonar.host.url="${SONAR_HOST_URL}" \
             -Dsonar.token="${SONAR_TOKEN}" \
             -Dsonar.organization= \
             -Dsonar.projectKey=Traigent_Traigent \
             -Dsonar.projectName=Traigent \
-            -Dsonar.qualitygate.wait="$WAIT" \
+            -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=300
 
       - name: Scale SonarQube back to zero
