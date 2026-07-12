@@ -516,6 +516,9 @@ def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
     result = client.close()
 
     assert stats["dropped_items"] >= 1
+    assert stats["dropped_by_reason"] == {"queue_full": 2}
+    assert stats["queue_depth"] == 1
+    assert stats["retry_attempts"] == 0
     assert result.items_dropped >= 1
 
 
@@ -696,6 +699,7 @@ def test_sync_batch_transport_retries_status_client_errors(monkeypatch):
     assert call_count == 3
     assert len(sent_batches) == 3
     assert len(sleep_calls) == 2
+    assert transport.get_stats()["retry_attempts"] == 2
 
 
 def test_observability_client_close_flushes_active_trace_payloads_without_explicit_flush():
@@ -1045,8 +1049,49 @@ def test_sync_batch_transport_emits_health_event_for_queue_full():
         (
             "queue_full",
             {
+                "drop_reason": "queue_full",
+                "dropped_items": 1,
+                "queue_depth": 1,
                 "message": "transport queue full; dropped payload for item 'trace_two'",
                 "item_id": "trace_two",
+            },
+        )
+    ]
+
+
+def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
+    events: list[tuple[str, dict]] = []
+
+    def sender(traces):
+        del traces
+        raise AuthenticationError("invalid credentials")
+
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+        health_callback=lambda event_type, payload: events.append(
+            (event_type, payload)
+        ),
+    )
+    assert transport.submit("trace_one", {"id": "trace_one"}) is True
+
+    result = transport.flush()
+    stats = transport.get_stats()
+
+    assert result.items_dropped == 1
+    assert stats["dropped_by_reason"] == {"batch_delivery_failed": 1}
+    assert events == [
+        (
+            "batch_delivery_failed",
+            {
+                "drop_reason": "batch_delivery_failed",
+                "dropped_items": 1,
+                "queue_depth": 0,
+                "message": "invalid credentials",
+                "item_count": 1,
             },
         )
     ]

@@ -156,7 +156,9 @@ class _SyncBatchTransport:
         self.max_buffer_age = max_buffer_age
         self.max_queue_size = max_queue_size
         self.max_batch_bytes = max_batch_bytes
-        self._retry_handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
+        self._retry_handler = RetryHandler(
+            replace(CLOUD_API_RETRY_CONFIG, callback_on_retry=self._record_retry)
+        )
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
@@ -174,7 +176,9 @@ class _SyncBatchTransport:
             "failed_batches": 0,
             "pending_items": 0,
             "background_flushes": 0,
+            "retry_attempts": 0,
         }
+        self._dropped_by_reason: dict[str, int] = {}
 
     def submit(self, item_id: str, payload: dict[str, Any]) -> bool:
         try:
@@ -266,10 +270,18 @@ class _SyncBatchTransport:
         return self.flush(timeout=timeout)
 
     def get_stats(self) -> dict[str, Any]:
+        """Return a thread-safe transport health snapshot.
+
+        ``dropped_by_reason`` identifies local data loss, ``queue_depth`` is the
+        number of buffered payloads, and ``inflight_items`` covers payloads that
+        have left the queue but whose sender has not completed.
+        """
         with self._lock:
             snapshot: dict[str, Any] = dict(self._stats)
+            snapshot["queue_depth"] = len(self._buffer)
             snapshot["inflight_items"] = self._inflight_items
             snapshot["send_in_progress"] = self._send_lock.locked()
+            snapshot["dropped_by_reason"] = dict(self._dropped_by_reason)
             snapshot["errors"] = list(self._errors)
             snapshot["warnings"] = list(self._warnings)
         return snapshot
@@ -446,9 +458,17 @@ class _SyncBatchTransport:
         with self._lock:
             self._stats["failed_batches"] += 1
             self._stats["dropped_items"] += len(payloads)
+            self._dropped_by_reason["batch_delivery_failed"] = (
+                self._dropped_by_reason.get("batch_delivery_failed", 0) + len(payloads)
+            )
+            dropped_items = self._stats["dropped_items"]
+            queue_depth = len(self._buffer)
         self._append_error(str(result.error or "batch delivery failed"))
         self._emit_health_event(
             "batch_delivery_failed",
+            drop_reason="batch_delivery_failed",
+            dropped_items=dropped_items,
+            queue_depth=queue_depth,
             message=str(result.error or "batch delivery failed"),
             item_count=len(payloads),
         )
@@ -494,10 +514,25 @@ class _SyncBatchTransport:
         self, event_type: str, message: str, **details: Any
     ) -> None:
         self._stats["dropped_items"] += 1
+        self._dropped_by_reason[event_type] = (
+            self._dropped_by_reason.get(event_type, 0) + 1
+        )
         self._errors.append(message)
         if len(self._errors) > 20:
             self._errors = self._errors[-20:]
-        self._emit_health_event(event_type, message=message, **details)
+        self._emit_health_event(
+            event_type,
+            drop_reason=event_type,
+            dropped_items=self._stats["dropped_items"],
+            queue_depth=len(self._buffer),
+            message=message,
+            **details,
+        )
+
+    def _record_retry(self, error: Exception, attempt: int) -> None:
+        del error, attempt
+        with self._lock:
+            self._stats["retry_attempts"] += 1
 
     def _emit_health_event(self, event_type: str, **payload: Any) -> None:
         if self._health_callback is None:
@@ -798,6 +833,13 @@ class ObservabilityClient:
         )
 
     def get_stats(self) -> dict[str, Any]:
+        """Return a snapshot of transport delivery and local-drop health.
+
+        The snapshot includes ``dropped_by_reason``, ``queue_depth``,
+        ``inflight_items``, and ``retry_attempts``. Configure
+        :attr:`ObservabilityConfig.health_callback` to receive a structured
+        callback for every local drop as it occurs.
+        """
         stats = cast(dict[str, Any], self._transport.get_stats())
         with self._lock:
             stats["active_trace_count"] = len(self._trace_states)

@@ -378,6 +378,39 @@ For HIPAA compliance or handling sensitive data:
 
 4. **Review Evaluation Dataset**: Ensure your evaluation datasets don't contain PII
 
+## Observability transport health
+
+`ObservabilityClient.get_stats()` returns a process-local snapshot of buffered
+trace delivery. Use it to alert on local loss before a trace reaches the
+backend. The snapshot includes `dropped_items`, `dropped_by_reason`,
+`queue_depth`, `inflight_items`, and `retry_attempts`.
+
+```python
+from traigent.observability import ObservabilityClient, ObservabilityConfig
+
+
+def report_transport_health(event_type: str, payload: dict) -> None:
+    # Every local drop invokes this callback. Payloads include drop_reason,
+    # cumulative dropped_items, queue_depth, and event-specific details.
+    metrics_sink.emit(event_type, payload)
+
+
+client = ObservabilityClient(
+    ObservabilityConfig(health_callback=report_transport_health)
+)
+stats = client.get_stats()
+if stats["dropped_items"]:
+    metrics_sink.emit("observability_transport_snapshot", stats)
+```
+
+`queue_depth` counts payloads still buffered; `inflight_items` counts payloads
+already handed to a sender but not yet completed. `dropped_by_reason` is bounded
+to the transport's in-process lifetime and distinguishes reasons such as
+`queue_full`, `payload_too_large`, `payload_not_json_serializable`,
+`transport_closed`, and `batch_delivery_failed`. These are local SDK metrics;
+they are deliberately not added to the ingest wire payload until the strict
+Schema and Backend contract is updated together.
+
 ## FAQ
 
 ### Q: Is telemetry enabled by default?
