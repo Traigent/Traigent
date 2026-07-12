@@ -59,13 +59,17 @@ new `client_instance_id`, which explicitly starts a new lineage; counters may
 therefore reset only across client-instance lineages, never within one.
 
 Backends must deduplicate and aggregate by snapshot identity: apply
-last-writer-wins for each `(client_instance_id, snapshot_seq)` and treat a retry
-of the same pair as idempotent. Never sum cumulative snapshot counters across
-retries or successive snapshots. Cross-client reporting must derive values from
-the latest accepted snapshot per client lineage (or a separately defined
-time-series calculation), not from request-level addition. The object is not an
-acknowledgement of backend persistence and must not change ingest response
-semantics.
+immutable identity rules for each `(client_instance_id, snapshot_seq)`. A retry
+with the same identity and the same content hash is an idempotent no-op. A
+submission with the same identity and a different content hash is an integrity
+conflict: the backend must reject it and alert, and must never overwrite the
+stored snapshot. A sequence lower than the stored maximum for its
+`client_instance_id` is an out-of-order no-op. Never sum cumulative snapshot
+counters across retries or successive snapshots. Cross-client reporting must
+derive values from the latest accepted snapshot per client lineage (or a
+separately defined time-series calculation), not from request-level addition.
+The object is not an acknowledgement of backend persistence and must not change
+ingest response semantics.
 
 ## Coordinated rollout
 
@@ -75,10 +79,10 @@ semantics.
 2. Add the matching versioned object to TraigentSchema with
    `additionalProperties: false`, its size bounds, and acceptance/rejection
    contract tests, including duplicate and out-of-order snapshot handling.
-3. Add backend ingest tests proving retries do not overcount, last-writer-wins
-   semantics hold per snapshot identity, and trace persistence is unchanged.
-   Decide separately whether to persist latest snapshots, emit derived metrics,
-   or both, with retention/cardinality limits.
+3. Add backend ingest tests proving retries do not overcount, immutable snapshot
+   identity semantics hold (including conflict rejection and alerting), and trace
+   persistence is unchanged. Decide separately whether to persist latest
+   snapshots, emit derived metrics, or both, with retention/cardinality limits.
 4. Only after the coordinated T4 backend and schema release is deployed, make
    the SDK include this capped object in outgoing batches. Preserve SDK-side
    `get_stats()` and `health_callback` as the immediate local observability

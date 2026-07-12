@@ -207,7 +207,13 @@ class _SyncBatchTransport:
             )
             self._health_dispatcher_thread.start()
 
-    def submit(self, item_id: str, payload: dict[str, Any]) -> bool:
+    def submit(
+        self,
+        item_id: str,
+        payload: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> bool:
         try:
             buffered_payload = self._prepare_payload(payload)
         except TypeError as exc:
@@ -248,7 +254,9 @@ class _SyncBatchTransport:
             return False
 
         drop_event: tuple[str, dict[str, Any]] | None = None
-        with self._lock:
+        if not self._acquire_lock_until(deadline):
+            return False
+        try:
             if self._closed:
                 drop_event = self._record_drop_locked(
                     "transport_closed",
@@ -279,9 +287,11 @@ class _SyncBatchTransport:
                 # submit/close. When the thread does drain everything, the leftover
                 # timer fires once, finds an empty buffer, and returns harmlessly.
                 self._ensure_timer_locked()
+        finally:
+            self._lock.release()
 
         if drop_event is not None:
-            self._emit_health_events([drop_event])
+            self._emit_health_events([drop_event], deadline=deadline)
             return False
 
         return True
@@ -293,14 +303,22 @@ class _SyncBatchTransport:
         warn_on_deadline_expiry: bool | None = None,
     ) -> BatchFlushResult:
         """Flush queued payloads, waiting no longer than ``timeout`` seconds."""
-        self._cancel_timer()
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         if warn_on_deadline_expiry is None:
             warn_on_deadline_expiry = timeout != 0
-        self._send_available(
+        if not self._cancel_timer(deadline):
+            return self._deadline_expiry_result(
+                "Observability transport flush deadline exceeded while acquiring "
+                "the timer state lock"
+            )
+        completed = self._send_available(
             deadline=deadline, warn_on_deadline_expiry=warn_on_deadline_expiry
         )
-        return self._build_result()
+        return self._build_result(
+            deadline,
+            deadline_expired=not completed,
+            warn_on_deadline_expiry=warn_on_deadline_expiry,
+        )
 
     def close(
         self,
@@ -310,8 +328,15 @@ class _SyncBatchTransport:
     ) -> BatchFlushResult:
         """Prevent new submissions, flush, and stop health-event dispatch."""
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
-        with self._lock:
+        if not self._acquire_lock_until(deadline):
+            return self._deadline_expiry_result(
+                "Observability transport close deadline exceeded while acquiring "
+                "the transport state lock"
+            )
+        try:
             self._closed = True
+        finally:
+            self._lock.release()
         result = self.flush(
             timeout=self._remaining_time(deadline),
             warn_on_deadline_expiry=warn_on_deadline_expiry,
@@ -319,7 +344,7 @@ class _SyncBatchTransport:
         self._stop_health_dispatcher(deadline)
         return result
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self, timeout: float | None = None) -> dict[str, Any]:
         """Return a thread-safe transport health snapshot.
 
         ``dropped_by_reason`` identifies local data loss,
@@ -328,7 +353,10 @@ class _SyncBatchTransport:
         number of buffered payloads, and ``inflight_items`` covers payloads that
         have left the queue but whose sender has not completed.
         """
-        with self._lock:
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+        if not self._acquire_lock_until(deadline):
+            return self._stats_snapshot_without_lock()
+        try:
             snapshot: dict[str, Any] = dict(self._stats)
             snapshot["queue_depth"] = len(self._buffer)
             snapshot["inflight_items"] = self._inflight_items
@@ -344,7 +372,9 @@ class _SyncBatchTransport:
             snapshot["dropped_health_events"] = self._dropped_health_events
             snapshot["errors"] = list(self._errors)
             snapshot["warnings"] = list(self._warnings)
-        return snapshot
+            return snapshot
+        finally:
+            self._lock.release()
 
     def _ensure_timer_locked(self) -> None:
         if self._timer is not None and self._timer.is_alive():
@@ -370,9 +400,14 @@ class _SyncBatchTransport:
         if timer is not None and timer is not threading.current_thread():
             timer.cancel()
 
-    def _cancel_timer(self) -> None:
-        with self._lock:
+    def _cancel_timer(self, deadline: float | None = None) -> bool:
+        if not self._acquire_lock_until(deadline):
+            return False
+        try:
             self._cancel_timer_locked()
+            return True
+        finally:
+            self._lock.release()
 
     def _flush_from_timer(self) -> None:
         try:
@@ -391,7 +426,7 @@ class _SyncBatchTransport:
         *,
         deadline: float | None = None,
         warn_on_deadline_expiry: bool = True,
-    ) -> None:
+    ) -> bool:
         events: list[tuple[str, dict[str, Any]]] = []
         caller_released = threading.Event()
         if deadline is None:
@@ -402,24 +437,32 @@ class _SyncBatchTransport:
             )
         if not acquired:
             if warn_on_deadline_expiry:
-                events.append(self._record_deadline_expiry())
-            self._emit_health_events(events)
-            return
+                event = self._record_deadline_expiry(deadline)
+                if event is not None:
+                    events.append(event)
+            self._emit_health_events(events, deadline=deadline)
+            return False
 
         try:
             while True:
                 if not self._wait_for_active_send(deadline):
                     if warn_on_deadline_expiry:
-                        events.append(self._record_deadline_expiry())
-                    return
+                        event = self._record_deadline_expiry(deadline)
+                        if event is not None:
+                            events.append(event)
+                    return False
                 if deadline is not None and time.monotonic() >= deadline:
                     if warn_on_deadline_expiry:
-                        events.append(self._record_deadline_expiry())
-                    return
-                with self._lock:
+                        event = self._record_deadline_expiry(deadline)
+                        if event is not None:
+                            events.append(event)
+                    return False
+                if not self._acquire_lock_until(deadline):
+                    return False
+                try:
                     if not self._buffer:
                         self._stats["pending_items"] = self._inflight_items
-                        return
+                        return True
 
                     batch_items: list[tuple[str, dict[str, Any]]] = []
                     batch_body_bytes = 0
@@ -442,6 +485,8 @@ class _SyncBatchTransport:
                     self._stats["pending_items"] = (
                         len(self._buffer) + self._inflight_items
                     )
+                finally:
+                    self._lock.release()
 
                 if not batch_items:
                     continue
@@ -456,13 +501,15 @@ class _SyncBatchTransport:
                     )
                     if batch_events is None:
                         if warn_on_deadline_expiry:
-                            events.append(self._record_deadline_expiry())
-                        return
+                            event = self._record_deadline_expiry(deadline)
+                            if event is not None:
+                                events.append(event)
+                        return False
                     events.extend(batch_events)
         finally:
             self._send_lock.release()
             caller_released.set()
-            self._emit_health_events(events)
+            self._emit_health_events(events, deadline=deadline)
 
     def _send_batch_until(
         self,
@@ -473,8 +520,12 @@ class _SyncBatchTransport:
         completed = threading.Event()
         events: list[tuple[str, dict[str, Any]]] = []
 
-        with self._lock:
+        if not self._acquire_lock_until(deadline):
+            return None
+        try:
             self._active_send_completion = completed
+        finally:
+            self._lock.release()
 
         def send() -> None:
             try:
@@ -506,8 +557,12 @@ class _SyncBatchTransport:
     def _wait_for_active_send(self, deadline: float | None) -> bool:
         """Wait for a timed-out sender without ever starting a concurrent sender."""
         while True:
-            with self._lock:
+            if not self._acquire_lock_until(deadline):
+                return False
+            try:
                 completion = self._active_send_completion
+            finally:
+                self._lock.release()
             if completion is None:
                 return True
             if deadline is None:
@@ -538,8 +593,12 @@ class _SyncBatchTransport:
             if completion is not None and self._active_send_completion is completion:
                 self._active_send_completion = None
 
-    def _record_deadline_expiry(self) -> tuple[str, dict[str, Any]]:
-        with self._lock:
+    def _record_deadline_expiry(
+        self, deadline: float | None
+    ) -> tuple[str, dict[str, Any]] | None:
+        if not self._acquire_lock_until(deadline):
+            return None
+        try:
             remaining = len(self._buffer) + self._inflight_items
             self._stats["pending_items"] = remaining
             message = (
@@ -550,6 +609,8 @@ class _SyncBatchTransport:
             if len(self._warnings) > 50:
                 self._warnings = self._warnings[-50:]
             event = self._queue_health_event_locked("warning", {"message": message})
+        finally:
+            self._lock.release()
         logger.warning(message)
         return event
 
@@ -621,10 +682,33 @@ class _SyncBatchTransport:
         )
         return events
 
-    def _build_result(self) -> BatchFlushResult:
-        with self._lock:
+    def _build_result(
+        self,
+        deadline: float | None = None,
+        *,
+        deadline_expired: bool = False,
+        warn_on_deadline_expiry: bool = True,
+    ) -> BatchFlushResult:
+        if not self._acquire_lock_until(deadline):
+            return self._deadline_expiry_result(
+                "Observability transport flush deadline exceeded while acquiring "
+                "the transport state lock"
+            )
+        try:
             remaining = len(self._buffer) + self._inflight_items
             self._stats["pending_items"] = remaining
+            warnings = list(self._warnings)
+            if (
+                warn_on_deadline_expiry
+                and deadline_expired
+                and not any(
+                    "flush deadline exceeded" in warning for warning in warnings
+                )
+            ):
+                warnings.append(
+                    "Observability transport flush deadline exceeded before "
+                    "delivery completed"
+                )
             return BatchFlushResult(
                 success=self._stats["failed_batches"] == 0 and remaining == 0,
                 items_sent=self._stats["sent_items"],
@@ -633,8 +717,10 @@ class _SyncBatchTransport:
                 successful_batches=self._stats["successful_batches"],
                 failed_batches=self._stats["failed_batches"],
                 errors=list(self._errors),
-                warnings=list(self._warnings),
+                warnings=warnings,
             )
+        finally:
+            self._lock.release()
 
     def _append_error(self, message: str) -> None:
         with self._lock:
@@ -699,12 +785,27 @@ class _SyncBatchTransport:
         )
         return event
 
-    def _emit_health_events(self, events: list[tuple[str, dict[str, Any]]]) -> None:
+    def _emit_health_events(
+        self,
+        events: list[tuple[str, dict[str, Any]]],
+        *,
+        deadline: float | None = None,
+    ) -> None:
         del events
         if self._health_callback is None:
             return
-        with self._health_event_condition:
+        if deadline is None:
+            acquired = self._health_event_condition.acquire()
+        else:
+            acquired = self._health_event_condition.acquire(
+                timeout=max(0.0, deadline - time.monotonic())
+            )
+        if not acquired:
+            return
+        try:
             self._health_event_condition.notify()
+        finally:
+            self._health_event_condition.release()
 
     def _dispatch_health_events(self) -> None:
         """Deliver health events from one daemon thread, preserving queue order."""
@@ -730,13 +831,19 @@ class _SyncBatchTransport:
         dispatcher = self._health_dispatcher_thread
         if dispatcher is None:
             return
-        with self._health_event_condition:
+        if not self._health_event_condition.acquire(
+            timeout=(-1 if deadline is None else max(0.0, deadline - time.monotonic()))
+        ):
+            return
+        try:
             if not self._health_dispatch_closed:
                 self._health_dispatch_closed = True
                 final_drain = threading.Event()
                 self._health_event_queue.append(final_drain)
                 self._health_event_queue.append(_HEALTH_DISPATCH_STOP)
                 self._health_event_condition.notify_all()
+        finally:
+            self._health_event_condition.release()
         if dispatcher is not threading.current_thread():
             dispatcher.join(timeout=self._remaining_time(deadline))
 
@@ -745,6 +852,46 @@ class _SyncBatchTransport:
         if deadline is None:
             return None
         return max(0.0, deadline - time.monotonic())
+
+    def _acquire_lock_until(self, deadline: float | None) -> bool:
+        if deadline is None:
+            return self._lock.acquire()
+        return self._lock.acquire(timeout=max(0.0, deadline - time.monotonic()))
+
+    def _stats_snapshot_without_lock(self) -> dict[str, Any]:
+        """Return the last state values when a bounded caller cannot lock them.
+
+        All writers update these values while holding ``_lock``. A caller reaches
+        this fallback only because another thread still owns that lock, so the
+        values are a stable, if necessarily partial, snapshot for the deadline
+        result rather than a fabricated success.
+        """
+        return {
+            **self._stats,
+            "queue_depth": len(self._buffer),
+            "inflight_items": self._inflight_items,
+            "send_in_progress": (
+                self._active_send_completion is not None or self._send_lock.locked()
+            ),
+            "oldest_inflight_age_seconds": None,
+            "dropped_by_reason": dict(self._dropped_by_reason),
+            "dropped_health_events": self._dropped_health_events,
+            "errors": list(self._errors),
+            "warnings": list(self._warnings),
+        }
+
+    def _deadline_expiry_result(self, warning: str) -> BatchFlushResult:
+        stats = self._stats_snapshot_without_lock()
+        return BatchFlushResult(
+            success=False,
+            items_sent=int(stats["sent_items"]),
+            items_pending=int(stats["pending_items"]),
+            items_dropped=int(stats["dropped_items"]),
+            successful_batches=int(stats["successful_batches"]),
+            failed_batches=int(stats["failed_batches"]),
+            errors=list(stats["errors"]),
+            warnings=[*stats["warnings"], warning],
+        )
 
 
 class ObservabilityClient:
@@ -1032,7 +1179,7 @@ class ObservabilityClient:
             self._log_offline_mode_once()
             return self._offline_flush_result()
         if not self._acquire_client_lock_until(deadline):
-            return self._flush_transport_until(deadline)
+            return self._flush_lock_timeout_result(deadline)
         try:
             trace_payloads = [
                 (
@@ -1050,7 +1197,7 @@ class ObservabilityClient:
             self._lock.release()
 
         for trace_id, payload in trace_payloads:
-            self._submit_trace_snapshot(trace_id, payload)
+            self._submit_trace_snapshot(trace_id, payload, deadline=deadline)
         return self._flush_transport_until(deadline)
 
     def get_stats(self) -> dict[str, Any]:
@@ -1083,7 +1230,7 @@ class ObservabilityClient:
         """
         deadline = self._flush_deadline(timeout)
         if not self._acquire_client_lock_until(deadline):
-            return self._close_lock_timeout_result()
+            return self._close_lock_timeout_result(deadline)
         try:
             if self._closing:
                 close_in_progress = True
@@ -1130,6 +1277,8 @@ class ObservabilityClient:
         if already_closed:
             return self._flush_transport_until(deadline)
 
+        result: FlushResult | None = None
+        finalizer_completed = False
         try:
             if offline_close:
                 self._log_offline_mode_once()
@@ -1137,30 +1286,50 @@ class ObservabilityClient:
                     timeout=self._remaining_flush_time(deadline),
                     warn_on_deadline_expiry=timeout != 0,
                 )
-                return self._offline_flush_result()
-
-            if inflight_snapshot_submissions:
-                remaining = self._remaining_flush_time(deadline)
-                completed = (
-                    self._snapshot_submission_complete.wait()
-                    if remaining is None
-                    else self._snapshot_submission_complete.wait(timeout=remaining)
-                )
-                if not completed:
-                    logger.warning(
-                        "Observability close deadline expired while waiting for "
-                        "%d snapshot submissions",
-                        inflight_snapshot_submissions,
+                result = self._offline_flush_result()
+            else:
+                if inflight_snapshot_submissions:
+                    remaining = self._remaining_flush_time(deadline)
+                    completed = (
+                        self._snapshot_submission_complete.wait()
+                        if remaining is None
+                        else self._snapshot_submission_complete.wait(timeout=remaining)
                     )
+                    if not completed:
+                        logger.warning(
+                            "Observability close deadline expired while waiting for "
+                            "%d snapshot submissions",
+                            inflight_snapshot_submissions,
+                        )
 
-            for trace_id, payload in trace_payloads:
-                self._submit_trace_snapshot(trace_id, payload)
-            result = self._transport.close(timeout=self._remaining_flush_time(deadline))
-            return self._flush_result_from_transport(result)
+                for trace_id, payload in trace_payloads:
+                    self._submit_trace_snapshot(trace_id, payload, deadline=deadline)
+                transport_result = self._transport.close(
+                    timeout=self._remaining_flush_time(deadline)
+                )
+                result = self._flush_result_from_transport(transport_result)
         finally:
-            with self._lock:
-                self._closing = False
-                self._close_complete.set()
+            if self._acquire_client_lock_until(deadline):
+                try:
+                    self._closing = False
+                    self._close_complete.set()
+                    finalizer_completed = True
+                finally:
+                    self._lock.release()
+            else:
+                logger.warning(
+                    "Observability close deadline exceeded while reacquiring the "
+                    "client state lock for finalization"
+                )
+                threading.Thread(
+                    target=self._finalize_close_when_client_lock_releases,
+                    name="traigent-observability-close-finalizer",
+                    daemon=True,
+                ).start()
+        if not finalizer_completed:
+            return self._close_finalizer_lock_timeout_result(deadline)
+        assert result is not None
+        return result
 
     @staticmethod
     def _flush_result_from_transport(result: BatchFlushResult) -> FlushResult:
@@ -1180,9 +1349,27 @@ class ObservabilityClient:
         result = self._transport.flush(timeout=self._remaining_flush_time(deadline))
         return self._flush_result_from_transport(result)
 
-    def _close_lock_timeout_result(self) -> FlushResult:
+    def _flush_lock_timeout_result(self, deadline: float | None) -> FlushResult:
+        """Report that flush never inspected client state or submitted snapshots."""
+        stats = self._transport.get_stats(timeout=self._remaining_flush_time(deadline))
+        warning = (
+            "Observability flush deadline exceeded while acquiring the client "
+            "state lock; no client snapshots were submitted"
+        )
+        return FlushResult(
+            success=False,
+            items_sent=int(stats["sent_items"]),
+            items_pending=int(stats["pending_items"]),
+            items_dropped=int(stats["dropped_items"]),
+            successful_batches=int(stats["successful_batches"]),
+            failed_batches=int(stats["failed_batches"]),
+            errors=list(stats["errors"]),
+            warnings=[*stats["warnings"], warning],
+        )
+
+    def _close_lock_timeout_result(self, deadline: float | None) -> FlushResult:
         """Report that close never acquired client state and changed nothing."""
-        stats = self._transport.get_stats()
+        stats = self._transport.get_stats(timeout=self._remaining_flush_time(deadline))
         warning = (
             "Observability close deadline exceeded while acquiring the client "
             "state lock; client and transport remain open"
@@ -1197,6 +1384,32 @@ class ObservabilityClient:
             errors=list(stats["errors"]),
             warnings=[*stats["warnings"], warning],
         )
+
+    def _close_finalizer_lock_timeout_result(
+        self, deadline: float | None
+    ) -> FlushResult:
+        """Report a close whose transport work finished but state finalization did not."""
+        stats = self._transport.get_stats(timeout=self._remaining_flush_time(deadline))
+        warning = (
+            "Observability close deadline exceeded while reacquiring the client "
+            "state lock for finalization; close state remains in progress"
+        )
+        return FlushResult(
+            success=False,
+            items_sent=int(stats["sent_items"]),
+            items_pending=int(stats["pending_items"]),
+            items_dropped=int(stats["dropped_items"]),
+            successful_batches=int(stats["successful_batches"]),
+            failed_batches=int(stats["failed_batches"]),
+            errors=list(stats["errors"]),
+            warnings=[*stats["warnings"], warning],
+        )
+
+    def _finalize_close_when_client_lock_releases(self) -> None:
+        """Complete state cleanup after a bounded close returned its partial result."""
+        with self._lock:
+            self._closing = False
+            self._close_complete.set()
 
     def _wait_for_concurrent_close(self, deadline: float | None) -> FlushResult:
         remaining = self._remaining_flush_time(deadline)
@@ -1657,10 +1870,26 @@ class ObservabilityClient:
                 if self._inflight_snapshot_submissions == 0:
                     self._snapshot_submission_complete.set()
 
-    def _submit_trace_snapshot(self, trace_id: str, payload: dict[str, Any]) -> None:
-        submitted = self._transport.submit(trace_id, payload)
+    def _submit_trace_snapshot(
+        self,
+        trace_id: str,
+        payload: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        submitted = (
+            self._transport.submit(trace_id, payload)
+            if deadline is None
+            else self._transport.submit(trace_id, payload, deadline=deadline)
+        )
         if not submitted:
-            stats = self._transport.get_stats()
+            stats = (
+                self._transport.get_stats()
+                if deadline is None
+                else self._transport.get_stats(
+                    timeout=self._remaining_flush_time(deadline)
+                )
+            )
             errors = stats.get("errors") or []
             reason = errors[-1] if errors else "transport rejected trace snapshot"
             reason = redact_sensitive_text(str(reason))

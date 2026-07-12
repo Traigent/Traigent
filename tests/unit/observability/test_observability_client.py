@@ -881,6 +881,155 @@ def test_observability_client_timeout_zero_is_warning_free_poll():
 
 
 @pytest.mark.timeout(3)
+def test_sync_batch_transport_bounded_flush_and_close_cover_transport_state_lock():
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+    )
+    assert transport.submit("locked", {"id": "locked"}) is True
+
+    def hold_lock() -> None:
+        with transport._lock:
+            lock_held.set()
+            assert release_lock.wait(timeout=2.0)
+
+    lock_holder = threading.Thread(target=hold_lock)
+    lock_holder.start()
+    assert lock_held.wait(timeout=1.0)
+    try:
+        flush_started = time.monotonic()
+        flush_result = transport.flush(timeout=0.05)
+        flush_elapsed = time.monotonic() - flush_started
+        close_started = time.monotonic()
+        close_result = transport.close(timeout=0.05)
+        close_elapsed = time.monotonic() - close_started
+
+        assert flush_elapsed < 0.15
+        assert close_elapsed < 0.15
+        assert flush_result.success is False
+        assert close_result.success is False
+        assert flush_result.items_pending == 1
+        assert close_result.items_pending == 1
+        assert any("state lock" in warning for warning in flush_result.warnings)
+        assert any("state lock" in warning for warning in close_result.warnings)
+        assert transport._closed is False
+    finally:
+        release_lock.set()
+        lock_holder.join(timeout=1.0)
+    assert not lock_holder.is_alive()
+    assert transport.close().success is True
+
+
+@pytest.mark.timeout(3)
+def test_observability_client_bounded_lock_probes_return_truthful_results(
+    monkeypatch,
+):
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            enable_atexit_flush=False,
+        ),
+        sender=lambda traces: None,
+    )
+
+    def hold_client_lock() -> None:
+        with client._lock:
+            lock_held.set()
+            assert release_lock.wait(timeout=2.0)
+
+    lock_holder = threading.Thread(target=hold_client_lock)
+    lock_holder.start()
+    assert lock_held.wait(timeout=1.0)
+    try:
+        flush_started = time.monotonic()
+        flush_result = client.flush(timeout=0.05)
+        flush_elapsed = time.monotonic() - flush_started
+
+        assert flush_elapsed < 0.15
+        assert flush_result.success is False
+        assert flush_result.items_pending == 0
+        assert any("client state lock" in warning for warning in flush_result.warnings)
+    finally:
+        release_lock.set()
+        lock_holder.join(timeout=1.0)
+    assert not lock_holder.is_alive()
+
+    transport_lock_held = threading.Event()
+    release_transport_lock = threading.Event()
+    trace_id = client.start_trace("transport-locked", trace_id="transport_locked")
+    client.end_trace(trace_id)
+
+    def hold_transport_lock() -> None:
+        with client._transport._lock:
+            transport_lock_held.set()
+            assert release_transport_lock.wait(timeout=2.0)
+
+    transport_lock_holder = threading.Thread(target=hold_transport_lock)
+    transport_lock_holder.start()
+    assert transport_lock_held.wait(timeout=1.0)
+    try:
+        transport_flush_started = time.monotonic()
+        transport_flush_result = client.flush(timeout=0.05)
+        transport_flush_elapsed = time.monotonic() - transport_flush_started
+
+        assert transport_flush_elapsed < 0.15
+        assert transport_flush_result.success is False
+        assert transport_flush_result.items_pending == 1
+    finally:
+        release_transport_lock.set()
+        transport_lock_holder.join(timeout=1.0)
+    assert not transport_lock_holder.is_alive()
+    assert client.flush().success is True
+
+    finalizer_lock_held = threading.Event()
+    release_finalizer_lock = threading.Event()
+    start_finalizer_holder = threading.Event()
+    original_transport_close = client._transport.close
+
+    def hold_finalizer_lock() -> None:
+        assert start_finalizer_holder.wait(timeout=1.0)
+        with client._lock:
+            finalizer_lock_held.set()
+            assert release_finalizer_lock.wait(timeout=2.0)
+
+    finalizer_lock_holder = threading.Thread(target=hold_finalizer_lock)
+    finalizer_lock_holder.start()
+
+    def coordinated_transport_close(*args, **kwargs):
+        start_finalizer_holder.set()
+        assert finalizer_lock_held.wait(timeout=1.0)
+        return original_transport_close(*args, **kwargs)
+
+    monkeypatch.setattr(client._transport, "close", coordinated_transport_close)
+    try:
+        close_started = time.monotonic()
+        close_result = client.close(timeout=0.05)
+        close_elapsed = time.monotonic() - close_started
+
+        assert close_elapsed < 0.15
+        assert close_result.success is False
+        assert close_result.items_pending == 0
+        assert any(
+            "reacquiring the client state lock" in warning
+            for warning in close_result.warnings
+        )
+    finally:
+        release_finalizer_lock.set()
+        finalizer_lock_holder.join(timeout=1.0)
+    assert not finalizer_lock_holder.is_alive()
+    assert client._close_complete.wait(timeout=1.0)
+    assert client.close().success is True
+
+
+@pytest.mark.timeout(3)
 def test_observability_client_bounded_flush_covers_client_state_lock():
     lock_held = threading.Event()
     release_lock = threading.Event()
@@ -1048,14 +1197,16 @@ def test_observability_client_close_waits_for_inflight_snapshot_submission(monke
     original_submit = client._submit_trace_snapshot
     delayed_submission_thread: list[int] = []
 
-    def delayed_submit(trace_id: str, payload: dict) -> None:
+    def delayed_submit(
+        trace_id: str, payload: dict, *, deadline: float | None = None
+    ) -> None:
         if not delayed_submission_thread:
             delayed_submission_thread.append(threading.get_ident())
             submit_entered.set()
             assert release_submit.wait(timeout=2.0)
         else:
             assert threading.get_ident() != delayed_submission_thread[0]
-        original_submit(trace_id, payload)
+        original_submit(trace_id, payload, deadline=deadline)
 
     monkeypatch.setattr(client, "_submit_trace_snapshot", delayed_submit)
 
@@ -1148,7 +1299,9 @@ def test_observability_client_concurrent_close_has_single_initial_closer(monkeyp
     original_submit = client._submit_trace_snapshot
     original_transport_close = client._transport.close
 
-    def delayed_first_submit(trace_id: str, payload: dict) -> None:
+    def delayed_first_submit(
+        trace_id: str, payload: dict, *, deadline: float | None = None
+    ) -> None:
         nonlocal submission_claimed
         with submission_claim_lock:
             is_first_submission = not submission_claimed
@@ -1156,7 +1309,7 @@ def test_observability_client_concurrent_close_has_single_initial_closer(monkeyp
         if is_first_submission:
             first_submit_entered.set()
             assert release_first_submit.wait(timeout=2.0)
-        original_submit(trace_id, payload)
+        original_submit(trace_id, payload, deadline=deadline)
 
     def observed_transport_close(*args, **kwargs):
         if not release_first_submit.is_set():
