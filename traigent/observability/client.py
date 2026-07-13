@@ -820,9 +820,11 @@ class _SyncBatchTransport:
                 queued.set()
                 continue
             _, event_type, payload = queued
+            callback = self._health_callback
+            if callback is None:
+                continue
             try:
-                assert self._health_callback is not None
-                self._health_callback(event_type, payload)
+                callback(event_type, payload)
             except Exception:
                 logger.debug("Observability health callback failed", exc_info=True)
 
@@ -1348,7 +1350,8 @@ class ObservabilityClient:
                 ).start()
         if not finalizer_completed:
             return self._close_finalizer_lock_timeout_result(deadline)
-        assert result is not None
+        if result is None:  # defensive: finalizer_completed implies a result was set
+            return self._close_finalizer_lock_timeout_result(deadline)
         return result
 
     @staticmethod
