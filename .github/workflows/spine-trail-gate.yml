@@ -262,7 +262,8 @@ jobs:
           # verifier just verified — otherwise an attacker can reference another
           # session's event that happens to carry this repo's head SHA and forge
           # a "verified" for a reference that was never actually verified.
-          ev_session = dig(ev, "session", "session_id", "change_session", "cs")
+          ev_subject_type = ev.get("subject_type")
+          ev_session = ev.get("subject_id")
           v_session = vdata.get("session") or vdata.get("session_id")
           branch_line = (vdata.get("product_branch_line")
                          or dig(ev, "product_branch_line", "branch_line"))
@@ -270,14 +271,21 @@ jobs:
 
           bits = [f"status={status or 'unknown'}"]
 
-          # (e) session binding (fail-closed): the metadata event file MUST carry
-          # a session id equal to the verified PR-body session, and any session
-          # id the verifier itself reports MUST match too. A missing or differing
-          # id is a distinct mismatch outcome — never "verified".
+          # (e) session binding (fail-closed): the metadata event file is a spine
+          # event whose AUTHORITATIVE identity is its TOP-LEVEL subject_id, with
+          # subject_type == "change_session". Bind ONLY on those two top-level
+          # fields — never on a non-authoritative session/session_id/change_session/cs
+          # alias an attacker could inject to spoof a foreign event. Both the
+          # subject_type and the subject_id MUST match the verified PR-body
+          # session, and any session id the verifier itself reports MUST match
+          # too. A missing/wrong subject_type or differing subject_id is a
+          # distinct mismatch outcome — never "verified".
           if not session:
               out("session_mismatch", "no_pr_body_session;" + ";".join(bits))
+          if str(ev_subject_type or "") != "change_session":
+              out("session_mismatch", f"event_subject_type={ev_subject_type or 'absent'}!=change_session;" + ";".join(bits))
           if not ev_session or str(ev_session) != str(session):
-              out("session_mismatch", f"event_session={ev_session or 'absent'}!={session};" + ";".join(bits))
+              out("session_mismatch", f"event_subject_id={ev_session or 'absent'}!={session};" + ";".join(bits))
           if v_session and str(v_session) != str(session):
               out("session_mismatch", f"verifier_session={v_session}!={session};" + ";".join(bits))
 
