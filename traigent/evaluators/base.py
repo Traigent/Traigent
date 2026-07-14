@@ -1457,9 +1457,19 @@ class BaseEvaluator(ABC):
         errors: list[str | None],
         **context,
     ) -> float:
-        """Compute average latency (response time) in seconds.
+        """Compute average latency (response time) in MILLISECONDS.
 
-        Returns the average execution time across all successful examples.
+        Returns the average execution time across all successful examples,
+        converted to ms — the canonical unit for the bare ``latency`` metric
+        on EVERY lane (#1855): the hybrid lane already aggregates per-result
+        ``latency_ms`` into ``metrics["latency"]`` and mirrors it to
+        ``response_time_ms`` (hybrid_api.py), and the schema timing
+        vocabulary treats ``_ms`` names as canonical. Before #1855 this
+        builtin returned SECONDS, so a local run and a hybrid run disagreed
+        1000x under the same metric key and the results table could not
+        label the unit truthfully. All inputs below are wall-clock seconds
+        (``execution_time``; ``avg_response_time`` per
+        ``avg_response_time_seconds``), hence the uniform conversion.
         """
         if "example_results" in context:
             example_results = context["example_results"]
@@ -1470,13 +1480,13 @@ class BaseEvaluator(ABC):
                     if hasattr(r, "execution_time") and r.execution_time > 0
                 ]
                 if response_times:
-                    return float(sum(response_times) / len(response_times))
+                    return float(sum(response_times) / len(response_times)) * 1000.0
 
-        # Fallback: look for latency in context directly
+        # Fallback: look for latency in context directly (seconds; see above)
         if "latency" in context:
-            return float(context["latency"])
+            return float(context["latency"]) * 1000.0
         if "avg_response_time" in context:
-            return float(context["avg_response_time"])
+            return float(context["avg_response_time"]) * 1000.0
 
         return 0.0
 
