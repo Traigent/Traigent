@@ -4234,7 +4234,13 @@ class OptimizationOrchestrator:
         if self._logger:
             weighted_results = None
             if len(self.optimizer.objectives) > 1:
-                weighted_results = optimization_result.calculate_weighted_scores()
+                # Thread the declared ObjectiveSchema so the persisted
+                # weighted_results_v2.json honours declared orientation rather
+                # than re-guessing minimize/maximize from metric names — which
+                # can crown the OPPOSITE winner from best_config.
+                weighted_results = optimization_result.calculate_weighted_scores(
+                    objective_schema=self.objective_schema
+                )
 
             self._logger_facade.log_session_end(
                 optimization_result=optimization_result,

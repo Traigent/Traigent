@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -818,7 +819,21 @@ def create_default_objectives(
         elif name in default_orientations:
             orientation = default_orientations[name]  # type: ignore[assignment]
         else:
+            # Unrecognized metric name and no explicit orientation given: we
+            # fall back to "maximize", but a minimize metric (e.g. "price",
+            # "spend", "perplexity") would then silently crown the WORST config.
+            # Fail loud so the guess is visible and overridable.
             orientation = "maximize"  # Default to maximize
+            warnings.warn(
+                f"Objective '{name}' is not a recognized metric name, so its "
+                "orientation was defaulted to 'maximize'. If this is a metric that "
+                "should be minimized (e.g. cost/price/loss), the best configuration "
+                "will be wrong. Declare it explicitly by building an ObjectiveSchema "
+                "with ObjectiveDefinition(name='"
+                f"{name}', orientation='minimize') (or pass an orientations mapping).",
+                UserWarning,
+                stacklevel=2,
+            )
 
         # Get weight
         if weights and name in weights:

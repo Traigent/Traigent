@@ -1854,8 +1854,14 @@ class BackendSessionManager:
                     obj: 1.0 / len(self._objectives) for obj in self._objectives
                 }
 
+            # Thread the declared ObjectiveSchema (when present) so the portal
+            # weighted scores honour declared orientation instead of re-guessing
+            # minimize/maximize from metric names — which can crown the OPPOSITE
+            # winner from best_config. objective_weights is still computed above
+            # for the other backend payload fields below.
             weighted_results = result.calculate_weighted_scores(
-                objective_weights=objective_weights
+                objective_weights=objective_weights,
+                objective_schema=self._objective_schema,
             )
 
             weighted_scores_data = list(weighted_results.get("weighted_scores", []))
