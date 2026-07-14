@@ -6,7 +6,62 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-14
+
+Multi-objective metric-contract release.
+
 ### Changed
+
+- **CONTRACT (owner-approved):** `metrics["cost"]` is the per-trial TOTAL on
+  every lane (local, hybrid, pruned), reconciling with `total_cost`; the
+  per-example mean moved to `metrics["cost_per_example_mean"]` (#1853, #1869).
+- **CONTRACT (owner-approved):** the bare `metrics["latency"]` metric is
+  MILLISECONDS on every lane; the local builtin previously recorded seconds
+  (1000x cross-lane disagreement). `execution_time` stays seconds (#1855, #1872).
+- Declared objective orientation is authoritative everywhere: the schema-less
+  name-guess fallback now matches whole tokens (no more `uptime` treated as
+  minimize), warns whenever an orientation is guessed, and plain-list unknown
+  names warn before defaulting to maximize (#1852, #1870).
+
+### Fixed
+
+- `best_metrics` returns the winner's replicate MEAN in aggregated/hybrid runs,
+  matching `best_score`; result selection stamps `winning_trial_ids` and
+  persistence round-trips them (save/load keeps the aggregated winner identity)
+  (#1854, #1871, #1874).
+
+### Added
+
+- One-shot run-level warning when a config's outputs are empty/whitespace at a
+  high rate — truncation/parsing/refusal signal (#1851, #1867).
+- CONTEXT-mode phantom `best_config` warning covers the no-overlap case: a tuned
+  knob that is neither a function parameter nor read via `get_config()` warns
+  at decoration time (#1856, #1868).
+
+### Dependencies
+
+- json-repair 0.61.4 (#1875).
+
+## [0.22.0] - 2026-07-14
+
+Weighted-selection contract release (backfilled entry; tag `v0.22.0`).
+
+### Changed
+
+- **CONTRACT (owner-approved):** default/uniform-weight multi-objective runs —
+  strategy presets included — return the weighted-aggregate winner as
+  `best_config`, not the accuracy-argmax; terminal selection and the post-hoc
+  weighted artifact agree (#1846, #1850).
+- Trial "score" single-meaning: `Trial.score` is populated with the primary
+  objective's value; when a custom `scoring_function` owns "accuracy", the
+  builtin exact-match scorer is recorded as `metrics["exact_match_default"]`
+  and `metrics["score"]` carries the optimization signal (#1845, #1849).
+- `ObjectiveSchema` is threaded into every post-hoc `calculate_weighted_scores`
+  call site, so declared minimize orientations are honored instead of
+  name-pattern autodetection (#1846 follow-up, #1857).
+
+
+### Changed (observability transport)
 
 - `ObservabilityClient.flush(timeout=0)` and `close(timeout=0)` now perform an
   immediate poll rather than treating zero as the configured 30-second flush
