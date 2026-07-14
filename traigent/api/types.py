@@ -977,6 +977,12 @@ class OptimizationResult:
             (None if offline/not synced).
         cloud_url: Direct link to the experiment on the cloud portal (None if offline).
         run_label: Human-readable run identifier (e.g. answer_question_20260315_143022_a3f1b2).
+        best_config_margin: Winner-vs-runner-up paired margin significance
+            qualifying ``best_config`` (issue #1866). Additive — never changes
+            the winner. ``None`` when there is no runner-up to compare against;
+            otherwise ``{runner_up, delta, ci95, p_value, verdict, ...}`` with
+            ``verdict`` in ``"clear" | "statistical_tie" | "na"``. A margin whose
+            CI includes 0 at typical n is a tie, not a decision.
     """
 
     trials: list[TrialResult]
@@ -1026,6 +1032,19 @@ class OptimizationResult:
     # degraded to local-only because the backend was unreachable mid-run. Also
     # mirrored in ``metadata["source"]`` for callers that inspect metadata.
     source: str = "backend"
+
+    # Winner-vs-runner-up paired margin significance (issue #1866). Additive
+    # qualification of ``best_config`` — it never changes which config won. None
+    # when there is no runner-up to compare against (< 2 distinct eligible
+    # configs, or no primary objective / per-example data unavailable). When set,
+    # a dict ``{runner_up, runner_up_trial_id, delta, ci95, p_value, verdict,
+    # test, n_shared_examples, ...}`` where ``verdict`` is ``"clear"`` (the
+    # winner significantly beats the runner-up on the primary objective),
+    # ``"statistical_tie"`` (the margin's CI includes 0 / p above alpha — the
+    # winner is interchangeable with the runner-up), or ``"na"`` (two configs
+    # but no shared per-example data for a paired test).
+    best_config_margin: dict[str, Any] | None = None
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )

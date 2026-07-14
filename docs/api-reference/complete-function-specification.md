@@ -311,6 +311,35 @@ def get_optimization_results() -> OptimizationResult | None
 def get_optimization_history() -> list[OptimizationResult]
 ```
 
+#### `OptimizationResult.best_config_margin` — is the winner real?
+
+`best_config` is the config that won, but a winner is not automatically a
+*decision*. `results.best_config_margin` qualifies it with a paired test of the
+**winner vs. the runner-up** (the 2nd-best distinct config on the primary
+objective), computed from per-example scores at ~zero cost:
+
+- **McNemar exact** for 0/1 binary scorers, a **paired t-test** for continuous
+  scorers.
+- Fields: `{runner_up, runner_up_trial_id, delta, ci95, p_value, verdict, test,
+  n_shared_examples}`.
+- `verdict` is one of:
+  - `"clear"` — the winner significantly beats the runner-up (`p <= alpha`,
+    CI excludes 0).
+  - `"statistical_tie"` — the margin's 95% CI includes 0 / `p` is above `alpha`.
+    The winner is **statistically interchangeable** with the runner-up on the
+    primary objective; a `logger.warning` naming both configs is emitted once
+    per run.
+  - `"na"` — two configs exist but there is no shared per-example data for a
+    paired test.
+- `best_config_margin` is `None` when there is no runner-up (fewer than two
+  distinct configs, or no primary objective).
+
+> **A margin within its CI at typical eval sizes (n = 20–80) is not a
+> decision.** A `"statistical_tie"` winner is noise-level ahead of its
+> runner-up — prefer the cheaper/faster config, or add examples, rather than
+> paying a cost multiple for a few points that will not survive re-testing.
+> This is additive qualification only: it never changes which config wins.
+
 #### `.is_optimization_complete()`
 **Check if optimization has been completed**
 
