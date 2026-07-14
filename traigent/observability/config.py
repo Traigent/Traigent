@@ -83,7 +83,12 @@ def _read_default_execution_context() -> dict[str, str | None]:
 
 @dataclass
 class ObservabilityConfig:
-    """Configuration for SDK-side observability delivery."""
+    """Configuration for SDK-side observability delivery.
+
+    ``health_callback`` receives batch-level local-drop and warning snapshots
+    after internal transport locks are released. It may run on background
+    threads, and exceptions raised by the callback are swallowed.
+    """
 
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
