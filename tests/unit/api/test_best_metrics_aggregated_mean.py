@@ -265,3 +265,87 @@ class TestEndToEndThroughRealSelection:
         )
         assert bm["accuracy"] == pytest.approx(result.best_score)
         assert bm["cost"] == pytest.approx(0.03), "secondary cost must be the mean too"
+
+
+class TestAuxKeyReplicateIdentity:
+    """Hardening (#1854 review finding): replicate identity by trial id.
+
+    Aggregation groups replicates by the config PROJECTED onto
+    ``config_space_keys`` but ``best_config`` keeps the first trial's FULL
+    config. Full-dict equality therefore silently drops replicates whose
+    auxiliary (non-space) config keys differ — averaging a subset and
+    re-creating the very best_score/best_metrics divergence this fix removes.
+    Result selection now stamps ``session_summary["winning_trial_ids"]`` and
+    ``best_metrics`` prefers it; config equality remains only as a fallback
+    for persisted results that predate the stamp.
+    """
+
+    def _aux_key_trials(self) -> list[TrialResult]:
+        # Same projected config {"model": "cheap"}; aux key "seed" differs, so
+        # full-dict equality matches ONLY t1.
+        return [
+            _make_trial(
+                "t1", {"model": "cheap", "seed": 1}, {"accuracy": 0.90, "cost": 1.0}
+            ),
+            _make_trial(
+                "t2", {"model": "cheap", "seed": 2}, {"accuracy": 0.70, "cost": 3.0}
+            ),
+        ]
+
+    def test_selection_stamps_winning_trial_ids(self) -> None:
+        """Both replicates of the projected winner land in the stamp."""
+        selection = select_best_configuration(
+            trials=self._aux_key_trials(),
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=True,
+            # legacy mode: eligibility needs only a finite primary metric (see
+            # the wiring test above) — this test targets the stamp, not
+            # comparability plumbing.
+            comparability_mode="legacy",
+        )
+        assert selection.session_summary["winning_trial_ids"] == ["t1", "t2"]
+
+    def test_best_metrics_means_over_id_matched_replicates(self) -> None:
+        """With the stamp, best_metrics averages BOTH aux-key replicates.
+
+        Config-equality matching would return t1's raw metrics (0.90/1.0);
+        the id-matched mean is 0.80/2.0 — consistent with best_score.
+        """
+        trials = self._aux_key_trials()
+        result = _make_result(
+            trials,
+            best_config={"model": "cheap", "seed": 1},  # full first config
+            best_score=0.80,  # the replicate MEAN, as selection computes it
+            objectives=["accuracy", "cost"],
+            metadata={
+                "session_summary": {
+                    "selection_mode": "aggregated_mean",
+                    "samples_per_config": {"h": 2},
+                    "winning_trial_ids": ["t1", "t2"],
+                }
+            },
+        )
+        best = result.best_metrics
+        assert best["accuracy"] == pytest.approx(0.80)
+        assert best["cost"] == pytest.approx(2.0)
+
+    def test_missing_stamp_falls_back_to_config_equality(self) -> None:
+        """Persisted pre-stamp results keep the config-equality path."""
+        trials = self._aux_key_trials()
+        result = _make_result(
+            trials,
+            best_config={"model": "cheap", "seed": 1},
+            best_score=0.80,
+            objectives=["accuracy", "cost"],
+            metadata={
+                "session_summary": {
+                    "selection_mode": "aggregated_mean",
+                    "samples_per_config": {"h": 2},
+                }
+            },
+        )
+        best = result.best_metrics
+        # Only t1 matches the full config -> its raw cost (the old behavior,
+        # preserved for backward compatibility with persisted results).
+        assert best["cost"] == pytest.approx(1.0)

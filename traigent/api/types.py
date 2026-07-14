@@ -861,13 +861,36 @@ class OptimizationResult:
         """
         if not self._is_aggregated_run() or not self.best_config:
             return None
-        replicates = [
-            trial
-            for trial in self.trials
-            if trial.is_successful
-            and trial.metrics
-            and trial.config == self.best_config
-        ]
+        # Prefer the authoritative winner replicate ids stamped by result
+        # selection (#1854): grouping is keyed by the config PROJECTED onto
+        # config_space_keys while best_config keeps the first trial's FULL
+        # config, so full-dict equality silently drops replicates whose aux
+        # keys differ. Config equality remains only as a fallback for older
+        # persisted results that predate the stamp.
+        winning_ids: set[str] | None = None
+        metadata = self.metadata
+        if isinstance(metadata, dict):
+            summary = metadata.get("session_summary")
+            if isinstance(summary, dict):
+                stamped = summary.get("winning_trial_ids")
+                if isinstance(stamped, list) and stamped:
+                    winning_ids = {str(trial_id) for trial_id in stamped}
+        if winning_ids is not None:
+            replicates = [
+                trial
+                for trial in self.trials
+                if trial.is_successful
+                and trial.metrics
+                and str(trial.trial_id) in winning_ids
+            ]
+        else:
+            replicates = [
+                trial
+                for trial in self.trials
+                if trial.is_successful
+                and trial.metrics
+                and trial.config == self.best_config
+            ]
         if not replicates:
             return None
         numeric_sums: dict[str, float] = {}

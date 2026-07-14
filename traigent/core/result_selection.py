@@ -881,6 +881,11 @@ def _select_best_weighted_aggregated(
         "samples_per_config": {
             key: entry["count"] for key, entry in aggregated.items()
         },
+        # Authoritative replicate identity for the winner (#1854): groups are
+        # keyed by the config PROJECTED onto config_space_keys, while
+        # best_config keeps the first trial's FULL config — so consumers must
+        # not reconstruct the group by config equality (aux keys diverge).
+        "winning_trial_ids": list(best_entry.get("trial_ids") or []),
         "metrics": _sanitize_mean_metrics(best_metrics),
         "sanitized": True,
         "ranking": ranking_summary,
@@ -991,6 +996,9 @@ def _select_best_aggregated(
         "samples_per_config": {
             key: entry["count"] for key, entry in aggregated.items()
         },
+        # Same rationale as the weighted path (#1854): the winner's replicate
+        # set by trial id, immune to aux config keys outside the space.
+        "winning_trial_ids": list(best_entry.get("trial_ids") or []),
         "metrics": sanitized_metrics,
         "sanitized": True,
         "ranking": ranking_summary,
