@@ -92,6 +92,13 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # is never dropped under the measures ceiling nor overwritten by a
         # user-supplied tuple key of the same name.
         "exact_match_default",
+        # Diagnostic: fraction of a config's outputs that are empty or
+        # whitespace-only (issue #1851). Computed by the evaluator on EVERY trial
+        # (metadata-free complement to the finish_reason guard, #1809). Reserved
+        # so a user tuple key named ``empty_output_rate`` cannot overwrite the
+        # evaluator's value and it is never sacrificed to the measures ceiling —
+        # portals/harnesses gate on it, so it must always survive to the trial.
+        "empty_output_rate",
         # format_for_backend / summary outputs.
         "duration",
         "input_tokens",
@@ -141,6 +148,38 @@ def is_reserved_metric_key(key: str) -> bool:
     :data:`RESERVED_METRIC_KEYS`.
     """
     return key in RESERVED_METRIC_KEYS
+
+
+#: Default fraction of empty/whitespace-only outputs a config may have before the
+#: evaluator surfaces a run-level warning (issue #1851). An empty output at any
+#: meaningful rate signals truncation, output-parsing failure, or refusals — the
+#: accuracy comparison is then measuring an artifact, not the config knobs. The
+#: warning fires strictly ABOVE this threshold (``rate > threshold``).
+EMPTY_OUTPUT_RATE_WARNING_THRESHOLD: float = 0.10
+
+
+def output_is_empty(output: Any) -> bool:
+    """Return ``True`` if ``output`` is effectively empty (issue #1851).
+
+    An output is empty when it is ``None`` or its string form is blank /
+    whitespace-only. This is the metadata-free signal that catches truncation,
+    output-parsing failures, and refusals even when the user's own function
+    makes the LLM call and returns only a string (complement to #1809).
+    """
+    return output is None or not str(output).strip()
+
+
+def compute_empty_output_rate(outputs: Sequence[Any]) -> float:
+    """Fraction of ``outputs`` that are empty or whitespace-only (issue #1851).
+
+    ``empty_output_rate == mean(output is None or not str(output).strip())`` over
+    the trial's per-example outputs. Returns ``0.0`` for an empty sequence (no
+    outputs means no empties to report, not a divide-by-zero).
+    """
+    if not outputs:
+        return 0.0
+    empty = sum(1 for output in outputs if output_is_empty(output))
+    return empty / len(outputs)
 
 
 def aggregate_user_custom_metrics(
