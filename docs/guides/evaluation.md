@@ -198,6 +198,31 @@ enable_mock_mode_for_quickstart()
 
 For shell-only fixtures, `TRAIGENT_MOCK_LLM=true` remains available outside production for backwards compatibility, but direct user-set activation emits `DeprecationWarning`.
 
+## Reading trial results — the trial-metrics contract
+
+Each `TrialResult` (the items in `result.trials`) exposes several score-like
+values. They do **not** all mean the same thing:
+
+| Field | Meaning |
+|---|---|
+| `trial.score` | The trial's **optimization signal** — the exact value `best_config` argmaxes. For a single-objective run it is the objective metric (e.g. accuracy); for a weighted multi-objective run it is the weighted selection basis. **Read this when you want "the trial's score".** |
+| `trial.metrics["score"]` | Same optimization signal, kept in the metrics map for serialization parity. |
+| `trial.metrics["accuracy"]` (and other objective keys) | The individual metric values. When a custom `scoring_function` defines the objective, `metrics["accuracy"]` is the custom scorer's mean. |
+| `trial.metrics["exact_match_default"]` | Present **only** when a custom `scoring_function` owns the `accuracy` objective. It holds the SDK's built-in case-insensitive exact-match scorer as a **diagnostic** — it is never the optimization signal and is not what `best_config` uses. |
+
+```python
+result = my_agent.optimize_sync(max_trials=10)
+for trial in result.trials:
+    # Correct: trial.score is the signal the optimizer used.
+    print(trial.config, trial.score)
+```
+
+Before this contract was fixed (issue #1845), `trial.score` was `None` and
+`metrics["score"]` held the built-in exact-match scorer even when a custom
+`scoring_function` was supplied — so a consumer doing
+`trial.score or trial.metrics["score"]` would log a number the optimizer never
+used, disagreeing with `best_config` whenever the custom scorer was non-binary.
+
 ## Troubleshooting
 
 - **Paraphrased answers score 0.0**: The default `LocalEvaluator` accuracy is exact / case-insensitive match; it is not semantic. Provide your own `scoring_function` (or `metric_functions={"accuracy": ...}`) that performs embedding similarity or LLM-judge scoring. `LocalExecutionAdapter` also raises a visible error when dataset examples are tagged `evaluation_type: "semantic"` without a configured scorer.

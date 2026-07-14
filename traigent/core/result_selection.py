@@ -24,6 +24,7 @@ __all__ = [
     "select_best_configuration",
     "apply_tie_breaker",
     "resolve_weighted_selection_schema",
+    "resolve_result_selection_schema",
 ]
 
 # Type alias matching TVL models.py
@@ -44,6 +45,10 @@ class SelectionResult:
     session_summary: dict[str, Any] | None
     reason_code: str | None = None
     best_trial_id: str | None = None
+    # Trial ids of the exact ranking-eligible set the winner was chosen over
+    # (issue #1832). Lets the orchestrator run the inert-constant-objective
+    # check over precisely the trials selection ranked, not a re-derived set.
+    ranking_eligible_trial_ids: list[str] | None = None
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -73,33 +78,77 @@ def _primary_scores_tied(score: float, best_score: float) -> bool:
     )
 
 
-def resolve_weighted_selection_schema(
+def _is_multi_objective_non_banded(
     objective_schema: ObjectiveSchema | None,
-) -> ObjectiveSchema | None:
-    """Return the schema when weighted selection should govern ranking.
+) -> bool:
+    """True when the schema declares >1 objective and none is banded.
 
-    Weighted selection (issue #1682) activates only when the declared
-    ObjectiveSchema carries meaningful (non-uniform) weights over more than
-    one objective and no objective is banded. Single-objective, unweighted
-    (uniform-weight), and banded schemas return ``None`` so callers keep
-    the legacy primary-objective ranking bit-for-bit.
-
-    Shared by the orchestrator's live incumbent tracking and the terminal
-    ``select_best_configuration`` so both gates agree.
+    The structural precondition shared by both weighted-selection gates below.
+    Single-objective and banded schemas are excluded: there is nothing to
+    trade off (single) or the winner is band-proximity, not a weighted
+    aggregate (banded).
     """
     if objective_schema is None:
-        return None
+        return False
     objectives = getattr(objective_schema, "objectives", None) or []
     if len(objectives) <= 1:
-        return None
+        return False
     if any(
         getattr(obj, "orientation", "") == "band"
         or getattr(obj, "band", None) is not None
         for obj in objectives
     ):
+        return False
+    return True
+
+
+def resolve_weighted_selection_schema(
+    objective_schema: ObjectiveSchema | None,
+) -> ObjectiveSchema | None:
+    """Return the schema when weighted *live incumbent* tracking should apply.
+
+    This is the narrow gate (issue #1682): it activates only when the declared
+    ObjectiveSchema carries meaningful (non-uniform) weights over more than
+    one non-banded objective. Single-objective, uniform-weight, and banded
+    schemas return ``None`` so mid-run incumbent tracking (``_simple_is_better``)
+    and the inert-constant-objective warning (#1832) keep the legacy
+    primary-objective behavior bit-for-bit.
+
+    NOTE: the *terminal* ``best_config`` uses the broader
+    :func:`resolve_result_selection_schema` (issue #1846) so uniform/default
+    weights also select by the weighted aggregate — matching the run's own
+    post-hoc ``weighted_results_v2.json``. This function stays non-uniform-only
+    on purpose to avoid perturbing live tracking and stop conditions.
+    """
+    if not _is_multi_objective_non_banded(objective_schema):
         return None
     has_meaningful = getattr(objective_schema, "has_meaningful_weights", None)
     if has_meaningful is None or not has_meaningful():
+        return None
+    return objective_schema
+
+
+def resolve_result_selection_schema(
+    objective_schema: ObjectiveSchema | None,
+) -> ObjectiveSchema | None:
+    """Return the schema when the *terminal* ``best_config`` must be chosen by
+    the weighted aggregate (issue #1846).
+
+    Broader than :func:`resolve_weighted_selection_schema`: it activates for
+    ANY multi-objective (>1), non-banded schema — INCLUDING uniform/default
+    equal weights. Declaring ``objectives=["accuracy", "cost"]`` (equal 0.5/0.5
+    weights) is a genuine multi-objective request, and the run's own post-hoc
+    analysis (``OptimizationResult.calculate_weighted_scores`` /
+    ``weighted_results_v2.json``) already crowns its winner by the equal-weight
+    aggregate. Selecting ``results.best_config`` by the same aggregate makes the
+    two artifacts of one run agree instead of contradicting each other (the
+    accuracy-argmax winner was rank 6/12 on the run's own declared basis).
+
+    Single-objective and banded schemas still return ``None`` so those paths —
+    and the #1184 exactly-equal-accuracy cost tie-break on the unweighted path —
+    are unchanged.
+    """
+    if not _is_multi_objective_non_banded(objective_schema):
         return None
     return objective_schema
 
@@ -167,6 +216,11 @@ def _populate_weighted_scores(
         if trial.metrics is None:
             trial.metrics = {}
         trial.metrics["score"] = weighted
+        # Keep the TrialResult.score accessor consistent with metrics["score"]
+        # for weighted runs: both carry the weighted selection basis (#1845
+        # semantics, #1682 basis). Additive — does not alter the metrics["score"]
+        # overwrite above, which remains the weighted-run source of truth.
+        trial.score = weighted
 
 
 def _weighted_session_extras(
@@ -950,6 +1004,31 @@ def _select_best_aggregated(
     )
 
 
+def _mark_weighted_selection_unavailable(
+    result: SelectionResult,
+    unavailable: bool,
+) -> None:
+    """Flag a legacy-fallback result that should have been weighted (#1846).
+
+    Additive, warning-only: when a multi-objective schema was declared but no
+    eligible trial produced a finite weighted score, terminal selection falls
+    back to primary-objective ranking. Recording the flag in the session
+    summary keeps the divergence from the post-hoc weighted artifact visible
+    downstream; it never changes the chosen ``best_config``.
+    """
+    if not unavailable:
+        return
+    summary = dict(result.session_summary or {})
+    summary["weighted_selection_unavailable"] = True
+    summary.setdefault(
+        "weighted_selection_unavailable_reason",
+        "declared multi-objective weights could not be applied "
+        "(no eligible trial had a finite weighted score); "
+        "best_config fell back to primary-objective ranking",
+    )
+    result.session_summary = summary
+
+
 def _trial_produced_outputs(trial: TrialResult) -> bool:
     """True iff the trial both completed AND produced at least one successful example.
 
@@ -1012,12 +1091,18 @@ def select_best_configuration(
             present, the declared orientation for the primary objective is used
             directly and name-pattern heuristics are bypassed.  Populated from
             ``ObjectiveSchema.objectives[*].orientation`` by the orchestrator.
-        objective_schema: Optional declared ObjectiveSchema. When it carries
-            meaningful (non-uniform) weights over >1 non-banded objectives,
-            ranking uses the schema's weighted aggregate
-            (``ObjectiveSchema.compute_weighted_score``) instead of the
-            primary objective alone (issue #1682). Single-objective,
-            uniform-weight, and banded schemas keep legacy behavior.
+        objective_schema: Optional declared ObjectiveSchema. When it declares
+            more than one non-banded objective, the terminal ``best_config``
+            is ranked by the schema's weighted aggregate
+            (``ObjectiveSchema.compute_weighted_score``) instead of the primary
+            objective alone — INCLUDING uniform/default equal weights (issue
+            #1846), so ``best_config`` equals the run's own post-hoc weighted
+            winner (``best_weighted_config`` / ``weighted_results_v2.json``).
+            Non-uniform weights already did this (issue #1682); #1846 extends it
+            to the uniform case declared by a bare ``objectives=[...]`` list.
+            Single-objective and banded schemas keep legacy primary-objective
+            behavior, preserving the #1184 exactly-equal-accuracy cost
+            tie-break on the unweighted path.
 
     Returns:
         SelectionResult with best configuration and score.
@@ -1125,7 +1210,16 @@ def select_best_configuration(
 
     tie_breakers = tie_breakers or {}
 
-    weighted_schema = resolve_weighted_selection_schema(objective_schema)
+    # Trial ids of the exact ranking-eligible set (issue #1832). Attached to
+    # whichever selection path wins so the orchestrator can run its
+    # inert-constant-objective check over precisely these trials.
+    eligible_trial_ids = [trial.trial_id for trial in eligible_trials]
+
+    # Terminal best_config uses the broader gate (issue #1846): uniform/default
+    # weights also select by the weighted aggregate so best_config equals the
+    # run's own post-hoc weighted winner. Live incumbent tracking keeps the
+    # narrower resolve_weighted_selection_schema (non-uniform only).
+    weighted_schema = resolve_result_selection_schema(objective_schema)
     if weighted_schema is not None:
         weighted_result = _select_best_weighted(
             eligible_trials,
@@ -1138,12 +1232,20 @@ def select_best_configuration(
             config_space_keys=set(config_space_keys),
         )
         if weighted_result is not None:
+            weighted_result.ranking_eligible_trial_ids = eligible_trial_ids
             return weighted_result
-        # Defensive: no computable weighted score on any eligible trial —
-        # fall back to legacy primary-objective ranking below.
+        # Defensive (issue #1846 fix-direction #4): a multi-objective schema was
+        # declared but NO eligible trial had a computable weighted score
+        # (e.g. non-finite/absent secondary objective). We fall back to legacy
+        # primary-objective ranking, but mark the result so the silent
+        # divergence from the post-hoc weighted artifact is visible rather than
+        # invisible.
+        weighted_selection_unavailable = True
+    else:
+        weighted_selection_unavailable = False
 
     if not aggregate_configs:
-        return _select_best_single_trial(
+        single_result = _select_best_single_trial(
             eligible_trials,
             primary_objective,
             tie_breakers,
@@ -1152,9 +1254,14 @@ def select_best_configuration(
             objective_order,
             objective_orientations=objective_orientations,
         )
+        single_result.ranking_eligible_trial_ids = eligible_trial_ids
+        _mark_weighted_selection_unavailable(
+            single_result, weighted_selection_unavailable
+        )
+        return single_result
 
     aggregated = _aggregate_trials(eligible_trials, set(config_space_keys))
-    return _select_best_aggregated(
+    aggregated_result = _select_best_aggregated(
         aggregated,
         primary_objective,
         tie_breakers,
@@ -1163,3 +1270,8 @@ def select_best_configuration(
         objective_order,
         objective_orientations=objective_orientations,
     )
+    aggregated_result.ranking_eligible_trial_ids = eligible_trial_ids
+    _mark_weighted_selection_unavailable(
+        aggregated_result, weighted_selection_unavailable
+    )
+    return aggregated_result

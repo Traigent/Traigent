@@ -1206,8 +1206,17 @@ class TestWeightedSelection:
         assert with_schema.session_summary == legacy.session_summary
         assert not any("score" in t.metrics for t in trials_b)
 
-    def test_uniform_weights_keep_legacy_result(self) -> None:
-        """Equal (default) weights are an unweighted schema — legacy behavior."""
+    def test_uniform_weights_select_by_weighted_aggregate(self) -> None:
+        """Issue #1846: equal (default) weights are a genuine multi-objective
+        request, so the terminal best_config is chosen by the weighted
+        aggregate — NOT the accuracy-argmax legacy path.
+
+        This is the #1846 contract change on top of #1682: declaring
+        ``objectives=["accuracy", "cost"]`` (equal 0.5/0.5) must not let cost be
+        ignored just because the weights are uniform. Before this fix
+        best_config followed accuracy alone (``gpt-4o-analog``) and contradicted
+        the run's own post-hoc weighted winner.
+        """
         trials_a = _tradeoff_trials()
         trials_b = _tradeoff_trials()
 
@@ -1220,11 +1229,25 @@ class TestWeightedSelection:
         )
         uniform = self._select(trials_b, _weighted_schema(1.0, 1.0))
 
-        assert uniform.best_config == legacy.best_config
-        assert uniform.best_score == legacy.best_score
-        assert uniform.session_summary == legacy.session_summary
-        assert "weighted_selection" not in (uniform.session_summary or {})
-        assert not any("score" in t.metrics for t in trials_b)
+        # Legacy (no schema) still picks the accuracy-argmax config.
+        assert legacy.best_config == {"model": "gpt-4o-analog"}
+        # Uniform-weight multi-objective now picks the weighted winner instead.
+        # 0.5*acc_n + 0.5*cost_n over ranges accuracy (0.70, 0.92),
+        # cost (0.001, 0.010): mid-analog = 0.5*(0.12/0.22) + 0.5*(0.006/0.009)
+        # = 0.606, beating gpt-4o (0.5) and nano (0.5).
+        assert uniform.best_config == {"model": "mid-analog"}
+        assert uniform.best_config != legacy.best_config
+        # best_score stays the winner's primary-objective (accuracy) value.
+        assert uniform.best_score == pytest.approx(0.82)
+        weighted = uniform.session_summary["weighted_selection"]
+        assert weighted["best_weighted_score"] == pytest.approx(
+            0.5 * (0.12 / 0.22) + 0.5 * (0.006 / 0.009)
+        )
+        assert weighted["weights_normalized"] == pytest.approx(
+            {"accuracy": 0.5, "cost": 0.5}
+        )
+        # Per-trial basis of selection is populated for weighted runs.
+        assert all("score" in t.metrics for t in trials_b)
 
     def test_weighted_selection_aggregated_configs(self) -> None:
         """Weighted ranking applies to config-aggregated mean metrics too."""
@@ -1279,3 +1302,337 @@ class TestWeightedSelection:
         assert resolve_weighted_selection_schema(None) is None
         assert resolve_weighted_selection_schema(_weighted_schema(0.7, 0.3)) is not None
         assert resolve_weighted_selection_schema(_weighted_schema(1.0, 1.0)) is None
+
+
+def _evidence_trials() -> list[FakeTrial]:
+    """Issue #1846's Evidence scenario (crux, 3 configs of the 12-trial run).
+
+    A NON-TIE accuracy edge where accuracy-argmax and the weighted winner
+    disagree: full/query_plan_cot has the highest accuracy (0.850) but 2.5x the
+    per-query cost; tables/direct is the equal-weight winner. The full run had
+    tables/direct at weighted rank 1 and full/query_plan_cot at rank 6/12.
+    """
+    return [
+        FakeTrial(
+            metrics={"accuracy": 0.825, "cost": 0.000070},
+            config={"schema": "tables", "prompt": "direct"},
+            trial_id="t_tables_direct",
+        ),
+        FakeTrial(
+            metrics={"accuracy": 0.850, "cost": 0.000177},
+            config={"schema": "full", "prompt": "query_plan_cot"},
+            trial_id="t_full_qpcot",
+        ),
+        FakeTrial(
+            metrics={"accuracy": 0.800, "cost": 0.000066},
+            config={"schema": "tables", "prompt": "direct0"},
+            trial_id="t_tables_d0",
+        ),
+    ]
+
+
+class TestIssue1846UniformWeightSelection:
+    """Terminal best_config respects declared objectives under uniform weights.
+
+    #1682 made non-uniform weights govern best_config; #1846 extends that to the
+    uniform/default case (a bare ``objectives=["accuracy", "cost"]`` list), so
+    ``results.best_config`` equals the run's own post-hoc weighted winner
+    (``best_weighted_config`` / ``weighted_results_v2.json``) instead of the
+    accuracy-argmax config that contradicted it.
+    """
+
+    def _select(self, trials, schema, *, aggregate: bool = False):
+        return select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"schema", "prompt"},
+            aggregate_configs=aggregate,
+            objective_order=["accuracy", "cost"],
+            objective_schema=schema,
+        )
+
+    def test_evidence_scenario_best_config_is_weighted_not_accuracy_argmax(
+        self,
+    ) -> None:
+        """Core #1846 repro: with default equal weights, best_config is the
+        cost-aware weighted winner, NOT the highest-accuracy config.
+
+        Fails on pre-#1846 code, which returned full/query_plan_cot.
+        """
+        schema = _weighted_schema(1.0, 1.0)  # default equal 0.5/0.5
+
+        result = self._select(_evidence_trials(), schema)
+
+        assert result.best_config == {"schema": "tables", "prompt": "direct"}
+        assert result.best_config != {"schema": "full", "prompt": "query_plan_cot"}
+        # best_score stays the winner's primary (accuracy) value.
+        assert result.best_score == pytest.approx(0.825)
+        assert "weighted_selection" in result.session_summary
+
+    def test_best_config_equals_post_hoc_weighted_winner(self) -> None:
+        """Consistency: terminal best_config == post-hoc best_weighted_config on
+        the same run — the two artifacts of one run must agree (#1846)."""
+        from traigent.api.types import (
+            OptimizationResult,
+            OptimizationStatus,
+            TrialResult,
+        )
+
+        schema = _weighted_schema(1.0, 1.0)
+        selection = self._select(_evidence_trials(), schema)
+
+        post_hoc_trials = [
+            TrialResult(
+                trial_id=t.trial_id,
+                config=t.config,
+                metrics={"accuracy": t.metrics["accuracy"], "cost": t.metrics["cost"]},
+                status=OptimizationStatus.COMPLETED,
+                duration=1.0,
+                timestamp=0.0,
+            )
+            for t in _evidence_trials()
+        ]
+        result = OptimizationResult(
+            trials=post_hoc_trials,
+            best_config=selection.best_config,
+            best_score=selection.best_score,
+            optimization_id="opt",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="grid",
+            timestamp=0.0,
+        )
+        weighted = result.calculate_weighted_scores(objective_schema=schema)
+
+        assert selection.best_config == weighted["best_weighted_config"]
+
+    def test_flipping_to_accuracy_heavy_weights_restores_accuracy_winner(
+        self,
+    ) -> None:
+        """Sanity: with accuracy-dominant weights the accuracy config wins,
+        confirming selection genuinely tracks the declared weights."""
+        result = self._select(_evidence_trials(), _weighted_schema(0.95, 0.05))
+        assert result.best_config == {"schema": "full", "prompt": "query_plan_cot"}
+
+    def test_single_objective_unchanged_under_1846(self) -> None:
+        """Single-objective runs keep accuracy-argmax (no weighted aggregate)."""
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+        from traigent.core.result_selection import resolve_result_selection_schema
+
+        single = ObjectiveSchema.from_objectives(
+            [ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0)]
+        )
+        assert resolve_result_selection_schema(single) is None
+        result = self._select(_evidence_trials(), single)
+        assert result.best_config == {"schema": "full", "prompt": "query_plan_cot"}
+        assert result.best_score == pytest.approx(0.850)
+        assert "weighted_selection" not in (result.session_summary or {})
+
+    def test_result_selection_gate_is_broader_than_live_gate(self) -> None:
+        """The terminal gate fires on uniform weights; the live gate does not.
+
+        Guards the intentional asymmetry: live incumbent tracking and the #1832
+        inert-objective warning stay non-uniform-only, while terminal
+        best_config selection is uniform-inclusive.
+        """
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+        from traigent.core.result_selection import (
+            resolve_result_selection_schema,
+            resolve_weighted_selection_schema,
+        )
+        from traigent.tvl.models import BandTarget
+
+        uniform = _weighted_schema(1.0, 1.0)
+        assert resolve_weighted_selection_schema(uniform) is None
+        assert resolve_result_selection_schema(uniform) is not None
+
+        non_uniform = _weighted_schema(0.7, 0.3)
+        assert resolve_weighted_selection_schema(non_uniform) is not None
+        assert resolve_result_selection_schema(non_uniform) is not None
+
+        # Single-objective and banded stay excluded from BOTH gates.
+        single = ObjectiveSchema.from_objectives(
+            [ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0)]
+        )
+        assert resolve_result_selection_schema(single) is None
+        assert resolve_result_selection_schema(None) is None
+        banded = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name="accuracy",
+                    orientation="band",
+                    weight=0.5,
+                    band=BandTarget(low=0.8, high=0.9),
+                ),
+                ObjectiveDefinition(name="cost", orientation="minimize", weight=0.5),
+            ]
+        )
+        assert resolve_result_selection_schema(banded) is None
+
+    def test_unavailable_weighted_selection_is_flagged(self) -> None:
+        """Defensive (#1846 #4): a declared multi-objective schema whose weighted
+        score is uncomputable (secondary objective never measured) falls back to
+        primary-objective ranking but is flagged, not silent."""
+        trials = [
+            FakeTrial(metrics={"accuracy": 0.9}, config={"schema": "a", "prompt": "x"}),
+            FakeTrial(metrics={"accuracy": 0.8}, config={"schema": "b", "prompt": "y"}),
+        ]
+        # cost is declared but present on NO trial -> the accuracy-only weighted
+        # score still computes, so instead declare a wholly-absent objective.
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(name="ndcg", orientation="maximize", weight=0.5),
+                ObjectiveDefinition(name="cost", orientation="minimize", weight=0.5),
+            ]
+        )
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"schema", "prompt"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+            objective_schema=schema,
+        )
+        # Neither declared objective (ndcg/cost) is measured -> no finite
+        # weighted score -> legacy fallback, but flagged.
+        assert result.best_config == {"schema": "a", "prompt": "x"}
+        assert result.session_summary.get("weighted_selection_unavailable") is True
+
+
+# Two Pareto endpoints that share the exact top weighted aggregate (0.5) under
+# equal 0.5/0.5 weights over observed ranges accuracy (0.70, 0.90) and
+# cost (0.001, 0.010):
+#   endpoint A (high accuracy / high cost): acc_n=1, cost_n=0  -> 0.5
+#   endpoint B (low accuracy  / low cost) : acc_n=0, cost_n=1  -> 0.5
+# Iteration order is [A, B], so a plain ``max`` (first-by-order) crowns A, while
+# the authoritative tie-break (min_abs_deviation: smallest secondary cost, then
+# trial_id) crowns B. This is the common linear/concave frontier endpoint tie,
+# not a corner.
+_TIE_ENDPOINTS = [
+    ("t_high_acc_high_cost", {"model": "big"}, {"accuracy": 0.90, "cost": 0.010}),
+    ("t_low_acc_low_cost", {"model": "small"}, {"accuracy": 0.70, "cost": 0.001}),
+]
+
+
+def _fake_trials(spec):
+    """FakeTrials for the TERMINAL selector (carry ranking-eligible metadata)."""
+    return [
+        FakeTrial(trial_id=tid, config=config, metrics=metrics)
+        for tid, config, metrics in spec
+    ]
+
+
+def _real_trials(spec):
+    """Real TrialResults for the POST-HOC ``calculate_weighted_scores`` path."""
+    from traigent.api.types import OptimizationStatus, TrialResult
+
+    return [
+        TrialResult(
+            trial_id=tid,
+            config=config,
+            metrics=metrics,
+            status=OptimizationStatus.COMPLETED,
+            duration=1.0,
+            timestamp=0.0,
+        )
+        for tid, config, metrics in spec
+    ]
+
+
+class TestIssue1846TieBreakParity:
+    """Terminal ``best_config`` and post-hoc ``best_weighted_config`` must crown
+    the SAME config on weighted ties, not just on unique maxima (#1846).
+
+    The reviewer's blocker: the post-hoc winner pick was a plain
+    ``max(weighted_scores)`` (first-by-iteration, no tolerance, no tie-break),
+    while the terminal selector gathers tolerance-tied trials and applies
+    ``apply_tie_breaker``. On a two-endpoint Pareto tie the two artifacts named
+    OPPOSITE winners, so the PR's headline "the two artifacts agree" was false
+    on ties. These tests reproduce that exact divergence and lock in parity.
+    Terminal selection is fed FakeTrials (which set the ranking-eligible
+    comparability metadata); the post-hoc path is fed the equivalent real
+    TrialResults, mirroring the existing #1846 consistency test.
+    """
+
+    def _terminal(self, spec, schema):
+        return select_best_configuration(
+            trials=_fake_trials(spec),
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+            objective_schema=schema,
+        )
+
+    def _post_hoc_result(self, spec, terminal):
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+
+        return OptimizationResult(
+            trials=_real_trials(spec),
+            best_config=terminal.best_config,
+            best_score=terminal.best_score,
+            optimization_id="opt",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="grid",
+            timestamp=0.0,
+        )
+
+    def test_terminal_and_post_hoc_agree_on_weighted_tie(self) -> None:
+        """The reviewer's exact repro: equal weights, two configs both weighted
+        0.5, ordered so plain-max and tie-broken-max differ.
+
+        FAILS on the pre-fix post-hoc selector (plain ``max`` -> endpoint A)
+        because the terminal selector tie-breaks to endpoint B; PASSES once the
+        post-hoc path shares the terminal tie policy.
+        """
+        schema = _weighted_schema(1.0, 1.0)  # default equal 0.5/0.5
+
+        terminal = self._terminal(_TIE_ENDPOINTS, schema)
+        # The authoritative selector tie-breaks to the lower-cost endpoint.
+        assert terminal.best_config == {"model": "small"}
+
+        result = self._post_hoc_result(_TIE_ENDPOINTS, terminal)
+        weighted = result.calculate_weighted_scores(objective_schema=schema)
+
+        # Both endpoints share the top weighted score (this IS a tie)...
+        scores = {t.trial_id: s for t, s in weighted["weighted_scores"]}
+        assert scores["t_high_acc_high_cost"] == pytest.approx(0.5)
+        assert scores["t_low_acc_low_cost"] == pytest.approx(0.5)
+        # ...and the post-hoc winner must equal the terminal winner.
+        assert weighted["best_weighted_config"] == terminal.best_config
+
+    def test_post_hoc_tie_winner_is_not_first_by_iteration(self) -> None:
+        """Guards against a silent regression to plain ``max``: the tie winner
+        is the lower-cost endpoint (tie-break), never the first tied trial."""
+        schema = _weighted_schema(1.0, 1.0)
+        terminal = self._terminal(_TIE_ENDPOINTS, schema)
+        result = self._post_hoc_result(_TIE_ENDPOINTS, terminal)
+
+        weighted = result.calculate_weighted_scores(objective_schema=schema)
+        # First trial by iteration order is the high-cost endpoint; a plain max
+        # would return it. The tie-break must reject it for the low-cost one.
+        assert result.trials[0].trial_id == "t_high_acc_high_cost"
+        assert weighted["best_weighted_config"] == {"model": "small"}
+
+    def test_unique_maximum_still_wins(self) -> None:
+        """Parity fix must not disturb the non-tie case: a strict weighted
+        maximum is still selected by both selectors."""
+        schema = _weighted_schema(1.0, 1.0)
+        spec = [
+            ("t_dominant", {"model": "best"}, {"accuracy": 0.90, "cost": 0.001}),
+            ("t_dominated", {"model": "worse"}, {"accuracy": 0.70, "cost": 0.010}),
+        ]
+        terminal = self._terminal(spec, schema)
+        assert terminal.best_config == {"model": "best"}
+
+        result = self._post_hoc_result(spec, terminal)
+        weighted = result.calculate_weighted_scores(objective_schema=schema)
+        assert weighted["best_weighted_config"] == {"model": "best"}
+        assert weighted["best_weighted_score"] == pytest.approx(1.0)

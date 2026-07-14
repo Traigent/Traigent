@@ -357,7 +357,26 @@ class TrialError:
 
 @dataclass
 class TrialResult:
-    """Result of a single optimization trial."""
+    """Result of a single optimization trial.
+
+    Trial-metrics contract (issue #1845) — the meaning of each score-like value:
+
+    * ``score`` — the trial's **optimization signal**: the exact value
+      ``best_config`` argmaxes. For a single-objective run it is the objective
+      metric's value (e.g. ``metrics["accuracy"]`` when the objective is
+      ``"accuracy"``); for a weighted multi-objective run it is the weighted
+      selection basis (issue #1682). This is the attribute to read when you want
+      "the trial's score"; it mirrors ``metrics["score"]``.
+    * ``metrics["score"]`` — same optimization signal, kept in the metrics map
+      for transport/serialization parity.
+    * ``metrics["accuracy"]`` and any other objective/diagnostic keys — the
+      individual metric values. When a custom ``scoring_function`` defines the
+      objective, ``metrics["accuracy"]`` is the custom scorer's mean.
+    * ``metrics["exact_match_default"]`` — present ONLY when a custom
+      ``scoring_function`` owns the ``"accuracy"`` objective. It holds the SDK's
+      built-in case-insensitive exact-match scorer as a DIAGNOSTIC. It is never
+      the optimization signal and is not what ``best_config`` uses.
+    """
 
     trial_id: str
     config: dict[str, Any]
@@ -368,6 +387,11 @@ class TrialResult:
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     error: TrialError | None = None
+    # Optimization signal — the value best_config argmaxes (objective metric for
+    # single-objective runs, weighted basis for weighted runs). Populated at the
+    # trial-construction site; None until the objective value is known or when
+    # the objective metric is absent (e.g. a failed trial). See class docstring.
+    score: float | None = None
 
     @property
     def is_successful(self) -> bool:
@@ -407,6 +431,7 @@ class TrialResult:
             f"trial_id={self.trial_id!r}, "
             "config='<redacted>', "
             f"metrics={self.metrics!r}, "
+            f"score={self.score!r}, "
             f"status={self.status!r}, "
             f"duration={self.duration!r}, "
             f"timestamp={self.timestamp!r}, "
@@ -434,6 +459,7 @@ class TrialResult:
         """
         result: dict[str, Any] = {
             "trial_id": self.trial_id,
+            "score": self.score,
             "status": self.status.value,
             "duration": float(self.duration),
             "timestamp": _serialize_datetime(
@@ -1419,7 +1445,29 @@ class OptimizationResult:
     def _select_best_weighted_result(
         self, weighted_scores: list[tuple[TrialResult, float]]
     ) -> tuple[dict[str, Any] | None, float]:
-        """Select the best configuration from computed weighted scores."""
+        """Select the best configuration from computed weighted scores.
+
+        Weighted ties are broken with the SAME policy as the authoritative
+        terminal selector (issue #1846). All trials whose weighted score is
+        within the conservative primary-score tolerance of the maximum
+        (``_primary_scores_tied``) are gathered, then resolved with
+        ``apply_tie_breaker`` — secondary metrics in the run's declared
+        objective order, then ``trial_id``. A plain ``max`` would instead
+        crown the first tied trial by iteration order and could name the
+        OPPOSITE winner from ``results.best_config`` on the common
+        Pareto-endpoint tie (two configs sharing the top weighted aggregate),
+        breaking the "the two artifacts agree" guarantee. Single-sourcing the
+        tie-break here keeps ``best_weighted_config`` identical to the terminal
+        ``best_config`` on ties as well as on unique maxima.
+        """
+        # Lazy import: result_selection imports TrialResult from this module,
+        # so a module-level import would create a cycle. Runtime-only call, so
+        # the deferred import is free (same pattern as the ObjectiveSchema
+        # imports elsewhere in this class).
+        from traigent.core.result_selection import (  # noqa: PLC0415
+            _primary_scores_tied,
+            apply_tie_breaker,
+        )
 
         if not weighted_scores:
             fallback_trial = (
@@ -1428,7 +1476,25 @@ class OptimizationResult:
             best_config = fallback_trial.config if fallback_trial else self.best_config
             return best_config, 0.0
 
-        best_trial, best_score = max(weighted_scores, key=lambda item: item[1])
+        best_score = max(score for _, score in weighted_scores)
+        tied_trials = [
+            trial
+            for trial, score in weighted_scores
+            if _primary_scores_tied(score, best_score)
+        ]
+        if len(tied_trials) > 1:
+            # Empty tie_breakers ⇒ the default ``min_abs_deviation`` strategy,
+            # exactly what the terminal selector applies for the common run
+            # (no custom promotion_policy.tie_breaker configured).
+            best_trial = apply_tie_breaker(
+                tied_trials,
+                {},
+                self.objectives[0] if self.objectives else "",
+                band_target=None,
+                objective_order=self.objectives,
+            )
+        else:
+            best_trial = tied_trials[0]
         return best_trial.config, best_score
 
     def score_trials(

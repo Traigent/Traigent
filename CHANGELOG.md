@@ -6,6 +6,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `ObservabilityClient.flush(timeout=0)` and `close(timeout=0)` now perform an
+  immediate poll rather than treating zero as the configured 30-second flush
+  timeout. No deadline-exceeded warning is emitted for this intentional
+  poll-style use. No-argument flush and close retain synchronous delivery.
+- `items_pending` and transport `pending_items` now count both buffered and
+  in-flight payloads, so a timed-out sender remains visible until it completes.
+  `get_stats()` also exposes `oldest_inflight_age_seconds` to diagnose custom
+  senders that do not return.
+
+### Fixed
+
+- Observability delivery keeps exactly one sender active, including after a
+  bounded flush returns before its sender completes. A later flush waits for
+  that sender within its own deadline before beginning another batch.
+- Health callbacks run after transport locks are released, and batch-delivery
+  failure events explicitly identify their batch (`item_count` and capped
+  `trace_ids`) instead of implying one callback per payload.
+- The atexit observability close is explicitly bounded by the default
+  `flush_timeout` (30 seconds). This intentionally favors a bounded interpreter
+  shutdown over guaranteed delivery of a very slow final backlog.
+
 ## [0.21.3] - 2026-07-11
 
 ### Added
