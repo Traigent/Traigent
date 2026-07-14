@@ -3000,6 +3000,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="OptimizationResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#best_config-in-multi-objective-runs-authoritative-accessor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        best_config in multi-objective runs (authoritative accessor)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -4884,6 +4901,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="OptimizationResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#best_config-in-multi-objective-runs-authoritative-accessor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        best_config in multi-objective runs (authoritative accessor)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -5875,6 +5909,34 @@ task-local heuristics and do not provide a statistical certificate.</p>
 - <code>success_rate</code>: Ratio of successful trials to total trials</p>
 <p><code>metadata["source"]</code> records result provenance as one of <code>cloud_brain</code>,
 <code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>.</p>
+<h4 id="best_config-in-multi-objective-runs-authoritative-accessor"><code>best_config</code> in multi-objective runs (authoritative accessor)<a class="headerlink" href="#best_config-in-multi-objective-runs-authoritative-accessor" title="Permanent link">&para;</a></h4>
+<p>When you declare more than one objective — e.g. <code>objectives=["accuracy", "cost"]</code>,
+<strong>including the default equal weights</strong> — <code>results.best_config</code> is the winner of
+the declared <strong>weighted aggregate</strong>, not the highest-accuracy config. This is the
+same winner the run's own post-hoc analysis crowns:</p>
+<ul>
+<li><code>results.best_config</code> <strong>==</strong> <code>results.calculate_weighted_scores()["best_weighted_config"]</code>
+  <strong>==</strong> the <code>best_weighted_config</code> in the persisted <code>weighted_results_v2.json</code>.</li>
+</ul>
+<p>The two artifacts of one run agree — <strong>including on ties</strong>: both selectors gather
+every config within the conservative weighted-score tolerance of the maximum and
+break the tie identically (secondary metrics in the declared objective order, then
+<code>trial_id</code>), so a two-endpoint Pareto tie (both configs sharing the top weighted
+aggregate) crowns the same winner in both places rather than opposite first-by-order
+picks. <code>results.best_score</code> remains the winner's primary-objective value (e.g. its
+accuracy); the weighted basis of the selection is surfaced per-trial in
+<code>metrics["score"]</code> and in <code>metadata["session_summary"]["weighted_selection"]</code>.
+<code>auto_load_best</code> and <code>get_best_config()</code> load this same weighted winner.</p>
+<p>The agreement holds for the common run. Two narrow cases can still diverge, by
+design: (1) a custom <code>promotion_policy.tie_breaker</code> (anything other than the default
+<code>min_abs_deviation</code>) is honoured by the terminal selector but not by the post-hoc
+accessor, which always uses the default; and (2) the terminal selector ranks only
+<strong>ranking-eligible</strong> trials (those passing the comparability/coverage gate) while
+<code>calculate_weighted_scores()</code> ranks all <strong>successful</strong> trials, so a successful but
+ranking-ineligible config can appear only in the post-hoc set.</p>
+<p>Single-objective runs are unchanged (highest primary-objective config); banded
+objectives select by band proximity. Declaring non-uniform weights simply shifts
+the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
 <h3 id="trialresult">TrialResult<a class="headerlink" href="#trialresult" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TrialResult</span><span class="p">:</span>

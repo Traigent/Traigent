@@ -1896,6 +1896,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reading-trial-results-the-trial-metrics-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading trial results — the trial-metrics contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#troubleshooting" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4206,6 +4217,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reading-trial-results-the-trial-metrics-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading trial results — the trial-metrics contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#troubleshooting" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4586,6 +4608,45 @@ with an explicit error and log at ERROR level. The contract is
 <span class="n">enable_mock_mode_for_quickstart</span><span class="p">()</span>
 </code></pre></div>
 <p>For shell-only fixtures, <code>TRAIGENT_MOCK_LLM=true</code> remains available outside production for backwards compatibility, but direct user-set activation emits <code>DeprecationWarning</code>.</p>
+<h2 id="reading-trial-results-the-trial-metrics-contract">Reading trial results — the trial-metrics contract<a class="headerlink" href="#reading-trial-results-the-trial-metrics-contract" title="Permanent link">&para;</a></h2>
+<p>Each <code>TrialResult</code> (the items in <code>result.trials</code>) exposes several score-like
+values. They do <strong>not</strong> all mean the same thing:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trial.score</code></td>
+<td>The trial's <strong>optimization signal</strong> — the exact value <code>best_config</code> argmaxes. For a single-objective run it is the objective metric (e.g. accuracy); for a weighted multi-objective run it is the weighted selection basis. <strong>Read this when you want "the trial's score".</strong></td>
+</tr>
+<tr>
+<td><code>trial.metrics["score"]</code></td>
+<td>Same optimization signal, kept in the metrics map for serialization parity.</td>
+</tr>
+<tr>
+<td><code>trial.metrics["accuracy"]</code> (and other objective keys)</td>
+<td>The individual metric values. When a custom <code>scoring_function</code> defines the objective, <code>metrics["accuracy"]</code> is the custom scorer's mean.</td>
+</tr>
+<tr>
+<td><code>trial.metrics["exact_match_default"]</code></td>
+<td>Present <strong>only</strong> when a custom <code>scoring_function</code> owns the <code>accuracy</code> objective. It holds the SDK's built-in case-insensitive exact-match scorer as a <strong>diagnostic</strong> — it is never the optimization signal and is not what <code>best_config</code> uses.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">trial</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">:</span>
+    <span class="c1"># Correct: trial.score is the signal the optimizer used.</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">trial</span><span class="o">.</span><span class="n">score</span><span class="p">)</span>
+</code></pre></div>
+<p>Before this contract was fixed (issue #1845), <code>trial.score</code> was <code>None</code> and
+<code>metrics["score"]</code> held the built-in exact-match scorer even when a custom
+<code>scoring_function</code> was supplied — so a consumer doing
+<code>trial.score or trial.metrics["score"]</code> would log a number the optimizer never
+used, disagreeing with <code>best_config</code> whenever the custom scorer was non-binary.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Paraphrased answers score 0.0</strong>: The default <code>LocalEvaluator</code> accuracy is exact / case-insensitive match; it is not semantic. Provide your own <code>scoring_function</code> (or <code>metric_functions={"accuracy": ...}</code>) that performs embedding similarity or LLM-judge scoring. <code>LocalExecutionAdapter</code> also raises a visible error when dataset examples are tagged <code>evaluation_type: "semantic"</code> without a configured scorer.</li>

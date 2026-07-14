@@ -2997,6 +2997,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#observability-transport-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability transport health
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#faq" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4524,6 +4535,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#observability-transport-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability transport health
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#faq" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4938,6 +4960,52 @@ all string/free-text config values are redacted while preserving the tuned keys.
 <p><strong>Review Evaluation Dataset</strong>: Ensure your evaluation datasets don't contain PII</p>
 </li>
 </ol>
+<h2 id="observability-transport-health">Observability transport health<a class="headerlink" href="#observability-transport-health" title="Permanent link">&para;</a></h2>
+<p><code>ObservabilityClient.get_stats()</code> returns a process-local snapshot of buffered
+trace delivery. Use it to alert on local loss before a trace reaches the
+backend. The snapshot includes <code>dropped_items</code>, <code>dropped_by_reason</code>,
+<code>queue_depth</code>, <code>inflight_items</code>, <code>oldest_inflight_age_seconds</code>, and
+<code>retry_attempts</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.observability</span><span class="w"> </span><span class="kn">import</span> <span class="n">ObservabilityClient</span><span class="p">,</span> <span class="n">ObservabilityConfig</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">report_transport_health</span><span class="p">(</span><span class="n">event_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># Every local drop is reported. Delivery failures are one event per batch:</span>
+    <span class="c1"># payloads include item_count and up to 20 trace_ids alongside drop_reason,</span>
+    <span class="c1"># cumulative dropped_items, queue_depth, and event-specific details.</span>
+    <span class="n">metrics_sink</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="n">event_type</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
+
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">ObservabilityClient</span><span class="p">(</span>
+    <span class="n">ObservabilityConfig</span><span class="p">(</span><span class="n">health_callback</span><span class="o">=</span><span class="n">report_transport_health</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_stats</span><span class="p">()</span>
+<span class="k">if</span> <span class="n">stats</span><span class="p">[</span><span class="s2">&quot;dropped_items&quot;</span><span class="p">]:</span>
+    <span class="n">metrics_sink</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="s2">&quot;observability_transport_snapshot&quot;</span><span class="p">,</span> <span class="n">stats</span><span class="p">)</span>
+</code></pre></div>
+<p><code>queue_depth</code> counts payloads still buffered; <code>inflight_items</code> counts payloads
+already handed to a sender but not yet completed. A non-null
+<code>oldest_inflight_age_seconds</code> makes a custom sender that does not return
+diagnosable; custom senders should enforce their own request timeout.
+<code>dropped_by_reason</code> is bounded to the transport's in-process lifetime and
+distinguishes reasons such as
+<code>queue_full</code>, <code>payload_too_large</code>, <code>payload_not_json_serializable</code>,
+<code>transport_closed</code>, and <code>batch_delivery_failed</code>. These are local SDK metrics;
+they are deliberately not added to the ingest wire payload until the strict
+Schema and Backend contract is updated together.</p>
+<p><code>health_callback</code> is invoked only after SDK transport locks are released. It
+may run on a background delivery thread, and callback exceptions are swallowed.
+Keep it fast and safe for concurrent invocation. Batch-delivery failures emit a
+single batch-shaped event with <code>item_count</code>, up to 20 <code>trace_ids</code>, and
+<code>trace_ids_truncated</code>; queue, oversized-payload, serialization, and closed-
+transport drops each emit their own event.</p>
+<p><code>flush(timeout=0)</code> and <code>close(timeout=0)</code> are immediate poll-style calls: they
+return without starting a sender and do not emit a deadline-exceeded warning.
+Previously, zero was treated like the configured flush timeout. An explicit
+positive timeout bounds the wait; no-argument flush/close preserves synchronous
+delivery. The atexit close path explicitly uses the default 30-second
+<code>flush_timeout</code>, so shutdown can trade undelivered tail items for a bounded
+interpreter exit.</p>
 <h2 id="faq">FAQ<a class="headerlink" href="#faq" title="Permanent link">&para;</a></h2>
 <h3 id="q-is-telemetry-enabled-by-default">Q: Is telemetry enabled by default?<a class="headerlink" href="#q-is-telemetry-enabled-by-default" title="Permanent link">&para;</a></h3>
 <p><strong>A</strong>: Yes, for local optimization metadata. The default portal-backed path can
