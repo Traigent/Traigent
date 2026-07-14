@@ -103,12 +103,12 @@ class TestAggregatedBestMetricsAreTheReplicateMean:
 
         bm = result.best_metrics
 
-        assert bm["accuracy"] == pytest.approx(
-            0.85
-        ), "primary must be the replicate MEAN (0.85), not the first replicate (0.80)"
-        assert bm["accuracy"] == pytest.approx(
-            result.best_score
-        ), "best_metrics[primary] must equal best_score in aggregated runs"
+        assert bm["accuracy"] == pytest.approx(0.85), (
+            "primary must be the replicate MEAN (0.85), not the first replicate (0.80)"
+        )
+        assert bm["accuracy"] == pytest.approx(result.best_score), (
+            "best_metrics[primary] must equal best_score in aggregated runs"
+        )
 
     def test_secondary_metrics_equal_the_replicate_mean(self):
         """Secondary cost/latency must be the mean, matching the session_summary mean."""
@@ -260,8 +260,8 @@ class TestEndToEndThroughRealSelection:
         )
 
         bm = result.best_metrics
-        assert bm["accuracy"] == pytest.approx(
-            0.85
-        ), "best_metrics primary must be the winning config's replicate MEAN"
+        assert bm["accuracy"] == pytest.approx(0.85), (
+            "best_metrics primary must be the winning config's replicate MEAN"
+        )
         assert bm["accuracy"] == pytest.approx(result.best_score)
         assert bm["cost"] == pytest.approx(0.03), "secondary cost must be the mean too"
