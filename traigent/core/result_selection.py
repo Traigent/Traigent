@@ -171,6 +171,11 @@ def _populate_weighted_scores(
         if trial.metrics is None:
             trial.metrics = {}
         trial.metrics["score"] = weighted
+        # Keep the TrialResult.score accessor consistent with metrics["score"]
+        # for weighted runs: both carry the weighted selection basis (#1845
+        # semantics, #1682 basis). Additive — does not alter the metrics["score"]
+        # overwrite above, which remains the weighted-run source of truth.
+        trial.score = weighted
 
 
 def _weighted_session_extras(

@@ -480,6 +480,28 @@ def _validated_comparability_payload(
     return comparability_payload
 
 
+def _populate_trial_score(
+    trial_result: TrialResult, primary_objective: str | None
+) -> None:
+    """Set ``trial_result.score`` to the trial's optimization signal (issue #1845).
+
+    The signal is the primary objective's value (what ``best_config`` argmaxes).
+    ``metrics["score"]`` is used as a fallback because the evaluator already
+    aligns it to the objective for single-objective runs. Non-numeric or missing
+    values leave ``score`` as ``None`` (e.g. an objective metric a failed trial
+    never produced).
+    """
+    metrics = trial_result.metrics or {}
+    for key in (primary_objective, "score"):
+        if not key or key not in metrics:
+            continue
+        value = metrics[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        trial_result.score = float(value)
+        return
+
+
 def build_success_result(
     *,
     trial_id: str,
@@ -490,6 +512,7 @@ def build_success_result(
     total_cost: float | None,
     optuna_trial_id: int | None,
     extra_reserved: frozenset[str] = frozenset(),
+    primary_objective: str | None = None,
 ) -> TrialResult:
     """Create a successful :class:`TrialResult` instance.
 
@@ -499,6 +522,13 @@ def build_success_result(
     The final-union ceiling below uses it so an evaluator-computed runtime name
     (e.g. ``f1``, ``context_precision``) is never mistaken for a droppable user
     key under ceiling pressure.
+
+    ``primary_objective`` is the run's primary objective name; when given, the
+    trial's optimization signal (``metrics[primary_objective]``) is copied to
+    :attr:`TrialResult.score` so the obvious accessor is populated and never
+    steers consumers to a diagnostic (issue #1845). Weighted runs re-populate
+    both ``score`` and ``metrics["score"]`` with the weighted basis at terminal
+    selection (issue #1682).
     """
     trial_metadata = _build_success_trial_metadata(
         eval_result,
@@ -582,6 +612,14 @@ def build_success_result(
         )
 
     trial_result.metadata["comparability"] = _extract_success_comparability(eval_result)
+
+    # Populate the optimization signal on the trial (issue #1845). Prefer the
+    # primary objective's value (what best_config argmaxes); fall back to the
+    # metrics["score"] the evaluator already aligned to the objective. This
+    # defuses the ``trial.score or trial.metrics["score"]`` trap: the obvious
+    # accessor now carries the signal the optimizer actually used, not a
+    # diagnostic. Weighted runs overwrite this at terminal selection (#1682).
+    _populate_trial_score(trial_result, primary_objective)
 
     logger.debug(
         "Trial %s completed: %s, duration: %.2fs",

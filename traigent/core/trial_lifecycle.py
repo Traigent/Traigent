@@ -64,6 +64,21 @@ from traigent.core.cost_enforcement import Permit
 logger = get_logger(__name__)
 
 
+def _resolve_primary_objective(orchestrator: Any) -> str | None:
+    """Return the run's primary objective name, or None when unavailable.
+
+    Used to populate :attr:`TrialResult.score` with the optimization signal
+    (issue #1845). Defensive: custom optimizers may not expose ``objectives``.
+    """
+    optimizer = getattr(orchestrator, "optimizer", None)
+    objectives = getattr(optimizer, "objectives", None) if optimizer else None
+    if objectives:
+        first = objectives[0]
+        if isinstance(first, str) and first:
+            return first
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Surrogate (pre-screen) scoring
 #
@@ -581,6 +596,8 @@ class TrialLifecycle:
                     "_evaluator_computable_metric_names",
                     lambda: frozenset(),
                 )(),
+                # Primary objective drives TrialResult.score population (#1845).
+                primary_objective=_resolve_primary_objective(orchestrator),
             )
             if surrogate_descriptor is not None:
                 result.metadata["surrogate_evaluator"] = surrogate_descriptor

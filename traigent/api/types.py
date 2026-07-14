@@ -357,7 +357,26 @@ class TrialError:
 
 @dataclass
 class TrialResult:
-    """Result of a single optimization trial."""
+    """Result of a single optimization trial.
+
+    Trial-metrics contract (issue #1845) — the meaning of each score-like value:
+
+    * ``score`` — the trial's **optimization signal**: the exact value
+      ``best_config`` argmaxes. For a single-objective run it is the objective
+      metric's value (e.g. ``metrics["accuracy"]`` when the objective is
+      ``"accuracy"``); for a weighted multi-objective run it is the weighted
+      selection basis (issue #1682). This is the attribute to read when you want
+      "the trial's score"; it mirrors ``metrics["score"]``.
+    * ``metrics["score"]`` — same optimization signal, kept in the metrics map
+      for transport/serialization parity.
+    * ``metrics["accuracy"]`` and any other objective/diagnostic keys — the
+      individual metric values. When a custom ``scoring_function`` defines the
+      objective, ``metrics["accuracy"]`` is the custom scorer's mean.
+    * ``metrics["exact_match_default"]`` — present ONLY when a custom
+      ``scoring_function`` owns the ``"accuracy"`` objective. It holds the SDK's
+      built-in case-insensitive exact-match scorer as a DIAGNOSTIC. It is never
+      the optimization signal and is not what ``best_config`` uses.
+    """
 
     trial_id: str
     config: dict[str, Any]
@@ -368,6 +387,11 @@ class TrialResult:
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     error: TrialError | None = None
+    # Optimization signal — the value best_config argmaxes (objective metric for
+    # single-objective runs, weighted basis for weighted runs). Populated at the
+    # trial-construction site; None until the objective value is known or when
+    # the objective metric is absent (e.g. a failed trial). See class docstring.
+    score: float | None = None
 
     @property
     def is_successful(self) -> bool:
@@ -407,6 +431,7 @@ class TrialResult:
             f"trial_id={self.trial_id!r}, "
             "config='<redacted>', "
             f"metrics={self.metrics!r}, "
+            f"score={self.score!r}, "
             f"status={self.status!r}, "
             f"duration={self.duration!r}, "
             f"timestamp={self.timestamp!r}, "
@@ -434,6 +459,7 @@ class TrialResult:
         """
         result: dict[str, Any] = {
             "trial_id": self.trial_id,
+            "score": self.score,
             "status": self.status.value,
             "duration": float(self.duration),
             "timestamp": _serialize_datetime(
