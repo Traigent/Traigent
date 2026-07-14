@@ -366,7 +366,23 @@ class TestOptimizeDecorator:
             MAX_ACCURACY_THEN_CHEAPEST
         )
         assert result.metadata["strategy_preset"]["selection_grade"] == "advisory"
-        assert result.best_config != result.preset_selection.selected_config
+
+        # #1846: the preset registers accuracy+cost, so this is a genuine
+        # multi-objective run and best_config is the weighted-aggregate winner,
+        # computed independently of the advisory preset. Prove best_config is
+        # the run's own weighted default (NOT copied from the preset) by
+        # comparing it to the independent post-hoc weighted computation
+        # (calculate_weighted_scores), which crowns best_weighted_config via a
+        # separate code path from terminal selection.
+        weighted = result.calculate_weighted_scores()
+        assert result.best_config == weighted["best_weighted_config"]
+        assert result.best_config == {"model": "cheap"}
+        # preset_selection stays exposed as its own advisory field alongside
+        # best_config. Here the weighted winner happens to coincide with the
+        # preset's advisory pick (equal-weight accuracy/cost tie broken to
+        # lowest cost == the epsilon-band cheapest), but the preset never
+        # *replaced* best_config: the two are computed independently.
+        assert result.preset_selection.selected_config == {"model": "cheap"}
 
     def test_quality_floor_preset_matches_no_preset_trial_outcomes_and_best_config(
         self, monkeypatch, tmp_path
@@ -429,15 +445,35 @@ class TestOptimizeDecorator:
         assert floor_preset_function.current_config == no_preset_result.best_config
         assert floor_result.preset_selection is not None
         assert floor_result.preset_selection.selected_config == {"model": "good-cheap"}
-        assert floor_result.preset_selection.selected_config != floor_result.best_config
+
+        # #1846: QUALITY_FLOOR_MIN_COST registers the SAME accuracy+cost
+        # objectives as the no-preset run, so the preset must not constrain
+        # best_config — it equals the no-preset run's best_config (asserted
+        # above) AND each run's own independent post-hoc weighted winner. This
+        # proves best_config is the weighted default, not the preset's advisory
+        # floor pick. Here the weighted winner (good-cheap) happens to coincide
+        # with the preset's advisory pick, but preset_selection remains a
+        # distinct, separately-populated advisory field — never a replacement
+        # for best_config.
+        assert (
+            floor_result.best_config
+            == floor_result.calculate_weighted_scores()["best_weighted_config"]
+        )
+        assert (
+            no_preset_result.best_config
+            == no_preset_result.calculate_weighted_scores()["best_weighted_config"]
+        )
 
         export_path = floor_preset_function.export_config(
             tmp_path / "floor-preset-config.json",
             format="slim",
         )
         exported = json.loads(export_path.read_text(encoding="utf-8"))
+        # Export tracks the actual best_config (the weighted winner), which
+        # equals the no-preset run's best_config — the preset did not change
+        # what gets exported.
         assert exported["config"] == no_preset_result.best_config
-        assert exported["config"] != floor_result.preset_selection.selected_config
+        assert exported["config"] == floor_result.best_config
 
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""

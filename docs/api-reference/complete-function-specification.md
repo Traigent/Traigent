@@ -529,6 +529,38 @@ class OptimizationResult:
 `metadata["source"]` records result provenance as one of `cloud_brain`,
 `local_fallback`, `explicit_local`, or `offline`.
 
+#### `best_config` in multi-objective runs (authoritative accessor)
+
+When you declare more than one objective — e.g. `objectives=["accuracy", "cost"]`,
+**including the default equal weights** — `results.best_config` is the winner of
+the declared **weighted aggregate**, not the highest-accuracy config. This is the
+same winner the run's own post-hoc analysis crowns:
+
+- `results.best_config` **==** `results.calculate_weighted_scores()["best_weighted_config"]`
+  **==** the `best_weighted_config` in the persisted `weighted_results_v2.json`.
+
+The two artifacts of one run agree — **including on ties**: both selectors gather
+every config within the conservative weighted-score tolerance of the maximum and
+break the tie identically (secondary metrics in the declared objective order, then
+`trial_id`), so a two-endpoint Pareto tie (both configs sharing the top weighted
+aggregate) crowns the same winner in both places rather than opposite first-by-order
+picks. `results.best_score` remains the winner's primary-objective value (e.g. its
+accuracy); the weighted basis of the selection is surfaced per-trial in
+`metrics["score"]` and in `metadata["session_summary"]["weighted_selection"]`.
+`auto_load_best` and `get_best_config()` load this same weighted winner.
+
+The agreement holds for the common run. Two narrow cases can still diverge, by
+design: (1) a custom `promotion_policy.tie_breaker` (anything other than the default
+`min_abs_deviation`) is honoured by the terminal selector but not by the post-hoc
+accessor, which always uses the default; and (2) the terminal selector ranks only
+**ranking-eligible** trials (those passing the comparability/coverage gate) while
+`calculate_weighted_scores()` ranks all **successful** trials, so a successful but
+ranking-ineligible config can appear only in the post-hoc set.
+
+Single-objective runs are unchanged (highest primary-objective config); banded
+objectives select by band proximity. Declaring non-uniform weights simply shifts
+the aggregate toward the heavier objective. (Issues #1682, #1846.)
+
 ### TrialResult
 
 ```python
