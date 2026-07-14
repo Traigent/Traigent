@@ -257,17 +257,29 @@ jobs:
                           return v
               return None
 
-          rcpt_session = (vdata.get("session") or vdata.get("session_id")
-                          or dig(ev, "session", "session_id", "change_session", "cs"))
+          # Metadata (branch line, product SHAs) is read from the referenced
+          # event file. That file MUST belong to the SAME ChangeSession the
+          # verifier just verified — otherwise an attacker can reference another
+          # session's event that happens to carry this repo's head SHA and forge
+          # a "verified" for a reference that was never actually verified.
+          ev_session = dig(ev, "session", "session_id", "change_session", "cs")
+          v_session = vdata.get("session") or vdata.get("session_id")
           branch_line = (vdata.get("product_branch_line")
                          or dig(ev, "product_branch_line", "branch_line"))
           product_shas = vdata.get("product_shas") or dig(ev, "product_shas") or {}
 
           bits = [f"status={status or 'unknown'}"]
 
-          # (e) session-id check: receipt session == PR body session marker.
-          if rcpt_session and session and str(rcpt_session) != str(session):
-              out("needs_attention", f"session_mismatch:{rcpt_session}!={session}")
+          # (e) session binding (fail-closed): the metadata event file MUST carry
+          # a session id equal to the verified PR-body session, and any session
+          # id the verifier itself reports MUST match too. A missing or differing
+          # id is a distinct mismatch outcome — never "verified".
+          if not session:
+              out("session_mismatch", "no_pr_body_session;" + ";".join(bits))
+          if not ev_session or str(ev_session) != str(session):
+              out("session_mismatch", f"event_session={ev_session or 'absent'}!={session};" + ";".join(bits))
+          if v_session and str(v_session) != str(session):
+              out("session_mismatch", f"verifier_session={v_session}!={session};" + ";".join(bits))
 
           # (d) branch-line check: develop->develop / main->main.
           base_line = (base_ref or "").strip()
@@ -280,11 +292,14 @@ jobs:
           if not status:
               out("error", "no_receipt_status_field")
 
-          # (f) PR-binding check — only meaningful if this repo is listed.
+          # (f) PR-binding check — only meaningful if this repo is listed. Match
+          # the repo key EXACTLY (case-insensitively); a substring match would
+          # let "Traigent" bind against "TraigentBackend"/"TraigentFrontend"/
+          # "TraigentSchema" keys and cross-bind the receipt to the wrong repo.
           shas_for_repo = None
           if isinstance(product_shas, dict):
               for k, v in product_shas.items():
-                  if repo_name and repo_name.lower() in str(k).lower():
+                  if repo_name and str(k).lower() == repo_name.lower():
                       shas_for_repo = v
                       break
           elif isinstance(product_shas, list):
