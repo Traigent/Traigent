@@ -1007,6 +1007,38 @@ class TestBackendSessionManagerWeightedScores:
         assert "weighted_results" in result.metadata
 
     @pytest.mark.asyncio
+    async def test_update_weighted_scores_passes_schema_kwarg(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """T1: the portal weighted-score path must pass the declared
+        ObjectiveSchema through to ``calculate_weighted_scores`` so orientation
+        is authoritative — not re-guessed from metric names. Pre-fix only
+        ``objective_weights`` was passed and the schema was discarded."""
+        result = Mock(spec=OptimizationResult)
+        result.trials = [mock_trial_result]
+        result.successful_trials = [mock_trial_result]
+        result.calculate_weighted_scores = Mock(
+            return_value={
+                "weighted_scores": [(mock_trial_result, 0.85)],
+                "normalization_ranges": {},
+                "best_weighted_config": {"param1": 1},
+                "best_weighted_score": 0.85,
+            }
+        )
+        result.metadata = {}
+
+        await backend_session_manager.update_weighted_scores(
+            result=result,
+            session_id="test-session-id",
+        )
+
+        _, kwargs = result.calculate_weighted_scores.call_args
+        assert (
+            kwargs.get("objective_schema") is backend_session_manager._objective_schema
+        )
+        assert kwargs["objective_schema"] is not None
+
+    @pytest.mark.asyncio
     async def test_update_weighted_scores_skips_failed_trials(
         self, backend_session_manager, mock_backend_client
     ):
