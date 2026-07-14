@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import traceback as traceback_module
 import warnings
 from collections import Counter
@@ -23,6 +24,42 @@ logger = get_logger(__name__)
 
 SelectionGrade = Literal["advisory"]
 ADVISORY_SELECTION_GRADE: SelectionGrade = "advisory"
+
+# Whole-token markers used ONLY by the last-resort, schema-less orientation
+# heuristic (see ``_name_suggests_minimize``). Declared
+# ``ObjectiveSchema.orientation`` is always authoritative when a schema is
+# available; this list is never consulted in that case.
+_MINIMIZE_NAME_TOKENS: frozenset[str] = frozenset(
+    {"cost", "latency", "error", "loss", "time", "duration"}
+)
+
+
+def _tokenize_metric_name(name: str) -> set[str]:
+    """Split a metric name into lowercased word tokens.
+
+    Handles ``snake_case``, ``kebab-case``, spaces, and ``camelCase`` so that,
+    e.g., ``"response_time"`` / ``"responseTime"`` both yield ``{"response",
+    "time"}`` while ``"uptime"`` yields ``{"uptime"}`` (crucially NOT
+    ``{"time"}``). Prevents arbitrary-substring false positives such as
+    ``"uptime" ⊃ "time"``.
+    """
+
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+    return {token.lower() for token in re.findall(r"[A-Za-z0-9]+", spaced)}
+
+
+def _name_suggests_minimize(name: str) -> bool:
+    """Heuristic: does this metric name look like a minimize objective?
+
+    Whole-token match against :data:`_MINIMIZE_NAME_TOKENS` (not substring),
+    so ``"uptime"`` is NOT flagged as minimize while ``"latency_ms"`` and
+    ``"total_cost"`` are. Best-effort only — used solely as a last resort when
+    no declared :class:`~traigent.core.objectives.ObjectiveSchema` orientation
+    is available.
+    """
+
+    return bool(_tokenize_metric_name(name) & _MINIMIZE_NAME_TOKENS)
+
 
 # Type checking imports to avoid circular dependencies
 if TYPE_CHECKING:
@@ -1228,14 +1265,39 @@ class OptimizationResult:
         return computed_total_cost
 
     def _auto_detect_minimize_objectives(self) -> list[str]:
-        """Infer minimize-oriented objectives based on common naming patterns."""
+        """Infer minimize objectives from names — last-resort fallback only.
 
-        minimize_patterns = ("cost", "latency", "error", "loss", "time", "duration")
-        detected = []
-        for obj in self.objectives:
-            lowered = obj.lower()
-            if any(pattern in lowered for pattern in minimize_patterns):
-                detected.append(obj)
+        This runs ONLY when no declared :class:`ObjectiveSchema` orientation and
+        no explicit ``minimize_objectives`` list are available. The declared
+        orientation is always authoritative when a schema is threaded through
+        (see :meth:`_prepare_objective_preferences`). Because a name-based guess
+        can be wrong in both directions (a custom minimize metric such as
+        ``spend``/``perplexity`` is silently treated as maximize; a maximize
+        metric can no longer be mis-flagged, e.g. ``uptime`` is not read as
+        ``time``), a :class:`UserWarning` names each guessed orientation and how
+        to override it.
+        """
+
+        detected = [obj for obj in self.objectives if _name_suggests_minimize(obj)]
+
+        if self.objectives:
+            minimize_set = set(detected)
+            guessed = ", ".join(
+                f"'{obj}'={'minimize' if obj in minimize_set else 'maximize'}"
+                for obj in self.objectives
+            )
+            warnings.warn(
+                "Objective orientation was guessed from metric names because no "
+                "ObjectiveSchema orientation (or explicit minimize_objectives list) "
+                f"was provided: {guessed}. This guess can be wrong for custom metric "
+                "names and is NOT authoritative. Declare orientation explicitly by "
+                "building an ObjectiveSchema with ObjectiveDefinition(name=..., "
+                "orientation='minimize'|'maximize') and passing it as "
+                "objective_schema.",
+                UserWarning,
+                stacklevel=3,
+            )
+
         return detected
 
     def _resolve_schema_preferences(
@@ -1768,10 +1830,7 @@ class OptimizationResult:
     ) -> pd.DataFrame:
         if not primary_objective or primary_objective not in df.columns:
             return df
-        minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
-        ascending = any(
-            pattern in primary_objective.lower() for pattern in minimize_patterns
-        )
+        ascending = _name_suggests_minimize(primary_objective)
         return df.sort_values(
             by=[primary_objective], ascending=ascending, na_position="last"
         )
@@ -1925,13 +1984,10 @@ class OptimizationResult:
         # Auto-detect directions if not provided
         if directions is None:
             directions = {}
-            minimize_patterns = ("cost", "latency", "error", "loss", "time", "duration")
             for obj in self.objectives:
-                lowered = obj.lower()
-                if any(pattern in lowered for pattern in minimize_patterns):
-                    directions[obj] = "minimize"
-                else:
-                    directions[obj] = "maximize"
+                directions[obj] = (
+                    "minimize" if _name_suggests_minimize(obj) else "maximize"
+                )
 
         # Create analyzer
         analyzer = VariableAnalyzer(
