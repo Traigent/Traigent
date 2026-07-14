@@ -258,6 +258,10 @@ class LocalEvaluator(BaseEvaluator):
         # with random.uniform()-based fake scores.
         self.mock_mode_config = mock_mode_config or {}
         self.metric_functions = metric_functions or {}
+        # One-shot guard for the dual-scorer run notice (issue #1845). The
+        # evaluator instance is shared across a run's trials, so a flag here
+        # emits the notice once per run rather than once per example/trial.
+        self._dual_scorer_notice_logged = False
 
     def _extract_prompt_info(
         self,
@@ -1417,6 +1421,23 @@ class LocalEvaluator(BaseEvaluator):
 
         return example_metric
 
+    def _log_dual_scorer_notice_once(self) -> None:
+        """Emit a single run-level notice when both scorers appear (issue #1845).
+
+        Fires at most once per evaluator instance (== once per run), never per
+        example/trial, so a customer sees one clear line rather than N.
+        """
+        if self._dual_scorer_notice_logged:
+            return
+        self._dual_scorer_notice_logged = True
+        logger.info(
+            "A custom scoring_function defines the 'accuracy' objective; "
+            "metrics['score'] carries the optimization signal (the objective "
+            "value, == metrics['accuracy']), and the SDK's built-in "
+            "exact-match scorer is recorded separately as "
+            "metrics['exact_match_default'] for diagnostics."
+        )
+
     def _compute_accuracy_aggregated(
         self,
         outputs: list[Any],
@@ -1724,16 +1745,40 @@ class LocalEvaluator(BaseEvaluator):
                 metric_errors=metric_errors,
             )
 
+        # A custom scoring_function / metric_function OWNS the "accuracy"
+        # objective when "accuracy" is both an objective and a custom metric
+        # function. In that case the SDK's built-in exact-match scorer is a
+        # DIAGNOSTIC, not the optimization signal, so it must not occupy
+        # metrics["score"] (issue #1845).
+        accuracy_is_custom_objective = (
+            "accuracy" in self.metrics and "accuracy" in self.metric_functions
+        )
+
         if "accuracy" in self.metrics:
             accuracy_value, _ = self._compute_accuracy_aggregated(outputs, dataset)
             if accuracy_value is not None:
-                aggregated_metrics["accuracy"] = accuracy_value
-                aggregated_metrics.setdefault("score", accuracy_value)
+                if accuracy_is_custom_objective:
+                    # Keep the default exact-match value as a labelled
+                    # diagnostic; the custom aggregate below owns "accuracy"
+                    # and "score" (set to the objective value).
+                    aggregated_metrics["exact_match_default"] = accuracy_value
+                    self._log_dual_scorer_notice_once()
+                else:
+                    # No custom scorer: the default exact-match IS the objective,
+                    # so it is correctly both "accuracy" and "score".
+                    aggregated_metrics["accuracy"] = accuracy_value
+                    aggregated_metrics.setdefault("score", accuracy_value)
 
         # Aggregate custom metric functions using helper
         if self.metric_functions:
             custom_aggregated = self._compute_aggregated_custom_metrics(example_results)
             aggregated_metrics.update(custom_aggregated)
+            # metrics["score"] is the optimization signal. When a custom scorer
+            # owns the objective, that signal is the objective value (the custom
+            # scorer mean == metrics["accuracy"]), NOT the default exact-match
+            # scorer (which now lives under "exact_match_default"). Issue #1845.
+            if accuracy_is_custom_objective and "accuracy" in aggregated_metrics:
+                aggregated_metrics["score"] = aggregated_metrics["accuracy"]
 
         # Add comprehensive metrics from tracker using helper. Thread the
         # evaluator's runtime-only computable names (registry + RAGAS) so a

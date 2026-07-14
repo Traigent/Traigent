@@ -87,6 +87,11 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         "cost",
         "latency",
         "score",
+        # Diagnostic: the built-in exact-match scorer recorded alongside a custom
+        # scoring_function that owns the objective (issue #1845). Reserved so it
+        # is never dropped under the measures ceiling nor overwritten by a
+        # user-supplied tuple key of the same name.
+        "exact_match_default",
         # format_for_backend / summary outputs.
         "duration",
         "input_tokens",
