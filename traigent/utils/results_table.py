@@ -131,7 +131,12 @@ def _format_metric_value(metric: str, val: float) -> str:
     if metric == "cost":
         return f"${val:.5f}"
     if metric == "latency":
-        return f"{val:.3f}s"
+        # The "latency" metric holds a mean of per-result ``latency_ms`` values
+        # (see ``evaluators/hybrid_api.py`` -> ``aggregated["latency"]``), i.e. it
+        # is in MILLISECONDS per the canonical ``_ms`` unit contract. Render it
+        # with an ``ms`` label; the prior ``f"{val:.3f}s"`` treated the ms value
+        # as seconds, overstating latency 1000x (850 ms -> "850.000s" ~= 14 min).
+        return f"{val:.0f}ms"
     return _format_percent_metric(val)
 
 
