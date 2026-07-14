@@ -818,6 +818,83 @@ class OptimizationResult:
             return 0.0
         return len(self.successful_trials) / len(self.trials)
 
+    def _is_aggregated_run(self) -> bool:
+        """Whether the winner was selected over config-aggregated MEAN metrics.
+
+        In aggregated/hybrid mode (``aggregate_configs`` True) result selection
+        ranks configs by the MEAN of their replicate metrics and sets
+        ``best_score`` to the winning config's mean of the primary objective
+        (see ``result_selection._select_best_aggregated`` /
+        ``_select_best_weighted_aggregated``). Both stamp
+        ``session_summary["selection_mode"] == "aggregated_mean"`` and a
+        ``samples_per_config`` map into the result metadata, either of which
+        authoritatively marks the run as aggregated.
+        """
+        metadata = self.metadata
+        if not isinstance(metadata, dict):
+            return False
+        summary = metadata.get("session_summary")
+        if not isinstance(summary, dict):
+            return False
+        return summary.get("selection_mode") == "aggregated_mean" or bool(
+            summary.get("samples_per_config")
+        )
+
+    def _aggregated_mean_metrics(self) -> dict[str, float] | None:
+        """Reconstruct the winning config's MEAN metrics for aggregated runs.
+
+        The naive "first trial whose config == best_config" match returns a
+        SINGLE replicate's raw metrics, which contradicts ``best_score`` (the
+        replicate MEAN) whenever the winning config has 2+ replicates — making
+        ``best_config.json`` self-contradictory and baking a single-replicate
+        value into ``export_config``. This averages each numeric metric over the
+        winning config's successful replicate set, on the SAME basis as
+        ``best_score``: it mirrors ``result_selection._compute_mean_metrics``
+        (numeric metrics only, ``examples_attempted`` excluded). The primary
+        objective is pinned to ``best_score`` so
+        ``best_metrics[primary] == best_score`` holds exactly, immune to
+        float summation-order drift.
+
+        Returns ``None`` when the run was not aggregated or no winning-config
+        replicates carry metrics, so the caller keeps the single-trial path
+        (local runs are unchanged).
+        """
+        if not self._is_aggregated_run() or not self.best_config:
+            return None
+        replicates = [
+            trial
+            for trial in self.trials
+            if trial.is_successful
+            and trial.metrics
+            and trial.config == self.best_config
+        ]
+        if not replicates:
+            return None
+        numeric_sums: dict[str, float] = {}
+        numeric_counts: dict[str, int] = {}
+        for trial in replicates:
+            for name, value in trial.metrics.items():
+                if name == "examples_attempted":
+                    continue
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)):
+                    numeric_sums[name] = numeric_sums.get(name, 0.0) + float(value)
+                    numeric_counts[name] = numeric_counts.get(name, 0) + 1
+        if not numeric_sums:
+            return None
+        mean_metrics: dict[str, float] = {
+            name: total / numeric_counts[name] for name, total in numeric_sums.items()
+        }
+        primary = self.objectives[0] if self.objectives else None
+        if (
+            primary is not None
+            and self.best_score is not None
+            and primary in mean_metrics
+        ):
+            mean_metrics[primary] = self.best_score
+        return mean_metrics
+
     @property
     def best_metrics(self) -> dict[str, float]:
         """Get best metrics from the best trial.
@@ -826,11 +903,18 @@ class OptimizationResult:
         ``best_score`` of ``None`` — makes no winner-metric claims. A valid
         winner whose config happens to be empty still carries a score and
         keeps its metrics.
+
+        In aggregated/hybrid runs the winning config's metrics are the MEAN
+        across its replicate set (consistent with ``best_score``), not a single
+        replicate — see ``_aggregated_mean_metrics``.
         """
         if not self.best_config and self.best_score is None:
             return {}
         if not self.trials:
             return {}
+        aggregated_metrics = self._aggregated_mean_metrics()
+        if aggregated_metrics is not None:
+            return aggregated_metrics
         if not self.objectives:
             for trial in self.trials:
                 if (
