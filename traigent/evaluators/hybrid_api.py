@@ -1404,6 +1404,11 @@ class HybridAPIEvaluator(BaseEvaluator):
             return {}, self._build_comparability_info([], {})
 
         aggregated: dict[str, float] = {
+            # ``cost`` is the per-trial TOTAL on every lane (finding T2): the local
+            # lane sums per-example spend (metrics_tracker ``format_for_backend``)
+            # and the pruned lane emits a cumulative partial sum. Setting it to
+            # ``total_cost`` here keeps the minimize-cost objective and the results
+            # table on one consistent scale across local and hybrid runs.
             "cost": total_cost,
             # Keep canonical trial-level key for downstream extractors.
             "total_cost": total_cost,
