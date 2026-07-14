@@ -68,7 +68,8 @@ REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 #:   ``cost``, ``latency`` (plus the per-example ``success`` flag);
 #: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
 #:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
-#:   ``response_time_ms``, ``cost``, ``total_examples``, ``successful_examples``,
+#:   ``response_time_ms``, ``cost`` (per-trial TOTAL),
+#:   ``cost_per_example_mean``, ``total_examples``, ``successful_examples``,
 #:   ``tokens_per_second``;
 #: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
 #:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
@@ -85,6 +86,10 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         "error_rate",
         "avg_output_length",
         "cost",
+        # Per-example MEAN cost, surfaced alongside the per-trial TOTAL ``cost``
+        # (finding T2). Reserved so a user tuple key cannot overwrite it and it is
+        # never dropped under the measures ceiling.
+        "cost_per_example_mean",
         "latency",
         "score",
         # Diagnostic: the built-in exact-match scorer recorded alongside a custom
@@ -629,6 +634,32 @@ class MetricsTracker:
             accuracy_value = 0.0
 
         duration_value = safe_get(aggregated, "duration")
+
+        # ``cost`` MUST be the per-trial TOTAL (sum of per-example spend), NOT the
+        # per-example mean (finding T2). The minimize-cost objective
+        # (``orchestrator._extract_objective_values``), the results table, and the
+        # portal all read this single ``cost`` key, yet the other two lanes emit a
+        # TOTAL: the hybrid lane sets ``cost = total_cost`` (hybrid_api.py) and the
+        # pruned lane sets ``cost`` to a cumulative partial sum
+        # (trial_result_factory.py). Emitting the MEAN here made a completed trial
+        # look ~N× cheaper than a pruned trial in the SAME run (biasing selection
+        # and the "best cost") and ~N× cheaper than the hybrid lane for the same
+        # config. Summing the per-example ``total_cost`` yields the same value the
+        # authoritative ``total_cost`` is built from (see
+        # ``orchestrator_helpers.extract_cost_from_results``), so per-config
+        # ``cost`` now reconciles with ``total_cost`` instead of diverging by ~N.
+        # The per-example mean is still useful and is preserved verbatim under the
+        # distinct ``cost_per_example_mean`` key — ``cost`` is never overloaded.
+        cost_per_example_mean = safe_get(aggregated, "total_cost", "mean")
+        successful_metrics = [m for m in self.example_metrics if m.success]
+        cost_total: float | None
+        if successful_metrics:
+            cost_total = sum(float(m.cost.total_cost) for m in successful_metrics)
+        else:
+            # Nothing to sum: mirror the mean's null/zero default so the strict-
+            # nulls contract (None) and the normal contract (0.0) are preserved.
+            cost_total = cost_per_example_mean
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -644,7 +675,10 @@ class MetricsTracker:
             "output_tokens": safe_get(aggregated, "output_tokens", "mean"),
             "total_tokens": safe_get(aggregated, "total_tokens", "mean"),
             "response_time_ms": safe_get(aggregated, "response_time_ms", "mean"),
-            "cost": safe_get(aggregated, "total_cost", "mean"),
+            # Per-trial TOTAL cost (consistent scale across all three lanes).
+            "cost": cost_total,
+            # Per-example MEAN cost, preserved under a distinct key.
+            "cost_per_example_mean": cost_per_example_mean,
             # Additional useful metrics
             "total_examples": aggregated["total_examples"],
             "successful_examples": aggregated["successful_examples"],

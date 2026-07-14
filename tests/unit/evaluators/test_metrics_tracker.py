@@ -86,7 +86,8 @@ class TestMetricsTracker:
         assert "output_tokens" in formatted
         assert "total_tokens" in formatted
         assert "response_time_ms" in formatted  # Returns mean value directly
-        assert "cost" in formatted  # Returns mean total cost directly
+        assert "cost" in formatted  # Per-trial TOTAL cost (sum of per-example spend)
+        assert "cost_per_example_mean" in formatted  # Per-example mean, distinct key
         assert "total_examples" in formatted
         assert "successful_examples" in formatted
 
