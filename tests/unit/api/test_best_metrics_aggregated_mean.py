@@ -349,3 +349,52 @@ class TestAuxKeyReplicateIdentity:
         # Only t1 matches the full config -> its raw cost (the old behavior,
         # preserved for backward compatibility with persisted results).
         assert best["cost"] == pytest.approx(1.0)
+
+
+class TestPersistedWinnerIdentityRoundTrip:
+    """Sol post-ship finding on the #1854 hardening: the winning_trial_ids
+    stamp must survive a save->load round-trip, else loaded results silently
+    degrade to the full-config-equality fallback and the aux-key replicate
+    mismatch re-opens for every persisted result (not just pre-stamp ones).
+    """
+
+    def test_round_trip_keeps_id_matched_replicate_mean(self, tmp_path) -> None:
+        from traigent.utils.persistence import PersistenceManager
+
+        trials = [
+            _make_trial(
+                "t1", {"model": "cheap", "seed": 1}, {"accuracy": 0.90, "cost": 1.0}
+            ),
+            _make_trial(
+                "t2", {"model": "cheap", "seed": 2}, {"accuracy": 0.70, "cost": 3.0}
+            ),
+        ]
+        result = _make_result(
+            trials,
+            best_config={"model": "cheap", "seed": 1},
+            best_score=0.80,
+            objectives=["accuracy", "cost"],
+            metadata={
+                "session_summary": {
+                    "selection_mode": "aggregated_mean",
+                    "samples_per_config": {"h": 2},
+                    "winning_trial_ids": ["t1", "t2"],
+                }
+            },
+        )
+
+        manager = PersistenceManager(base_dir=tmp_path)
+        manager.save_result(result, name="round-trip")
+        loaded = manager.load_result("round-trip")
+
+        # trial ids and the stamp both survived...
+        assert [t.trial_id for t in loaded.trials] == ["t1", "t2"]
+        assert loaded.metadata["session_summary"]["winning_trial_ids"] == [
+            "t1",
+            "t2",
+        ]
+        # ...so best_metrics stays the id-matched replicate MEAN (0.80/2.0),
+        # not t1's raw single-replicate metrics (0.90/1.0).
+        best = loaded.best_metrics
+        assert best["accuracy"] == pytest.approx(0.80)
+        assert best["cost"] == pytest.approx(2.0)
