@@ -3051,3 +3051,96 @@ class TestIssue1422SelfDescribingPortalName:
         assert portal_name.startswith("My Custom Experiment"), (
             f"Explicit name not honoured in portal_name: {portal_name!r}"
         )
+
+
+class TestWeightedSchemaThreading1846:
+    """update_weighted_scores must honor DECLARED orientations (#1846 follow-up).
+
+    ``calculate_weighted_scores`` falls back to name-pattern minimize
+    autodetection when called without ``objective_schema``. A declared
+    minimize objective whose name matches no pattern (e.g. ``tokens_used``)
+    would then be ranked as maximize, so ``best_weighted_config`` — and the
+    finalize ``session_aggregation`` built from this metadata — could
+    contradict terminal ``best_config``. The manager (and the orchestrator's
+    session-end logging, same principle) must thread the schema through.
+    """
+
+    @staticmethod
+    def _real_result() -> OptimizationResult:
+        # t1 is the schema-aware winner (minimize tokens_used);
+        # t2 wins ONLY if tokens_used is mis-ranked as maximize (autodetect).
+        specs = [
+            ("t1", {"model": "cheap"}, {"accuracy": 0.81, "tokens_used": 100.0}),
+            ("t2", {"model": "big"}, {"accuracy": 0.82, "tokens_used": 1000.0}),
+            ("t3", {"model": "bad"}, {"accuracy": 0.70, "tokens_used": 900.0}),
+        ]
+        trials = [
+            TrialResult(
+                trial_id=tid,
+                config=config,
+                metrics=metrics,
+                status=OptimizationStatus.COMPLETED,
+                duration=1.0,
+                timestamp=0.0,
+            )
+            for tid, config, metrics in specs
+        ]
+        return OptimizationResult(
+            trials=trials,
+            best_config={"model": "cheap"},
+            best_score=0.81,
+            optimization_id="opt-1846-followup",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "tokens_used"],
+            algorithm="grid",
+            timestamp=0.0,
+        )
+
+    @staticmethod
+    def _schema():
+        return create_default_objectives(
+            objective_names=["accuracy", "tokens_used"],
+            orientations={"accuracy": "maximize", "tokens_used": "minimize"},
+            weights={"accuracy": 0.5, "tokens_used": 0.5},
+        )
+
+    def test_autodetect_misranks_nonpattern_minimize_objective(self):
+        """Sensitivity guard: WITHOUT the schema the winner flips to t2.
+
+        Proves the fixture discriminates — if this ever fails, the threading
+        test below no longer guards anything and both must be revisited.
+        """
+        result = self._real_result()
+        no_schema = result.calculate_weighted_scores(
+            objective_weights={"accuracy": 0.5, "tokens_used": 0.5}
+        )
+        assert no_schema["best_weighted_config"] == {"model": "big"}
+
+    @pytest.mark.asyncio
+    async def test_update_weighted_scores_threads_declared_schema(
+        self, mock_backend_client, traigent_config, mock_optimizer
+    ):
+        """The metadata winner honors the declared minimize orientation."""
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "tokens_used"],
+            objective_schema=self._schema(),
+            optimizer=mock_optimizer,
+            optimization_id="opt-1846-followup",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        result = self._real_result()
+
+        update_count = await manager.update_weighted_scores(
+            result=result, session_id="sess-1846-followup"
+        )
+
+        assert update_count == 3
+        weighted = result.metadata["weighted_results"]
+        # Declared minimize wins: t1, matching terminal best_config — NOT the
+        # autodetect (maximize-everything) winner t2 asserted above.
+        assert weighted["best_weighted_config"] == {"model": "cheap"}
+        assert weighted["best_weighted_config"] == result.best_config
