@@ -615,17 +615,27 @@ def _warn_context_mode_param_shadowing(
     injection_mode: Any,
     config_param: str | None,
 ) -> None:
-    """Warn when CONTEXT-mode tuned knobs shadow the wrapped function's params.
+    """Warn when a CONTEXT-mode config space can never affect the wrapped function.
 
     In the default ``injection_mode=InjectionMode.CONTEXT`` the optimizer does
     **not** override function parameters — the per-trial config lives in
-    contextvars and must be read via ``traigent.get_config()``. If a function
-    already declares the tuned knobs as parameters (the common "wrap a pre-existing
-    agent function" shape) and never reads ``get_config()``, every trial silently
-    receives the signature defaults, so the optimizer reports a "best config" for a
-    sweep that never actually varied those parameters (see issue #1372). This emits
-    a loud warning so the no-op is not silent. It is advisory (never raises): a
-    function that intentionally reads ``get_config()`` is detected and skipped.
+    contextvars and must be read via ``traigent.get_config()``. Two shapes make
+    the sweep a silent no-op, so the optimizer reports a confident "best config"
+    for knobs that never actually varied (a phantom best_config):
+
+    1. **Param shadowing (issue #1372):** the function already declares the tuned
+       knobs as parameters (the common "wrap a pre-existing agent function" shape)
+       and never reads ``get_config()`` — every trial receives the signature
+       defaults.
+    2. **Naive default (no overlap):** a knob (e.g. ``temperature``) is hardcoded
+       in the body and is neither a parameter nor read via ``get_config()`` — every
+       trial runs identically.
+
+    Both emit a loud warning so the no-op is not silent. It is advisory (never
+    raises): a function that reads ``get_config()``/``current_config`` is detected
+    and skipped. When the source is unintrospectable (lambda / C-extension /
+    notebook), the naive-default case is skipped rather than warned to avoid false
+    positives (best-effort — noted limitation).
     """
     # Only CONTEXT mode shadows parameters; PARAMETER/SEAMLESS inject explicitly.
     if injection_mode not in (InjectionMode.CONTEXT, "context"):
@@ -653,30 +663,66 @@ def _warn_context_mode_param_shadowing(
     if config_param:
         param_names.discard(config_param)
 
-    shadowed = sorted(config_keys & param_names)
-    if not shadowed:
-        return
-
-    # Best-effort: if the body already reads the per-trial config, the knobs are
-    # honored and the overlap is intentional — do not warn.
+    # Best-effort source scan (lifted out of the param-overlap gate so it also
+    # covers the no-overlap phantom case below). If the body reads the per-trial
+    # config, CONTEXT injection is working as intended and no warning applies —
+    # regardless of whether the knobs also shadow parameters. When the source is
+    # unavailable (lambda / C-extension / notebook / frozen), we cannot tell, so
+    # ``source_available`` gates the phantom warning to avoid false positives.
+    reads_config = False
+    source_available = True
     try:
         source = inspect.getsource(func)
-        if "get_config" in source or "current_config" in source:
-            return
+        reads_config = "get_config" in source or "current_config" in source
     except (OSError, TypeError):  # pragma: no cover - source unavailable
-        pass
+        source_available = False
+
+    if reads_config:
+        return
 
     import warnings
 
     func_name = getattr(func, "__name__", repr(func))
+
+    shadowed = sorted(config_keys & param_names)
+    if shadowed:
+        # #1372: knobs are declared as parameters but CONTEXT never overrides
+        # them, so every trial gets the signature defaults.
+        message = (
+            f"@traigent.optimize: the tuned variable(s) {shadowed} are declared as "
+            f"parameters of '{func_name}', but injection_mode is CONTEXT (the default), "
+            f"which does NOT override function parameters. Unless the body reads "
+            f"traigent.get_config(), every trial will run with the signature defaults "
+            f"and the optimization will silently sweep nothing (a false-positive 'best "
+            f"config'). To actually vary {shadowed}: read them via traigent.get_config() "
+            f'inside the function, or use injection_mode="seamless" (zero code change) / '
+            f'injection_mode="parameter".'
+        )
+        warnings.warn(message, UserWarning, stacklevel=3)
+        logger.warning("%s", message)
+        return
+
+    # Phantom best_config (issue #1372 sibling): the tuned knobs are NEITHER
+    # function parameters NOR read via traigent.get_config()/current_config, yet
+    # a non-empty configuration_space was provided under CONTEXT mode. In CONTEXT
+    # mode the per-trial config is delivered ONLY through traigent.get_config();
+    # a body that never reads it runs every trial identically, so the optimizer
+    # reports a confident "best config" for a sweep that never varied anything.
+    # Only warn when we could actually confirm the body reads no config — if the
+    # source was unavailable we cannot know, so stay silent (graceful degrade).
+    if not source_available:
+        return
+    all_knobs = sorted(config_keys)
     message = (
-        f"@traigent.optimize: the tuned variable(s) {shadowed} are declared as "
-        f"parameters of '{func_name}', but injection_mode is CONTEXT (the default), "
-        f"which does NOT override function parameters. Unless the body reads "
-        f"traigent.get_config(), every trial will run with the signature defaults "
-        f"and the optimization will silently sweep nothing (a false-positive 'best "
-        f"config'). To actually vary {shadowed}: read them via traigent.get_config() "
-        f'inside the function, or use injection_mode="seamless" (zero code change) / '
+        f"@traigent.optimize: injection_mode is CONTEXT (the default) and a "
+        f"configuration_space was provided ({all_knobs}), but '{func_name}' neither "
+        f"reads traigent.get_config() nor accepts the tuned variable(s) as parameters. "
+        f"In CONTEXT mode the per-trial config is delivered ONLY via "
+        f"traigent.get_config(); since the body never reads it, every trial runs "
+        f"identically and the optimizer will report a confident 'best config' for a "
+        f"sweep that never varied anything (a phantom best_config). To actually apply "
+        f"the config: read the knob(s) via traigent.get_config() inside the function, "
+        f'or use injection_mode="seamless" (zero code change) / '
         f'injection_mode="parameter".'
     )
     warnings.warn(message, UserWarning, stacklevel=3)
