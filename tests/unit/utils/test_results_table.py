@@ -548,6 +548,29 @@ class TestMetricPercentFormatting:
         # The scale rule applies to any non cost/latency metric name.
         assert _format_metric_value("score", 87.4) == "87.4%"
 
-    def test_cost_and_latency_formatting_unchanged(self) -> None:
+    def test_cost_formatting_unchanged(self) -> None:
         assert _format_metric_value("cost", 0.00123).startswith("$")
-        assert _format_metric_value("latency", 1.234) == "1.234s"
+
+
+class TestMetricLatencyFormatting:
+    """The trial-results table must render the ``latency`` metric in ms.
+
+    Regression: the ``latency`` metric holds a mean of per-result
+    ``latency_ms`` values (see ``evaluators/hybrid_api.py`` ->
+    ``aggregated["latency"] = mean(r.latency_ms)``), i.e. it is in MILLISECONDS
+    per the canonical ``_ms`` unit contract. The formatter used
+    ``f"{val:.3f}s"``, which labelled the millisecond value as seconds and
+    overstated latency 1000x: a mean of 850 ms rendered as "850.000s" (~14 min),
+    driving users to reject fast configs and mis-size SLAs.
+    """
+
+    def test_millisecond_value_not_overstated_as_seconds(self) -> None:
+        rendered = _format_metric_value("latency", 850.0)
+        # Fail-on-old: the buggy formatter produced "850.000s".
+        assert rendered != "850.000s"
+        # Pass-on-new: the stored millisecond value is labelled ms.
+        assert rendered == "850ms"
+
+    def test_latency_rounds_to_whole_milliseconds(self) -> None:
+        assert _format_metric_value("latency", 1234.7) == "1235ms"
+        assert _format_metric_value("latency", 0.0) == "0ms"
