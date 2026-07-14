@@ -23,9 +23,11 @@ from traigent.evaluators.base import (
     _example_correlation_key,
 )
 from traigent.evaluators.metrics_tracker import (
+    EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
     ExampleMetrics,
     MetricsCalculator,
     MetricsTracker,
+    compute_empty_output_rate,
     enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
@@ -262,6 +264,11 @@ class LocalEvaluator(BaseEvaluator):
         # evaluator instance is shared across a run's trials, so a flag here
         # emits the notice once per run rather than once per example/trial.
         self._dual_scorer_notice_logged = False
+        # One-shot guard for the high-empty-output-rate run warning (issue
+        # #1851). Same rationale as the dual-scorer flag: the evaluator instance
+        # is shared across the run's trials, so this emits ONE warning per run
+        # (naming the first offending config) rather than one per trial/example.
+        self._empty_output_warning_logged = False
 
     def _extract_prompt_info(
         self,
@@ -1438,6 +1445,35 @@ class LocalEvaluator(BaseEvaluator):
             "metrics['exact_match_default'] for diagnostics."
         )
 
+    def _maybe_warn_high_empty_output_rate(
+        self, rate: float, config: dict[str, Any]
+    ) -> None:
+        """Emit a single run-level warning for a high empty-output rate (#1851).
+
+        Fires at most once per evaluator instance (== once per run), never per
+        example/trial, mirroring the dual-scorer notice (#1845). An empty or
+        whitespace-only output at any meaningful rate signals truncation,
+        output-parsing failure, or refusals, so the accuracy comparison is
+        measuring an artifact, not the config knobs. Every trial still records
+        its own ``empty_output_rate`` metric; this warning names the first
+        offending config so the run does not finish silently.
+        """
+        if rate <= EMPTY_OUTPUT_RATE_WARNING_THRESHOLD:
+            return
+        if self._empty_output_warning_logged:
+            return
+        self._empty_output_warning_logged = True
+        logger.warning(
+            "%.1f%% of outputs for config %r are empty or whitespace-only "
+            "(threshold %.0f%%) — likely token truncation, output-parsing "
+            "failure, or refusals; accuracy comparisons are unreliable until "
+            "resolved. Each trial's empty_output_rate metric records the "
+            "per-config rate.",
+            rate * 100.0,
+            config,
+            EMPTY_OUTPUT_RATE_WARNING_THRESHOLD * 100.0,
+        )
+
     def _compute_accuracy_aggregated(
         self,
         outputs: list[Any],
@@ -1790,6 +1826,17 @@ class LocalEvaluator(BaseEvaluator):
         self._merge_comprehensive_metrics(aggregated_metrics, comprehensive_metrics)
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
+
+        # Empty/whitespace-output guard (issue #1851): compute the fraction of
+        # this config's outputs that are empty on EVERY trial and expose it as a
+        # reserved metric so portals/harnesses can gate on it, then surface ONE
+        # run-level warning naming the offending config above the threshold. This
+        # works for every calling pattern (decorator/wrapper/managed) because it
+        # reads only the returned outputs — the metadata-free complement to the
+        # finish_reason guard (#1809).
+        empty_output_rate = compute_empty_output_rate(outputs)
+        aggregated_metrics["empty_output_rate"] = empty_output_rate
+        self._maybe_warn_high_empty_output_rate(empty_output_rate, config)
 
         # Authoritative cap on the FINAL trial metrics: user keys (arriving via
         # the per-example custom_metrics -> comprehensive_metrics merge above)

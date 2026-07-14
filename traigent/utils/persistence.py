@@ -310,6 +310,11 @@ class PersistenceManager:
             "created_at": datetime.now(UTC).isoformat(),
             "total_trials": len(result.trials),
             "successful_trials": len(result.successful_trials),
+            # #1854 hardening: the aggregated winner's replicate identity lives
+            # in session_summary["winning_trial_ids"]; without persisting it a
+            # save->load round-trip silently degrades best_metrics to the
+            # full-config-equality fallback (sol post-ship finding).
+            "session_summary": _safe_json_value(result.metadata.get("session_summary")),
         }
 
         self._atomic_write_json(result_dir / METADATA_FILE, metadata)
@@ -322,6 +327,11 @@ class PersistenceManager:
             serialized_metadata = _serialize_metadata(raw_metadata)
 
             trial_dict = {
+                # Persist the real id so the winning_trial_ids stamp (#1854)
+                # still matches after a round-trip (load already reads it).
+                # getattr: save tolerates duck-typed trials (CLI tests use
+                # bare stand-ins), matching the hasattr guards below.
+                "trial_id": getattr(trial, "trial_id", None),
                 "config": _safe_json_value(trial.config),
                 "metrics": _safe_json_value(
                     trial.metrics if hasattr(trial, "metrics") else {}
@@ -408,7 +418,7 @@ class PersistenceManager:
                     rehydrated_metadata = _rehydrate_metadata(raw_metadata)
 
                     trial = TrialResult(
-                        trial_id=t.get("trial_id", f"trial_{i}"),
+                        trial_id=t.get("trial_id") or f"trial_{i}",
                         config=t["config"],
                         metrics=t.get("metrics", {}),
                         status=TrialStatus(t.get("status", "completed")),
@@ -452,6 +462,13 @@ class PersistenceManager:
                 **(
                     {"strategy_preset": metadata["strategy_preset"]}
                     if metadata.get("strategy_preset") is not None
+                    else {}
+                ),
+                # #1854: restore the aggregated-winner identity so
+                # best_metrics keeps id-matched replicate means after load.
+                **(
+                    {"session_summary": metadata["session_summary"]}
+                    if metadata.get("session_summary") is not None
                     else {}
                 ),
             },

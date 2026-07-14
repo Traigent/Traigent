@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import traceback as traceback_module
 import warnings
 from collections import Counter
@@ -23,6 +24,42 @@ logger = get_logger(__name__)
 
 SelectionGrade = Literal["advisory"]
 ADVISORY_SELECTION_GRADE: SelectionGrade = "advisory"
+
+# Whole-token markers used ONLY by the last-resort, schema-less orientation
+# heuristic (see ``_name_suggests_minimize``). Declared
+# ``ObjectiveSchema.orientation`` is always authoritative when a schema is
+# available; this list is never consulted in that case.
+_MINIMIZE_NAME_TOKENS: frozenset[str] = frozenset(
+    {"cost", "latency", "error", "loss", "time", "duration"}
+)
+
+
+def _tokenize_metric_name(name: str) -> set[str]:
+    """Split a metric name into lowercased word tokens.
+
+    Handles ``snake_case``, ``kebab-case``, spaces, and ``camelCase`` so that,
+    e.g., ``"response_time"`` / ``"responseTime"`` both yield ``{"response",
+    "time"}`` while ``"uptime"`` yields ``{"uptime"}`` (crucially NOT
+    ``{"time"}``). Prevents arbitrary-substring false positives such as
+    ``"uptime" ⊃ "time"``.
+    """
+
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+    return {token.lower() for token in re.findall(r"[A-Za-z0-9]+", spaced)}
+
+
+def _name_suggests_minimize(name: str) -> bool:
+    """Heuristic: does this metric name look like a minimize objective?
+
+    Whole-token match against :data:`_MINIMIZE_NAME_TOKENS` (not substring),
+    so ``"uptime"`` is NOT flagged as minimize while ``"latency_ms"`` and
+    ``"total_cost"`` are. Best-effort only — used solely as a last resort when
+    no declared :class:`~traigent.core.objectives.ObjectiveSchema` orientation
+    is available.
+    """
+
+    return bool(_tokenize_metric_name(name) & _MINIMIZE_NAME_TOKENS)
+
 
 # Type checking imports to avoid circular dependencies
 if TYPE_CHECKING:
@@ -818,6 +855,106 @@ class OptimizationResult:
             return 0.0
         return len(self.successful_trials) / len(self.trials)
 
+    def _is_aggregated_run(self) -> bool:
+        """Whether the winner was selected over config-aggregated MEAN metrics.
+
+        In aggregated/hybrid mode (``aggregate_configs`` True) result selection
+        ranks configs by the MEAN of their replicate metrics and sets
+        ``best_score`` to the winning config's mean of the primary objective
+        (see ``result_selection._select_best_aggregated`` /
+        ``_select_best_weighted_aggregated``). Both stamp
+        ``session_summary["selection_mode"] == "aggregated_mean"`` and a
+        ``samples_per_config`` map into the result metadata, either of which
+        authoritatively marks the run as aggregated.
+        """
+        metadata = self.metadata
+        if not isinstance(metadata, dict):
+            return False
+        summary = metadata.get("session_summary")
+        if not isinstance(summary, dict):
+            return False
+        return summary.get("selection_mode") == "aggregated_mean" or bool(
+            summary.get("samples_per_config")
+        )
+
+    def _aggregated_mean_metrics(self) -> dict[str, float] | None:
+        """Reconstruct the winning config's MEAN metrics for aggregated runs.
+
+        The naive "first trial whose config == best_config" match returns a
+        SINGLE replicate's raw metrics, which contradicts ``best_score`` (the
+        replicate MEAN) whenever the winning config has 2+ replicates — making
+        ``best_config.json`` self-contradictory and baking a single-replicate
+        value into ``export_config``. This averages each numeric metric over the
+        winning config's successful replicate set, on the SAME basis as
+        ``best_score``: it mirrors ``result_selection._compute_mean_metrics``
+        (numeric metrics only, ``examples_attempted`` excluded). The primary
+        objective is pinned to ``best_score`` so
+        ``best_metrics[primary] == best_score`` holds exactly, immune to
+        float summation-order drift.
+
+        Returns ``None`` when the run was not aggregated or no winning-config
+        replicates carry metrics, so the caller keeps the single-trial path
+        (local runs are unchanged).
+        """
+        if not self._is_aggregated_run() or not self.best_config:
+            return None
+        # Prefer the authoritative winner replicate ids stamped by result
+        # selection (#1854): grouping is keyed by the config PROJECTED onto
+        # config_space_keys while best_config keeps the first trial's FULL
+        # config, so full-dict equality silently drops replicates whose aux
+        # keys differ. Config equality remains only as a fallback for older
+        # persisted results that predate the stamp.
+        winning_ids: set[str] | None = None
+        metadata = self.metadata
+        if isinstance(metadata, dict):
+            summary = metadata.get("session_summary")
+            if isinstance(summary, dict):
+                stamped = summary.get("winning_trial_ids")
+                if isinstance(stamped, list) and stamped:
+                    winning_ids = {str(trial_id) for trial_id in stamped}
+        if winning_ids is not None:
+            replicates = [
+                trial
+                for trial in self.trials
+                if trial.is_successful
+                and trial.metrics
+                and str(trial.trial_id) in winning_ids
+            ]
+        else:
+            replicates = [
+                trial
+                for trial in self.trials
+                if trial.is_successful
+                and trial.metrics
+                and trial.config == self.best_config
+            ]
+        if not replicates:
+            return None
+        numeric_sums: dict[str, float] = {}
+        numeric_counts: dict[str, int] = {}
+        for trial in replicates:
+            for name, value in trial.metrics.items():
+                if name == "examples_attempted":
+                    continue
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)):
+                    numeric_sums[name] = numeric_sums.get(name, 0.0) + float(value)
+                    numeric_counts[name] = numeric_counts.get(name, 0) + 1
+        if not numeric_sums:
+            return None
+        mean_metrics: dict[str, float] = {
+            name: total / numeric_counts[name] for name, total in numeric_sums.items()
+        }
+        primary = self.objectives[0] if self.objectives else None
+        if (
+            primary is not None
+            and self.best_score is not None
+            and primary in mean_metrics
+        ):
+            mean_metrics[primary] = self.best_score
+        return mean_metrics
+
     @property
     def best_metrics(self) -> dict[str, float]:
         """Get best metrics from the best trial.
@@ -826,11 +963,18 @@ class OptimizationResult:
         ``best_score`` of ``None`` — makes no winner-metric claims. A valid
         winner whose config happens to be empty still carries a score and
         keeps its metrics.
+
+        In aggregated/hybrid runs the winning config's metrics are the MEAN
+        across its replicate set (consistent with ``best_score``), not a single
+        replicate — see ``_aggregated_mean_metrics``.
         """
         if not self.best_config and self.best_score is None:
             return {}
         if not self.trials:
             return {}
+        aggregated_metrics = self._aggregated_mean_metrics()
+        if aggregated_metrics is not None:
+            return aggregated_metrics
         if not self.objectives:
             for trial in self.trials:
                 if (
@@ -1228,14 +1372,39 @@ class OptimizationResult:
         return computed_total_cost
 
     def _auto_detect_minimize_objectives(self) -> list[str]:
-        """Infer minimize-oriented objectives based on common naming patterns."""
+        """Infer minimize objectives from names — last-resort fallback only.
 
-        minimize_patterns = ("cost", "latency", "error", "loss", "time", "duration")
-        detected = []
-        for obj in self.objectives:
-            lowered = obj.lower()
-            if any(pattern in lowered for pattern in minimize_patterns):
-                detected.append(obj)
+        This runs ONLY when no declared :class:`ObjectiveSchema` orientation and
+        no explicit ``minimize_objectives`` list are available. The declared
+        orientation is always authoritative when a schema is threaded through
+        (see :meth:`_prepare_objective_preferences`). Because a name-based guess
+        can be wrong in both directions (a custom minimize metric such as
+        ``spend``/``perplexity`` is silently treated as maximize; a maximize
+        metric can no longer be mis-flagged, e.g. ``uptime`` is not read as
+        ``time``), a :class:`UserWarning` names each guessed orientation and how
+        to override it.
+        """
+
+        detected = [obj for obj in self.objectives if _name_suggests_minimize(obj)]
+
+        if self.objectives:
+            minimize_set = set(detected)
+            guessed = ", ".join(
+                f"'{obj}'={'minimize' if obj in minimize_set else 'maximize'}"
+                for obj in self.objectives
+            )
+            warnings.warn(
+                "Objective orientation was guessed from metric names because no "
+                "ObjectiveSchema orientation (or explicit minimize_objectives list) "
+                f"was provided: {guessed}. This guess can be wrong for custom metric "
+                "names and is NOT authoritative. Declare orientation explicitly by "
+                "building an ObjectiveSchema with ObjectiveDefinition(name=..., "
+                "orientation='minimize'|'maximize') and passing it as "
+                "objective_schema.",
+                UserWarning,
+                stacklevel=3,
+            )
+
         return detected
 
     def _resolve_schema_preferences(
@@ -1768,10 +1937,7 @@ class OptimizationResult:
     ) -> pd.DataFrame:
         if not primary_objective or primary_objective not in df.columns:
             return df
-        minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
-        ascending = any(
-            pattern in primary_objective.lower() for pattern in minimize_patterns
-        )
+        ascending = _name_suggests_minimize(primary_objective)
         return df.sort_values(
             by=[primary_objective], ascending=ascending, na_position="last"
         )
@@ -1925,13 +2091,10 @@ class OptimizationResult:
         # Auto-detect directions if not provided
         if directions is None:
             directions = {}
-            minimize_patterns = ("cost", "latency", "error", "loss", "time", "duration")
             for obj in self.objectives:
-                lowered = obj.lower()
-                if any(pattern in lowered for pattern in minimize_patterns):
-                    directions[obj] = "minimize"
-                else:
-                    directions[obj] = "maximize"
+                directions[obj] = (
+                    "minimize" if _name_suggests_minimize(obj) else "maximize"
+                )
 
         # Create analyzer
         analyzer = VariableAnalyzer(

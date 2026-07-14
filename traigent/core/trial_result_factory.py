@@ -716,6 +716,12 @@ def build_pruned_result(
             try:
                 cost_value = float(total_cost_value)
                 metrics["total_cost"] = cost_value
+                # ``cost`` is the per-trial TOTAL on every lane (finding T2): the
+                # completed local lane sums per-example spend (metrics_tracker
+                # ``format_for_backend``) and the hybrid lane sets cost=total_cost.
+                # ``cost_value`` here is the cumulative partial spend-so-far — a
+                # total on the same scale — so completed and pruned trials in one
+                # run rank on a consistent scale.
                 metrics.setdefault("cost", cost_value)
                 metadata["total_example_cost"] = cost_value
             except (TypeError, ValueError) as e:
