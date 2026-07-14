@@ -4031,8 +4031,10 @@ class OptimizationOrchestrator:
             certified_config=certified_config,
             certified_score=certified_score,
             objective_orientations=_obj_orientations,
-            # Weighted-selection gating happens inside the selector; schemas
-            # without meaningful weights keep legacy ranking (issue #1682).
+            # Weighted-selection gating happens inside the selector: any
+            # >1-objective non-banded schema — uniform/default weights
+            # included — selects by the weighted aggregate (#1682, #1846);
+            # single-objective and banded schemas keep legacy ranking.
             objective_schema=self.objective_schema,
         )
         best_config = selection.best_config
@@ -4234,7 +4236,14 @@ class OptimizationOrchestrator:
         if self._logger:
             weighted_results = None
             if len(self.optimizer.objectives) > 1:
-                weighted_results = optimization_result.calculate_weighted_scores()
+                # Thread the declared schema (same reason as
+                # BackendSessionManager.update_weighted_scores): without it,
+                # minimize orientations fall back to name-pattern autodetect
+                # and the logged weighted results can contradict terminal
+                # best_config (#1846 follow-up).
+                weighted_results = optimization_result.calculate_weighted_scores(
+                    objective_schema=self.objective_schema
+                )
 
             self._logger_facade.log_session_end(
                 optimization_result=optimization_result,

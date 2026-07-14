@@ -1854,8 +1854,16 @@ class BackendSessionManager:
                     obj: 1.0 / len(self._objectives) for obj in self._objectives
                 }
 
+            # Thread the declared schema so orientations come from the user's
+            # declaration, not calculate_weighted_scores' name-pattern
+            # minimize autodetect — a declared minimize objective with a
+            # non-pattern name (e.g. "tokens_used") would otherwise be ranked
+            # as maximize here, making best_weighted_config (and the finalize
+            # session_aggregation built from this metadata) diverge from
+            # terminal best_config (#1846 follow-up).
             weighted_results = result.calculate_weighted_scores(
-                objective_weights=objective_weights
+                objective_weights=objective_weights,
+                objective_schema=self._objective_schema,
             )
 
             weighted_scores_data = list(weighted_results.get("weighted_scores", []))
