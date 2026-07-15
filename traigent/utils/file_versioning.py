@@ -47,6 +47,7 @@ FILE_PATTERNS = {
     "best_config": "best_config_v{version}.json",
     "weighted_results": "weighted_results_v{version}.json",
     "pareto_front": "pareto_front_v{version}.json",  # New in v2
+    "outcome_matrix": "outcome_matrix_v{version}.json",  # New in v2 (issue #1838)
     "results": "results_v{version}.json",  # General results file
     # Status files
     "status": "status_v{version}.json",
@@ -69,6 +70,7 @@ LEGACY_PATTERNS = {
     "trial_history": "trial_history.json",
     "best_config": "best_config.json",
     "weighted_results": "weighted_results.json",
+    "outcome_matrix": "outcome_matrix.json",
     "status": "status.json",
 }
 
