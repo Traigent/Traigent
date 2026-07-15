@@ -839,6 +839,20 @@ class OptimizationResult:
         return [trial for trial in self.trials if trial.status == TrialStatus.FAILED]
 
     @property
+    def example_matrix(self) -> dict[str, Any]:
+        """The per-example x per-trial outcome matrix for this run (issue #1838).
+
+        Built in-memory from the per-example outcomes already carried on each
+        trial (``trial.metadata["example_results"]``) — no recomputation and no
+        re-collection. ``examples`` is empty when the run captured no
+        per-example detail. See ``traigent.utils.outcome_matrix`` for the schema
+        and ``load_outcome_matrix`` for reading the persisted artifact.
+        """
+        from traigent.utils.outcome_matrix import build_outcome_matrix
+
+        return build_outcome_matrix(self)
+
+    @property
     def persistence_failed(self) -> bool:
         """Whether backend persistence/finalization failed after the run completed."""
         return bool(

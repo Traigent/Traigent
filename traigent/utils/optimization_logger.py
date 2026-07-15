@@ -797,6 +797,39 @@ class OptimizationLogger:
         self._atomic_write(file_path, payload)
         logger.info(f"Logged results for {self.run_id}")
 
+    def log_outcome_matrix(self, optimization_result: OptimizationResult) -> None:
+        """Persist the per-example x per-trial outcome matrix (issue #1838).
+
+        Reuses the per-example outcomes already computed in
+        ``trial.metadata["example_results"]`` — no recomputation, no re-run — and
+        writes them as a single ``outcome_matrix`` artifact next to
+        ``best_config``. Skipped (no file written) when the run produced no
+        per-example detail, to avoid an empty artifact. See
+        ``traigent.utils.outcome_matrix`` for the file schema and the
+        ``load_outcome_matrix`` accessor used by downstream consumers.
+        """
+        from traigent.utils.outcome_matrix import build_outcome_matrix
+
+        matrix = build_outcome_matrix(optimization_result)
+        if not matrix.get("examples"):
+            logger.debug(
+                "No per-example results for %s; skipping outcome matrix", self.run_id
+            )
+            return
+
+        matrix_file = (
+            self.run_path
+            / "artifacts"
+            / self.file_manager.get_filename("outcome_matrix")
+        )
+        self._atomic_write(matrix_file, matrix)
+        logger.info(
+            "Logged outcome matrix for %s (%d examples x %d trials)",
+            self.run_id,
+            matrix.get("example_count", 0),
+            matrix.get("trial_count", 0),
+        )
+
     def log_session_end(
         self,
         optimization_result: OptimizationResult,
@@ -824,6 +857,22 @@ class OptimizationLogger:
                 / self.file_manager.get_filename("weighted_results")
             )
             self._atomic_write(weighted_file, weighted_results)
+
+        # Persist the per-example x per-trial outcome matrix (#1838) so
+        # example-level analysis (#1880/#1881) needs no re-collection. Always
+        # attempted, like best_config above; a no-op when the run carried no
+        # per-example detail. Best-effort and isolated: this artifact runs
+        # BEFORE metrics_summary / session-status / manifest finalization, so a
+        # failure here must never leave the run un-finalized — log loudly and
+        # continue rather than aborting session end.
+        try:
+            self.log_outcome_matrix(optimization_result)
+        except Exception:  # noqa: BLE001 - best-effort artifact, never fatal
+            logger.warning(
+                "Failed to persist outcome matrix for %s; continuing session end",
+                self.run_id,
+                exc_info=True,
+            )
 
         if len(optimization_result.objectives) > 1:
             from traigent.utils.multi_objective import ParetoFrontCalculator
