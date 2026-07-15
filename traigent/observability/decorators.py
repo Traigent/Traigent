@@ -310,7 +310,15 @@ class ObserveContext:
         metadata.update(self._enriched_metadata)
         if error is not None:
             metadata["error_type"] = type(error).__name__
-            metadata["error_message"] = str(error)
+            # error_message is free-form content: exception strings routinely
+            # interpolate the very inputs the content gate withholds (prompts,
+            # records, PII), so it must honor `_effective_content_mode` exactly
+            # like input_data/output_data. error_type is only a class name, so
+            # it is safe to keep in every mode.
+            if self._effective_content_mode == "record":
+                metadata["error_message"] = str(error)
+            elif self._effective_content_mode == "redacted":
+                metadata["error_message"] = "[REDACTED]"
 
         if self._trace_id and self._observation_id:
             output_data = self._captured_output(result)

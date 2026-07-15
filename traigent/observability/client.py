@@ -934,6 +934,7 @@ class ObservabilityClient:
         self._missing_generation_usage_notice_logged = False
         self._http_opener = request.build_opener(_NoRedirectHandler)
         self._transport = self._create_transport()
+        self._disable_egress_if_credential_missing()
 
         if self.config.enable_atexit_flush:
             atexit.register(self._atexit_close)
@@ -1956,6 +1957,40 @@ class ObservabilityClient:
                 trace_id,
                 reason,
             )
+
+    def _disable_egress_if_credential_missing(self) -> None:
+        """Fail fast (quietly) when no credential resolves for network egress.
+
+        Without a credential the backend rejects every ingest batch with 401,
+        which the retry handler turns into a per-batch retry storm and, once the
+        circuit breaker opens, an opaque "ingest rejected with status 401" that
+        never names the missing key. When this client would egress over the
+        network (not offline, no custom sender/request_sender override) and
+        neither an API key nor a JWT resolved, log one actionable warning and
+        behave as offline for the rest of the process. Telemetry must never
+        break the host app, so this never raises.
+        """
+        if self.config.offline_mode:
+            return
+        if (
+            self._sender_override is not None
+            or self._request_sender_override is not None
+        ):
+            return
+        if self.config.api_key or self.config.jwt_token:
+            return
+
+        logger.warning(
+            "No Traigent credential resolved (set TRAIGENT_API_KEY or run "
+            "`traigent auth login`); observability egress disabled for this process"
+        )
+        # Reuse the existing offline gating on every egress path instead of
+        # threading a second disable flag through the client. `replace` leaves
+        # the caller's config object untouched.
+        self.config = replace(self.config, offline_mode=True)
+        # The warning above already told the user egress is disabled; suppress
+        # the vaguer INFO offline notice so exactly one message is emitted.
+        self._offline_notice_logged = True
 
     def _log_offline_mode_once(self) -> None:
         if self._offline_notice_logged:

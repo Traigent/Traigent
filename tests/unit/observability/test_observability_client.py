@@ -2571,6 +2571,136 @@ def test_observability_config_rejects_unbounded_values(field, value, message):
         ObservabilityConfig(**kwargs)
 
 
+@pytest.mark.parametrize(
+    ("content_mode", "expected_error_message", "content_should_ship"),
+    [
+        # Default (metadata-only): the exception string must not ship at all.
+        (None, None, False),
+        ("redacted", "[REDACTED]", False),
+        ("record", "parse failed on: PATIENT diagnosis cancer stage 3", True),
+    ],
+)
+def test_observe_error_message_honors_content_mode(
+    content_mode, expected_error_message, content_should_ship
+):
+    """Exception messages must obey the same content gate as input/output.
+
+    Regression for the error-path egress leak: `error_message` carries
+    free-form content (f-strings interpolate prompts, records, PII that
+    pattern redaction cannot catch), so the metadata-only default must not
+    ship it. `error_type` is only a class name and stays in every mode.
+    """
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    sensitive = "PATIENT diagnosis cancer stage 3"
+    with pytest.raises(ValueError):
+        with observe("parse", client=client, content_mode=content_mode):
+            raise ValueError(f"parse failed on: {sensitive}")
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    observation = sent_batches[-1][-1]["observations"][0]
+    metadata = observation["metadata"]
+    assert observation["status"] == "failed"
+    # error_type is a class name, never content, so it is retained everywhere.
+    assert metadata["error_type"] == "ValueError"
+    if expected_error_message is None:
+        assert "error_message" not in metadata
+    else:
+        assert metadata["error_message"] == expected_error_message
+    # The sensitive free-form content only ever ships in "record" mode.
+    assert (sensitive in json.dumps(sent_batches)) is content_should_ship
+
+
+def test_observability_client_disables_egress_when_no_credential_resolves(
+    monkeypatch, caplog
+):
+    """A missing credential must fail fast, not silently 401-retry-storm.
+
+    With no API key or JWT and network egress otherwise enabled, the client
+    logs one actionable warning naming TRAIGENT_API_KEY and behaves as
+    offline for the process — never attempting an (inevitably rejected)
+    unauthenticated ingest, and never raising.
+    """
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    http_attempts = {"count": 0}
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key=None,
+            jwt_token=None,
+            batch_size=1,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        )
+    )
+
+    def fail_if_called(*args, **kwargs):
+        http_attempts["count"] += 1
+        raise AssertionError("network egress attempted without a credential")
+
+    monkeypatch.setattr(client._http_opener, "open", fail_if_called)
+
+    trace_id = client.start_trace("no-credential-probe", trace_id="trace_no_cred")
+    client.record_observation(trace_id, name="no-credential-observation")
+    client.end_trace(trace_id)
+
+    result = client.flush()
+    close_result = client.close()
+
+    assert client.config.offline_mode is True
+    assert http_attempts["count"] == 0
+    assert result.success is True
+    assert result.items_sent == 0
+    assert close_result.success is True
+    warnings = [
+        record for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "TRAIGENT_API_KEY" in message
+    assert "egress disabled" in message
+
+
+def test_observability_client_keeps_egress_when_api_key_present(monkeypatch, caplog):
+    """The credential-missing fail-fast must not fire when a key resolves."""
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            enable_atexit_flush=False,
+        )
+    )
+
+    assert client.config.offline_mode is False
+    assert "TRAIGENT_API_KEY" not in caplog.text
+    client.close()
+
+
 def test_observation_dto_rejects_negative_values():
     with pytest.raises(ValueError, match="input_tokens"):
         ObservationDTO(
