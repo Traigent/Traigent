@@ -18,6 +18,8 @@ from typing import Any
 
 from dataclasses import asdict
 
+import pytest
+
 from traigent.api.types import (
     ExampleResult,
     OptimizationResult,
@@ -477,3 +479,28 @@ class TestSuccessDerivation:
         matrix = build_outcome_matrix(_result([_trial("t0", {"m": "x"}, [ex])]))
         cell = matrix["examples"][0]["cells"]["t0"]
         assert cell["success"] is False
+
+
+class TestLoaderContainment:
+    """The loader must refuse artifacts that resolve outside the artifacts dir
+    (Aikido finding on #1889: symlink inside artifacts/ escaping the root)."""
+
+    def test_symlinked_artifact_outside_artifacts_dir_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "outside.json"
+        outside.write_text('{"schema_version": 2}', encoding="utf-8")
+        artifacts = tmp_path / "run" / "artifacts"
+        artifacts.mkdir(parents=True)
+        (artifacts / "outcome_matrix_v2.json").symlink_to(outside)
+
+        with pytest.raises(ValueError, match="outside the artifacts"):
+            load_outcome_matrix(tmp_path / "run")
+
+    def test_regular_artifact_still_loads(self, tmp_path: Path) -> None:
+        artifacts = tmp_path / "run" / "artifacts"
+        artifacts.mkdir(parents=True)
+        (artifacts / "outcome_matrix_v2.json").write_text(
+            '{"schema_version": 2}', encoding="utf-8"
+        )
+        assert load_outcome_matrix(tmp_path / "run") == {"schema_version": 2}

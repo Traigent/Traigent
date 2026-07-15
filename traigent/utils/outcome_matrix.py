@@ -351,6 +351,7 @@ def load_outcome_matrix(run_path: str | Path) -> dict[str, Any] | None:
         else []
     )
 
+    artifacts_real = artifacts.resolve()
     seen: set[Path] = set()
     for candidate in candidates:
         if candidate in seen:
@@ -358,6 +359,19 @@ def load_outcome_matrix(run_path: str | Path) -> dict[str, Any] | None:
         seen.add(candidate)
         if not candidate.exists():
             continue
+        # Containment guard: candidates are constructed under ``artifacts``, but
+        # a symlink placed inside the artifacts dir could still point anywhere
+        # on disk. Refuse to read a resolved path that escapes the artifacts
+        # root rather than silently including an arbitrary file.
+        candidate_real = candidate.resolve()
+        try:
+            candidate_real.relative_to(artifacts_real)
+        except ValueError:
+            raise ValueError(
+                f"Refusing to read outcome matrix artifact outside the artifacts "
+                f"directory: {candidate} resolves to {candidate_real}, which is "
+                f"not under {artifacts_real}"
+            ) from None
         try:
             with open(candidate, encoding="utf-8") as handle:
                 return dict(json.load(handle))
