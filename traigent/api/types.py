@@ -726,6 +726,128 @@ class ExperimentStats:
 
 
 @dataclass
+class EvalAuditFlag:
+    """One eval-dataset example flagged as a likely defect (issue #1880).
+
+    Attributes:
+        example_id: The flagged example's id (matrix row key).
+        detectors: Names of the detectors that flagged it, e.g.
+            ``["never-correct"]``, ``["token-leak"]``,
+            ``["cross-family-consensus-on-wrong"]`` (or several).
+        suggested_answer: For a cross-family consensus-on-wrong flag, the answer
+            the unrelated families agreed on — the "recovers the fix" correction
+            when the recorded gold is wrong. ``None`` for the other detectors.
+    """
+
+    example_id: str
+    detectors: list[str] = field(default_factory=list)
+    suggested_answer: Any | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view; omits ``suggested_answer`` when absent."""
+        out: dict[str, Any] = {
+            "example_id": self.example_id,
+            "detectors": list(self.detectors),
+        }
+        if self.suggested_answer is not None:
+            out["suggested_answer"] = self.suggested_answer
+        return out
+
+
+@dataclass
+class DetectorStat:
+    """Per-detector summary line in an eval audit (issue #1880).
+
+    Attributes:
+        name: Detector name.
+        active: Whether the detector ran (D7 is inactive with <2 model families;
+            D3 is inactive with too few always-correct items for a robust IQR).
+        flagged_count: Number of examples this detector flagged.
+        eligible_count: Size of the population this detector could flag from.
+        flag_rate: ``flagged_count / eligible_count`` (0 when no eligibles).
+        lift: Base-rate-adjusted enrichment (definition is per-detector; see
+            ``traigent.utils.eval_audit``). ``None`` when undefined.
+        note: Why the detector was skipped/inactive, when applicable.
+    """
+
+    name: str
+    active: bool
+    flagged_count: int
+    eligible_count: int
+    flag_rate: float
+    lift: float | None = None
+    note: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "name": self.name,
+            "active": self.active,
+            "flagged_count": self.flagged_count,
+            "eligible_count": self.eligible_count,
+            "flag_rate": self.flag_rate,
+            "lift": self.lift,
+            "note": self.note,
+        }
+
+
+@dataclass
+class EvalAuditSummary:
+    """Roll-up counts and lift for an eval audit (issue #1880).
+
+    Attributes:
+        example_count: Number of examples (matrix rows) audited.
+        config_count: Number of configurations/replicates (matrix columns).
+        family_count: Number of distinct known model families in the run.
+        total_flagged: Distinct examples flagged by at least one detector.
+        detectors: Per-detector :class:`DetectorStat` keyed by detector name.
+    """
+
+    example_count: int
+    config_count: int
+    family_count: int
+    total_flagged: int
+    detectors: dict[str, DetectorStat] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "example_count": self.example_count,
+            "config_count": self.config_count,
+            "family_count": self.family_count,
+            "total_flagged": self.total_flagged,
+            "detectors": {
+                name: stat.to_dict() for name, stat in self.detectors.items()
+            },
+        }
+
+
+@dataclass
+class EvalAudit:
+    """Opt-in eval-dataset defect report for a run (issue #1880).
+
+    Computed on demand from the already-persisted per-example x per-config
+    outcome matrix (#1838) — no LLM calls, no network. Obtain it via
+    :attr:`OptimizationResult.eval_audit`.
+
+    Attributes:
+        flagged: Examples flagged by one or more detectors, sorted by id.
+        summary: Per-detector counts + lift so the user knows how many flags to
+            expect and how concentrated they are versus chance.
+    """
+
+    flagged: list[EvalAuditFlag] = field(default_factory=list)
+    summary: EvalAuditSummary | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "flagged": [flag.to_dict() for flag in self.flagged],
+            "summary": self.summary.to_dict() if self.summary else None,
+        }
+
+
+@dataclass
 class OptimizationResult:
     """Complete results from an optimization run.
 
@@ -837,6 +959,43 @@ class OptimizationResult:
     def failed_trials(self) -> list[TrialResult]:
         """Get only failed trials."""
         return [trial for trial in self.trials if trial.status == TrialStatus.FAILED]
+
+    @property
+    def example_matrix(self) -> dict[str, Any]:
+        """The per-example x per-trial outcome matrix for this run (issue #1838).
+
+        Built in-memory from the per-example outcomes already carried on each
+        trial (``trial.metadata["example_results"]``) — no recomputation and no
+        re-collection. ``examples`` is empty when the run captured no
+        per-example detail. See ``traigent.utils.outcome_matrix`` for the schema
+        and ``load_outcome_matrix`` for reading the persisted artifact.
+        """
+        from traigent.utils.outcome_matrix import build_outcome_matrix
+
+        return build_outcome_matrix(self)
+
+    @property
+    def eval_audit(self) -> EvalAudit | None:
+        """Opt-in eval-dataset defect audit for this run (issue #1880).
+
+        Runs the deterministic defect detectors (never-correct, token-leak,
+        cross-family consensus-on-wrong) over this run's per-example x per-config
+        outcome matrix (#1838). It is **opt-in and zero-cost by default**: nothing
+        is computed until you read this property, and it makes no LLM calls and no
+        network requests — it is a pure function of data the run already produced.
+
+        Returns ``None`` when an audit is not applicable — the run captured no
+        per-example detail, or spanned fewer than two configurations (columns),
+        for which never-correct/consensus are meaningless. When present, the
+        cross-family consensus detector activates only if the config space spans
+        >=2 model families; single-family runs still get never-correct + token-leak.
+
+        See ``traigent.utils.eval_audit`` for the exact detector rules, thresholds,
+        the model-family mapping, and the lift definitions.
+        """
+        from traigent.utils.eval_audit import compute_eval_audit
+
+        return compute_eval_audit(self.example_matrix)
 
     @property
     def persistence_failed(self) -> bool:
