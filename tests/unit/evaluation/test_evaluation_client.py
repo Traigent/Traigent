@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from unittest.mock import patch
 from urllib import error
 
 import pytest
@@ -1153,3 +1154,125 @@ def test_result_dtos_retain_unknown_top_level_keys_in_extra():
         }
     )
     assert complete.extra == {"audit_token": "tok_456"}
+
+
+# --- SDK #1893: W3C traceparent injection on evaluation backend calls --------
+# _request_json_sync builds headers per-request via config.build_headers()
+# (a fresh dict) -- a safe per-request injection site (no cached headers).
+
+import re  # noqa: E402
+import sys  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from urllib import request as _urllib_request  # noqa: E402
+
+from opentelemetry.sdk.trace import TracerProvider as _SdkTracerProvider  # noqa: E402
+
+from traigent.evaluation.config import EvaluationConfig  # noqa: E402
+
+_TRACEPARENT_RE = re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-0[0-9a-f]$")
+
+
+@contextmanager
+def _recording_span():
+    provider = _SdkTracerProvider()
+    tracer = provider.get_tracer("test-sdk-1893-evaluation")
+    with tracer.start_as_current_span("test-span") as span:
+        yield span
+
+
+def _header_ci(req, name):
+    """Case-insensitive header lookup on a urllib Request (which capitalizes
+    header names internally)."""
+    for key, value in req.header_items():
+        if key.lower() == name.lower():
+            return value
+    return None
+
+
+class _FakeResponse:
+    status = 200
+
+    def read(self):
+        return b'{"data": {"ok": true}}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _capture_urlopen(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req, *args, **kwargs):
+        captured["request"] = req
+        return _FakeResponse()
+
+    monkeypatch.setattr("traigent.evaluation.client.request.urlopen", fake_urlopen)
+    return captured
+
+
+def test_evaluation_request_headers_carry_traceparent(monkeypatch):
+    captured = _capture_urlopen(monkeypatch)
+    client = EvaluationClient()
+
+    with _recording_span() as span:
+        client._request_json_sync("GET", "/api/v1beta/ping", None)
+        expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+    req = captured["request"]
+    tp = _header_ci(req, "traceparent")
+    assert tp is not None
+    assert _TRACEPARENT_RE.match(tp), tp
+    assert tp.split("-")[1] == expected_trace_id
+
+
+def test_evaluation_request_no_span_headers_byte_identical(monkeypatch):
+    captured = _capture_urlopen(monkeypatch)
+    client = EvaluationClient()
+
+    client._request_json_sync("POST", "/api/v1beta/ping", {"a": 1})
+
+    req = captured["request"]
+    assert _header_ci(req, "traceparent") is None
+    assert _header_ci(req, "tracestate") is None
+    # Byte-identical to the pre-#1893 header set (built directly from config).
+    control = _urllib_request.Request(
+        f"{client.config.backend_origin}/api/v1beta/ping",
+        headers=client.config.build_headers(),
+        method="POST",
+    )
+    assert sorted(req.header_items()) == sorted(control.header_items())
+
+
+def test_evaluation_request_caller_supplied_traceparent_not_overridden(monkeypatch):
+    caller_tp = "00-" + "b" * 32 + "-" + "c" * 16 + "-01"
+    captured = _capture_urlopen(monkeypatch)
+    client = EvaluationClient(
+        config=EvaluationConfig(extra_headers={"traceparent": caller_tp})
+    )
+
+    with _recording_span():
+        client._request_json_sync("GET", "/api/v1beta/ping", None)
+
+    req = captured["request"]
+    assert _header_ci(req, "traceparent") == caller_tp
+
+
+def test_evaluation_request_noop_without_opentelemetry(monkeypatch):
+    captured = _capture_urlopen(monkeypatch)
+    client = EvaluationClient()
+
+    with patch.dict(
+        sys.modules,
+        {
+            "opentelemetry": None,
+            "opentelemetry.trace.propagation.tracecontext": None,
+        },
+    ):
+        with _recording_span():
+            client._request_json_sync("GET", "/api/v1beta/ping", None)
+
+    req = captured["request"]
+    assert _header_ci(req, "traceparent") is None
