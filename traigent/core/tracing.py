@@ -263,16 +263,50 @@ except ImportError:
         """Get the Traigent tracer, initializing if needed."""
         return _initialize_tracer()
 
-    def _set_error_status(span: Span | None, error: str) -> None:
-        """Mark a span as failed without requiring OpenTelemetry imports."""
+    def _scrub_error_text(error: object) -> str:
+        """Coerce an error of any runtime shape to a scrubbed *string*.
+
+        Callers are typed ``error: str | None``, but Exception instances
+        and dict payloads leak through in practice. Deterministic order:
+        dict/list/tuple payloads get key-aware secret redaction first
+        (``_redact_payload``), then everything is stringified, then the
+        text is PII-scrubbed — so the scrubber always sees a string and
+        the result is always a scrubbed ``str`` (valid as an OTLP status
+        description, never a redaction bypass for non-string shapes).
+        """
+        if isinstance(error, (dict, list, tuple)):
+            error = _redact_payload(error)
+        return str(_scrub_pii_text(str(error)))
+
+    def _set_error_status(
+        span: Span | None, error: object, attribute_name: str | None = None
+    ) -> None:
+        """Mark a span as failed without requiring OpenTelemetry imports.
+
+        ``error`` is scrubbed through the same PII/secret scrubber used for
+        ``example.input`` / ``example.expected_output`` / ``example.actual_output``
+        before it is attached to the span (see ``_scrub_error_text`` for
+        the non-string coercion rules). Without this, error strings
+        (which routinely echo the input, expected/actual output, or a
+        provider's raw response body) ship unredacted to the OTLP status
+        description and any ``attribute_name`` this is called with — see
+        local validation gap for traigent/core/tracing.py#issues/0.
+
+        If ``attribute_name`` is given, the scrubbed error is also set as
+        a span attribute under that name, so callers no longer need a
+        separate raw ``set_attribute`` call before this one.
+        """
         if span is None:
             return
+        scrubbed_error = _scrub_error_text(error)
+        if attribute_name:
+            span.set_attribute(attribute_name, scrubbed_error)
         if trace is not None:
-            span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+            span.set_status(trace.Status(trace.StatusCode.ERROR, scrubbed_error))
         else:
             # Best-effort fallback for no-OTEL environments and mock spans.
             try:
-                span.set_status(status="ERROR", description=error)
+                span.set_status(status="ERROR", description=scrubbed_error)
             except TypeError:
                 span.set_status("ERROR")
 
@@ -466,8 +500,7 @@ except ImportError:
                 if isinstance(value, (int, float)):
                     span.set_attribute(f"trial.metric.{name}", value)
         if error:
-            span.set_attribute("trial.error", error)
-            _set_error_status(span, error)
+            _set_error_status(span, error, attribute_name="trial.error")
 
     def record_optimization_complete(
         span: Span | None,
@@ -580,8 +613,7 @@ except ImportError:
         if execution_time is not None:
             span.set_attribute("example.execution_time_ms", execution_time * 1000)
         if error:
-            span.set_attribute("example.error", error)
-            _set_error_status(span, error)
+            _set_error_status(span, error, attribute_name="example.error")
 
 
 __all__ = [
