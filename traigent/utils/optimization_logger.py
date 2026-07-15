@@ -8,6 +8,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -272,6 +273,45 @@ def _extract_output_text(output: Any) -> str | None:
 ENV_LOG_EXAMPLE_CONTENT = "TRAIGENT_LOG_EXAMPLE_CONTENT"
 _CONTENT_LOGGING_DISABLED_VALUES = {"0", "false", "no", "off", ""}
 
+ENV_OPTIMIZATION_LOG_MAX_RUNS = "TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS"
+# Matches the run_id format minted in OptimizationLogger.__init__:
+# f"{YYYYMMDD_HHMMSS}_{session_short}". Anything not matching this is left
+# alone by retention pruning — better to skip than to guess.
+_RUN_DIR_NAME_PATTERN = re.compile(r"^\d{8}_\d{6}_.+$")
+# Terminal statuses written by log_session_end() -> _update_status(); a run
+# dir whose status file carries one of these has provably finished.
+_TERMINAL_RUN_STATUSES = {"completed", "failed"}
+# Status filenames the logger itself mints at the run-dir root:
+# FILE_PATTERNS["status"] = "status_v{version}.json" (v2) and
+# LEGACY_PATTERNS["status"] = "status.json" (v1).
+_STATUS_FILE_GLOB_PATTERNS = ("status.json", "status_v*.json")
+
+
+def _run_dir_shows_completion_evidence(run_dir: Path) -> bool:
+    """Whether ``run_dir`` provably belongs to a *finished* run.
+
+    Completion evidence = a status file the run writer itself produces at run
+    end (``log_session_end()`` -> ``_update_status("completed"|"failed")``,
+    written to ``<run_dir>/status_v2.json`` / legacy ``status.json``) carrying
+    a terminal status. An active run has ``"running"`` (written at session
+    start) or no status file at all — neither counts as evidence. Any doubt
+    (missing file, unreadable file, unparseable JSON, unknown status) returns
+    ``False`` so the caller skips the directory.
+    """
+    for pattern in _STATUS_FILE_GLOB_PATTERNS:
+        for status_file in run_dir.glob(pattern):
+            try:
+                with open(status_file, encoding="utf-8") as handle:
+                    status_data = json.load(handle)
+            except (OSError, ValueError):
+                continue  # unreadable/unparseable -> not evidence
+            if (
+                isinstance(status_data, dict)
+                and status_data.get("status") in _TERMINAL_RUN_STATUSES
+            ):
+                return True
+    return False
+
 
 def _should_log_example_content() -> bool:
     """Whether per-example query/response/expected content is persisted to disk.
@@ -383,6 +423,7 @@ class OptimizationLogger:
         self._buffer_lock = threading.Lock()
 
         self._ensure_directories()
+        self._prune_old_runs()
         self.start_time = datetime.now(UTC)
 
         self.file_manager = FileVersionManager(version="2")
@@ -437,6 +478,130 @@ class OptimizationLogger:
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
         self._write_log_dir_gitignore()
+
+    def _prune_old_runs(self) -> None:
+        """Opt-in retention pruning for the local run-dir store (Traigent/Traigent#1884).
+
+        Controlled by ``TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS``. When unset (the
+        default), this is a no-op — behavior is byte-for-byte identical to
+        before this fix: every run dir is kept forever. When set to a positive
+        integer N, after this run's directory has been created, the oldest
+        **completed** run dirs under ``experiments/<name>/runs/`` (by mtime)
+        are deleted so that at most N-1 completed runs remain alongside the
+        just-created active run — i.e. runs with completion evidence
+        (including the active one, once it finishes) are capped at N. Dirs
+        without completion evidence are never counted nor deleted.
+
+        Conservative by construction:
+        - Never touches the currently active run (``self.run_path``).
+        - Never touches a run without **completion evidence** (a terminal
+          ``status`` in the run's own ``status_v2.json``/``status.json``, see
+          :func:`_run_dir_shows_completion_evidence`) — this protects other
+          processes' concurrently-ACTIVE runs, which carry ``"running"`` or
+          no status file yet. Crashed runs that never wrote a terminal
+          status are likewise never pruned.
+        - Never follows symlinks (skipped outright).
+        - Only ever deletes entries whose name matches the run-dir naming
+          pattern this class itself mints (``YYYYMMDD_HHMMSS_<session>``);
+          anything else — including any non-run-dir file or unparseable name
+          — is left alone.
+        - Deletion failures are logged loudly (never silently swallowed).
+
+        Residual: the list -> evidence-check -> stat -> rmtree sequence is
+        not atomic (TOCTOU); a full cross-process lock is intentionally out
+        of scope. The completion-evidence gate means the worst residual race
+        deletes an old run that *finished* moments earlier, never one that
+        is still active.
+        """
+        raw_max_runs = os.getenv(ENV_OPTIMIZATION_LOG_MAX_RUNS)
+        if not raw_max_runs:
+            return  # default: unset = no pruning, current behavior preserved
+
+        try:
+            max_runs = int(raw_max_runs.strip())
+        except ValueError:
+            logger.warning(
+                "Ignoring invalid %s=%r (must be a positive integer); "
+                "skipping optimization-log retention pruning",
+                ENV_OPTIMIZATION_LOG_MAX_RUNS,
+                raw_max_runs,
+            )
+            return
+        if max_runs <= 0:
+            logger.warning(
+                "Ignoring %s=%d (must be > 0); skipping optimization-log "
+                "retention pruning",
+                ENV_OPTIMIZATION_LOG_MAX_RUNS,
+                max_runs,
+            )
+            return
+
+        runs_dir = self.run_path.parent
+        if not runs_dir.is_dir():
+            return
+
+        try:
+            entries = list(runs_dir.iterdir())
+        except OSError as exc:
+            logger.warning(
+                "Could not list run directories under %s for retention pruning: %s",
+                runs_dir,
+                exc,
+            )
+            return
+
+        candidates: list[Path] = []
+        for entry in entries:
+            if entry.is_symlink():
+                continue  # never follow symlinks
+            if not entry.is_dir():
+                continue
+            if entry.name == self.run_path.name:
+                continue  # never touch the active run
+            if not _RUN_DIR_NAME_PATTERN.match(entry.name):
+                continue  # unparseable name -> on any doubt, skip
+            if not _run_dir_shows_completion_evidence(entry):
+                # No terminal status on disk: this may be another process's
+                # concurrently ACTIVE run (or a crashed one). No completion
+                # evidence -> skip.
+                continue
+            candidates.append(entry)
+
+        keep_count = max(max_runs - 1, 0)  # -1 reserves a slot for the active run
+        if len(candidates) <= keep_count:
+            return  # nothing to prune yet
+
+        try:
+            candidates.sort(key=lambda p: p.stat().st_mtime)
+        except OSError as exc:
+            logger.warning(
+                "Could not stat candidate run directories under %s for "
+                "retention pruning: %s",
+                runs_dir,
+                exc,
+            )
+            return
+
+        to_delete = candidates[: len(candidates) - keep_count]
+        for old_run in to_delete:
+            try:
+                shutil.rmtree(old_run)
+                logger.info(
+                    "Pruned old optimization-log run directory (retention "
+                    "cap %s=%d): %s",
+                    ENV_OPTIMIZATION_LOG_MAX_RUNS,
+                    max_runs,
+                    old_run,
+                )
+            except OSError:
+                logger.error(
+                    "Failed to prune old optimization-log run directory %s "
+                    "while enforcing %s=%d",
+                    old_run,
+                    ENV_OPTIMIZATION_LOG_MAX_RUNS,
+                    max_runs,
+                    exc_info=True,
+                )
 
     def _write_log_dir_gitignore(self) -> None:
         """Drop a ``.gitignore`` into the log root so per-example content (which
