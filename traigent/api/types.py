@@ -726,6 +726,216 @@ class ExperimentStats:
 
 
 @dataclass
+class EvalAuditFlag:
+    """One eval-dataset example flagged as a likely defect (issue #1880).
+
+    Attributes:
+        example_id: The flagged example's id (matrix row key).
+        detectors: Names of the detectors that flagged it, e.g.
+            ``["never-correct"]``, ``["token-leak"]``,
+            ``["cross-family-consensus-on-wrong"]`` (or several).
+        suggested_answer: For a cross-family consensus-on-wrong flag, the answer
+            the unrelated families agreed on — the "recovers the fix" correction
+            when the recorded gold is wrong. ``None`` for the other detectors.
+    """
+
+    example_id: str
+    detectors: list[str] = field(default_factory=list)
+    suggested_answer: Any | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view; omits ``suggested_answer`` when absent."""
+        out: dict[str, Any] = {
+            "example_id": self.example_id,
+            "detectors": list(self.detectors),
+        }
+        if self.suggested_answer is not None:
+            out["suggested_answer"] = self.suggested_answer
+        return out
+
+
+@dataclass
+class DetectorStat:
+    """Per-detector summary line in an eval audit (issue #1880).
+
+    Attributes:
+        name: Detector name.
+        active: Whether the detector ran (D7 is inactive with <2 model families;
+            D3 is inactive with too few always-correct items for a robust IQR).
+        flagged_count: Number of examples this detector flagged.
+        eligible_count: Size of the population this detector could flag from.
+        flag_rate: ``flagged_count / eligible_count`` (0 when no eligibles).
+        lift: Base-rate-adjusted enrichment (definition is per-detector; see
+            ``traigent.utils.eval_audit``). ``None`` when undefined.
+        note: Why the detector was skipped/inactive, when applicable.
+    """
+
+    name: str
+    active: bool
+    flagged_count: int
+    eligible_count: int
+    flag_rate: float
+    lift: float | None = None
+    note: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "name": self.name,
+            "active": self.active,
+            "flagged_count": self.flagged_count,
+            "eligible_count": self.eligible_count,
+            "flag_rate": self.flag_rate,
+            "lift": self.lift,
+            "note": self.note,
+        }
+
+
+@dataclass
+class EvalAuditSummary:
+    """Roll-up counts and lift for an eval audit (issue #1880).
+
+    Attributes:
+        example_count: Number of examples (matrix rows) audited.
+        config_count: Number of configurations/replicates (matrix columns).
+        family_count: Number of distinct known model families in the run.
+        total_flagged: Distinct examples flagged by at least one detector.
+        detectors: Per-detector :class:`DetectorStat` keyed by detector name.
+    """
+
+    example_count: int
+    config_count: int
+    family_count: int
+    total_flagged: int
+    detectors: dict[str, DetectorStat] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "example_count": self.example_count,
+            "config_count": self.config_count,
+            "family_count": self.family_count,
+            "total_flagged": self.total_flagged,
+            "detectors": {
+                name: stat.to_dict() for name, stat in self.detectors.items()
+            },
+        }
+
+
+@dataclass
+class DefectSignal:
+    """One feature's contribution to an item's continuous defect score (#1881).
+
+    The score is a logistic function ``sigmoid(b0 + Σ wi·xi)`` over per-item
+    telemetry features. This records one term of that sum for explainability, so a
+    reviewer can see *which* signal moved an item's suspicion, and in which
+    direction. Signals are ranked by ``|contribution|`` (strongest driver first).
+
+    Attributes:
+        feature: Feature name (``mean_wrong`` / ``never_correct`` / ``instability``).
+        value: The feature's value for this item (``xi``).
+        weight: The model coefficient applied to the feature (``wi``).
+        contribution: ``weight * value`` — the feature's additive push on the
+            score's logit. The SIGN is the direction: a positive contribution
+            RAISED suspicion, a negative one (possible only under a negative refit
+            weight) LOWERED it. Magnitude is how strongly it moved the score.
+    """
+
+    feature: str
+    value: float
+    weight: float
+    contribution: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "feature": self.feature,
+            "value": self.value,
+            "weight": self.weight,
+            "contribution": self.contribution,
+        }
+
+
+@dataclass
+class ItemDefectScore:
+    """Continuous per-item defect score + dataset-relative rank (issue #1881).
+
+    The continuous layer on top of #1880's binary flags: instead of a yes/no,
+    each scored item carries a suspicion score plus its rank within this run, so a
+    reviewer gets a sorted worklist and can start at the worst items and stop when
+    the signal thins out. Computed as a pure, deterministic function of the
+    outcome matrix (#1838) — no LLM calls.
+
+    Attributes:
+        example_id: The scored example's id (matrix row key).
+        defect_score: Heuristic suspicion score in [0, 1] —
+            ``sigmoid(b0 + Σ wi·xi)`` over the telemetry features. With the
+            DEFAULT (illustrative, hand-chosen) coefficients this is NOT a
+            calibrated probability; it is calibrated only if you refit the
+            coefficients on your own labeled subset. Use ``defect_percentile`` to
+            RANK items by default.
+        defect_percentile: The item's rank within THIS run's scored items —
+            the fraction of scored items with a score <= this item's (so the most
+            suspicious item is 1.0). This is the trustworthy default output: "top
+            5% most suspicious" (percentile >= 0.95) works regardless of absolute
+            calibration.
+        features: The raw telemetry features that fed the score
+            (``never_correct``, ``mean_wrong``, ``instability``).
+        contributing_signals: Per-feature ``weight * value`` contributions above
+            a small threshold, sorted by contribution descending — the
+            explainability view of which signal drove the score.
+    """
+
+    example_id: str
+    defect_score: float
+    defect_percentile: float
+    features: dict[str, float] = field(default_factory=dict)
+    contributing_signals: list[DefectSignal] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "example_id": self.example_id,
+            "defect_score": self.defect_score,
+            "defect_percentile": self.defect_percentile,
+            "features": dict(self.features),
+            "contributing_signals": [s.to_dict() for s in self.contributing_signals],
+        }
+
+
+@dataclass
+class EvalAudit:
+    """Opt-in eval-dataset defect report for a run (issue #1880 + #1881).
+
+    Computed on demand from the already-persisted per-example x per-config
+    outcome matrix (#1838) — no LLM calls, no network. Obtain it via
+    :attr:`OptimizationResult.eval_audit`.
+
+    Attributes:
+        flagged: Examples flagged by one or more binary detectors (#1880),
+            sorted by id.
+        summary: Per-detector counts + lift so the user knows how many flags to
+            expect and how concentrated they are versus chance.
+        scored: The continuous layer (#1881): every scored item (ran in >=2
+            configs) with its ``defect_score`` + ``defect_percentile`` +
+            ``contributing_signals``, sorted by score descending — a ranked
+            worklist over ALL scored items, not just the flagged ones.
+    """
+
+    flagged: list[EvalAuditFlag] = field(default_factory=list)
+    summary: EvalAuditSummary | None = None
+    scored: list[ItemDefectScore] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "flagged": [flag.to_dict() for flag in self.flagged],
+            "summary": self.summary.to_dict() if self.summary else None,
+            "scored": [s.to_dict() for s in self.scored],
+        }
+
+
+@dataclass
 class OptimizationResult:
     """Complete results from an optimization run.
 
@@ -837,6 +1047,46 @@ class OptimizationResult:
     def failed_trials(self) -> list[TrialResult]:
         """Get only failed trials."""
         return [trial for trial in self.trials if trial.status == TrialStatus.FAILED]
+
+    @property
+    def example_matrix(self) -> dict[str, Any]:
+        """The per-example x per-trial outcome matrix for this run (issue #1838).
+
+        Built in-memory from the per-example outcomes already carried on each
+        trial (``trial.metadata["example_results"]``) — no recomputation and no
+        re-collection. ``examples`` is empty when the run captured no
+        per-example detail. See ``traigent.utils.outcome_matrix`` for the schema
+        and ``load_outcome_matrix`` for reading the persisted artifact.
+        """
+        from traigent.utils.outcome_matrix import build_outcome_matrix
+
+        return build_outcome_matrix(self)
+
+    @property
+    def eval_audit(self) -> EvalAudit | None:
+        """Opt-in eval-dataset defect audit for this run (issues #1880 + #1881).
+
+        Runs the deterministic defect detectors (never-correct, token-leak,
+        cross-family consensus-on-wrong) over this run's per-example x per-config
+        outcome matrix (#1838), and computes the continuous per-item defect score
+        + dataset-relative percentile (#1881) exposed as ``EvalAudit.scored`` — a
+        ranked worklist over all scored items. It is **opt-in and zero-cost by
+        default**: nothing is computed until you read this property, and it makes
+        no LLM calls and no network requests — it is a pure function of data the
+        run already produced.
+
+        Returns ``None`` when an audit is not applicable — the run captured no
+        per-example detail, or spanned fewer than two configurations (columns),
+        for which never-correct/consensus are meaningless. When present, the
+        cross-family consensus detector activates only if the config space spans
+        >=2 model families; single-family runs still get never-correct + token-leak.
+
+        See ``traigent.utils.eval_audit`` for the exact detector rules, thresholds,
+        the model-family mapping, and the lift definitions.
+        """
+        from traigent.utils.eval_audit import compute_eval_audit
+
+        return compute_eval_audit(self.example_matrix)
 
     @property
     def persistence_failed(self) -> bool:
