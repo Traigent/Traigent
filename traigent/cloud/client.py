@@ -45,7 +45,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
 from traigent.utils.validation import CoreValidators, validate_or_raise
 
-from .auth import AuthenticationError, AuthManager
+from .auth import AuthenticationError, AuthManager, _strip_trace_context_headers
 from .billing import UsageTracker
 from .models import (
     AgentExecutionRequest,
@@ -841,7 +841,11 @@ class TraigentCloudClient(BaseTraigentClient):
 
         self._aio_session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.timeout),
-            headers=await self.auth.get_headers(),
+            # Session-default headers are long-lived: never freeze a
+            # traceparent/tracestate into them (it would stamp every later
+            # request with a stale span context). Trace context travels only
+            # on per-request headers (see _get_headers / _inject_trace_context).
+            headers=_strip_trace_context_headers(await self.auth.get_headers()),
             trust_env=True,
         )
         self._register_session_finalizer(self._aio_session)
@@ -891,7 +895,9 @@ class TraigentCloudClient(BaseTraigentClient):
 
             self._aio_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-                headers=headers,
+                # Same rule as __aenter__: no stale trace context in
+                # long-lived session-default headers.
+                headers=_strip_trace_context_headers(headers),
                 trust_env=True,
             )
             self._register_session_finalizer(self._aio_session)
