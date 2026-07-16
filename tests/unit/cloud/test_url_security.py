@@ -201,8 +201,10 @@ def test_env_detection_matches_canonical_policy_helper() -> None:
         # IMDS IP literals absent from the hostname set must be blocked by IP.
         ("http://169.254.169.254", "metadata service"),
         ("http://169.254.169.254/latest/meta-data/", "metadata service"),
-        ("http://100.100.100.200", "metadata service"),  # Alibaba IMDS (not link-local)
-        ("http://[fd00:ec2::254]", "metadata service"),  # AWS IMDSv2 IPv6 (unique-local)
+        # Alibaba IMDS (not link-local).
+        ("http://100.100.100.200", "metadata service"),
+        # AWS IMDSv2 IPv6 (unique-local, not link-local).
+        ("http://[fd00:ec2::254]", "metadata service"),
         # Any other link-local literal is blocked by range, not just IMDS.
         ("http://169.254.1.1", "link-local address"),
     ],
@@ -216,3 +218,103 @@ def test_metadata_and_link_local_ips_blocked_even_in_development(
     with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
         with pytest.raises(ValueError, match=message):
             validate_cloud_base_url(url)
+
+
+@pytest.mark.parametrize(
+    ("resolved_ip", "message"),
+    [
+        ("169.254.169.254", "metadata service"),  # AWS/GCP/Azure IMDS.
+        ("100.100.100.200", "metadata service"),  # Alibaba IMDS.
+        ("fd00:ec2::254", "metadata service"),  # AWS IMDSv2 IPv6.
+        ("169.254.1.1", "link-local address"),  # Link-local range generally.
+    ],
+)
+def test_hostname_resolving_to_metadata_blocked_in_development(
+    resolved_ip: str,
+    message: str,
+) -> None:
+    # The residue behind the IP-literal guard: development returned before DNS
+    # resolution, so an attacker-chosen hostname resolving to IMDS still received
+    # credentials. Resolution must happen in every environment and its answers
+    # must go through the always-blocked guard.
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info(resolved_ip)):
+            with pytest.raises(ValueError, match=message):
+                validate_cloud_base_url("http://imds.rebind.example.com")
+
+
+def test_hostname_resolving_to_scoped_link_local_blocked_in_development() -> None:
+    # getaddrinfo returns IPv6 link-local answers with a zone id; the zone must
+    # be stripped rather than making the answer unparseable and skipped.
+    scoped = [
+        (
+            socket.AF_INET6,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            ("fe80::1%eth0", 443),
+        )
+    ]
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        with patch("socket.getaddrinfo", return_value=scoped):
+            with pytest.raises(ValueError, match="link-local address"):
+                validate_cloud_base_url("http://rebind.example.com")
+
+
+def test_local_mdns_hostname_resolving_to_metadata_blocked_in_development() -> None:
+    # ``.local`` is allowed in development, but the allowance covers legitimate
+    # local endpoints — not an mDNS name pointing at the metadata service.
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        with patch(
+            "socket.getaddrinfo",
+            return_value=_addr_info("169.254.169.254"),
+        ):
+            with pytest.raises(ValueError, match="metadata service"):
+                validate_cloud_base_url("http://imds.local")
+
+
+# --- The development allowance itself is preserved ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "resolved_ip", "expected"),
+    [
+        # A private/LAN dev backend stays reachable in development.
+        (
+            "http://dev-backend.example.com:8000/",
+            "10.0.0.5",
+            "http://dev-backend.example.com:8000",
+        ),
+        ("http://box.local:8000/", "192.168.1.10", "http://box.local:8000"),
+    ],
+)
+def test_development_still_allows_private_endpoints(
+    url: str,
+    resolved_ip: str,
+    expected: str,
+) -> None:
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info(resolved_ip)):
+            assert validate_cloud_base_url(url) == expected
+
+
+def test_development_allows_unresolvable_host() -> None:
+    # Adding resolution to the development path must not turn an offline/local-only
+    # hostname into a hard failure: it cannot reach a metadata endpoint anyway.
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror):
+            assert (
+                validate_cloud_base_url("http://offline-dev.example.com/")
+                == "http://offline-dev.example.com"
+            )
+
+
+def test_development_loopback_name_skips_resolution() -> None:
+    # localhost is reserved for loopback, so it must not pay for a DNS lookup.
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        with patch("socket.getaddrinfo", side_effect=AssertionError("no DNS")) as dns:
+            assert (
+                validate_cloud_base_url("http://localhost:5000/")
+                == "http://localhost:5000"
+            )
+        dns.assert_not_called()

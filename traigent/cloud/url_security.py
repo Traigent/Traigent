@@ -88,6 +88,21 @@ def _parse_ip_literal(
         return None
 
 
+def _reject_always_blocked_ip(
+    host_ip: ipaddress.IPv4Address | ipaddress.IPv6Address, *, purpose: str
+) -> None:
+    """Reject IMDS / link-local destinations in EVERY environment.
+
+    Applied both to IP literals in the URL and to the addresses a hostname
+    resolves to, because a credential-bearing request must never reach a cloud
+    metadata endpoint or the link-local range — development included.
+    """
+    if host_ip in _METADATA_SERVICE_IPS:
+        raise ValueError(f"{purpose} base URL points at a metadata service") from None
+    if host_ip.is_link_local:
+        raise ValueError(f"{purpose} base URL points at a link-local address") from None
+
+
 def _reject_always_blocked_hostname(hostname: str, *, purpose: str) -> str:
     normalized = _normalize_hostname(hostname)
     if not normalized:
@@ -98,20 +113,11 @@ def _reject_always_blocked_hostname(hostname: str, *, purpose: str) -> str:
 
     host_ip = _parse_ip_literal(normalized)
     if host_ip is not None:
-        # IMDS / link-local egress is blocked ALWAYS — even in development —
-        # because a credential-bearing request must never reach a cloud metadata
-        # endpoint or the link-local range. Matches by resolved IP value, not by
-        # hostname string, so IP literals such as http://169.254.169.254/ are
-        # rejected even though they are absent from ``_METADATA_HOSTNAMES``
-        # (issue #1908). Mirrors ``hybrid/transport.py``'s unconditional guard.
-        if host_ip in _METADATA_SERVICE_IPS:
-            raise ValueError(
-                f"{purpose} base URL points at a metadata service"
-            ) from None
-        if host_ip.is_link_local:
-            raise ValueError(
-                f"{purpose} base URL points at a link-local address"
-            ) from None
+        # Matches by IP value, not by hostname string, so IP literals such as
+        # http://169.254.169.254/ are rejected even though they are absent from
+        # ``_METADATA_HOSTNAMES`` (issue #1908). Mirrors ``hybrid/transport.py``'s
+        # unconditional guard.
+        _reject_always_blocked_ip(host_ip, purpose=purpose)
     elif _is_nonstandard_ip_notation(normalized):
         raise ValueError(
             f"{purpose} base URL uses non-standard IP address notation"
@@ -120,15 +126,38 @@ def _reject_always_blocked_hostname(hostname: str, *, purpose: str) -> str:
     return normalized
 
 
+def _is_loopback_name(normalized: str) -> bool:
+    """Return True for names RFC 6761 reserves for the loopback interface."""
+    return normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(
+        ".localhost"
+    )
+
+
+def _is_local_name(normalized: str) -> bool:
+    return _is_loopback_name(normalized) or normalized.endswith(".local")
+
+
+def _parse_resolved_ip(
+    sockaddr_host: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    # IPv6 results carry a zone id (``fe80::1%eth0``) that ``ip_address``
+    # rejects; strip it so scoped link-local answers are still checked.
+    return _parse_ip_literal(sockaddr_host.split("%", 1)[0])
+
+
 def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
     normalized = _reject_always_blocked_hostname(hostname, purpose="Cloud")
 
-    if normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(
-        (".localhost", ".local")
-    ):
-        if allow_local:
+    if _is_local_name(normalized):
+        if not allow_local:
+            raise ValueError(
+                "Cloud base URL host is not allowed in production"
+            ) from None
+        # ``localhost``/``.localhost`` are reserved for loopback and cannot
+        # reach a metadata endpoint. ``.local`` (mDNS) can, so it falls through
+        # to the resolved-IP guard below.
+        if _is_loopback_name(normalized):
             return
-        raise ValueError("Cloud base URL host is not allowed in production") from None
 
     host_ip = _parse_ip_literal(normalized)
 
@@ -139,22 +168,27 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
             ) from None
         return
 
-    if allow_local:
-        return
-
     try:
         addr_infos = socket.getaddrinfo(normalized, None)
     except socket.gaierror:
+        if allow_local:
+            # Development: a host that does not resolve cannot reach a metadata
+            # endpoint either, so keep the local-development allowance rather
+            # than breaking offline/local-only workflows.
+            return
         raise CloudUrlUnreachableError(
             "Cloud base URL host could not be resolved"
         ) from None
 
     for _family, _socktype, _proto, _canonname, sockaddr in addr_infos:
-        try:
-            resolved_ip = ipaddress.ip_address(sockaddr[0])
-        except ValueError:
+        resolved_ip = _parse_resolved_ip(sockaddr[0])
+        if resolved_ip is None:
             continue
-        if not resolved_ip.is_global:
+        # Checked in EVERY environment: the development allowance covers
+        # legitimate local/private endpoints, never a hostname that resolves to
+        # a metadata service or the link-local range (issue #1908).
+        _reject_always_blocked_ip(resolved_ip, purpose="Cloud")
+        if not allow_local and not resolved_ip.is_global:
             raise ValueError(
                 "Cloud base URL must not resolve to private or loopback IPs"
             ) from None
@@ -230,9 +264,9 @@ def _validation_needs_dns_resolution(base_url: str) -> bool:
         return False
 
     normalized = _normalize_hostname(hostname)
-    if normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(
-        (".localhost", ".local")
-    ):
+    # ``.local`` is deliberately absent: it is resolved (and its answers guarded)
+    # in development, so it must be offloaded like any other resolvable name.
+    if _is_loopback_name(normalized):
         return False
 
     if normalized in _METADATA_HOSTNAMES:
