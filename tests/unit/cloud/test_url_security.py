@@ -152,14 +152,58 @@ def test_validate_cloud_base_url_honors_traigent_environment_development() -> No
         )
 
 
-def test_validate_cloud_base_url_production_signal_wins_over_dev_signal() -> None:
-    with patch.dict(
-        "os.environ",
+@pytest.mark.parametrize(
+    "env",
+    [
+        # Canonical-first key order: the strict marker is the one that resolves.
         {"ENVIRONMENT": "production", "TRAIGENT_ENV": "development"},
-        clear=True,
-    ):
+        # Reversed: the dev marker resolves FIRST via the canonical key order,
+        # so a gate that simply asked resolve_environment_name() would hand a
+        # production deployment the development allowance. Any strict signal on
+        # any canonical key must win regardless of order.
+        {"ENVIRONMENT": "development", "TRAIGENT_ENV": "production"},
+        {"ENVIRONMENT": "development", "TRAIGENT_ENVIRONMENT": "production"},
+        # A staging marker is strict here too, so it must not be overridden by
+        # a dev marker on an earlier-resolving key either.
+        {"ENVIRONMENT": "development", "TRAIGENT_ENV": "staging"},
+    ],
+)
+def test_strict_env_signal_wins_over_dev_signal_in_any_key_order(
+    env: dict[str, str],
+) -> None:
+    # Conflicting canonical markers must fail closed: a box whose shell exports
+    # ENVIRONMENT=development must not relax credential egress just because it
+    # sorts ahead of an explicit TRAIGENT_ENV=production deployment marker.
+    with patch.dict("os.environ", env, clear=True):
         with pytest.raises(ValueError, match="must use https in production"):
             validate_cloud_base_url("http://localhost:5000")
+        with pytest.raises(ValueError, match="private or loopback"):
+            validate_cloud_base_url("https://127.0.0.1:5000")
+
+
+@pytest.mark.parametrize("env_value", ["staging", "stage"])
+@pytest.mark.parametrize(
+    "env_key", ["ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"]
+)
+def test_staging_is_strict_like_production(env_key: str, env_value: str) -> None:
+    # Staging is a real deployment tier: it runs on real cloud hosts carrying
+    # real Traigent API keys, so it must not inherit the local-development
+    # allowance for plaintext HTTP or private/loopback egress — even though the
+    # canonical policy helper classifies it non-production for feature gates.
+    with patch.dict("os.environ", {env_key: env_value}, clear=True):
+        with pytest.raises(ValueError, match="must use https in production"):
+            validate_cloud_base_url("http://localhost:5000")
+        with pytest.raises(ValueError, match="private or loopback"):
+            validate_cloud_base_url("https://127.0.0.1:5000")
+
+
+def test_staging_rejects_plaintext_egress_to_private_hostname() -> None:
+    # The concrete regression: ENVIRONMENT=staging with an internal backend URL
+    # resolving to a private address must not send the API key in cleartext.
+    with patch.dict("os.environ", {"ENVIRONMENT": "staging"}, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.0.0.5")):
+            with pytest.raises(ValueError, match="must use https in production"):
+                validate_cloud_base_url("http://internal-db.corp")
 
 
 # --- Regression: unified env detection (issue #1905) ---------------------------
@@ -181,8 +225,10 @@ def test_env_detection_ignores_noncanonical_keys(noncanonical_key: str) -> None:
 
 def test_env_detection_matches_canonical_policy_helper() -> None:
     # ENVIRONMENT=test is a canonical non-production marker, so the unified gate
-    # must classify it exactly as the shared policy helper does (allow_local),
-    # rather than via a private value-set that could disagree with other gates.
+    # must classify it from the shared value set (allow_local) rather than via a
+    # private value-set that could disagree with other gates. The gate is allowed
+    # to be STRICTER than the helper, never looser — see
+    # test_staging_is_strict_like_production for the one documented divergence.
     from traigent.utils.env_config import treat_as_production_policy
 
     with patch.dict("os.environ", {"ENVIRONMENT": "test"}, clear=True):
@@ -190,6 +236,32 @@ def test_env_detection_matches_canonical_policy_helper() -> None:
         assert (
             validate_cloud_base_url("http://localhost:5000/") == "http://localhost:5000"
         )
+
+
+def test_env_detection_reuses_canonical_key_and_value_sets() -> None:
+    # Pin the reuse structurally, not just behaviorally: this gate's development
+    # set must be the canonical non-production set minus the strict-egress tiers,
+    # so a new canonical env name cannot silently miss this gate and cannot be
+    # looser here than treat_as_production_policy.
+    from traigent.cloud.url_security import (
+        _STRICT_EGRESS_ENV_NAMES,
+        _is_development_environment,
+    )
+    from traigent.utils.env_config import (
+        _ENVIRONMENT_KEYS,
+        _NON_PRODUCTION_ENV_NAMES,
+        treat_as_production_policy,
+    )
+
+    assert _STRICT_EGRESS_ENV_NAMES <= _NON_PRODUCTION_ENV_NAMES
+
+    for key in _ENVIRONMENT_KEYS:
+        for name in _NON_PRODUCTION_ENV_NAMES:
+            with patch.dict("os.environ", {key: name}, clear=True):
+                assert treat_as_production_policy() is False
+                assert _is_development_environment() is (
+                    name not in _STRICT_EGRESS_ENV_NAMES
+                )
 
 
 # --- Regression: metadata/link-local egress is always blocked (issue #1908) ----
@@ -300,7 +372,11 @@ def test_development_still_allows_private_endpoints(
 
 def test_development_allows_unresolvable_host() -> None:
     # Adding resolution to the development path must not turn an offline/local-only
-    # hostname into a hard failure: it cannot reach a metadata endpoint anyway.
+    # hostname into a hard failure. This pins a deliberate development-only
+    # allowance, NOT a safety property: a name that fails to resolve at validation
+    # time may still resolve at connect time (see the residue note in
+    # _reject_unsafe_hostname). It is strictly narrower than the base behavior,
+    # which skipped resolution in development entirely.
     with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
         with patch("socket.getaddrinfo", side_effect=socket.gaierror):
             assert (

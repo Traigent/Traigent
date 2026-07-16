@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import os
 import socket
 from urllib.parse import unquote, urlparse, urlunparse
 
@@ -40,27 +41,61 @@ class CloudUrlUnreachableError(ValueError):
     """
 
 
+# Deployment tiers that ``env_config`` classifies as non-production but that
+# this gate must still treat as strict. Staging runs on real cloud hosts with
+# real Traigent API keys, so it must not inherit the local-development
+# allowance for plaintext HTTP or private/loopback destinations — the
+# classification that is right for feature/billing gates is wrong for
+# credential egress. Kept as an explicit subtraction from the canonical value
+# set (below) rather than a private value universe, so a new canonical env name
+# lands here automatically and can only ever be *more* strict than
+# ``treat_as_production_policy``.
+_STRICT_EGRESS_ENV_NAMES = frozenset({"stage", "staging"})
+
+
 def _is_development_environment() -> bool:
     """Return True only for explicit/local SDK development environments.
 
-    Delegates to the canonical, fail-closed policy-surface detector
-    :func:`traigent.utils.env_config.treat_as_production_policy` so that this
-    SSRF/credential/TLS gate reads the *same* environment signal (same env-var
-    keys, same value-set, same precedence) as every other security gate in the
-    SDK — auth, credential-fallback, mock bypass. Previously this helper used a
-    private, divergent key set (adding ``APP_ENV``/``FLASK_ENV``) and value set,
-    so one deployment could be classified 'dev' here while the canonical
-    ``is_development()``/policy checks classified it 'prod' (see issue #1905).
+    Reads the canonical env-var keys and value set from
+    :mod:`traigent.utils.env_config` — the same signal every other SDK security
+    gate uses (auth, credential-fallback, mock bypass). Before issue #1905 this
+    helper had a private, divergent key set (adding ``APP_ENV``/``FLASK_ENV``),
+    so a deployment could be 'dev' here and 'prod' to every other gate.
 
-    Fail closed: an unset / unrecognized environment is treated as production
-    (strict) so that a deployment which never set an env marker does not
-    silently allow credential egress to localhost / private / metadata hosts.
+    Two deliberate ways this gate is STRICTER than
+    :func:`~traigent.utils.env_config.treat_as_production_policy`, because it
+    guards credential egress rather than a feature flag:
+
+    * ``stage``/``staging`` are strict (see ``_STRICT_EGRESS_ENV_NAMES``).
+    * A dev marker on one canonical key cannot override a strict marker on
+      another. ``resolve_environment_name`` returns the first key that is set,
+      so ``ENVIRONMENT=dev TRAIGENT_ENV=production`` would resolve to ``dev``
+      purely from key order; here *every* declared key must be a development
+      name, so any strict signal wins regardless of order.
+
+    Fail closed: an unset or unrecognized environment is treated as production
+    (strict), so a deployment that never set an env marker — or set a typo —
+    does not silently allow credential egress to localhost / private / metadata
+    hosts.
     """
     # Imported lazily so this module stays import-cycle-free relative to
     # ``env_config`` (which is a foundational module).
-    from traigent.utils.env_config import treat_as_production_policy
+    from traigent.utils.env_config import (
+        _ENVIRONMENT_KEYS,
+        _NON_PRODUCTION_ENV_NAMES,
+        _normalize_str,
+    )
 
-    return not treat_as_production_policy()
+    development_env_names = _NON_PRODUCTION_ENV_NAMES - _STRICT_EGRESS_ENV_NAMES
+
+    declared = [
+        value.lower()
+        for value in (_normalize_str(os.getenv(key)) for key in _ENVIRONMENT_KEYS)
+        if value is not None
+    ]
+    if not declared:
+        return False
+    return all(name in development_env_names for name in declared)
 
 
 def _normalize_hostname(hostname: str) -> str:
@@ -172,9 +207,14 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
         addr_infos = socket.getaddrinfo(normalized, None)
     except socket.gaierror:
         if allow_local:
-            # Development: a host that does not resolve cannot reach a metadata
-            # endpoint either, so keep the local-development allowance rather
-            # than breaking offline/local-only workflows.
+            # Development only: let offline/local-only workflows validate rather
+            # than hard-failing on a name that does not resolve right now.
+            # KNOWN RESIDUE: resolution failing HERE does not mean the request's
+            # own later lookup fails — a hostile resolver can answer SERVFAIL now
+            # and a metadata address at connect time. This is the same
+            # validate-then-request window documented on
+            # ``validate_cloud_base_url``; closing it needs connect-time peer-IP
+            # enforcement, not a stricter check here.
             return
         raise CloudUrlUnreachableError(
             "Cloud base URL host could not be resolved"
@@ -198,7 +238,20 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
     """Validate and normalize a cloud base URL before sending credentials.
 
     Production calls must use a public HTTP(S) host. Localhost and private
-    networks are allowed only in explicit development/test environments.
+    networks are allowed only in explicit development/test environments;
+    ``staging`` is strict here even though other policy gates treat it as
+    non-production (see :func:`_is_development_environment`).
+
+    Not a hard guarantee against a hostile resolver. This validates a URL
+    *string*: any hostname is resolved here, but the returned string is what
+    callers hand to their HTTP client, which resolves the name again at connect
+    time. Nothing pins the address that was checked, so an attacker who controls
+    DNS answers/TTLs can still steer the request elsewhere between the two
+    lookups (classic DNS rebinding). Closing that window requires connect-time
+    peer-IP enforcement in the transport, like the guard in
+    ``traigent/hybrid/transport.py``. What this function does guarantee is that
+    metadata/link-local destinations are rejected in EVERY environment when they
+    are visible at validation time — as an IP literal or as a resolved answer.
     """
     candidate = (base_url or "").strip().rstrip("/")
     if not candidate:
