@@ -22,6 +22,11 @@ _METADATA_HOSTNAMES = {
     "metadata.google.internal",
 }
 
+# NAT64 well-known prefix (RFC 6052). ``64:ff9b::/96`` embeds an IPv4 address
+# in its low 32 bits; a NAT64/DNS64 gateway translates it back to that IPv4,
+# so an embedded loopback/link-local/metadata IPv4 must be re-classified.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
 
 class CloudUrlUnreachableError(ValueError):
     """A cloud base URL was structurally valid but its host could not be resolved.
@@ -98,6 +103,39 @@ def _reject_always_blocked_hostname(hostname: str, *, purpose: str) -> str:
     return normalized
 
 
+def _embedded_ipv4(
+    host_ip: ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | None:
+    """Return the IPv4 embedded in an IPv6 transition form, if any.
+
+    Covers IPv4-mapped (``::ffff:0:0/96``), 6to4 (``2002::/16``), and the
+    NAT64 well-known prefix (``64:ff9b::/96``). These forms can carry a
+    private/loopback/metadata IPv4 while ``is_global`` reports ``True`` on the
+    outer IPv6 literal, so the embedded address must be re-classified to stop
+    the SSRF gate from being bypassed via a translation prefix.
+    """
+    mapped = host_ip.ipv4_mapped
+    if mapped is not None:
+        return mapped
+    sixtofour = host_ip.sixtofour
+    if sixtofour is not None:
+        return sixtofour
+    if host_ip in _NAT64_WELL_KNOWN_PREFIX:
+        return ipaddress.IPv4Address(int(host_ip) & 0xFFFFFFFF)
+    return None
+
+
+def _iter_ip_forms(
+    host_ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
+    """Yield the IP literal plus any IPv4 embedded in an IPv6 transition form."""
+    if isinstance(host_ip, ipaddress.IPv6Address):
+        embedded = _embedded_ipv4(host_ip)
+        if embedded is not None:
+            return (host_ip, embedded)
+    return (host_ip,)
+
+
 def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
     normalized = _reject_always_blocked_hostname(hostname, purpose="Cloud")
 
@@ -111,10 +149,21 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
     host_ip = _parse_ip_literal(normalized)
 
     if host_ip is not None:
-        if not allow_local and not host_ip.is_global:
-            raise ValueError(
-                "Cloud base URL must not target private or loopback IPs"
-            ) from None
+        if not allow_local:
+            for ip_form in _iter_ip_forms(host_ip):
+                if (
+                    ip_form.is_link_local
+                    or ip_form.is_multicast
+                    or ip_form.is_unspecified
+                    or ip_form.is_reserved
+                ):
+                    raise ValueError(
+                        "Cloud base URL must not target a non-routable address"
+                    ) from None
+                if not ip_form.is_global:
+                    raise ValueError(
+                        "Cloud base URL must not target private or loopback IPs"
+                    ) from None
         return
 
     if allow_local:

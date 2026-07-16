@@ -68,6 +68,30 @@ def test_validate_cloud_base_url_rejects_private_ip_in_production() -> None:
 
 
 @pytest.mark.parametrize(
+    "url",
+    [
+        # NAT64 64:ff9b::/96 embedding 127.0.0.1 -> loopback via NAT64 gateway
+        "https://[64:ff9b::7f00:1]/api",
+        # NAT64 embedding 169.254.169.254 -> cloud IMDS via NAT64 gateway
+        "https://[64:ff9b::a9fe:a9fe]/api",
+        # IPv4-mapped Alibaba metadata IP (is_global=True on the outer literal)
+        "https://[::ffff:100.100.100.200]/api",
+        # 6to4 2002::/16 embedding a link-local metadata IPv4
+        "https://[2002:a9fe:a9fe::]/api",
+    ],
+)
+def test_validate_cloud_base_url_rejects_ipv6_transition_metadata_ips(
+    url: str,
+) -> None:
+    # is_global reports True on these IPv6 transition/embedded-IPv4 literals, so
+    # the embedded IPv4 must be re-classified or the SSRF/credential-egress gate
+    # can be bypassed to loopback / link-local (IMDS) in production.
+    with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
+        with pytest.raises(ValueError, match="non-routable|private or loopback"):
+            validate_cloud_base_url(url)
+
+
+@pytest.mark.parametrize(
     ("url", "message"),
     [
         ("http://metadata.google.internal", "metadata service"),
