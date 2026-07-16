@@ -2760,6 +2760,47 @@ def test_observability_client_blank_credentials_do_not_bypass_guard(
     client.close()
 
 
+@pytest.mark.parametrize(
+    ("config_kwargs", "header_name", "expected_value"),
+    [
+        (
+            {"api_key": "   ", "jwt_token": None},
+            "X-API-Key",
+            "valid-header-key",
+        ),
+        (
+            {"api_key": None, "jwt_token": "   "},
+            "Authorization",
+            "Bearer valid-header-token",
+        ),
+    ],
+    ids=["blank-api-key-vs-header", "blank-jwt-vs-header"],
+)
+def test_blank_explicit_credentials_do_not_overwrite_header_auth(
+    monkeypatch, caplog, config_kwargs, header_name, expected_value
+):
+    """A blank explicit credential must behave as absent end to end: the guard
+    keeps egress enabled because extra_headers carries working auth, and
+    build_headers() must NOT overwrite that auth with the blank value."""
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    config = ObservabilityConfig(
+        backend_origin="http://localhost:5000",
+        enable_atexit_flush=False,
+        extra_headers={header_name: expected_value},
+        **config_kwargs,
+    )
+    client = ObservabilityClient(config)
+
+    headers = config.build_headers()
+    assert headers[header_name] == expected_value
+    assert client._credential_egress_disabled is False
+    assert "TRAIGENT_API_KEY" not in caplog.text
+    client.close()
+
+
 def test_observability_client_no_credential_sender_only_keeps_ingest_lane(
     monkeypatch, caplog
 ):

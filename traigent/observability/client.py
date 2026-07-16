@@ -19,7 +19,7 @@ from urllib import error, request
 from urllib.parse import urlencode
 
 from traigent.cloud.async_batch_transport import BatchFlushResult
-from traigent.observability.config import ObservabilityConfig
+from traigent.observability.config import ObservabilityConfig, nonblank_credential
 from traigent.observability.dtos import (
     OBSERVABILITY_STATUSES,
     CorrelationIds,
@@ -73,11 +73,6 @@ class _NoRedirectHandler(request.HTTPRedirectHandler):
         newurl: str,
     ) -> None:
         return None
-
-
-def _nonblank(value: str | None) -> bool:
-    """A credential value counts only when it carries non-whitespace content."""
-    return bool(value and value.strip())
 
 
 def _new_trace_id() -> str:
@@ -2003,14 +1998,17 @@ class ObservabilityClient:
             # Every egress lane is override-covered; the SDK itself will never
             # emit network traffic, authenticated or not.
             return
-        if _nonblank(self.config.api_key) or _nonblank(self.config.jwt_token):
+        if nonblank_credential(self.config.api_key) or nonblank_credential(
+            self.config.jwt_token
+        ):
             return
         # A caller supplying auth through extra_headers (gateway/proxy setups)
         # has a working credential the backend will accept — the 401-storm
         # premise this guard exists for does not apply. Header names alone do
         # not count: a blank value is as unauthenticated as a missing header.
         if any(
-            name.strip().lower() in ("authorization", "x-api-key") and _nonblank(value)
+            name.strip().lower() in ("authorization", "x-api-key")
+            and nonblank_credential(value)
             for name, value in self.config.extra_headers.items()
         ):
             return

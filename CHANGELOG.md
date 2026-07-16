@@ -31,7 +31,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keeps owning ingest delivery, a custom `request_sender` keeps owning
   control-plane calls, and blocked control-plane requests raise a clear
   "no credential resolved" error. `config.offline_mode` is left untouched.
-  Telemetry never raises into the host app.
+  Blank explicit credentials are also treated as absent by
+  `build_headers()`, so they can never overwrite working auth supplied via
+  `extra_headers`. Telemetry never raises into the host app.
 
 ## [0.23.0] - 2026-07-14
 
