@@ -18,6 +18,7 @@ import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import EvaluationExample
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.cloud_optimizer import CloudOptimizer
@@ -30,6 +31,7 @@ from traigent.optimizers.remote_services import (
     SmartTrialSuggestion,
 )
 from traigent.utils.exceptions import OptimizationError, ServiceError
+from traigent.utils.objectives import is_minimization_objective
 
 # Test fixtures
 
@@ -1954,5 +1956,153 @@ class TestStrategyEarlyStoppingOrientation:
         history = [
             self._trial("t1", "cost", 0.5),
             self._trial("t2", "cost", 0.4),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+
+class TestDeclaredOrientationOverridesHeuristic:
+    """The patience-based early-stop must honour the orientation declared in the
+    user's ``ObjectiveSchema``, not the name-pattern heuristic.
+
+    ``is_minimization_objective`` guesses direction from substrings ("cost",
+    "latency", "error", ...). Any lower-is-better metric whose name lacks those
+    substrings is silently treated as maximize, which inverts the no-improvement
+    test. The declared schema is authoritative; the heuristic is only a fallback
+    for objectives no schema declares.
+    """
+
+    # Lower-is-better, but matches no _MINIMIZE_OBJECTIVE_PATTERNS substring, so
+    # the heuristic misclassifies it as maximize.
+    MISCLASSIFIED_OBJECTIVE = "regret"
+
+    @staticmethod
+    def _trial(trial_id: str, obj: str, value: float) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config={},
+            metrics={obj: value},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+
+    def _optimizer(self, objectives, strategy, mock_remote_service, schema=None):
+        return CloudOptimizer(
+            config_space={"temperature": {"min": 0.0, "max": 1.0, "type": "float"}},
+            objectives=objectives,
+            remote_service=mock_remote_service,
+            optimization_strategy=strategy,
+            objective_schema=schema,
+        )
+
+    def _plateaued_history(self, obj: str) -> list[TrialResult]:
+        """Overall best (0.1) is early; the recent window is uniformly worse.
+
+        Under minimize this is a genuine no-improvement plateau (best_recent 0.5
+        is far above best_overall 0.1 -> stop). Under the heuristic's maximize
+        reading, best_recent == best_overall == 0.7 -> no stop. The two
+        orientations therefore disagree, which is what makes this discriminating.
+        """
+        return [
+            self._trial("t1", obj, 0.1),
+            self._trial("t2", obj, 0.1),
+            self._trial("t3", obj, 0.5),
+            self._trial("t4", obj, 0.6),
+            self._trial("t5", obj, 0.7),
+        ]
+
+    def test_heuristic_misclassifies_the_objective_name(self):
+        """Pin the premise: without an orientation the heuristic calls this
+        lower-is-better metric a maximize objective."""
+        assert is_minimization_objective(self.MISCLASSIFIED_OBJECTIVE) is False
+        assert (
+            is_minimization_objective(
+                self.MISCLASSIFIED_OBJECTIVE, orientation="minimize"
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_declared_minimize_reaches_production_stopping_path(
+        self, mock_remote_service
+    ):
+        """A schema-declared minimize objective must stop through the public
+        ``should_stop_async`` path, not merely in the private helper.
+
+        The remote service is asserted untouched to prove the stop decision came
+        from the strategy gate rather than from the mock's own verdict.
+        """
+        schema = create_default_objectives(
+            [self.MISCLASSIFIED_OBJECTIVE],
+            orientations={self.MISCLASSIFIED_OBJECTIVE: "minimize"},
+        )
+        optimizer = self._optimizer(
+            [self.MISCLASSIFIED_OBJECTIVE],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+            schema=schema,
+        )
+        history = self._plateaued_history(self.MISCLASSIFIED_OBJECTIVE)
+
+        assert await optimizer.should_stop_async(history) is True
+        mock_remote_service.should_stop_optimization.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_without_schema_heuristic_misses_the_plateau(
+        self, mock_remote_service
+    ):
+        """Same history, no declared schema: the heuristic's maximize reading
+        fails to see the plateau and the strategy gate does not fire.
+
+        This is the pre-fix behaviour, retained as the backward-compatibility
+        baseline for string-only objective flows and as the contrast that makes
+        the test above meaningful.
+        """
+        optimizer = self._optimizer(
+            [self.MISCLASSIFIED_OBJECTIVE],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+        )
+        history = self._plateaued_history(self.MISCLASSIFIED_OBJECTIVE)
+
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_declared_maximize_overrides_minimize_heuristic(self, mock_remote_service):
+        """Inverse direction: "cost" reads as minimize to the heuristic, but a
+        schema declaring maximize must win."""
+        schema = create_default_objectives(["cost"], orientations={"cost": "maximize"})
+        optimizer = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+            schema=schema,
+        )
+        # Rising values: improving under maximize (no stop); under the minimize
+        # heuristic these would look like a plateau and stop.
+        history = self._plateaued_history("cost")
+
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_objective_absent_from_schema_falls_back_to_heuristic(
+        self, mock_remote_service
+    ):
+        """A schema that does not declare the primary objective genuinely lacks
+        an explicit value, so the heuristic still applies."""
+        schema = create_default_objectives(["accuracy"])
+        optimizer = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+            schema=schema,
+        )
+        assert optimizer._primary_objective_orientation("cost") is None
+        # Heuristic minimize semantics: recent trials keep dropping -> no stop.
+        history = [
+            self._trial("t1", "cost", 0.5),
+            self._trial("t2", "cost", 0.4),
+            self._trial("t3", "cost", 0.3),
+            self._trial("t4", "cost", 0.2),
+            self._trial("t5", "cost", 0.1),
         ]
         assert optimizer._check_strategy_stopping_conditions(history) is False

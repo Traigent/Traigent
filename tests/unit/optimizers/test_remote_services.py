@@ -595,6 +595,45 @@ class TestOptimizationStrategy:
         assert strategy.metadata == {}
 
 
+class TestOptimizationStrategyMinDeltaValidation:
+    """``early_stopping_min_delta`` feeds the no-improvement comparison in
+    CloudOptimizer, so it must be a finite non-negative number.
+
+    A negative delta inverts the test into an "improvement" the trial never had;
+    NaN makes every comparison False, silently disabling early stopping. Both
+    are rejected at construction rather than coerced, so the caller learns the
+    strategy is wrong instead of getting a quietly broken optimization run.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_delta",
+        [
+            -0.01,
+            -1.0,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        ],
+    )
+    def test_rejects_negative_and_non_finite(self, bad_delta):
+        with pytest.raises(ValueError, match="early_stopping_min_delta"):
+            OptimizationStrategy(early_stopping_min_delta=bad_delta)
+
+    @pytest.mark.parametrize("good_delta", [0.0, 0.001, 0.01, 1.0, 100.0])
+    def test_accepts_zero_and_nonnegative_finite(self, good_delta):
+        strategy = OptimizationStrategy(early_stopping_min_delta=good_delta)
+
+        # No coercion: the value survives construction exactly as supplied.
+        assert strategy.early_stopping_min_delta == good_delta
+
+    def test_default_is_valid(self):
+        assert OptimizationStrategy().early_stopping_min_delta == 0.01
+
+    def test_error_names_the_offending_value(self):
+        with pytest.raises(ValueError, match="finite non-negative"):
+            OptimizationStrategy(early_stopping_min_delta=-5.0)
+
+
 class TestRemoteOptimizationServiceAbstract:
     """Test RemoteOptimizationService abstract base class."""
 
