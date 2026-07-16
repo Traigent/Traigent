@@ -126,15 +126,16 @@ def _unwrap_embedded_ipv4(
     """Return the IPv4 address an IPv6 address actually reaches, if any.
 
     ``::ffff:169.254.169.254`` connects to 169.254.169.254 on any dual-stack
-    host (Linux default ``bindv6only=0``), but Python reports it as neither
-    link-local nor equal to the IPv4 literal, so both ``_METADATA_SERVICE_IPS``
-    and ``is_global`` miss it. Worse, on Python 3.12+ ``::ffff:100.100.100.200``
-    is ``is_global=True`` (``IPv6Address.is_global`` is ``not is_private``, and
-    100.64.0.0/10 is not classified private), so it clears the production gate
-    too. Mapped-address semantics differ across the supported interpreters (3.11
-    classifies both of the above the other way); normalizing here means every
-    downstream classification sees the address the request will really hit, on
-    every version.
+    host (Linux default ``bindv6only=0``), but the guards downstream do not see
+    through the mapping on their own. ``_METADATA_SERVICE_IPS`` matches by exact
+    address value, so no mapped form ever equals an entry in it, on any
+    interpreter. The link-local check cannot cover the gap either:
+    ``::ffff:100.100.100.200`` (Alibaba IMDS) is never link-local on any
+    interpreter, because 100.64.0.0/10 is CGNAT. Python releases further differ
+    in whether an IPv4-mapped address is classified by its embedded IPv4 or by
+    the IPv6 value, so ``is_global``/``is_link_local`` answers are not stable
+    across builds. Normalizing here means every downstream classification sees
+    the address the request will really hit, independent of interpreter version.
 
     The IPv4-mapped range is the one that is verified routable; the IPv4-
     compatible (RFC 4291, deprecated), 6to4, and NAT64 well-known prefixes also
