@@ -619,12 +619,36 @@ class TestOptimizationStrategyMinDeltaValidation:
         with pytest.raises(ValueError, match="early_stopping_min_delta"):
             OptimizationStrategy(early_stopping_min_delta=bad_delta)
 
-    @pytest.mark.parametrize("good_delta", [0.0, 0.001, 0.01, 1.0, 100.0])
+    @pytest.mark.parametrize("bad_delta", [True, False])
+    def test_rejects_bool(self, bad_delta):
+        # bool is a Python number, so an unguarded check lets True/False through
+        # and they become 1/0 in the early-stop arithmetic — a caller passing a
+        # flag by mistake would silently get a min_delta of 1.0 or 0.0.
+        with pytest.raises(ValueError, match="early_stopping_min_delta"):
+            OptimizationStrategy(early_stopping_min_delta=bad_delta)
+
+    @pytest.mark.parametrize(
+        "bad_delta",
+        [
+            "0.01",
+            None,
+            complex(1, 1),
+            [0.01],
+            object(),
+        ],
+    )
+    def test_rejects_non_real(self, bad_delta):
+        # ValueError, not the TypeError math.isfinite would raise on these.
+        with pytest.raises(ValueError, match="early_stopping_min_delta"):
+            OptimizationStrategy(early_stopping_min_delta=bad_delta)
+
+    @pytest.mark.parametrize("good_delta", [0.0, 0.001, 0.01, 1.0, 100.0, 0, 1, 100])
     def test_accepts_zero_and_nonnegative_finite(self, good_delta):
         strategy = OptimizationStrategy(early_stopping_min_delta=good_delta)
 
         # No coercion: the value survives construction exactly as supplied.
         assert strategy.early_stopping_min_delta == good_delta
+        assert type(strategy.early_stopping_min_delta) is type(good_delta)
 
     def test_default_is_valid(self):
         assert OptimizationStrategy().early_stopping_min_delta == 0.01
