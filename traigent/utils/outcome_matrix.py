@@ -58,6 +58,9 @@ A single JSON object::
               "cost_usd": 0.0004,        # per-example cost, or null
               "execution_time": 0.42,    # seconds (ExampleResult), or null
               "latency_ms": null,        # milliseconds (HybridExampleResult), or null
+              "predicted": "B",          # the model's actual answer for this cell
+                                         # (``actual_output`` verbatim); present
+                                         # only on NON-correct cells, else null
               "error": null              # error message, if the example failed
             },
             ...
@@ -87,6 +90,16 @@ Cell fields record only what the run actually produced — no fabricated values:
   defaults ``latency_ms`` and ``cost_usd`` to ``0.0`` at the dataclass level, so
   a hybrid example that never set them records ``0.0`` (not ``null``) — the
   projection fabricates nothing and reflects exactly what the run produced.
+* ``predicted`` is the model's actual answer for the cell (``actual_output``
+  verbatim). It is recorded **only on non-correct cells** (``success is not
+  True`` — the wrong and indeterminate cells) and is ``null`` otherwise. That is
+  exactly the subset the #1880 cross-family consensus detector (D7) reads to tell
+  whether models from different families agreed on the *same* wrong answer;
+  clearly-correct cells never anchor consensus, so their (potentially large)
+  output is not persisted, keeping the matrix from growing with data no detector
+  consumes. Recording it here keeps the eval-defect audit a pure function of the
+  persisted matrix. Serialized as-is (the writer's ``json.dump(default=str)``
+  coerces any non-JSON value).
 
 Downstream consumers (#1880 eval-defect detectors, #1881 defect score) read
 ``examples`` as the item x config outcome/token matrix.
@@ -199,6 +212,17 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
     execution_time = _get(ex, "execution_time")
     latency_ms = _get(ex, "latency_ms")
 
+    # The model's actual answer for this cell, recorded verbatim (no coercion) so
+    # the #1880 cross-family consensus detector (D7) can compare answers across
+    # configs/families straight from the persisted matrix. Stored ONLY when the
+    # cell is not clearly correct (``success is not True`` — the wrong and
+    # indeterminate cells), which is exactly the subset D7 reads: a clearly-correct
+    # cell never anchors consensus, so keeping its full model output would only
+    # bloat the persisted matrix (examples x configs x output length) with data no
+    # detector reads. ``None`` for clearly-correct cells and when the run captured
+    # no output (e.g. a failed example).
+    predicted = _get(ex, "actual_output") if success is not True else None
+
     cell: dict[str, Any] = {
         "score": score,
         "accuracy": accuracy,
@@ -208,6 +232,7 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
         "cost_usd": cost_usd,
         "execution_time": execution_time,
         "latency_ms": latency_ms,
+        "predicted": predicted,
         "error": error,
     }
     return cell
@@ -326,6 +351,7 @@ def load_outcome_matrix(run_path: str | Path) -> dict[str, Any] | None:
         else []
     )
 
+    artifacts_real = artifacts.resolve()
     seen: set[Path] = set()
     for candidate in candidates:
         if candidate in seen:
@@ -333,6 +359,19 @@ def load_outcome_matrix(run_path: str | Path) -> dict[str, Any] | None:
         seen.add(candidate)
         if not candidate.exists():
             continue
+        # Containment guard: candidates are constructed under ``artifacts``, but
+        # a symlink placed inside the artifacts dir could still point anywhere
+        # on disk. Refuse to read a resolved path that escapes the artifacts
+        # root rather than silently including an arbitrary file.
+        candidate_real = candidate.resolve()
+        try:
+            candidate_real.relative_to(artifacts_real)
+        except ValueError:
+            raise ValueError(
+                f"Refusing to read outcome matrix artifact outside the artifacts "
+                f"directory: {candidate} resolves to {candidate_real}, which is "
+                f"not under {artifacts_real}"
+            ) from None
         try:
             with open(candidate, encoding="utf-8") as handle:
                 return dict(json.load(handle))
