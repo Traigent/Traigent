@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ipaddress
 import socket
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from traigent.cloud.url_security import (
+    _unwrap_embedded_ipv4,
+    _validation_needs_dns_resolution,
     validate_cloud_base_url,
     validate_cloud_base_url_async,
 )
@@ -279,6 +282,24 @@ def test_env_detection_reuses_canonical_key_and_value_sets() -> None:
         ("http://[fd00:ec2::254]", "metadata service"),
         # Any other link-local literal is blocked by range, not just IMDS.
         ("http://169.254.1.1", "link-local address"),
+        # IPv6 literals embedding an IPv4 IMDS address. Linux maps ::ffff:0:0/96
+        # onto the IPv4 peer at connect time (bindv6only=0), so these reach the
+        # metadata service exactly like the bare literal above, while Python
+        # reports them as neither link-local nor equal to the IPv4 address.
+        ("http://[::ffff:169.254.169.254]", "metadata service"),
+        # Same address, hex spelling of the embedded IPv4 octets.
+        ("http://[::ffff:a9fe:a9fe]", "metadata service"),
+        # Same address, fully expanded.
+        ("http://[0:0:0:0:0:ffff:169.254.169.254]", "metadata service"),
+        # Alibaba IMDS mapped: is_global=True on IPv6 (100.64.0.0/10 is not
+        # classified private), so it also cleared the production gate.
+        ("http://[::ffff:100.100.100.200]", "metadata service"),
+        # Mapped link-local generally, not just the IMDS addresses.
+        ("http://[::ffff:169.254.1.1]", "link-local address"),
+        # Deprecated IPv4-compatible / NAT64 / 6to4 forms (defense in depth).
+        ("http://[::169.254.169.254]", "metadata service"),
+        ("http://[64:ff9b::169.254.169.254]", "metadata service"),
+        ("http://[2002:a9fe:a9fe::1]", "metadata service"),
     ],
 )
 def test_metadata_and_link_local_ips_blocked_even_in_development(
@@ -299,6 +320,12 @@ def test_metadata_and_link_local_ips_blocked_even_in_development(
         ("100.100.100.200", "metadata service"),  # Alibaba IMDS.
         ("fd00:ec2::254", "metadata service"),  # AWS IMDSv2 IPv6.
         ("169.254.1.1", "link-local address"),  # Link-local range generally.
+        # A resolver can answer with the IPv4-mapped form (an AAAA record, or
+        # getaddrinfo normalizing a mapped literal), which reaches the same
+        # IPv4 peer and must be classified the same way.
+        ("::ffff:169.254.169.254", "metadata service"),
+        ("::ffff:100.100.100.200", "metadata service"),
+        ("::ffff:169.254.1.1", "link-local address"),
     ],
 )
 def test_hostname_resolving_to_metadata_blocked_in_development(
@@ -343,6 +370,94 @@ def test_local_mdns_hostname_resolving_to_metadata_blocked_in_development() -> N
         ):
             with pytest.raises(ValueError, match="metadata service"):
                 validate_cloud_base_url("http://imds.local")
+
+
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        # IPv4-mapped: the routable case (Linux connects these to the IPv4 peer).
+        ("::ffff:169.254.169.254", "169.254.169.254"),
+        ("::ffff:a9fe:a9fe", "169.254.169.254"),
+        ("0:0:0:0:0:ffff:169.254.169.254", "169.254.169.254"),
+        ("::ffff:93.184.216.34", "93.184.216.34"),
+        # Deprecated/relayed forms unwrapped as defense in depth.
+        ("::169.254.169.254", "169.254.169.254"),
+        ("64:ff9b::169.254.169.254", "169.254.169.254"),
+        ("2002:a9fe:a9fe::1", "169.254.169.254"),
+        # Embeds nothing -> returned unchanged. ::1 and :: sit inside ::/96 but
+        # are the loopback/unspecified addresses, not IPv4-compatible addresses;
+        # unwrapping them would report ::1 as 0.0.0.1. Both classify the same way
+        # today, so only this assertion pins the distinction.
+        ("::1", "::1"),
+        ("::", "::"),
+        ("fd00:ec2::254", "fd00:ec2::254"),
+        ("fe80::1", "fe80::1"),
+        ("2606:2800:220:1:248:1893:25c8:1946", "2606:2800:220:1:248:1893:25c8:1946"),
+        # IPv4 input is passed through untouched.
+        ("169.254.169.254", "169.254.169.254"),
+    ],
+)
+def test_unwrap_embedded_ipv4(address: str, expected: str) -> None:
+    assert _unwrap_embedded_ipv4(ipaddress.ip_address(address)) == ipaddress.ip_address(
+        expected
+    )
+
+
+def test_mapped_alibaba_imds_blocked_in_production() -> None:
+    # ::ffff:100.100.100.200 cleared BOTH always-blocked guards (exact-match IMDS
+    # set, is_link_local) and the production is_global gate, because
+    # IPv6Address.is_global is `not is_private` and 100.64.0.0/10 is not private.
+    # It was therefore reachable from production, not just development.
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "production"}, clear=True):
+        with pytest.raises(ValueError, match="metadata service"):
+            validate_cloud_base_url("https://[::ffff:100.100.100.200]")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Loopback: ::1 lives in ::/96 but embeds no IPv4 address — unwrapping it
+        # would yield 0.0.0.1 and change how it is classified.
+        "http://[::1]:8000",
+        # Unique-local IPv6 dev endpoint.
+        "http://[fd12:3456::1]:8000",
+        # Mapped IPv4 private endpoint stays usable in development.
+        "http://[::ffff:192.168.1.10]:8000",
+    ],
+)
+def test_development_still_allows_local_ipv6_literals(url: str) -> None:
+    # The unwrap must not over-block: legitimate loopback/private IPv6 literals
+    # keep the development allowance they had before it.
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        assert validate_cloud_base_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Ordinary global IPv6 is untouched by the unwrap.
+        "https://[2606:2800:220:1:248:1893:25c8:1946]",
+        # A mapped *public* IPv4 address is global and must stay allowed.
+        "https://[::ffff:93.184.216.34]",
+    ],
+)
+def test_production_still_allows_global_ipv6_literals(url: str) -> None:
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "production"}, clear=True):
+        assert validate_cloud_base_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[::1]:8000",
+        "http://[::ffff:169.254.169.254]",
+    ],
+)
+def test_ipv6_literals_never_trigger_dns_resolution(url: str) -> None:
+    # The unwrap runs inside _parse_ip_literal, which _validation_needs_dns_resolution
+    # also consults. An unwrap that made a literal unparseable would silently turn
+    # it into a name lookup and break sync/async parity.
+    assert _validation_needs_dns_resolution(url) is False
 
 
 # --- The development allowance itself is preserved ----------------------------

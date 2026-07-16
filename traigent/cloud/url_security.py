@@ -27,6 +27,12 @@ _METADATA_SERVICE_IPS = frozenset(
     }
 )
 
+# IPv6 prefixes that carry an IPv4 address in their low 32 bits, beyond the
+# IPv4-mapped range that ``IPv6Address.ipv4_mapped`` already reports. See
+# ``_unwrap_embedded_ipv4``.
+_IPV4_COMPATIBLE_PREFIX = ipaddress.ip_network("::/96")
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
 
 class CloudUrlUnreachableError(ValueError):
     """A cloud base URL was structurally valid but its host could not be resolved.
@@ -114,13 +120,56 @@ def _is_nonstandard_ip_notation(hostname: str) -> bool:
     return bool(labels) and all(_is_numeric_hostname_label(label) for label in labels)
 
 
+def _unwrap_embedded_ipv4(
+    host_ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Return the IPv4 address an IPv6 address actually reaches, if any.
+
+    ``::ffff:169.254.169.254`` connects to 169.254.169.254 on any dual-stack
+    host (Linux default ``bindv6only=0``), but Python reports it as neither
+    link-local nor equal to the IPv4 literal, so both ``_METADATA_SERVICE_IPS``
+    and ``is_global`` miss it. Worse, ``::ffff:100.100.100.200`` is
+    ``is_global=True`` (``IPv6Address.is_global`` is ``not is_private``, and
+    100.64.0.0/10 is not classified private), so it clears the production gate
+    too. Normalizing here means every downstream classification sees the address
+    the request will really hit.
+
+    The IPv4-mapped range is the one that is verified routable; the IPv4-
+    compatible (RFC 4291, deprecated), 6to4, and NAT64 well-known prefixes also
+    embed an IPv4 address in their low 32 bits and are unwrapped as defense in
+    depth — they reach IPv4 only through a relay/gateway, but a credential-
+    bearing request has no legitimate reason to name IMDS in any of them.
+
+    Addresses that embed nothing (``::1``, ``fd00::1``, ordinary global IPv6)
+    are returned unchanged.
+    """
+    if not isinstance(host_ip, ipaddress.IPv6Address):
+        return host_ip
+    if host_ip.ipv4_mapped is not None:
+        return host_ip.ipv4_mapped
+    if host_ip.sixtofour is not None:
+        return host_ip.sixtofour
+    if host_ip in _NAT64_WELL_KNOWN_PREFIX:
+        return ipaddress.IPv4Address(int(host_ip) & 0xFFFFFFFF)
+    # ``::`` (unspecified) and ``::1`` (loopback) live in ::/96 but embed no
+    # IPv4 address; unwrapping them would turn ::1 into 0.0.0.1.
+    if host_ip in _IPV4_COMPATIBLE_PREFIX and int(host_ip) > 1:
+        return ipaddress.IPv4Address(int(host_ip))
+    return host_ip
+
+
 def _parse_ip_literal(
     hostname: str,
 ) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
-        return ipaddress.ip_address(hostname.strip("[]"))
+        host_ip = ipaddress.ip_address(hostname.strip("[]"))
     except ValueError:
         return None
+    # Normalized at the single parse point every caller shares, so the IMDS set,
+    # the link-local range check, and the ``is_global`` production gate all
+    # classify the address that is actually reached — for URL literals and for
+    # resolved answers alike (``_parse_resolved_ip`` delegates here).
+    return _unwrap_embedded_ipv4(host_ip)
 
 
 def _reject_always_blocked_ip(
@@ -131,6 +180,12 @@ def _reject_always_blocked_ip(
     Applied both to IP literals in the URL and to the addresses a hostname
     resolves to, because a credential-bearing request must never reach a cloud
     metadata endpoint or the link-local range — development included.
+
+    Callers must pass an address from :func:`_parse_ip_literal` /
+    :func:`_parse_resolved_ip` rather than ``ipaddress.ip_address`` directly:
+    both classifications below are IPv4-vs-IPv6 exact, so an IPv6 form
+    embedding an IPv4 IMDS address evades them unless it has been through
+    :func:`_unwrap_embedded_ipv4`.
     """
     if host_ip in _METADATA_SERVICE_IPS:
         raise ValueError(f"{purpose} base URL points at a metadata service") from None
@@ -251,7 +306,10 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
     peer-IP enforcement in the transport, like the guard in
     ``traigent/hybrid/transport.py``. What this function does guarantee is that
     metadata/link-local destinations are rejected in EVERY environment when they
-    are visible at validation time — as an IP literal or as a resolved answer.
+    are visible at validation time — as an IP literal or as a resolved answer,
+    including IPv6 forms that embed the IPv4 address they reach
+    (``[::ffff:169.254.169.254]``), which are normalized before classification
+    (see :func:`_unwrap_embedded_ipv4`).
     """
     candidate = (base_url or "").strip().rstrip("/")
     if not candidate:
