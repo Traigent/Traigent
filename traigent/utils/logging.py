@@ -51,7 +51,10 @@ def configure_litellm_logging(
 
 
 def setup_logging(
-    level: str = "INFO", format_string: str | None = None, use_rich: bool = False
+    level: str = "INFO",
+    format_string: str | None = None,
+    use_rich: bool = False,
+    logger_name: str | None = None,
 ) -> None:
     """Setup logging configuration for Traigent.
 
@@ -59,14 +62,33 @@ def setup_logging(
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         format_string: Custom format string for log messages
         use_rich: Whether to use rich formatting for console output
+        logger_name: Optional opt-in for host applications that embed Traigent.
+            Defaults to ``None``, which preserves Traigent's historical behavior
+            of clearing and reconfiguring the **ROOT** logger
+            (``logging.getLogger()``) — existing callers (``configure()``,
+            ``initialize()``, the CLI, diagnostics) are unaffected. Pass a
+            logger name (e.g. ``"traigent"``) to scope this call to that
+            logger tree instead: only that logger's handlers are cleared and
+            reconfigured, and the ROOT logger is left completely untouched.
+            The scoped logger also gets ``propagate = False`` so records it
+            handles do not bubble up and get emitted a second time by the
+            host's root handlers. This lets a host application that has
+            already configured `logging` for itself opt into
+            Traigent-scoped logging without losing its own root
+            configuration.
     """
     if format_string is None:
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    # Remove existing handlers
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
+    # Resolve the target logger: ROOT by default (unchanged behavior), or an
+    # explicit opt-in named logger when the host asks for one.
+    target_logger = (
+        logging.getLogger(logger_name) if logger_name else logging.getLogger()
+    )
+
+    # Remove existing handlers on the target logger only.
+    for handler in target_logger.handlers[:]:
+        target_logger.removeHandler(handler)
 
     # Configure logging level
     resolved_level = _resolve_logging_level(level)
@@ -78,8 +100,12 @@ def setup_logging(
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(format_string))
 
-    root_logger.addHandler(handler)
-    root_logger.setLevel(numeric_level)
+    target_logger.addHandler(handler)
+    target_logger.setLevel(numeric_level)
+    if logger_name:
+        # Scoped opt-in: our handler now emits these records; stop them from
+        # bubbling up to the host's root handlers (double emission).
+        target_logger.propagate = False
 
     # Set specific levels for third-party libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)

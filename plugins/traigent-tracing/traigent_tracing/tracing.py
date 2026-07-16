@@ -156,6 +156,55 @@ def _scrub_for_export(value: Any) -> Any:
     return _redact_payload(value)
 
 
+def _scrub_error_text(error: object) -> str:
+    """Coerce an error of any runtime shape to a scrubbed *string*.
+
+    Mirrors ``traigent.core.tracing._scrub_error_text``. Callers are
+    typed ``error: str | None``, but Exception instances and dict
+    payloads leak through in practice. Deterministic order: dict/list/
+    tuple payloads get key-aware secret redaction first
+    (``_redact_payload``), then everything is stringified, then the text
+    is PII-scrubbed — so the scrubber always sees a string and the
+    result is always a scrubbed ``str`` (valid as an OTLP status
+    description, never a redaction bypass for non-string shapes).
+    """
+    if isinstance(error, (dict, list, tuple)):
+        error = _redact_payload(error)
+    return str(_scrub_pii_text(str(error)))
+
+
+def _set_error_status(
+    span: Span | None, error: object, attribute_name: str | None = None
+) -> None:
+    """Mark a span as failed, scrubbing the error text first.
+
+    Mirrors ``traigent.core.tracing._set_error_status``. ``error`` is
+    coerced to a scrubbed string via ``_scrub_error_text`` before being
+    attached to the span, so trial/example error strings (and the
+    exported span status description) get the same PII/secret scrub as
+    ``example.input`` / ``example.expected_output`` /
+    ``example.actual_output`` instead of shipping raw to the OTLP
+    exporter.
+
+    If ``attribute_name`` is given, the scrubbed error is also set as a
+    span attribute under that name.
+    """
+    if span is None:
+        return
+    scrubbed_error = _scrub_error_text(error)
+    if attribute_name:
+        span.set_attribute(attribute_name, scrubbed_error)
+    if trace is not None:
+        span.set_status(trace.Status(trace.StatusCode.ERROR, scrubbed_error))
+    else:
+        # Best-effort fallback for no-OTEL environments and mock spans,
+        # mirroring traigent.core.tracing._set_error_status.
+        try:
+            span.set_status(status="ERROR", description=scrubbed_error)
+        except TypeError:
+            span.set_status("ERROR")
+
+
 class SecureIdGenerator(IdGenerator if IdGenerator else object):  # type: ignore[misc]
     """ID generator using os.urandom for cryptographically secure random IDs.
 
@@ -547,8 +596,7 @@ def record_trial_result(
                 span.set_attribute(f"trial.metric.{name}", value)
 
     if error:
-        span.set_attribute("trial.error", error)
-        span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+        _set_error_status(span, error, attribute_name="trial.error")
 
 
 def record_optimization_complete(
@@ -706,5 +754,4 @@ def record_example_result(
         span.set_attribute("example.execution_time_ms", execution_time * 1000)
 
     if error:
-        span.set_attribute("example.error", error)
-        span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+        _set_error_status(span, error, attribute_name="example.error")

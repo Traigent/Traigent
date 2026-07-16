@@ -6,6 +6,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- `@observe` exception metadata now honors the content gate. `error_message`
+  carries free-form content — exception strings routinely interpolate prompts,
+  records, and PII that pattern redaction cannot catch — so it now follows the
+  same rule as `input_data`/`output_data`: withheld entirely under the
+  metadata-only default, replaced with `[REDACTED]` under
+  `content_mode="redacted"`, and sent verbatim only under
+  `content_mode="record"`. `error_type` (a class name, never content) is
+  retained in every mode. Closes the error-path egress gap left open when
+  0.21.0 made `@observe` metadata-only.
+
+### Fixed
+
+- `ObservabilityClient` fails fast when no credential resolves. With
+  `offline_mode` off and neither an API key, a JWT, nor a non-blank
+  `Authorization`/`X-API-Key` in `extra_headers` (gateway/proxy auth counts;
+  whitespace-only values do not), the client logs one actionable warning
+  naming `TRAIGENT_API_KEY` (or `traigent auth login`) and disables its own
+  network lanes, instead of emitting unauthenticated ingest requests that
+  401-retry-storm behind an opaque "ingest rejected with status 401".
+  Suppression is lane-aware, not a global offline flip: a custom `sender`
+  keeps owning ingest delivery, a custom `request_sender` keeps owning
+  control-plane calls, and blocked control-plane requests raise a clear
+  "no credential resolved" error. `config.offline_mode` is left untouched.
+  Blank explicit credentials are also treated as absent by
+  `build_headers()`, so they can never overwrite working auth supplied via
+  `extra_headers`. Telemetry never raises into the host app.
+
 ## [0.23.0] - 2026-07-14
 
 Multi-objective metric-contract release.
