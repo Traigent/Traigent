@@ -9,6 +9,7 @@ services, enabling local execution with optional remote guidance architectures.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -190,6 +191,19 @@ class OptimizationStrategy:
     # Metadata
     strategy_name: str = "smart_optimization"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate fields that feed early-stopping arithmetic."""
+        # A negative or NaN min_delta silently inverts or disables the
+        # no-improvement test in CloudOptimizer._check_strategy_stopping_conditions
+        # (NaN comparisons are always False, so optimization never early-stops).
+        # Zero is valid and means "any change counts as an improvement".
+        delta = self.early_stopping_min_delta
+        if not math.isfinite(delta) or delta < 0:
+            raise ValueError(
+                f"early_stopping_min_delta must be a finite non-negative number, "
+                f"got {delta!r}"
+            )
 
 
 class RemoteOptimizationService(ABC):

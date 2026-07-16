@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Coroutine
 from datetime import UTC, datetime
 from random import SystemRandom
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
@@ -31,6 +31,11 @@ from traigent.optimizers.remote_services import (
 from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import is_minimization_objective
+
+if TYPE_CHECKING:
+    # Annotation-only: the optimizers layer must not import traigent.core at
+    # runtime (traigent.core.orchestrator imports optimizers).
+    from traigent.core.objectives import ObjectiveSchema
 
 _SECURE_RANDOM = SystemRandom()
 
@@ -92,6 +97,7 @@ class CloudOptimizer(BaseOptimizer):
         fallback_optimizer: BaseOptimizer | None = None,
         optimization_strategy: OptimizationStrategy | None = None,
         context: TraigentConfig | None = None,
+        objective_schema: ObjectiveSchema | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize remote optimizer with fallback support.
@@ -103,6 +109,10 @@ class CloudOptimizer(BaseOptimizer):
             fallback_optimizer: Local optimizer to use if remote service fails
             optimization_strategy: Strategy for smart optimization
             context: Optional TraigentConfig for accessing global configuration
+            objective_schema: Optional declared objective schema. When supplied,
+                its ``orientation`` is authoritative for early-stopping
+                direction; name-pattern heuristics are only used for objectives
+                the schema does not declare.
             **kwargs: Additional algorithm-specific configuration
         """
         super().__init__(config_space, objectives, context, **kwargs)
@@ -110,6 +120,7 @@ class CloudOptimizer(BaseOptimizer):
         self.remote_service = remote_service
         self.fallback_optimizer = fallback_optimizer
         self.optimization_strategy = optimization_strategy or OptimizationStrategy()
+        self.objective_schema = objective_schema
 
         # State tracking
         self.session_id: str | None = None
@@ -605,6 +616,18 @@ class CloudOptimizer(BaseOptimizer):
 
         logger.error(f"Remote {operation} failed: {error}")
 
+    def _primary_objective_orientation(self, objective_name: str) -> str | None:
+        """Return the declared orientation for *objective_name*, if any.
+
+        Returns None when no schema was supplied or the schema does not declare
+        this objective, in which case callers fall back to name-pattern
+        heuristics for backward compatibility with string-only objective flows.
+        """
+        if self.objective_schema is None:
+            return None
+        orientation: str | None = self.objective_schema.get_orientation(objective_name)
+        return orientation
+
     def _check_strategy_stopping_conditions(self, history: list[TrialResult]) -> bool:
         """Check strategy-based stopping conditions.
 
@@ -654,10 +677,15 @@ class CloudOptimizer(BaseOptimizer):
         ):
             # Look for improvement in recent trials. Resolve orientation once so
             # the "best" aggregation and the "no improvement" test respect a
-            # minimize primary objective (cost/latency/error) instead of the old
-            # hard-coded maximize assumption (#1915, sibling of #1466/#1852).
+            # minimize primary objective instead of the old hard-coded maximize
+            # assumption (#1915, sibling of #1466/#1852). The declared schema
+            # orientation wins; name patterns are only a fallback for objectives
+            # no schema declares.
             primary_obj = self.objectives[0]
-            minimize = is_minimization_objective(primary_obj)
+            minimize = is_minimization_objective(
+                primary_obj,
+                orientation=self._primary_objective_orientation(primary_obj),
+            )
             min_delta = strategy.early_stopping_min_delta
             recent_scores = []
 
