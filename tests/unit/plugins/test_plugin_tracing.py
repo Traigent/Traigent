@@ -221,3 +221,143 @@ class TestPluginExportedAttributeScrubbing:
         )
         assert fake_access_key not in best_config_call.args[1]
         assert "***REDACTED***" in best_config_call.args[1]
+
+
+def _status_description(call) -> str:
+    """Extract the status description from a ``span.set_status`` call.
+
+    ``_set_error_status`` (both core and plugin) has two branches: a
+    real OTel ``Status`` object passed positionally when
+    ``opentelemetry`` resolved a working ``trace`` module, or a
+    ``status=``/``description=`` keyword fallback when it didn't. This
+    helper reads the description from whichever branch actually ran, so
+    the test doesn't depend on which OTel packages happen to be
+    installed in the environment it runs in.
+    """
+    if call.args:
+        return str(call.args[0].description)
+    return str(call.kwargs["description"])
+
+
+class TestPluginErrorScrubbing:
+    """Regression tests for #1885: trial.error/example.error and the
+    exported span status description must not leak raw PII to OTLP.
+
+    Mirrors the equivalent tests in ``tests/unit/core/test_tracing.py``
+    for the in-tree fallback — the plugin is a separate implementation
+    (``traigent.core.tracing`` imports it wholesale when installed), so
+    the scrub has to be verified here independently.
+    """
+
+    def test_trial_error_attribute_is_scrubbed(self, plugin_tracing) -> None:
+        span = MagicMock()
+        plugin_tracing.record_trial_result(
+            span,
+            "failed",
+            error="AssertionError: expected SSN 123-45-6789 got ops@example.io",
+        )
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "trial.error"
+        )
+        exported = error_call.args[1]
+        assert "123-45-6789" not in exported
+        assert "ops@example.io" not in exported
+        assert "***SSN***" in exported
+        assert "***EMAIL***" in exported
+
+    def test_trial_error_status_description_is_scrubbed(self, plugin_tracing) -> None:
+        span = MagicMock()
+        plugin_tracing.record_trial_result(
+            span, "failed", error="Customer SSN: 123-45-6789 rejected"
+        )
+
+        description = _status_description(span.set_status.call_args)
+        assert "123-45-6789" not in description
+        assert "***SSN***" in description
+
+    def test_example_error_attribute_is_scrubbed(self, plugin_tracing) -> None:
+        span = MagicMock()
+        jwt_like = ".".join(["ey" + "Jheader", "payload", "signature"])
+        plugin_tracing.record_example_result(
+            span,
+            success=False,
+            error=f"Provider 400: request echoed token {jwt_like}",
+        )
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "example.error"
+        )
+        exported = error_call.args[1]
+        assert jwt_like not in exported
+        assert "***JWT***" in exported
+
+    def test_example_error_status_description_is_scrubbed(self, plugin_tracing) -> None:
+        span = MagicMock()
+        plugin_tracing.record_example_result(
+            span, success=False, error="Contact ops@example.io about this failure"
+        )
+
+        description = _status_description(span.set_status.call_args)
+        assert "ops@example.io" not in description
+        assert "***EMAIL***" in description
+
+    def test_exception_error_is_coerced_to_scrubbed_string(
+        self, plugin_tracing
+    ) -> None:
+        """An Exception instance (real caller shape) must not crash or leak."""
+        span = MagicMock()
+        exc = ValueError("auth failed for jane@example.org with key AKIA" + "A" * 16)
+        plugin_tracing.record_trial_result(span, "failed", error=exc)
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "trial.error"
+        )
+        exported = error_call.args[1]
+        assert isinstance(exported, str)
+        assert "jane@example.org" not in exported
+        assert "AKIA" + "A" * 16 not in exported
+        assert "***EMAIL***" in exported
+        assert "***AWS_ACCESS_KEY***" in exported
+
+        description = _status_description(span.set_status.call_args)
+        assert isinstance(description, str)
+        assert "jane@example.org" not in description
+        assert "***EMAIL***" in description
+
+    def test_dict_error_is_coerced_to_scrubbed_string(self, plugin_tracing) -> None:
+        """A dict payload gets key-aware secret redaction plus PII scrub."""
+        span = MagicMock()
+        plugin_tracing.record_example_result(
+            span,
+            success=False,
+            error={
+                "api_key": "sk-super-secret-value",  # pragma: allowlist secret
+                "detail": "user ops@example.io rejected",
+            },
+        )
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "example.error"
+        )
+        exported = error_call.args[1]
+        assert isinstance(exported, str)
+        assert "sk-super-secret-value" not in exported
+        assert "***REDACTED***" in exported
+        assert "ops@example.io" not in exported
+        assert "***EMAIL***" in exported
+
+        description = _status_description(span.set_status.call_args)
+        assert isinstance(description, str)
+        assert "sk-super-secret-value" not in description
+
+    def test_none_error_keeps_no_attribute_no_status_path(self, plugin_tracing) -> None:
+        """error=None must keep today's behavior: no error attr, no status."""
+        span = MagicMock()
+        plugin_tracing.record_trial_result(span, "completed", error=None)
+        plugin_tracing.record_example_result(span, success=True, error=None)
+
+        attribute_keys = [c.args[0] for c in span.set_attribute.call_args_list]
+        assert "trial.error" not in attribute_keys
+        assert "example.error" not in attribute_keys
+        span.set_status.assert_not_called()
