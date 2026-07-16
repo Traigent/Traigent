@@ -105,14 +105,14 @@ Traigent automatically injects configuration values into simple variable assignm
 @traigent.optimize(
     injection_mode="seamless",
     configuration_space={
-        "model": ["claude-2", "gpt-4", "gemini-pro"],
+        "model": ["claude-3-sonnet", "gpt-4o", "gemini-1.5-pro"],
         "max_retries": [1, 3, 5],
         "timeout": [10, 30, 60]
     }
 )
 def robust_api_call(query: str) -> str:
     # These assignments are overridden by Traigent during optimization
-    model = "gpt-4"
+    model = "gpt-4o"
     max_retries = 3
     timeout = 30
 

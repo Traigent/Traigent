@@ -737,5 +737,69 @@ class TestDocumentationCompleteness(unittest.TestCase):
         )
 
 
+class TestPublicDocsAccuracyRegressions(unittest.TestCase):
+    """Regression guards for public-doc accuracy fixes (SDK#1903/#1904/#1907)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.project_root = PROJECT_ROOT
+        cls.readme_path = cls.project_root / "README.md"
+        cls.injection_modes_path = (
+            cls.project_root / "docs" / "user-guide" / "injection_modes.md"
+        )
+
+    def test_readme_api_key_export_uses_straight_ascii_quotes(self):
+        """SDK#1903: the API-key export must use straight ASCII quotes, not curly ones."""
+        content = self.readme_path.read_text(encoding="utf-8")
+        export_lines = [
+            line for line in content.splitlines() if "export TRAIGENT_API_KEY=" in line
+        ]
+        self.assertTrue(export_lines, "API-key export instruction not found in README")
+        for line in export_lines:
+            # U+201C / U+201D are the curly smart-quote characters.
+            self.assertNotIn("“", line, f"Curly opening quote in: {line!r}")
+            self.assertNotIn("”", line, f"Curly closing quote in: {line!r}")
+            self.assertIn('TRAIGENT_API_KEY="sk_', line)
+
+    def test_injection_modes_docs_avoid_retired_model_ids(self):
+        """SDK#1904: injection-mode examples must not advertise retired model IDs."""
+        content = self.injection_modes_path.read_text(encoding="utf-8")
+        # Retired / EOL identifiers that must not appear as model choices.
+        retired_patterns = {
+            "claude-2": r"\bclaude-2\b",
+            "gemini-pro": r"\bgemini-pro\b",
+        }
+        for name, pattern in retired_patterns.items():
+            self.assertIsNone(
+                re.search(pattern, content),
+                f"Retired model ID '{name}' still advertised in injection_modes.md",
+            )
+
+    def test_readme_cli_cheatsheet_results_is_a_group(self):
+        """SDK#1907: the cheat-sheet must not call bare `traigent results` a listing command."""
+        from traigent.cli.main import results
+
+        # Ground truth: `results` is a Click command group with no default
+        # subcommand, and `list` is the subcommand that lists past runs.
+        self.assertTrue(
+            hasattr(results, "commands"),
+            "`traigent results` should be a Click command group",
+        )
+        self.assertIn("list", results.commands)
+        self.assertFalse(
+            getattr(results, "invoke_without_command", False),
+            "`traigent results` has no default subcommand; bare invocation shows help",
+        )
+
+        content = self.readme_path.read_text(encoding="utf-8")
+        # The bare group must not be documented as if it lists past runs.
+        self.assertNotRegex(
+            content,
+            r"traigent results\s+#\s*List past runs",
+            "README cheat-sheet still describes bare `traigent results` as a listing command",
+        )
+        self.assertRegex(content, r"traigent results list\s+#\s*List past runs")
+
+
 if __name__ == "__main__":
     unittest.main()
