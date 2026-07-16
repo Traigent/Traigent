@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import numbers
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -198,8 +199,16 @@ class OptimizationStrategy:
         # no-improvement test in CloudOptimizer._check_strategy_stopping_conditions
         # (NaN comparisons are always False, so optimization never early-stops).
         # Zero is valid and means "any change counts as an improvement".
+        # bool is a Real in Python, so True/False would otherwise be accepted
+        # and silently act as 1/0 in that arithmetic; the type check also keeps
+        # math.isfinite from raising TypeError on str/None/complex.
         delta = self.early_stopping_min_delta
-        if not math.isfinite(delta) or delta < 0:
+        if (
+            isinstance(delta, bool)
+            or not isinstance(delta, numbers.Real)
+            or not math.isfinite(float(delta))
+            or delta < 0
+        ):
             raise ValueError(
                 f"early_stopping_min_delta must be a finite non-negative number, "
                 f"got {delta!r}"
