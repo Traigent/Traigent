@@ -2571,6 +2571,335 @@ def test_observability_config_rejects_unbounded_values(field, value, message):
         ObservabilityConfig(**kwargs)
 
 
+@pytest.mark.parametrize(
+    ("content_mode", "expected_error_message", "content_should_ship"),
+    [
+        # Default (metadata-only): the exception string must not ship at all.
+        (None, None, False),
+        ("redacted", "[REDACTED]", False),
+        ("record", "parse failed on: PATIENT diagnosis cancer stage 3", True),
+    ],
+)
+def test_observe_error_message_honors_content_mode(
+    content_mode, expected_error_message, content_should_ship
+):
+    """Exception messages must obey the same content gate as input/output.
+
+    Regression for the error-path egress leak: `error_message` carries
+    free-form content (f-strings interpolate prompts, records, PII that
+    pattern redaction cannot catch), so the metadata-only default must not
+    ship it. `error_type` is only a class name and stays in every mode.
+    """
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    sensitive = "PATIENT diagnosis cancer stage 3"
+    with pytest.raises(ValueError):
+        with observe("parse", client=client, content_mode=content_mode):
+            raise ValueError(f"parse failed on: {sensitive}")
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    observation = sent_batches[-1][-1]["observations"][0]
+    metadata = observation["metadata"]
+    assert observation["status"] == "failed"
+    # error_type is a class name, never content, so it is retained everywhere.
+    assert metadata["error_type"] == "ValueError"
+    if expected_error_message is None:
+        assert "error_message" not in metadata
+    else:
+        assert metadata["error_message"] == expected_error_message
+    # The sensitive free-form content only ever ships in "record" mode.
+    assert (sensitive in json.dumps(sent_batches)) is content_should_ship
+
+
+def test_observability_client_disables_egress_when_no_credential_resolves(
+    monkeypatch, caplog
+):
+    """A missing credential must fail fast, not silently 401-retry-storm.
+
+    With no API key or JWT and network egress otherwise enabled, the client
+    logs one actionable warning naming TRAIGENT_API_KEY and disables its own
+    network lanes for the process — never attempting an (inevitably rejected)
+    unauthenticated ingest, and never raising. ``config.offline_mode`` stays
+    untouched: it reflects the caller's explicit setting, not the guard.
+    """
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    http_attempts = {"count": 0}
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key=None,
+            jwt_token=None,
+            batch_size=1,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        )
+    )
+
+    def fail_if_called(*args, **kwargs):
+        http_attempts["count"] += 1
+        raise AssertionError("network egress attempted without a credential")
+
+    monkeypatch.setattr(client._http_opener, "open", fail_if_called)
+
+    trace_id = client.start_trace("no-credential-probe", trace_id="trace_no_cred")
+    client.record_observation(trace_id, name="no-credential-observation")
+    client.end_trace(trace_id)
+
+    result = client.flush()
+    with pytest.raises(ClientError, match="no credential resolved"):
+        client.list_sessions()
+    close_result = client.close()
+
+    assert client.config.offline_mode is False
+    assert client._credential_egress_disabled is True
+    assert http_attempts["count"] == 0
+    assert result.success is True
+    assert result.items_sent == 0
+    assert close_result.success is True
+    warnings = [
+        record for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "TRAIGENT_API_KEY" in message
+    assert "egress disabled" in message
+
+
+def test_observability_client_keeps_egress_when_api_key_present(monkeypatch, caplog):
+    """The credential-missing fail-fast must not fire when a key resolves."""
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            enable_atexit_flush=False,
+        )
+    )
+
+    assert client.config.offline_mode is False
+    assert "TRAIGENT_API_KEY" not in caplog.text
+    client.close()
+
+
+@pytest.mark.parametrize("header_name", ["Authorization", "x-api-key"])
+def test_observability_client_keeps_egress_when_auth_rides_extra_headers(
+    monkeypatch, caplog, header_name
+):
+    """Auth supplied via extra_headers (gateway/proxy setups) is a working
+    credential — the missing-credential fail-fast must not force it offline."""
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key=None,
+            extra_headers={header_name: "Bearer gateway-token"},
+            enable_atexit_flush=False,
+        )
+    )
+
+    assert client.config.offline_mode is False
+    assert "TRAIGENT_API_KEY" not in caplog.text
+    client.close()
+
+
+@pytest.mark.parametrize(
+    "config_kwargs",
+    [
+        {"api_key": "   ", "jwt_token": None},
+        {"api_key": None, "jwt_token": "   "},
+        {"api_key": None, "jwt_token": None, "extra_headers": {"Authorization": ""}},
+        {"api_key": None, "jwt_token": None, "extra_headers": {"X-API-Key": "   "}},
+    ],
+    ids=["blank-api-key", "blank-jwt", "empty-authorization", "blank-x-api-key"],
+)
+def test_observability_client_blank_credentials_do_not_bypass_guard(
+    monkeypatch, caplog, config_kwargs
+):
+    """Whitespace-only credentials are as unauthenticated as missing ones."""
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            enable_atexit_flush=False,
+            **config_kwargs,
+        )
+    )
+
+    assert client._credential_egress_disabled is True
+    assert "TRAIGENT_API_KEY" in caplog.text
+    client.close()
+
+
+@pytest.mark.parametrize(
+    ("config_kwargs", "header_name", "expected_value"),
+    [
+        (
+            {"api_key": "   ", "jwt_token": None},
+            "X-API-Key",
+            "valid-header-key",
+        ),
+        (
+            {"api_key": None, "jwt_token": "   "},
+            "Authorization",
+            "Bearer valid-header-token",
+        ),
+    ],
+    ids=["blank-api-key-vs-header", "blank-jwt-vs-header"],
+)
+def test_blank_explicit_credentials_do_not_overwrite_header_auth(
+    monkeypatch, caplog, config_kwargs, header_name, expected_value
+):
+    """A blank explicit credential must behave as absent end to end: the guard
+    keeps egress enabled because extra_headers carries working auth, and
+    build_headers() must NOT overwrite that auth with the blank value."""
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    config = ObservabilityConfig(
+        backend_origin="http://localhost:5000",
+        enable_atexit_flush=False,
+        extra_headers={header_name: expected_value},
+        **config_kwargs,
+    )
+    client = ObservabilityClient(config)
+
+    headers = config.build_headers()
+    assert headers[header_name] == expected_value
+    assert client._credential_egress_disabled is False
+    assert "TRAIGENT_API_KEY" not in caplog.text
+    client.close()
+
+
+def test_observability_client_no_credential_sender_only_keeps_ingest_lane(
+    monkeypatch, caplog
+):
+    """A custom sender owns ingest delivery, so the missing-credential guard
+    must keep it working while blocking the un-overridden control-plane lane
+    from emitting unauthenticated network requests."""
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    sent_batches: list[list[dict]] = []
+    http_attempts = {"count": 0}
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key=None,
+            jwt_token=None,
+            enable_atexit_flush=False,
+        ),
+        sender=sent_batches.append,
+    )
+
+    def fail_if_called(*args, **kwargs):
+        http_attempts["count"] += 1
+        raise AssertionError("network egress attempted without a credential")
+
+    monkeypatch.setattr(client._http_opener, "open", fail_if_called)
+
+    trace_id = client.start_trace("sender-only-probe", trace_id="trace_sender_only")
+    client.end_trace(trace_id)
+    result = client.flush()
+
+    with pytest.raises(ClientError, match="no credential resolved"):
+        client.list_sessions()
+
+    client.close()
+    assert client._credential_egress_disabled is True
+    assert result.success is True
+    assert result.items_sent >= 1
+    assert any(
+        trace["id"] == "trace_sender_only" for batch in sent_batches for trace in batch
+    )
+    assert http_attempts["count"] == 0
+    assert "TRAIGENT_API_KEY" in caplog.text
+
+
+def test_observability_client_no_credential_request_sender_only_keeps_control_lane(
+    monkeypatch, caplog
+):
+    """A custom request_sender owns control-plane calls, so the guard must keep
+    it working while suppressing the un-overridden network ingest lane."""
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    request_calls: list[tuple[str, str]] = []
+    http_attempts = {"count": 0}
+
+    canned_response = {"ok": True}
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        request_calls.append((method, path))
+        return canned_response
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key=None,
+            jwt_token=None,
+            enable_atexit_flush=False,
+        ),
+        request_sender=request_sender,
+    )
+
+    def fail_if_called(*args, **kwargs):
+        http_attempts["count"] += 1
+        raise AssertionError("network egress attempted without a credential")
+
+    monkeypatch.setattr(client._http_opener, "open", fail_if_called)
+
+    trace_id = client.start_trace("request-sender-only-probe", trace_id="trace_rs_only")
+    client.end_trace(trace_id)
+    result = client.flush()
+    # Exercise the control-plane dispatch directly: the override must be
+    # consulted (list_* wrappers add response-shape parsing that is not what
+    # this test pins).
+    response = client._request_json("GET", "/sessions")
+    client.close()
+
+    assert client._credential_egress_disabled is True
+    assert result.success is True
+    assert result.items_sent == 0
+    assert response == canned_response
+    assert request_calls == [("GET", "/sessions")]
+    assert http_attempts["count"] == 0
+    assert "TRAIGENT_API_KEY" in caplog.text
+
+
 def test_observation_dto_rejects_negative_values():
     with pytest.raises(ValueError, match="input_tokens"):
         ObservationDTO(

@@ -505,6 +505,20 @@ class TestRecordTrialMetricsFiltering:
         assert ("example.metric.label", "positive") not in call_args
 
 
+def _status_description(call) -> str:
+    """Extract the status description from a ``span.set_status`` call.
+
+    ``_set_error_status`` has two branches: a real OTel ``Status``
+    object passed positionally (when ``opentelemetry`` resolved a
+    working ``trace`` module), or a ``status=``/``description=``
+    keyword fallback otherwise. This helper reads the description from
+    whichever branch actually ran.
+    """
+    if call.args:
+        return str(call.args[0].description)
+    return str(call.kwargs["description"])
+
+
 class TestPIITelemetryScrubbing:
     """Regression tests for PII scrubbing in tracing exports.
 
@@ -637,3 +651,130 @@ class TestPIITelemetryScrubbing:
         span.set_attribute.assert_any_call(
             "example.actual_output", "Generated response"
         )
+
+    def test_record_trial_result_error_attribute_is_scrubbed(self) -> None:
+        """trial.error must not leak raw PII to OTLP (regression for #1885)."""
+        span = MagicMock()
+        record_trial_result(
+            span,
+            "failed",
+            error="AssertionError: expected SSN 123-45-6789 got ops@example.io",
+        )
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "trial.error"
+        )
+        exported = error_call.args[1]
+        assert "123-45-6789" not in exported
+        assert "ops@example.io" not in exported
+        assert "***SSN***" in exported
+        assert "***EMAIL***" in exported
+
+    def test_record_trial_result_error_status_description_is_scrubbed(self) -> None:
+        """The exported span status description must also be scrubbed.
+
+        ``_set_error_status`` has two branches depending on whether the
+        real OTel ``trace`` module resolved: a ``Status`` object passed
+        positionally, or a ``status=``/``description=`` keyword
+        fallback. ``_status_description`` reads whichever branch ran so
+        this test doesn't depend on which OTel packages are installed.
+        """
+        span = MagicMock()
+        record_trial_result(span, "failed", error="Customer SSN: 123-45-6789 rejected")
+
+        description = _status_description(span.set_status.call_args)
+        assert "123-45-6789" not in description
+        assert "***SSN***" in description
+
+    def test_record_example_result_error_attribute_is_scrubbed(self) -> None:
+        """example.error must not leak raw PII/secrets to OTLP."""
+        span = MagicMock()
+        jwt_like = ".".join(["ey" + "Jheader", "payload", "signature"])
+        record_example_result(
+            span,
+            success=False,
+            error=f"Provider 400: request echoed token {jwt_like}",
+        )
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "example.error"
+        )
+        exported = error_call.args[1]
+        assert jwt_like not in exported
+        assert "***JWT***" in exported
+
+    def test_record_example_result_error_status_description_is_scrubbed(self) -> None:
+        """The exported span status description must also be scrubbed."""
+        span = MagicMock()
+        record_example_result(
+            span, success=False, error="Contact ops@example.io about this failure"
+        )
+
+        description = _status_description(span.set_status.call_args)
+        assert "ops@example.io" not in description
+        assert "***EMAIL***" in description
+
+    def test_exception_error_is_coerced_to_scrubbed_string(self) -> None:
+        """An Exception instance (real caller shape) must not crash or leak.
+
+        Callers are typed ``error: str | None`` but Exception instances
+        leak through in practice; the scrubber only scrubs ``str``, so
+        without stringify-before-scrub the raw exception text would
+        bypass redaction entirely.
+        """
+        span = MagicMock()
+        exc = ValueError("auth failed for jane@example.org with key AKIA" + "A" * 16)
+        record_trial_result(span, "failed", error=exc)  # type: ignore[arg-type]
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "trial.error"
+        )
+        exported = error_call.args[1]
+        assert isinstance(exported, str)
+        assert "jane@example.org" not in exported
+        assert "AKIA" + "A" * 16 not in exported
+        assert "***EMAIL***" in exported
+        assert "***AWS_ACCESS_KEY***" in exported
+
+        description = _status_description(span.set_status.call_args)
+        assert isinstance(description, str)
+        assert "jane@example.org" not in description
+        assert "***EMAIL***" in description
+
+    def test_dict_error_is_coerced_to_scrubbed_string(self) -> None:
+        """A dict payload gets key-aware secret redaction plus PII scrub."""
+        span = MagicMock()
+        error_payload = {
+            "api_key": "sk-super-secret-value",  # pragma: allowlist secret
+            "detail": "user ops@example.io rejected",
+        }
+        record_example_result(
+            span,
+            success=False,
+            error=error_payload,  # type: ignore[arg-type]
+        )
+
+        error_call = next(
+            c for c in span.set_attribute.call_args_list if c.args[0] == "example.error"
+        )
+        exported = error_call.args[1]
+        assert isinstance(exported, str)
+        assert "sk-super-secret-value" not in exported
+        assert "***REDACTED***" in exported
+        assert "ops@example.io" not in exported
+        assert "***EMAIL***" in exported
+
+        description = _status_description(span.set_status.call_args)
+        assert isinstance(description, str)
+        assert "sk-super-secret-value" not in description
+
+    def test_none_error_keeps_no_attribute_no_status_path(self) -> None:
+        """error=None must keep today's behavior: no error attr, no status."""
+        span = MagicMock()
+        record_trial_result(span, "completed", error=None)
+        record_example_result(span, success=True, error=None)
+
+        attribute_keys = [c.args[0] for c in span.set_attribute.call_args_list]
+        assert "trial.error" not in attribute_keys
+        assert "example.error" not in attribute_keys
+        span.set_status.assert_not_called()

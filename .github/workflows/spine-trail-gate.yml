@@ -60,3 +60,275 @@ jobs:
             echo "See tools/spine-trail/README.md"
             exit 1
           fi
+
+  spine-receipt-shadow:
+    name: spine-receipt shadow
+    # SHADOW mode (Recovery Plan Phase 4): observe-only receipt verification for
+    # governed PRs. This job NEVER blocks a PR — every code path exits 0 and the
+    # job is marked continue-on-error. It writes exactly ONE machine-greppable
+    # line to the step summary:
+    #   SPINE_RECEIPT_SHADOW: <outcome> [detail]
+    # which is the source for the 7-day / 20-PR shadow metrics (>=98%
+    # deterministic-execution target). Routine PRs (no Spine-Session:/Spine: cs_
+    # marker) are not_governed — a Spine-Trail alone remains sufficient (plan
+    # rule). Governed PRs must additionally carry:
+    #   Spine-Receipt: <40-hex-spine-commit>:<relative-event-path>
+    # Promotion of this job to a required check is a separate, later owner
+    # decision. This job leaves the existing "spine-trail present" job untouched.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Classify PR (governed? receipt present?)
+        id: classify
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set +e  # SHADOW: never fail.
+          out=proceed
+          detail=""
+          session=""
+          spine_commit=""
+          event_path=""
+          need_checkout=false
+
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            # merge_group candidates carry no PR body; the mark was validated at
+            # PR time. Nothing to verify in shadow here.
+            out=not_governed
+            detail="merge_group"
+          else
+            # A PR is "governed" if the body carries a ChangeSession marker,
+            # either "Spine-Session: cs_..." or "Spine: cs_...".
+            sess_re='^[[:space:]]*Spine(-Session)?:[[:space:]]*cs_[0-9a-z]{6,}[[:space:]]*$'
+            session=$(printf '%s\n' "$PR_BODY" | grep -Eio "$sess_re" | grep -Eio 'cs_[0-9a-z]{6,}' | head -n1)
+            if [ -z "$session" ]; then
+              out=not_governed
+              detail="no_session_marker"
+            else
+              # Governed → require Spine-Receipt: <40-hex>:<relative-event-path>.
+              rc_re='^[[:space:]]*Spine-Receipt:[[:space:]]*[0-9a-f]{40}:[^[:space:]]+[[:space:]]*$'
+              rc_line=$(printf '%s\n' "$PR_BODY" | grep -Eio "$rc_re" | head -n1)
+              if [ -z "$rc_line" ]; then
+                out=receipt_missing
+                detail="governed_no_receipt_line;session=${session}"
+              else
+                rc_val=$(printf '%s' "$rc_line" | sed -E 's/^[[:space:]]*Spine-Receipt:[[:space:]]*//; s/[[:space:]]*$//')
+                spine_commit=${rc_val%%:*}
+                event_path=${rc_val#*:}
+                out=proceed
+                need_checkout=true
+              fi
+            fi
+          fi
+
+          {
+            echo "outcome=$out"
+            echo "detail=$detail"
+            echo "session=$session"
+            echo "spine_commit=$spine_commit"
+            echo "event_path=$event_path"
+            echo "need_checkout=$need_checkout"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Checkout spine at receipt commit (shadow)
+        id: spine_checkout
+        if: ${{ steps.classify.outputs.need_checkout == 'true' }}
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: Traigent/traigent-validation-spine
+          ref: ${{ steps.classify.outputs.spine_commit }}
+          token: ${{ secrets.SPINE_READ_TOKEN || github.token }}
+          path: .spine-shadow
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python (shadow)
+        id: setup_python
+        if: ${{ steps.classify.outputs.need_checkout == 'true' && steps.spine_checkout.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify receipt and record shadow outcome
+        if: ${{ always() }}
+        env:
+          STAGE_OUTCOME: ${{ steps.classify.outputs.outcome }}
+          STAGE_DETAIL: ${{ steps.classify.outputs.detail }}
+          SESSION: ${{ steps.classify.outputs.session }}
+          SPINE_COMMIT: ${{ steps.classify.outputs.spine_commit }}
+          EVENT_PATH: ${{ steps.classify.outputs.event_path }}
+          NEED_CHECKOUT: ${{ steps.classify.outputs.need_checkout }}
+          CHECKOUT_OUTCOME: ${{ steps.spine_checkout.outcome }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set +e  # SHADOW: never fail.
+          SPINE_DIR="$GITHUB_WORKSPACE/.spine-shadow"
+
+          emit() {
+            # $1=outcome $2=detail  (writes the single machine-greppable line)
+            o="$1"; d="$2"
+            line="SPINE_RECEIPT_SHADOW: ${o}"
+            if [ -n "$d" ]; then line="${line} ${d}"; fi
+            echo "$line"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "### spine-receipt shadow"
+                echo ""
+                echo '```'
+                echo "$line"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
+          # Stage-1 terminal outcomes (no spine checkout needed).
+          if [ "$STAGE_OUTCOME" = "not_governed" ]; then
+            emit not_governed "$STAGE_DETAIL"; exit 0
+          fi
+          if [ "$STAGE_OUTCOME" = "receipt_missing" ]; then
+            emit receipt_missing "$STAGE_DETAIL"; exit 0
+          fi
+
+          # proceed → a spine checkout was required.
+          if [ "$CHECKOUT_OUTCOME" != "success" ]; then
+            emit skipped_no_access "checkout=${CHECKOUT_OUTCOME:-none};commit=${SPINE_COMMIT}"; exit 0
+          fi
+
+          # (b) the event path must exist under receipts/ in the checkout.
+          case "$EVENT_PATH" in
+            receipts/*) rel="$EVENT_PATH" ;;
+            *)          rel="receipts/${EVENT_PATH#receipts/}" ;;
+          esac
+          if [ ! -f "$SPINE_DIR/$rel" ]; then
+            emit needs_attention "event_path_absent:${rel}"; exit 0
+          fi
+
+          # (c) install and run the spine's own verifier.
+          python3 -m pip install --quiet --upgrade pip >/dev/null 2>&1
+          pip install -e "$SPINE_DIR" >/dev/null 2>&1 || true
+          VOUT=$(validation change receipt verify "$SESSION" --spine-repo "$SPINE_DIR" 2>/dev/null)
+          VRC=$?
+          if [ "$VRC" -ne 0 ] || [ -z "$VOUT" ]; then
+            emit error "verifier_unavailable;rc=${VRC}"; exit 0
+          fi
+
+          # (c-f) parse verifier JSON + receipt event, run the shadow checks.
+          printf '%s' "$VOUT" > "$RUNNER_TEMP/spine_verifier.json"
+          cat > "$RUNNER_TEMP/spine_shadow_check.py" <<'PY'
+          import json, sys
+          event_file, session, base_ref, head_sha, repo_name, vfile = sys.argv[1:7]
+
+          def out(o, d=""):
+              print(f"{o}\t{d}")
+              raise SystemExit(0)
+
+          try:
+              raw = open(vfile).read().strip()
+              vdata = json.loads(raw) if raw else {}
+          except Exception as e:
+              out("error", f"verifier_parse_fail:{type(e).__name__}")
+
+          status = str(vdata.get("receipt_status", "")).lower()
+
+          try:
+              ev = json.load(open(event_file))
+          except Exception:
+              ev = {}
+
+          def dig(d, *keys):
+              if not isinstance(d, dict):
+                  return None
+              for k in keys:
+                  v = d.get(k)
+                  if v not in (None, ""):
+                      return v
+              for sub in ("payload", "data", "receipt", "event"):
+                  if isinstance(d.get(sub), dict):
+                      v = dig(d[sub], *keys)
+                      if v not in (None, ""):
+                          return v
+              return None
+
+          # Metadata (branch line, product SHAs) is read from the referenced
+          # event file. That file MUST belong to the SAME ChangeSession the
+          # verifier just verified — otherwise an attacker can reference another
+          # session's event that happens to carry this repo's head SHA and forge
+          # a "verified" for a reference that was never actually verified.
+          ev_subject_type = ev.get("subject_type")
+          ev_session = ev.get("subject_id")
+          v_session = vdata.get("session") or vdata.get("session_id")
+          branch_line = (vdata.get("product_branch_line")
+                         or dig(ev, "product_branch_line", "branch_line"))
+          product_shas = vdata.get("product_shas") or dig(ev, "product_shas") or {}
+
+          bits = [f"status={status or 'unknown'}"]
+
+          # (e) session binding (fail-closed): the metadata event file is a spine
+          # event whose AUTHORITATIVE identity is its TOP-LEVEL subject_id, with
+          # subject_type == "change_session". Bind ONLY on those two top-level
+          # fields — never on a non-authoritative session/session_id/change_session/cs
+          # alias an attacker could inject to spoof a foreign event. Both the
+          # subject_type and the subject_id MUST match the verified PR-body
+          # session, and any session id the verifier itself reports MUST match
+          # too. A missing/wrong subject_type or differing subject_id is a
+          # distinct mismatch outcome — never "verified".
+          if not session:
+              out("session_mismatch", "no_pr_body_session;" + ";".join(bits))
+          if str(ev_subject_type or "") != "change_session":
+              out("session_mismatch", f"event_subject_type={ev_subject_type or 'absent'}!=change_session;" + ";".join(bits))
+          if not ev_session or str(ev_session) != str(session):
+              out("session_mismatch", f"event_subject_id={ev_session or 'absent'}!={session};" + ";".join(bits))
+          if v_session and str(v_session) != str(session):
+              out("session_mismatch", f"verifier_session={v_session}!={session};" + ";".join(bits))
+
+          # (d) branch-line check: develop->develop / main->main.
+          base_line = (base_ref or "").strip()
+          if branch_line and base_line and str(branch_line).lower() != base_line.lower():
+              out("needs_attention", f"branch_line_mismatch:{branch_line}!={base_line}")
+
+          # primary verifier verdict.
+          if status and status != "verified":
+              out("needs_attention", f"receipt_status={status}")
+          if not status:
+              out("error", "no_receipt_status_field")
+
+          # (f) PR-binding check — only meaningful if this repo is listed. Match
+          # the repo key EXACTLY (case-insensitively); a substring match would
+          # let "Traigent" bind against "TraigentBackend"/"TraigentFrontend"/
+          # "TraigentSchema" keys and cross-bind the receipt to the wrong repo.
+          shas_for_repo = None
+          if isinstance(product_shas, dict):
+              for k, v in product_shas.items():
+                  if repo_name and str(k).lower() == repo_name.lower():
+                      shas_for_repo = v
+                      break
+          elif isinstance(product_shas, list):
+              shas_for_repo = product_shas
+
+          if shas_for_repo is None:
+              out("binding_unverified", "repo_not_in_product_shas;" + ";".join(bits))
+
+          listed = [shas_for_repo] if isinstance(shas_for_repo, str) else list(shas_for_repo or [])
+          listed = [str(s) for s in listed if s]
+          if head_sha and any(head_sha.startswith(s) or s.startswith(head_sha) for s in listed):
+              out("verified", ";".join(bits))
+
+          # Ancestry is not derivable here (product git graph is not checked out).
+          out("binding_unverified", "head_sha_not_in_listed_shas;" + ";".join(bits))
+          PY
+          RESULT=$(python3 "$RUNNER_TEMP/spine_shadow_check.py" \
+            "$SPINE_DIR/$rel" "$SESSION" "$BASE_REF" "$HEAD_SHA" "$REPO_NAME" \
+            "$RUNNER_TEMP/spine_verifier.json" 2>/dev/null)
+          O=$(printf '%s' "$RESULT" | head -n1 | cut -f1)
+          D=$(printf '%s' "$RESULT" | head -n1 | cut -f2-)
+          if [ -z "$O" ]; then O=error; D="empty_python_result"; fi
+          emit "$O" "$D"
+          exit 0
