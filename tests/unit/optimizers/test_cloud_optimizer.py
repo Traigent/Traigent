@@ -1843,3 +1843,116 @@ class TestSessionConstant:
         from traigent.optimizers.cloud_optimizer import _SESSION_NOT_INITIALIZED
 
         assert _SESSION_NOT_INITIALIZED == "Session not initialized"
+
+
+class TestStrategyEarlyStoppingOrientation:
+    """#1915: the patience-based early-stop must respect the primary objective's
+    orientation instead of the old hard-coded maximize (``max()`` + upward test).
+    """
+
+    @staticmethod
+    def _trial(trial_id: str, obj: str, value: float) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config={},
+            metrics={obj: value},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+
+    def _optimizer(self, objectives, strategy, mock_remote_service):
+        return CloudOptimizer(
+            config_space={"temperature": {"min": 0.0, "max": 1.0, "type": "float"}},
+            objectives=objectives,
+            remote_service=mock_remote_service,
+            optimization_strategy=strategy,
+        )
+
+    def test_minimize_still_improving_does_not_stop(self, mock_remote_service):
+        """Minimize primary objective (cost) whose recent trials keep dropping
+        below the earlier best must NOT trigger the no-improvement stop.
+
+        Under the old maximize-only code, ``max()`` treated the largest cost as
+        "best" and the inverted ``<`` test fired a premature stop here.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "cost", 0.5),
+            self._trial("t2", "cost", 0.4),
+            self._trial("t3", "cost", 0.3),
+            self._trial("t4", "cost", 0.2),
+            self._trial("t5", "cost", 0.1),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_minimize_no_improvement_stops(self, mock_remote_service):
+        """Minimize primary objective whose recent trials are all worse than the
+        overall best must trigger the no-improvement stop.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "cost", 0.1),
+            self._trial("t2", "cost", 0.1),
+            self._trial("t3", "cost", 0.5),
+            self._trial("t4", "cost", 0.6),
+            self._trial("t5", "cost", 0.7),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_maximize_behaviour_preserved(self, mock_remote_service):
+        """Maximize primary objective (accuracy) keeps the original semantics:
+        recent best well below the overall best stops.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", 0.9),
+            self._trial("t2", "accuracy", 0.9),
+            self._trial("t3", "accuracy", 0.5),
+            self._trial("t4", "accuracy", 0.4),
+            self._trial("t5", "accuracy", 0.3),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_configurable_min_delta(self, mock_remote_service):
+        """The improvement epsilon is driven by ``early_stopping_min_delta``
+        (default 0.01) rather than a hard-coded literal.
+        """
+        # Overall best (0.90) sits in t1, outside the patience=2 recent window;
+        # the recent best (0.88) dips 0.02 below it.
+        history = [
+            self._trial("t1", "accuracy", 0.90),
+            self._trial("t2", "accuracy", 0.87),
+            self._trial("t3", "accuracy", 0.88),
+        ]
+        # Default delta (0.01): 0.88 < 0.90 - 0.01 -> stop.
+        opt_default = self._optimizer(
+            ["accuracy"],
+            OptimizationStrategy(early_stopping_patience=2),
+            mock_remote_service,
+        )
+        assert opt_default._check_strategy_stopping_conditions(history) is True
+        # Larger delta (0.05): 0.88 is within tolerance -> keep going.
+        opt_tolerant = self._optimizer(
+            ["accuracy"],
+            OptimizationStrategy(
+                early_stopping_patience=2, early_stopping_min_delta=0.05
+            ),
+            mock_remote_service,
+        )
+        assert opt_tolerant._check_strategy_stopping_conditions(history) is False
+
+    def test_empty_objectives_guarded(self, mock_remote_service):
+        """No objectives + a patience gate must not raise IndexError (sibling of
+        #1909's ``objectives[0]`` guard)."""
+        strategy = OptimizationStrategy(early_stopping_patience=2)
+        optimizer = self._optimizer([], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "cost", 0.5),
+            self._trial("t2", "cost", 0.4),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False

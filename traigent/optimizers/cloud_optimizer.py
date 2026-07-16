@@ -30,6 +30,7 @@ from traigent.optimizers.remote_services import (
 )
 from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import is_minimization_objective
 
 _SECURE_RANDOM = SystemRandom()
 
@@ -648,10 +649,16 @@ class CloudOptimizer(BaseOptimizer):
         # Check early stopping patience
         if (
             strategy.early_stopping_patience
+            and self.objectives
             and len(history) >= strategy.early_stopping_patience
         ):
-            # Look for improvement in recent trials
+            # Look for improvement in recent trials. Resolve orientation once so
+            # the "best" aggregation and the "no improvement" test respect a
+            # minimize primary objective (cost/latency/error) instead of the old
+            # hard-coded maximize assumption (#1915, sibling of #1466/#1852).
             primary_obj = self.objectives[0]
+            minimize = is_minimization_objective(primary_obj)
+            min_delta = strategy.early_stopping_min_delta
             recent_scores = []
 
             for trial in history[-strategy.early_stopping_patience :]:
@@ -659,18 +666,25 @@ class CloudOptimizer(BaseOptimizer):
                     recent_scores.append(trial.metrics[primary_obj])
 
             if recent_scores:
-                best_recent = max(recent_scores)
                 # Find best overall score
                 all_scores = [
-                    trial.metrics.get(primary_obj, 0)
+                    trial.metrics[primary_obj]
                     for trial in history
                     if trial.is_successful and primary_obj in trial.metrics
                 ]
 
                 if all_scores:
-                    best_overall = max(all_scores)
-                    # Stop if no significant improvement
-                    if best_recent < best_overall - 0.01:
+                    if minimize:
+                        best_recent = min(recent_scores)
+                        best_overall = min(all_scores)
+                        # No improvement: recent best not meaningfully below overall
+                        no_improvement = best_recent > best_overall + min_delta
+                    else:
+                        best_recent = max(recent_scores)
+                        best_overall = max(all_scores)
+                        # No improvement: recent best not meaningfully above overall
+                        no_improvement = best_recent < best_overall - min_delta
+                    if no_improvement:
                         logger.info(
                             f"Stopping: no improvement in {strategy.early_stopping_patience} trials"
                         )

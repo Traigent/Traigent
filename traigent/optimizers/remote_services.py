@@ -173,6 +173,9 @@ class OptimizationStrategy:
     # Exploration strategy
     exploration_ratio: float = 0.3  # 0.0 = pure exploitation, 1.0 = pure exploration
     early_stopping_patience: int = 10  # Stop if no improvement for N trials
+    early_stopping_min_delta: float = (
+        0.01  # Min primary-objective change counted as an improvement
+    )
     confidence_threshold: float = 0.95  # Stop when this confident about optimum
 
     # Dataset usage strategy
