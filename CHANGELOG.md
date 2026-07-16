@@ -29,8 +29,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The outcome-matrix loader refuses artifacts resolving outside the artifacts
   directory (symlink containment).
 
-### Security
-
 - `@observe` exception metadata now honors the content gate. `error_message`
   carries free-form content — exception strings routinely interpolate prompts,
   records, and PII that pattern redaction cannot catch — so it now follows the
