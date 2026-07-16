@@ -823,27 +823,115 @@ class EvalAuditSummary:
 
 
 @dataclass
+class DefectSignal:
+    """One feature's contribution to an item's continuous defect score (#1881).
+
+    The score is a logistic function ``sigmoid(b0 + Σ wi·xi)`` over per-item
+    telemetry features. This records one term of that sum for explainability, so a
+    reviewer can see *which* signal moved an item's suspicion, and in which
+    direction. Signals are ranked by ``|contribution|`` (strongest driver first).
+
+    Attributes:
+        feature: Feature name (``mean_wrong`` / ``never_correct`` / ``instability``).
+        value: The feature's value for this item (``xi``).
+        weight: The model coefficient applied to the feature (``wi``).
+        contribution: ``weight * value`` — the feature's additive push on the
+            score's logit. The SIGN is the direction: a positive contribution
+            RAISED suspicion, a negative one (possible only under a negative refit
+            weight) LOWERED it. Magnitude is how strongly it moved the score.
+    """
+
+    feature: str
+    value: float
+    weight: float
+    contribution: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "feature": self.feature,
+            "value": self.value,
+            "weight": self.weight,
+            "contribution": self.contribution,
+        }
+
+
+@dataclass
+class ItemDefectScore:
+    """Continuous per-item defect score + dataset-relative rank (issue #1881).
+
+    The continuous layer on top of #1880's binary flags: instead of a yes/no,
+    each scored item carries a suspicion score plus its rank within this run, so a
+    reviewer gets a sorted worklist and can start at the worst items and stop when
+    the signal thins out. Computed as a pure, deterministic function of the
+    outcome matrix (#1838) — no LLM calls.
+
+    Attributes:
+        example_id: The scored example's id (matrix row key).
+        defect_score: Heuristic suspicion score in [0, 1] —
+            ``sigmoid(b0 + Σ wi·xi)`` over the telemetry features. With the
+            DEFAULT (illustrative, hand-chosen) coefficients this is NOT a
+            calibrated probability; it is calibrated only if you refit the
+            coefficients on your own labeled subset. Use ``defect_percentile`` to
+            RANK items by default.
+        defect_percentile: The item's rank within THIS run's scored items —
+            the fraction of scored items with a score <= this item's (so the most
+            suspicious item is 1.0). This is the trustworthy default output: "top
+            5% most suspicious" (percentile >= 0.95) works regardless of absolute
+            calibration.
+        features: The raw telemetry features that fed the score
+            (``never_correct``, ``mean_wrong``, ``instability``).
+        contributing_signals: Per-feature ``weight * value`` contributions above
+            a small threshold, sorted by contribution descending — the
+            explainability view of which signal drove the score.
+    """
+
+    example_id: str
+    defect_score: float
+    defect_percentile: float
+    features: dict[str, float] = field(default_factory=dict)
+    contributing_signals: list[DefectSignal] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable view."""
+        return {
+            "example_id": self.example_id,
+            "defect_score": self.defect_score,
+            "defect_percentile": self.defect_percentile,
+            "features": dict(self.features),
+            "contributing_signals": [s.to_dict() for s in self.contributing_signals],
+        }
+
+
+@dataclass
 class EvalAudit:
-    """Opt-in eval-dataset defect report for a run (issue #1880).
+    """Opt-in eval-dataset defect report for a run (issue #1880 + #1881).
 
     Computed on demand from the already-persisted per-example x per-config
     outcome matrix (#1838) — no LLM calls, no network. Obtain it via
     :attr:`OptimizationResult.eval_audit`.
 
     Attributes:
-        flagged: Examples flagged by one or more detectors, sorted by id.
+        flagged: Examples flagged by one or more binary detectors (#1880),
+            sorted by id.
         summary: Per-detector counts + lift so the user knows how many flags to
             expect and how concentrated they are versus chance.
+        scored: The continuous layer (#1881): every scored item (ran in >=2
+            configs) with its ``defect_score`` + ``defect_percentile`` +
+            ``contributing_signals``, sorted by score descending — a ranked
+            worklist over ALL scored items, not just the flagged ones.
     """
 
     flagged: list[EvalAuditFlag] = field(default_factory=list)
     summary: EvalAuditSummary | None = None
+    scored: list[ItemDefectScore] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable view."""
         return {
             "flagged": [flag.to_dict() for flag in self.flagged],
             "summary": self.summary.to_dict() if self.summary else None,
+            "scored": [s.to_dict() for s in self.scored],
         }
 
 
@@ -976,13 +1064,16 @@ class OptimizationResult:
 
     @property
     def eval_audit(self) -> EvalAudit | None:
-        """Opt-in eval-dataset defect audit for this run (issue #1880).
+        """Opt-in eval-dataset defect audit for this run (issues #1880 + #1881).
 
         Runs the deterministic defect detectors (never-correct, token-leak,
         cross-family consensus-on-wrong) over this run's per-example x per-config
-        outcome matrix (#1838). It is **opt-in and zero-cost by default**: nothing
-        is computed until you read this property, and it makes no LLM calls and no
-        network requests — it is a pure function of data the run already produced.
+        outcome matrix (#1838), and computes the continuous per-item defect score
+        + dataset-relative percentile (#1881) exposed as ``EvalAudit.scored`` — a
+        ranked worklist over all scored items. It is **opt-in and zero-cost by
+        default**: nothing is computed until you read this property, and it makes
+        no LLM calls and no network requests — it is a pure function of data the
+        run already produced.
 
         Returns ``None`` when an audit is not applicable — the run captured no
         per-example detail, or spanned fewer than two configurations (columns),
