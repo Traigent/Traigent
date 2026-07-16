@@ -47,6 +47,16 @@ _EXECUTION_CONTEXT_ENV_VARS = {
 }
 
 
+def nonblank_credential(value: str | None) -> bool:
+    """A credential value counts only when it carries non-whitespace content.
+
+    Used by both header construction and the missing-credential guard so a
+    whitespace-only api_key/jwt can neither authenticate a request nor
+    overwrite working auth supplied via ``extra_headers``.
+    """
+    return bool(value and value.strip())
+
+
 def _read_observability_offline_mode() -> bool:
     return is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
 
@@ -184,9 +194,11 @@ class ObservabilityConfig:
             "User-Agent": "traigent-observability/0.1",
             **self.extra_headers,
         }
-        if self.api_key:
+        # Blank explicit credentials are treated as absent so they can never
+        # overwrite working auth supplied through extra_headers.
+        if nonblank_credential(self.api_key):
             headers["X-API-Key"] = self.api_key
-        if self.jwt_token:
+        if nonblank_credential(self.jwt_token):
             headers["Authorization"] = f"Bearer {self.jwt_token}"
         if self.tenant_id:
             headers[TENANT_HEADER_NAME] = self.tenant_id
