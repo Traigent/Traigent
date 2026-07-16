@@ -395,9 +395,14 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             obj: not is_minimization_objective(obj) for obj in resolved_objectives
         }
 
-        # Use random search for multi-objective exploration
+        # Use random search for multi-objective exploration. Thread the caller's
+        # ``max_trials`` (default 100, matching the historical hard-coded cap) so
+        # the delegated ``should_stop`` honours the configured budget and
+        # config-space exhaustion instead of a magic constant (#1916).
         self._base_optimizer = RandomSearchOptimizer(
-            configuration_space, resolved_objectives
+            configuration_space,
+            resolved_objectives,
+            max_trials=kwargs.get("max_trials", 100),
         )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
@@ -405,9 +410,13 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         return cast(dict[str, Any], self._base_optimizer.suggest_next_trial(history))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
-        """Determine if optimization should stop."""
-        # Stop when we've reached a reasonable number of trials for multi-objective
-        return len(history) >= 100
+        """Determine if optimization should stop.
+
+        Delegates to the injected base optimizer (like the sibling batch
+        optimizers) so the configured ``max_trials`` and config-space
+        exhaustion are honoured instead of a hard-coded 100-trial cap (#1916).
+        """
+        return bool(self._base_optimizer.should_stop(history))
 
     async def optimize(
         self,

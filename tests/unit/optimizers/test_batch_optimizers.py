@@ -318,6 +318,39 @@ class TestMultiObjectiveBatchOptimizer:
 
         assert optimizer._select_best_from_pareto() is None
 
+    def test_should_stop_honours_max_trials(self):
+        """#1916: should_stop delegates to the base optimizer's configured
+        max_trials budget instead of the old hard-coded ``len(history) >= 100``.
+        """
+        # Large discrete space so config-space exhaustion does not fire first.
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(50))},
+            objectives=["accuracy"],
+            max_trials=3,
+        )
+
+        # The caller's budget is threaded into the internal base optimizer.
+        assert optimizer._base_optimizer.max_trials == 3
+
+        # Below budget: do not stop (old code returned len([]) >= 100 == False,
+        # but ignored the configured budget entirely).
+        assert optimizer.should_stop([]) is False
+
+        # Drive suggestions up to the configured budget; then it must stop.
+        for _ in range(3):
+            optimizer.suggest_next_trial([])
+        assert optimizer.should_stop([]) is True
+
+    def test_should_stop_default_preserves_prior_cap(self):
+        """#1916: with no explicit max_trials the default budget stays 100,
+        preserving the historical stop point (just no longer hard-coded).
+        """
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(200))},
+            objectives=["accuracy"],
+        )
+        assert optimizer._base_optimizer.max_trials == 100
+
 
 class TestAdaptiveBatchOptimizer:
     """Test suite for AdaptiveBatchOptimizer."""
