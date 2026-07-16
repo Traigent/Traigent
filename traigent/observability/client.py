@@ -1979,6 +1979,15 @@ class ObservabilityClient:
             return
         if self.config.api_key or self.config.jwt_token:
             return
+        # A caller supplying auth through extra_headers (gateway/proxy setups)
+        # has a working credential the backend will accept — the 401-storm
+        # premise this guard exists for does not apply, so don't force them
+        # offline.
+        if any(
+            name.strip().lower() in ("authorization", "x-api-key")
+            for name in self.config.extra_headers
+        ):
+            return
 
         logger.warning(
             "No Traigent credential resolved (set TRAIGENT_API_KEY or run "

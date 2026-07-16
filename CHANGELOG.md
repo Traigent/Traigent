@@ -26,6 +26,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   naming `TRAIGENT_API_KEY` (or `traigent auth login`) and disables network
   egress for the process, instead of emitting unauthenticated ingest requests
   that 401-retry-storm behind an opaque "ingest rejected with status 401".
+  Auth supplied via `extra_headers` (`Authorization`/`X-API-Key`, e.g. gateway
+  or proxy setups) counts as a resolved credential and is not forced offline.
   Telemetry never raises into the host app.
 
 ## [0.23.0] - 2026-07-14

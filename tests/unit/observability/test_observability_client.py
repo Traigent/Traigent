@@ -2701,6 +2701,30 @@ def test_observability_client_keeps_egress_when_api_key_present(monkeypatch, cap
     client.close()
 
 
+@pytest.mark.parametrize("header_name", ["Authorization", "x-api-key"])
+def test_observability_client_keeps_egress_when_auth_rides_extra_headers(
+    monkeypatch, caplog, header_name
+):
+    """Auth supplied via extra_headers (gateway/proxy setups) is a working
+    credential — the missing-credential fail-fast must not force it offline."""
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key=None,
+            extra_headers={header_name: "Bearer gateway-token"},
+            enable_atexit_flush=False,
+        )
+    )
+
+    assert client.config.offline_mode is False
+    assert "TRAIGENT_API_KEY" not in caplog.text
+    client.close()
+
+
 def test_observation_dto_rejects_negative_values():
     with pytest.raises(ValueError, match="input_tokens"):
         ObservationDTO(
