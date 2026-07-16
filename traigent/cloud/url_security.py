@@ -4,23 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import os
 import socket
 from urllib.parse import unquote, urlparse, urlunparse
 
-_DEVELOPMENT_ENV_NAMES = {"dev", "development", "local", "test", "testing"}
-_PRODUCTION_ENV_NAMES = {"prod", "production", "stage", "staging"}
-_ENV_KEYS = (
-    "TRAIGENT_ENV",
-    "ENVIRONMENT",
-    "TRAIGENT_ENVIRONMENT",
-    "APP_ENV",
-    "FLASK_ENV",
-)
 _METADATA_HOSTNAMES = {
     "metadata",
     "metadata.google.internal",
 }
+# Cloud instance-metadata service (IMDS) IP literals that must never receive a
+# credential-bearing request, kept in parity with
+# ``traigent/hybrid/transport.py::_METADATA_SERVICE_IPS``. These are matched by
+# resolved IP value (not hostname string) and blocked ALWAYS — including in
+# development — alongside the generic link-local range. 169.254.169.254 is also
+# link-local, but 100.100.100.200 (Alibaba, CGNAT range) and fd00:ec2::254
+# (AWS IMDSv2 IPv6, unique-local) are not, so they need explicit listing.
+_METADATA_SERVICE_IPS = frozenset(
+    {
+        ipaddress.ip_address("169.254.169.254"),
+        ipaddress.ip_address("100.100.100.200"),
+        ipaddress.ip_address("fd00:ec2::254"),
+    }
+)
 
 
 class CloudUrlUnreachableError(ValueError):
@@ -39,20 +43,24 @@ class CloudUrlUnreachableError(ValueError):
 def _is_development_environment() -> bool:
     """Return True only for explicit/local SDK development environments.
 
+    Delegates to the canonical, fail-closed policy-surface detector
+    :func:`traigent.utils.env_config.treat_as_production_policy` so that this
+    SSRF/credential/TLS gate reads the *same* environment signal (same env-var
+    keys, same value-set, same precedence) as every other security gate in the
+    SDK — auth, credential-fallback, mock bypass. Previously this helper used a
+    private, divergent key set (adding ``APP_ENV``/``FLASK_ENV``) and value set,
+    so one deployment could be classified 'dev' here while the canonical
+    ``is_development()``/policy checks classified it 'prod' (see issue #1905).
+
     Fail closed: an unset / unrecognized environment is treated as production
     (strict) so that a deployment which never set an env marker does not
     silently allow credential egress to localhost / private / metadata hosts.
     """
-    for key in _ENV_KEYS:
-        value = os.getenv(key)
-        if value and value.strip().lower() in _PRODUCTION_ENV_NAMES:
-            return False
+    # Imported lazily so this module stays import-cycle-free relative to
+    # ``env_config`` (which is a foundational module).
+    from traigent.utils.env_config import treat_as_production_policy
 
-    for key in _ENV_KEYS:
-        value = os.getenv(key)
-        if value and value.strip().lower() in _DEVELOPMENT_ENV_NAMES:
-            return True
-    return False
+    return not treat_as_production_policy()
 
 
 def _normalize_hostname(hostname: str) -> str:
@@ -88,9 +96,23 @@ def _reject_always_blocked_hostname(hostname: str, *, purpose: str) -> str:
     if normalized in _METADATA_HOSTNAMES:
         raise ValueError(f"{purpose} base URL points at a metadata service") from None
 
-    if _parse_ip_literal(normalized) is None and _is_nonstandard_ip_notation(
-        normalized
-    ):
+    host_ip = _parse_ip_literal(normalized)
+    if host_ip is not None:
+        # IMDS / link-local egress is blocked ALWAYS — even in development —
+        # because a credential-bearing request must never reach a cloud metadata
+        # endpoint or the link-local range. Matches by resolved IP value, not by
+        # hostname string, so IP literals such as http://169.254.169.254/ are
+        # rejected even though they are absent from ``_METADATA_HOSTNAMES``
+        # (issue #1908). Mirrors ``hybrid/transport.py``'s unconditional guard.
+        if host_ip in _METADATA_SERVICE_IPS:
+            raise ValueError(
+                f"{purpose} base URL points at a metadata service"
+            ) from None
+        if host_ip.is_link_local:
+            raise ValueError(
+                f"{purpose} base URL points at a link-local address"
+            ) from None
+    elif _is_nonstandard_ip_notation(normalized):
         raise ValueError(
             f"{purpose} base URL uses non-standard IP address notation"
         ) from None

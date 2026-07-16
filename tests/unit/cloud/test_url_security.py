@@ -160,3 +160,59 @@ def test_validate_cloud_base_url_production_signal_wins_over_dev_signal() -> Non
     ):
         with pytest.raises(ValueError, match="must use https in production"):
             validate_cloud_base_url("http://localhost:5000")
+
+
+# --- Regression: unified env detection (issue #1905) ---------------------------
+
+
+@pytest.mark.parametrize("noncanonical_key", ["APP_ENV", "FLASK_ENV"])
+def test_env_detection_ignores_noncanonical_keys(noncanonical_key: str) -> None:
+    # Before #1905 url_security read a private, divergent key set that included
+    # APP_ENV/FLASK_ENV, so one of these alone could relax the credential-egress
+    # gate even though the canonical policy detector (ENVIRONMENT/TRAIGENT_ENV/
+    # TRAIGENT_ENVIRONMENT) still treated the run as production. The unified gate
+    # must ignore these keys and fail closed (strict) for localhost.
+    # https:// so the strict-TLS check is satisfied and the assertion targets
+    # the localhost host-rejection specifically (the SSRF-relevant relaxation).
+    with patch.dict("os.environ", {noncanonical_key: "development"}, clear=True):
+        with pytest.raises(ValueError, match="not allowed in production"):
+            validate_cloud_base_url("https://localhost:5000")
+
+
+def test_env_detection_matches_canonical_policy_helper() -> None:
+    # ENVIRONMENT=test is a canonical non-production marker, so the unified gate
+    # must classify it exactly as the shared policy helper does (allow_local),
+    # rather than via a private value-set that could disagree with other gates.
+    from traigent.utils.env_config import treat_as_production_policy
+
+    with patch.dict("os.environ", {"ENVIRONMENT": "test"}, clear=True):
+        assert treat_as_production_policy() is False
+        assert (
+            validate_cloud_base_url("http://localhost:5000/") == "http://localhost:5000"
+        )
+
+
+# --- Regression: metadata/link-local egress is always blocked (issue #1908) ----
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        # IMDS IP literals absent from the hostname set must be blocked by IP.
+        ("http://169.254.169.254", "metadata service"),
+        ("http://169.254.169.254/latest/meta-data/", "metadata service"),
+        ("http://100.100.100.200", "metadata service"),  # Alibaba IMDS (not link-local)
+        ("http://[fd00:ec2::254]", "metadata service"),  # AWS IMDSv2 IPv6 (unique-local)
+        # Any other link-local literal is blocked by range, not just IMDS.
+        ("http://169.254.1.1", "link-local address"),
+    ],
+)
+def test_metadata_and_link_local_ips_blocked_even_in_development(
+    url: str,
+    message: str,
+) -> None:
+    # allow_local=True (development) must NOT open a path to the cloud metadata
+    # service or the link-local range for a credential-bearing request.
+    with patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True):
+        with pytest.raises(ValueError, match=message):
+            validate_cloud_base_url(url)
