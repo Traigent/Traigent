@@ -21,13 +21,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - `ObservabilityClient` fails fast when no credential resolves. With
-  `offline_mode` off and neither an API key, a JWT, nor a custom
-  sender/request_sender override, the client now logs one actionable warning
-  naming `TRAIGENT_API_KEY` (or `traigent auth login`) and disables network
-  egress for the process, instead of emitting unauthenticated ingest requests
-  that 401-retry-storm behind an opaque "ingest rejected with status 401".
-  Auth supplied via `extra_headers` (`Authorization`/`X-API-Key`, e.g. gateway
-  or proxy setups) counts as a resolved credential and is not forced offline.
+  `offline_mode` off and neither an API key, a JWT, nor a non-blank
+  `Authorization`/`X-API-Key` in `extra_headers` (gateway/proxy auth counts;
+  whitespace-only values do not), the client logs one actionable warning
+  naming `TRAIGENT_API_KEY` (or `traigent auth login`) and disables its own
+  network lanes, instead of emitting unauthenticated ingest requests that
+  401-retry-storm behind an opaque "ingest rejected with status 401".
+  Suppression is lane-aware, not a global offline flip: a custom `sender`
+  keeps owning ingest delivery, a custom `request_sender` keeps owning
+  control-plane calls, and blocked control-plane requests raise a clear
+  "no credential resolved" error. `config.offline_mode` is left untouched.
   Telemetry never raises into the host app.
 
 ## [0.23.0] - 2026-07-14

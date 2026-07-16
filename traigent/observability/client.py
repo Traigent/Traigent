@@ -75,6 +75,11 @@ class _NoRedirectHandler(request.HTTPRedirectHandler):
         return None
 
 
+def _nonblank(value: str | None) -> bool:
+    """A credential value counts only when it carries non-whitespace content."""
+    return bool(value and value.strip())
+
+
 def _new_trace_id() -> str:
     return f"trace_{uuid.uuid4().hex}"
 
@@ -932,6 +937,7 @@ class ObservabilityClient:
         self._closed = False
         self._offline_notice_logged = False
         self._missing_generation_usage_notice_logged = False
+        self._credential_egress_disabled = False
         self._http_opener = request.build_opener(_NoRedirectHandler)
         self._transport = self._create_transport()
         self._disable_egress_if_credential_missing()
@@ -1182,7 +1188,7 @@ class ObservabilityClient:
         for delivery events from this flush have run.
         """
         deadline = self._flush_deadline(timeout)
-        if self.config.offline_mode and not self._has_custom_trace_sender:
+        if self._ingest_suppressed:
             self._log_offline_mode_once()
             return self._offline_flush_result()
         if not self._acquire_client_lock_until(deadline):
@@ -1256,9 +1262,7 @@ class ObservabilityClient:
                 already_closed = False
                 self._closing = True
                 self._close_complete.clear()
-                offline_close = (
-                    self.config.offline_mode and not self._has_custom_trace_sender
-                )
+                offline_close = self._ingest_suppressed
                 trace_payloads = []
                 inflight_snapshot_submissions = 0
             else:
@@ -1267,9 +1271,7 @@ class ObservabilityClient:
                 self._closing = True
                 self._close_pending = True
                 self._close_complete.clear()
-                offline_close = (
-                    self.config.offline_mode and not self._has_custom_trace_sender
-                )
+                offline_close = self._ingest_suppressed
                 if offline_close:
                     trace_payloads = []
                     inflight_snapshot_submissions = 0
@@ -1738,8 +1740,20 @@ class ObservabilityClient:
     def _has_custom_trace_sender(self) -> bool:
         return self._sender_override is not None
 
+    @property
+    def _ingest_suppressed(self) -> bool:
+        """Trace-snapshot delivery is suppressed for this client.
+
+        True when offline mode or the missing-credential guard is active and
+        no custom sender owns delivery — a custom sender is a local lane the
+        SDK never authenticates, so it keeps working in both cases.
+        """
+        return (
+            self.config.offline_mode or self._credential_egress_disabled
+        ) and not self._has_custom_trace_sender
+
     def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
-        if self.config.offline_mode:
+        if self.config.offline_mode or self._credential_egress_disabled:
             self._log_offline_mode_once()
             return None
 
@@ -1826,6 +1840,11 @@ class ObservabilityClient:
             return cast(
                 dict[str, Any], self._request_sender_override(method, path, payload)
             )
+        if self._credential_egress_disabled:
+            raise ClientError(
+                "Observability backend request skipped: no credential resolved "
+                "(set TRAIGENT_API_KEY or run `traigent auth login`)"
+            )
         return self._request_json_sync(method, path, payload)
 
     def _request_json_sync(
@@ -1909,7 +1928,7 @@ class ObservabilityClient:
                 raise ValueError("event observations cannot have children")
 
     def _queue_trace_snapshot(self, trace_id: str) -> None:
-        if self.config.offline_mode and not self._has_custom_trace_sender:
+        if self._ingest_suppressed:
             return
         with self._lock:
             state = self._trace_states.get(trace_id)
@@ -1964,39 +1983,44 @@ class ObservabilityClient:
         Without a credential the backend rejects every ingest batch with 401,
         which the retry handler turns into a per-batch retry storm and, once the
         circuit breaker opens, an opaque "ingest rejected with status 401" that
-        never names the missing key. When this client would egress over the
-        network (not offline, no custom sender/request_sender override) and
-        neither an API key nor a JWT resolved, log one actionable warning and
-        behave as offline for the rest of the process. Telemetry must never
-        break the host app, so this never raises.
+        never names the missing key. When neither an API key, a JWT, nor a
+        non-blank Authorization/X-API-Key in ``extra_headers`` resolved, log one
+        actionable warning and disable the SDK's own network egress for the
+        process. Suppression is lane-aware rather than a global offline flip:
+        a custom ``sender`` keeps owning ingest delivery and a custom
+        ``request_sender`` keeps owning control-plane calls — only the
+        network lanes the SDK itself would drive unauthenticated are disabled.
+        ``config.offline_mode`` is left untouched so it keeps reflecting the
+        caller's explicit setting. Telemetry must never break the host app, so
+        this never raises.
         """
         if self.config.offline_mode:
             return
         if (
             self._sender_override is not None
-            or self._request_sender_override is not None
+            and self._request_sender_override is not None
         ):
+            # Every egress lane is override-covered; the SDK itself will never
+            # emit network traffic, authenticated or not.
             return
-        if self.config.api_key or self.config.jwt_token:
+        if _nonblank(self.config.api_key) or _nonblank(self.config.jwt_token):
             return
         # A caller supplying auth through extra_headers (gateway/proxy setups)
         # has a working credential the backend will accept — the 401-storm
-        # premise this guard exists for does not apply, so don't force them
-        # offline.
+        # premise this guard exists for does not apply. Header names alone do
+        # not count: a blank value is as unauthenticated as a missing header.
         if any(
-            name.strip().lower() in ("authorization", "x-api-key")
-            for name in self.config.extra_headers
+            name.strip().lower() in ("authorization", "x-api-key") and _nonblank(value)
+            for name, value in self.config.extra_headers.items()
         ):
             return
 
         logger.warning(
             "No Traigent credential resolved (set TRAIGENT_API_KEY or run "
-            "`traigent auth login`); observability egress disabled for this process"
+            "`traigent auth login`); observability network egress disabled "
+            "for this process"
         )
-        # Reuse the existing offline gating on every egress path instead of
-        # threading a second disable flag through the client. `replace` leaves
-        # the caller's config object untouched.
-        self.config = replace(self.config, offline_mode=True)
+        self._credential_egress_disabled = True
         # The warning above already told the user egress is disabled; suppress
         # the vaguer INFO offline notice so exactly one message is emitted.
         self._offline_notice_logged = True
