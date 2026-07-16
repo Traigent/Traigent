@@ -318,6 +318,31 @@ class TestEnhancedBaseOptimizer:
         assert optimizer.context.get("algorithm_setting") == "conservative"
         assert optimizer.context.get("nonexistent", "default") == "default"
 
+    def test_update_best_no_objectives(self):
+        """update_best must not raise when objectives is empty (SDK#1909).
+
+        Optimizers may be constructed without objectives (weighted scoring
+        disabled). The first successful trial previously indexed
+        ``self.objectives[0]`` unconditionally, raising IndexError.
+        """
+        optimizer = MockOptimizer({"param1": ["a", "b"]}, [])
+        assert optimizer.objectives == []
+
+        trial = TrialResult(
+            trial_id="test_1",
+            config={"param1": "a"},
+            metrics={"accuracy": 0.8},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(),
+        )
+        assert trial.is_successful
+
+        # Should be a no-op, not an IndexError.
+        optimizer.update_best(trial)
+        assert optimizer.best_score is None
+        assert optimizer.best_config is None
+
 
 def test_concurrent_async_operations():
     """Test concurrent async operations on optimizer."""
