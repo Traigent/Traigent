@@ -4,7 +4,30 @@ All notable changes to Traigent SDK are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.24.0] - 2026-07-16
+
+### Added
+
+- **Eval-defect audit** (`result.eval_audit`, opt-in, zero-cost by default): a
+  per-example × per-config outcome matrix persisted with each run (#1838/#1889),
+  deterministic dataset-defect detectors — never-correct, token-leak,
+  cross-family consensus-on-wrong (#1880/#1897) — and a continuous 0-1 defect
+  score with percentile ranking per example via `result.eval_audit.scored`
+  (#1881/#1901). Pure functions of already-persisted run data: no LLM calls,
+  no network.
+- `setup_logging(logger_name=...)`: confine SDK logging to a scoped logger
+  instead of the root logger (opt-in; default behavior unchanged) (#1883/#1899).
+- `TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS`: opt-in retention pruning of old local
+  run directories — never touches the active run, errs on keeping data
+  (#1884/#1899).
+
+### Security
+
+- Span error strings are scrubbed before OTLP export in both the core and
+  plugin tracing paths: exception messages/payloads are redacted of emails,
+  keys, and secrets before entering any trace backend (#1885/#1898).
+- The outcome-matrix loader refuses artifacts resolving outside the artifacts
+  directory (symlink containment).
 
 ### Security
 
