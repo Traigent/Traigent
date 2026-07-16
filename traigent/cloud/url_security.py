@@ -128,11 +128,13 @@ def _unwrap_embedded_ipv4(
     ``::ffff:169.254.169.254`` connects to 169.254.169.254 on any dual-stack
     host (Linux default ``bindv6only=0``), but Python reports it as neither
     link-local nor equal to the IPv4 literal, so both ``_METADATA_SERVICE_IPS``
-    and ``is_global`` miss it. Worse, ``::ffff:100.100.100.200`` is
-    ``is_global=True`` (``IPv6Address.is_global`` is ``not is_private``, and
+    and ``is_global`` miss it. Worse, on Python 3.12+ ``::ffff:100.100.100.200``
+    is ``is_global=True`` (``IPv6Address.is_global`` is ``not is_private``, and
     100.64.0.0/10 is not classified private), so it clears the production gate
-    too. Normalizing here means every downstream classification sees the address
-    the request will really hit.
+    too. Mapped-address semantics differ across the supported interpreters (3.11
+    classifies both of the above the other way); normalizing here means every
+    downstream classification sees the address the request will really hit, on
+    every version.
 
     The IPv4-mapped range is the one that is verified routable; the IPv4-
     compatible (RFC 4291, deprecated), 6to4, and NAT64 well-known prefixes also
@@ -228,8 +230,13 @@ def _is_local_name(normalized: str) -> bool:
 
 
 def _parse_resolved_ip(
-    sockaddr_host: str,
+    sockaddr_host: str | int,
 ) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    # ``getaddrinfo``'s sockaddr is a union whose first element is typed
+    # ``str | int``; a non-str answer is not an address this guard can classify,
+    # so skip it rather than crash.
+    if not isinstance(sockaddr_host, str):
+        return None
     # IPv6 results carry a zone id (``fe80::1%eth0``) that ``ip_address``
     # rejects; strip it so scoped link-local answers are still checked.
     return _parse_ip_literal(sockaddr_host.split("%", 1)[0])
@@ -303,8 +310,8 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
     time. Nothing pins the address that was checked, so an attacker who controls
     DNS answers/TTLs can still steer the request elsewhere between the two
     lookups (classic DNS rebinding). Closing that window requires connect-time
-    peer-IP enforcement in the transport, like the guard in
-    ``traigent/hybrid/transport.py``. What this function does guarantee is that
+    peer-IP enforcement in the transport, which no SDK HTTP path implements
+    today. What this function does guarantee is that
     metadata/link-local destinations are rejected in EVERY environment when they
     are visible at validation time — as an IP literal or as a resolved answer,
     including IPv6 forms that embed the IPv4 address they reach
