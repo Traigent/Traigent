@@ -229,7 +229,7 @@ The default run uses Traigent's smart optimizer when portal credentials are avai
 ```python
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini/gemini-pro"],
+        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini-1.5-pro"],
         "temperature": [0.1, 0.5, 0.9],
     },
     objectives=["accuracy", "cost"],

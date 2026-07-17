@@ -761,19 +761,63 @@ class TestPublicDocsAccuracyRegressions(unittest.TestCase):
             self.assertNotIn("”", line, f"Curly closing quote in: {line!r}")
             self.assertIn('TRAIGENT_API_KEY="sk_', line)
 
-    def test_injection_modes_docs_avoid_retired_model_ids(self):
-        """SDK#1904: injection-mode examples must not advertise retired model IDs."""
-        content = self.injection_modes_path.read_text(encoding="utf-8")
-        # Retired / EOL identifiers that must not appear as model choices.
-        retired_patterns = {
-            "claude-2": r"\bclaude-2\b",
-            "gemini-pro": r"\bgemini-pro\b",
+    def test_public_docs_advertise_only_catalog_model_ids(self):
+        """SDK#1904: public examples must advertise real catalog model IDs.
+
+        Earlier this guard was a two-literal denylist (``claude-2`` /
+        ``gemini-pro``). That let non-catalog stand-ins slip through: e.g.
+        ``claude-3-sonnet`` satisfies the anthropic provider regex in
+        ``models.yaml`` yet is absent from ``known_models`` (only the dated
+        ``claude-3-sonnet-20240229`` exists), and ``gemini/gemini-pro`` is not a
+        catalog ID at all. Instead of a hand-maintained denylist we parse the
+        model registry (``traigent/config/models.yaml``) and require every model
+        ID advertised in the public injection-mode and README examples to be an
+        exact ``known_models`` member. Exact membership — not a bare pattern
+        match — is required precisely because retired IDs can still satisfy a
+        provider's permissive regex.
+        """
+        from traigent.config.provider_support import load_models_yaml
+
+        try:
+            registry = load_models_yaml()
+        except ImportError:  # pragma: no cover - PyYAML is a dev/extra dep only
+            self.skipTest("PyYAML unavailable; model registry check skipped")
+
+        if not registry:
+            self.skipTest("model registry (models.yaml) missing or unparseable")
+
+        known_models = {
+            model_id
+            for provider in registry.values()
+            if isinstance(provider, dict)
+            for model_id in provider.get("known_models", [])
         }
-        for name, pattern in retired_patterns.items():
-            self.assertIsNone(
-                re.search(pattern, content),
-                f"Retired model ID '{name}' still advertised in injection_modes.md",
-            )
+        # Sanity-check the registry actually parsed before trusting the guard.
+        self.assertIn(
+            "gpt-4o", known_models, "model registry parsed without known_models"
+        )
+
+        model_list_re = re.compile(r'"model"\s*:\s*\[([^\]]*)\]')
+        default_re = re.compile(r'\.get\(\s*"model"\s*,\s*"([^"]+)"\s*\)')
+        quoted_re = re.compile(r'"([^"]+)"')
+
+        offenders = []
+        for doc_path in (self.injection_modes_path, self.readme_path):
+            content = doc_path.read_text(encoding="utf-8")
+            advertised = set()
+            for list_body in model_list_re.findall(content):
+                advertised.update(quoted_re.findall(list_body))
+            advertised.update(default_re.findall(content))
+            for model_id in sorted(advertised):
+                if model_id not in known_models:
+                    offenders.append(f"{doc_path.name}: {model_id}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Public docs advertise model IDs absent from "
+            f"traigent/config/models.yaml known_models: {offenders}",
+        )
 
     def test_readme_cli_cheatsheet_results_is_a_group(self):
         """SDK#1907: the cheat-sheet must not call bare `traigent results` a listing command."""
