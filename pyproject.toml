@@ -38,6 +38,7 @@ dependencies = [
     "click>=8.0.0",
     "rich>=12.0.0",
     "aiohttp>=3.14.0,<4.0",  # CVE-2026-34993/CVE-2026-47265 fixed in 3.14.0
+    "anyio>=4.14.2",  # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching (fixed 4.14.2; transitive via httpx/anthropic/mcp)
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
