@@ -14,6 +14,7 @@ from typing import Any, Literal, Protocol
 
 from traigent.evaluators.base import Dataset
 from traigent.generation.options import SkillTrainOptions
+from traigent.generation.validators import looks_like_injection
 from traigent.utils.logging import get_logger
 
 from .artifacts import write_artifacts
@@ -43,6 +44,11 @@ class RolloutRecord:
 
 
 logger = get_logger(__name__)
+
+# Upper bound on the optimizer-side meta-skill stored in trainer state and
+# re-injected into every analyze/merge prompt. Parity with edits.MAX_DOC_CHARS
+# for the trained document; keeps the optimizer prompt budget bounded.
+MAX_META_SKILL_CHARS = 8000
 
 EvaluateFn = Callable[[str, Dataset], tuple[float, list[RolloutRecord]]]
 
@@ -612,11 +618,23 @@ class SkillTrainer:
             self._reject_history,
             self._meta_skill,
         )
-        if isinstance(content, str) and content.strip():
-            self._meta_skill = content.strip()
-            epoch_summary["meta_skill"] = "updated"
-        else:
+        if not (isinstance(content, str) and content.strip()):
             epoch_summary["meta_skill"] = "skipped_empty"
+            return
+        stripped = content.strip()
+        # LLM-produced content: gate for injection before it persists across
+        # epochs and is re-injected into every analyze/merge prompt (parity with
+        # the slow_update/per-edit content paths, which already gate).
+        if looks_like_injection(stripped):
+            epoch_summary["meta_skill"] = "skipped_injection"
+            return
+        if len(stripped) > MAX_META_SKILL_CHARS:
+            stripped = stripped[:MAX_META_SKILL_CHARS]
+            self._meta_skill = stripped
+            epoch_summary["meta_skill"] = "updated_truncated"
+        else:
+            self._meta_skill = stripped
+            epoch_summary["meta_skill"] = "updated"
 
     def _mark_rollout_failures(
         self, rollouts: Sequence[RolloutRecord]
