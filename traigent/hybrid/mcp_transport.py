@@ -12,6 +12,7 @@ import asyncio
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from traigent.hybrid.protocol import (
     BenchmarksResponse,
@@ -232,7 +233,7 @@ class MCPTransport:
         """
         uri = CONFIG_SPACE_URI
         if tunable_id is not None:
-            uri = f"{CONFIG_SPACE_URI}?tunable_id={tunable_id}"
+            uri = f"{CONFIG_SPACE_URI}?tunable_id={quote(tunable_id, safe='')}"
         data = await self._read_resource(uri)
         return ConfigSpaceResponse.from_dict(data)
 

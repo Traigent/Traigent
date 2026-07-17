@@ -377,6 +377,28 @@ class TestMCPTransportDiscoverConfigSpace:
         assert len(result.tvars) == 1
         transport._client.read_resource.assert_called_with(CONFIG_SPACE_URI)
 
+    @pytest.mark.asyncio
+    async def test_discover_config_space_encodes_tunable_id(
+        self, transport: MCPTransport
+    ) -> None:
+        """Test config space discovery URL-encodes the tunable ID."""
+        config_space = {
+            "schema_version": "0.9",
+            "tunable_id": "agent one&two=three?four",
+            "tvars": [],
+        }
+        mock_response = MockMCPResponse(
+            success=True,
+            data={"content": json.dumps(config_space)},
+        )
+        transport._client.read_resource = AsyncMock(return_value=mock_response)
+
+        await transport.discover_config_space(tunable_id="agent one&two=three?four")
+
+        transport._client.read_resource.assert_called_once_with(
+            "traigent://config-space?tunable_id=agent%20one%26two%3Dthree%3Ffour"
+        )
+
 
 class TestMCPTransportBenchmarks:
     """Tests for benchmarks method (not yet supported over MCP)."""
