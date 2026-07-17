@@ -71,14 +71,15 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     ("openai", "fast"): ["gpt-4o-mini"],
     ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
     ("openai", "quality"): ["gpt-4o"],
-    # Anthropic tiers
-    ("anthropic", "fast"): ["claude-3-haiku-20240307"],
-    ("anthropic", "balanced"): ["claude-3-5-sonnet-20241022"],
-    ("anthropic", "quality"): ["claude-3-opus-20240229"],
-    # Gemini tiers
-    ("gemini", "fast"): ["gemini-1.5-flash"],
-    ("gemini", "balanced"): ["gemini-1.5-flash", "gemini-1.5-pro"],
-    ("gemini", "quality"): ["gemini-1.5-pro"],
+    # Anthropic tiers — kept in sync with the SDK's own defaults
+    # (parameter_ranges.Choices.model) and config/models.yaml (#1936).
+    ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
+    ("anthropic", "balanced"): ["claude-sonnet-4-6"],
+    ("anthropic", "quality"): ["claude-opus-4-8"],
+    # Gemini tiers — Gemini 1.5 is deprecated; use current 2.x (#1936).
+    ("gemini", "fast"): ["gemini-2.0-flash"],
+    ("gemini", "balanced"): ["gemini-2.0-flash"],
+    ("gemini", "quality"): ["gemini-2.0-flash"],
     # Mistral tiers
     ("mistral", "fast"): ["mistral-small-latest"],
     ("mistral", "balanced"): ["mistral-medium-latest"],
@@ -114,17 +115,20 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     "openai": {
         "fast": ["gpt-4o-mini", "gpt-3.5-turbo"],
         "balanced": ["gpt-4o-mini", "gpt-4o"],
-        "quality": ["gpt-4o", "o1-preview", "o1-mini"],
+        # Drop retired o1-preview/o1-mini preview hints (#1936).
+        "quality": ["gpt-4o", "o3-mini"],
     },
     "anthropic": {
-        "fast": ["claude-3-haiku-20240307"],
-        "balanced": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
-        "quality": ["claude-3-opus-20240229", "claude-3-5-sonnet-20241022"],
+        # Refresh to current Claude 4.x defaults (#1936); drop Claude 3 Opus.
+        "fast": ["claude-haiku-4-5-20251001"],
+        "balanced": ["claude-sonnet-4-6", "claude-3-5-haiku-20241022"],
+        "quality": ["claude-opus-4-8", "claude-sonnet-4-6"],
     },
     "gemini": {
-        "fast": ["gemini-1.5-flash", "gemini-1.5-flash-8b"],
-        "balanced": ["gemini-1.5-flash", "gemini-1.5-pro"],
-        "quality": ["gemini-1.5-pro", "gemini-2.0-flash-exp"],
+        # Gemini 1.5 deprecated / gemini-2.0-flash-exp preview retired (#1936).
+        "fast": ["gemini-2.0-flash"],
+        "balanced": ["gemini-2.0-flash"],
+        "quality": ["gemini-2.0-flash"],
     },
     "mistral": {
         "fast": ["mistral-small-latest", "open-mistral-7b"],

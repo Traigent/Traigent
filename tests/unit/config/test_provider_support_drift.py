@@ -32,7 +32,11 @@ from __future__ import annotations
 import pytest
 
 from traigent.config import provider_support as ps
-from traigent.integrations.providers import _MODEL_TIERS, list_available_providers
+from traigent.integrations.providers import (
+    _FALLBACK_MODELS,
+    _MODEL_TIERS,
+    list_available_providers,
+)
 from traigent.providers.validation import (
     _KNOWN_MODELS,
     _PROVIDER_PATTERNS,
@@ -226,3 +230,106 @@ class TestMappingOnlyValidatorStatus:
         # from the HuggingFace catch-all.
         assert get_provider_for_model("azure/my-deployment") != "huggingface"
         assert get_provider_for_model("bedrock/anthropic.claude-3") != "huggingface"
+
+
+# Known-retired / delisted model IDs that must never resurface in any of the
+# hand-maintained default tables (#1937). The old drift test asserted only
+# provider KEY-SETs, so every retired ID here passed CI green.
+RETIRED_MODEL_IDS = frozenset(
+    {
+        # OpenAI o1 preview line (superseded)
+        "o1-preview",
+        "o1-mini",
+        # Anthropic Claude 3 Opus (retirement track)
+        "claude-3-opus-20240229",
+        # Gemini 1.x (deprecated) + 2.0 preview
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash-exp",
+        "gemini-1.0-pro",
+        "gemini-pro",
+    }
+)
+
+# The SDK's current Anthropic default fallback IDs (parameter_ranges.Choices.model
+# / providers._FALLBACK_MODELS). These must be recognized by _KNOWN_MODELS so the
+# validator never warns "unknown" on the SDK's own happy-path defaults.
+CURRENT_ANTHROPIC_DEFAULTS = frozenset(
+    {
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-6",
+        "claude-opus-4-8",
+    }
+)
+
+
+def _all_ids(table) -> set[str]:
+    """Flatten every model-ID value out of a nested tier/fallback table."""
+    ids: set[str] = set()
+    for value in table.values():
+        if isinstance(value, dict):
+            for models in value.values():
+                ids.update(models)
+        else:  # flat list of model IDs (e.g. _FALLBACK_MODELS)
+            ids.update(value)
+    return ids
+
+
+@pytest.mark.unit
+class TestModelCatalogCurrency:
+    """#1937: assert the model-ID VALUES, not just the provider key-sets.
+
+    The provider-drift gate historically pinned only the taxonomy (which
+    provider appears in which registry). Catalog *currency* — the actual model
+    strings inside each tier/frozenset — was invisible, so retired IDs passed
+    CI green. These checks close that blind spot offline.
+    """
+
+    def test_model_tiers_carry_no_retired_ids(self) -> None:
+        offenders = _all_ids(_MODEL_TIERS) & RETIRED_MODEL_IDS
+        assert not offenders, f"_MODEL_TIERS lists retired model IDs: {offenders}"
+
+    def test_fallback_models_carry_no_retired_ids(self) -> None:
+        offenders = _all_ids(_FALLBACK_MODELS) & RETIRED_MODEL_IDS
+        assert not offenders, f"_FALLBACK_MODELS lists retired model IDs: {offenders}"
+
+    def test_known_models_drop_fully_dead_gemini_1_0(self) -> None:
+        # _KNOWN_MODELS is a broad *recognition* allowlist (avoid false "unknown"
+        # warnings), so it legitimately keeps older-but-referenceable IDs. Only
+        # the fully-dead Gemini 1.0 IDs must be pruned (#1936).
+        dead_gemini_1_0 = {"gemini-1.0-pro", "gemini-pro"}
+        offenders = set(_KNOWN_MODELS.get("google", frozenset())) & dead_gemini_1_0
+        assert not offenders, (
+            f"_KNOWN_MODELS['google'] lists dead Gemini 1.0 IDs: {offenders}"
+        )
+
+    def test_current_anthropic_defaults_are_known(self) -> None:
+        # The SDK must not warn "unknown" on its own default Anthropic models.
+        missing = CURRENT_ANTHROPIC_DEFAULTS - set(_KNOWN_MODELS["anthropic"])
+        assert not missing, f"_KNOWN_MODELS['anthropic'] omits SDK defaults: {missing}"
+
+    def test_fallback_anthropic_defaults_are_current(self) -> None:
+        anthropic_fallback = {
+            mid
+            for (provider, _tier), models in _FALLBACK_MODELS.items()
+            if provider == "anthropic"
+            for mid in models
+        }
+        assert anthropic_fallback == CURRENT_ANTHROPIC_DEFAULTS
+
+    def test_anthropic_table_ids_are_in_models_yaml(self) -> None:
+        # Every Anthropic ID emitted by the tier/fallback tables must exist in
+        # the canonical config/models.yaml catalog (single source of truth).
+        config = ps.load_models_yaml()
+        yaml_anthropic = set(config["anthropic"]["known_models"])
+        table_anthropic = {
+            mid for tier in _MODEL_TIERS["anthropic"].values() for mid in tier
+        } | {
+            mid
+            for (provider, _tier), models in _FALLBACK_MODELS.items()
+            if provider == "anthropic"
+            for mid in models
+        }
+        missing = table_anthropic - yaml_anthropic
+        assert not missing, f"Anthropic IDs absent from models.yaml catalog: {missing}"

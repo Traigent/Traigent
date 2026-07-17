@@ -796,3 +796,66 @@ class TestObjectiveOrientationInCompositeScore:
         )
         assert set(optimizer._minimize_objectives) == {"cost", "latency", "error"}
         assert "accuracy" not in optimizer._minimize_objectives
+
+
+def _trial(scores: dict, score: float = 0.0) -> Trial:
+    """Build a Trial carrying objective_scores metadata for frontier tests."""
+    return Trial(
+        configuration={},
+        score=score,
+        duration=0.1,
+        metadata={"objective_scores": dict(scores)},
+    )
+
+
+class TestBatchDominanceMissingMetric:
+    """Regression for #1944: missing metric must NOT default to 0.0 (best-for-minimize)."""
+
+    def _optimizer(self):
+        return MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+        )
+
+    def test_missing_minimize_metric_does_not_falsely_dominate(self):
+        opt = self._optimizer()
+        assert opt.objective_directions["cost"] is False  # minimize
+        complete = {"accuracy": 0.90, "cost": 5.0}
+        partial = {"accuracy": 0.90}  # cost MISSING
+        # With the old 0.0 default, partial's cost=0.0 beat every real cost.
+        assert opt._dominates(partial, complete) is False
+        assert opt._dominates(complete, partial) is True
+
+    def test_complete_cheap_point_not_evicted_by_partial(self):
+        opt = self._optimizer()
+        opt._update_pareto_frontier(_trial({"accuracy": 0.90, "cost": 0.5}, score=0.9))
+        # A higher-accuracy trial that OMITS cost must not dominate/evict it.
+        opt._update_pareto_frontier(_trial({"accuracy": 0.91}, score=0.91))
+        frontier_scores = [t.metadata["objective_scores"] for t in opt.pareto_frontier]
+        assert {"accuracy": 0.90, "cost": 0.5} in frontier_scores
+
+
+class TestParetoFrontierTrimByCrowding:
+    """Regression for #1942: size cap must prune by crowding, keep the extremes."""
+
+    def test_cost_minimal_extreme_is_retained(self):
+        opt = MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+            pareto_frontier_size=2,
+        )
+        # Three mutually non-dominated trials (accuracy maximize / cost minimize).
+        # Score is highest for hi_acc so the old score-sort trim would drop cheap.
+        opt._update_pareto_frontier(
+            _trial({"accuracy": 0.95, "cost": 90.0}, score=0.95)
+        )
+        opt._update_pareto_frontier(
+            _trial({"accuracy": 0.80, "cost": 40.0}, score=0.80)
+        )
+        opt._update_pareto_frontier(_trial({"accuracy": 0.60, "cost": 5.0}, score=0.60))
+
+        assert len(opt.pareto_frontier) == 2
+        costs = {t.metadata["objective_scores"]["cost"] for t in opt.pareto_frontier}
+        # The cost-minimal extreme (5.0) must survive; the interior mid (40.0) is pruned.
+        assert 5.0 in costs
+        assert 40.0 not in costs

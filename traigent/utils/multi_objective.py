@@ -52,12 +52,20 @@ class ParetoPoint:
         Returns:
             True if this point dominates the other
         """
+        # Treat a missing objective as *non-comparable* (#1941). If either
+        # point lacks any objective in the requested set, the pair is
+        # incomparable — deciding domination on the shared subset alone lets a
+        # metric-incomplete trial evict a fully-measured one from the front.
+        requested = set(self.objectives) | set(other.objectives)
+        if any(
+            obj_name not in self.objectives or obj_name not in other.objectives
+            for obj_name in requested
+        ):
+            return False
+
         better_in_at_least_one = False
 
         for obj_name, obj_value in self.objectives.items():
-            if obj_name not in other.objectives:
-                continue
-
             other_value = other.objectives[obj_name]
             should_maximize = maximize.get(obj_name, True)
 
@@ -196,34 +204,56 @@ class ParetoFrontCalculator:
             return 0.0
 
         obj1, obj2 = objectives
+        max1 = self.maximize.get(obj1, True)
+        max2 = self.maximize.get(obj2, True)
 
-        # Set reference point
+        # Set reference point. The auto reference is the *nadir* (worse than
+        # every point) and must be orientation-aware (#1940): min-1 for a
+        # maximize objective, max+1 for a minimize objective. Using min-1 for a
+        # minimize objective would place the reference on the wrong (better)
+        # side and measure the complement region.
         if reference_point is None:
-            ref1 = min(point.objectives[obj1] for point in pareto_front) - 1
-            ref2 = min(point.objectives[obj2] for point in pareto_front) - 1
+            ref1 = (
+                (min(p.objectives[obj1] for p in pareto_front) - 1)
+                if max1
+                else (max(p.objectives[obj1] for p in pareto_front) + 1)
+            )
+            ref2 = (
+                (min(p.objectives[obj2] for p in pareto_front) - 1)
+                if max2
+                else (max(p.objectives[obj2] for p in pareto_front) + 1)
+            )
         else:
             ref1 = reference_point.get(obj1, 0)
             ref2 = reference_point.get(obj2, 0)
 
-        # Sort points by first objective
+        # Sort so we iterate obj1 from best to worst (descending for maximize,
+        # ascending for minimize). On a Pareto front obj2 then moves
+        # monotonically from worst (nadir side) to best, which makes the
+        # staircase decomposition below exact.
         sorted_points = sorted(
             pareto_front,
             key=lambda p: p.objectives[obj1],
-            reverse=self.maximize.get(obj1, True),
+            reverse=max1,
         )
 
+        # Decomposition consistent with the sort (#1940): full width to the
+        # reference on obj1 (``abs(curr_obj1 - ref1)``) times the *incremental*
+        # slab height on obj2 (``abs(curr_obj2 - prev_obj2)``, prev seeded at
+        # ``ref2``). The previous code mixed an incremental width with a full
+        # height under a descending sort, double-counting the first slab.
         hypervolume = 0.0
-        prev_obj1 = ref1
+        prev_obj2 = ref2
 
         for point in sorted_points:
             curr_obj1 = point.objectives[obj1]
             curr_obj2 = point.objectives[obj2]
 
-            width = abs(curr_obj1 - prev_obj1)
-            height = abs(curr_obj2 - ref2)
+            width = abs(curr_obj1 - ref1)
+            height = abs(curr_obj2 - prev_obj2)
 
             hypervolume += width * height
-            prev_obj1 = curr_obj1
+            prev_obj2 = curr_obj2
 
         return hypervolume
 
@@ -236,26 +266,37 @@ class ParetoFrontCalculator:
 
         objectives = list(pareto_front[0].objectives.keys())
 
-        # Set reference point and bounds
-        if reference_point is None:
-            ref_point = {
-                obj: min(point.objectives[obj] for point in pareto_front) - 1
-                for obj in objectives
-            }
-        else:
-            ref_point = reference_point
+        # Build the sampling box per-objective from orientation (#1945). The box
+        # spans from the *nadir* (reference / worst) to the *ideal* (best +
+        # margin) on each objective. A blind ``max + 1`` upper bound inverts the
+        # range for a minimize objective whose nadir reference is *larger* than
+        # every point (e.g. a user cost/latency reference), so ``uniform(ref,
+        # max+1)`` samples a thin sliver and ``abs()`` silently hides it.
+        lower_bounds: dict[str, float] = {}
+        upper_bounds: dict[str, float] = {}
+        for obj in objectives:
+            values = [point.objectives[obj] for point in pareto_front]
+            maximize = self.maximize.get(obj, True)
 
-        max_point = {
-            obj: max(point.objectives[obj] for point in pareto_front) + 1
-            for obj in objectives
-        }
+            if reference_point is not None and obj in reference_point:
+                nadir = reference_point[obj]
+            else:
+                nadir = (min(values) - 1) if maximize else (max(values) + 1)
+
+            ideal = (max(values) + 1) if maximize else (min(values) - 1)
+
+            # For maximize the ideal is the high end; for minimize it is the low
+            # end. Order the bounds so the draw is always over a valid range.
+            lower_bounds[obj], upper_bounds[obj] = (
+                (nadir, ideal) if maximize else (ideal, nadir)
+            )
 
         # Monte Carlo sampling
         dominated_count = 0
         for _ in range(self.num_samples):
             # Generate random point in search space
             sample_point = {
-                obj: self._rng.uniform(ref_point[obj], max_point[obj])
+                obj: self._rng.uniform(lower_bounds[obj], upper_bounds[obj])
                 for obj in objectives
             }
 
@@ -268,7 +309,7 @@ class ParetoFrontCalculator:
         # Calculate volume of search space
         total_volume = 1.0
         for obj in objectives:
-            total_volume *= abs(max_point[obj] - ref_point[obj])
+            total_volume *= abs(upper_bounds[obj] - lower_bounds[obj])
 
         # Approximate hypervolume
         hypervolume = (dominated_count / self.num_samples) * total_volume

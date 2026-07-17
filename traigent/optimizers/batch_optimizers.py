@@ -9,6 +9,7 @@ including parallel optimization, multi-objective batch optimization, and distrib
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -519,11 +520,18 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 dataset,  # type: ignore[arg-type]
             )
 
-            # Extract objective scores
+            # Extract objective scores. A metric the evaluator omitted must NOT
+            # default to 0.0 (#1944): for a minimize objective (cost/latency)
+            # 0.0 is the *best* possible value, so a metric-incomplete trial
+            # would falsely dominate complete trials and evict them from the
+            # frontier. Default to the orientation-*worst* sentinel instead so a
+            # missing metric can never win on that objective.
             objective_scores = {}
             metrics = evaluation_result.metrics or {}
             for objective in self.objectives:
-                objective_scores[objective] = metrics.get(objective, 0.0)
+                should_maximize = self.objective_directions.get(objective, True)
+                worst = float("-inf") if should_maximize else float("inf")
+                objective_scores[objective] = metrics.get(objective, worst)
 
             # Calculate composite score using weighted averaging
             # Import the scalarize_objectives function for proper weighted scoring
@@ -606,11 +614,60 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             # Add new trial
             self.pareto_frontier.append(new_trial)
 
-            # Maintain frontier size limit
-            if len(self.pareto_frontier) > self.pareto_frontier_size:
-                # Remove trial with lowest composite score
-                self.pareto_frontier.sort(key=lambda t: t.score, reverse=True)
-                self.pareto_frontier = self.pareto_frontier[: self.pareto_frontier_size]
+            # Maintain frontier size limit by pruning the *least diverse*
+            # points, not the lowest composite score (#1942). Every member is
+            # mutually non-dominated, so trimming by descending ``t.score`` would
+            # silently evict Pareto-optimal trade-off extremes (e.g. the
+            # cost-minimal corner) and collapse the frontier toward the
+            # highest-scalar corner. Crowding distance (NSGA-II) assigns the
+            # boundary points infinite distance, so the extremes are retained.
+            while len(self.pareto_frontier) > self.pareto_frontier_size:
+                distances = self._crowding_distances(self.pareto_frontier)
+                most_crowded = min(
+                    range(len(self.pareto_frontier)),
+                    key=lambda i: distances[i],
+                )
+                self.pareto_frontier.pop(most_crowded)
+
+    def _crowding_distances(self, trials: list[Trial]) -> list[float]:
+        """Compute NSGA-II crowding distance for each trial on the frontier.
+
+        Boundary points (min/max on any objective) receive ``inf`` so the
+        trade-off extremes are never pruned; interior points accumulate the
+        normalized gap to their neighbours per objective. Higher = more
+        isolated = more valuable to keep for diversity.
+        """
+        n = len(trials)
+        if n <= 2:
+            # With two or fewer points every point is a boundary extreme.
+            return [float("inf")] * n
+
+        distances = [0.0] * n
+        for objective in self.objectives:
+            values = [
+                t.metadata.get("objective_scores", {}).get(objective, 0.0)
+                for t in trials
+            ]
+            order = sorted(range(n), key=lambda i: values[i])
+
+            # Boundary points are the diversity extremes — always keep them.
+            distances[order[0]] = float("inf")
+            distances[order[-1]] = float("inf")
+
+            span = values[order[-1]] - values[order[0]]
+            if span <= 0 or not math.isfinite(span):
+                # Degenerate/undefined spread on this objective — skip it rather
+                # than inject NaN/inf into interior distances.
+                continue
+
+            for k in range(1, n - 1):
+                idx = order[k]
+                if math.isinf(distances[idx]):
+                    continue
+                gap = values[order[k + 1]] - values[order[k - 1]]
+                distances[idx] += gap / span
+
+        return distances
 
     def _dominates(self, scores1: dict[str, float], scores2: dict[str, float]) -> bool:
         """Check if scores1 dominates scores2 (all objectives better or equal, at least one strictly better)."""
@@ -621,11 +678,15 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         at_least_one_better = False
 
         for objective in self.objectives:
-            score1 = scores1.get(objective, 0.0)
-            score2 = scores2.get(objective, 0.0)
-
             # Check if we should maximize (True) or minimize (False) this objective
             should_maximize = self.objective_directions.get(objective, True)
+
+            # Default a missing objective to the orientation-*worst* sentinel,
+            # never 0.0 (#1944) — for a minimize objective 0.0 is the best value,
+            # which would let a metric-incomplete trial falsely dominate.
+            worst = float("-inf") if should_maximize else float("inf")
+            score1 = scores1.get(objective, worst)
+            score2 = scores2.get(objective, worst)
 
             if should_maximize:
                 # Higher is better
