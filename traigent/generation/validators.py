@@ -55,14 +55,11 @@ MAX_EXAMPLE_CHARS = 20000
 #   0xE0000        reserved (language tag block)
 #   0xE0002-0xE001F   reserved (language tag block)
 #   0xE0080-0xE0FFF   VARIATION SELECTOR-17..256 (Mn) + reserved tag block
-# Deliberate remainder (not stripped): DICP is a general-purpose "renders
-# invisibly" property; the language-tag block's *assigned* subrange
-# U+E0020-U+E007F (which spells out an actual BCP-47 tag) carries semantic
-# content rather than being a pure obfuscation vector, and sits outside the
-# ranges above (which straddle but do not include it). We do not strip it:
-# no known marker-splitting attack in this threat model relies on tag
-# characters, and stripping meaningful tag content would be a correctness
-# footgun for no security benefit here.
+# The language-tag block's *assigned* subrange U+E0020-U+E007F sits outside
+# the ranges above, but that is NOT a scan exception: tag characters are
+# general category Cf, so the category-based strip removes them before
+# marker matching (pinned by the tag-character regression test). The ranges
+# above only need to cover the non-Cf remainder of DICP.
 _NON_CF_DEFAULT_IGNORABLE_RANGES: tuple[tuple[int, int], ...] = (
     (0x034F, 0x034F),
     (0x115F, 0x1160),
