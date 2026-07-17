@@ -737,5 +737,113 @@ class TestDocumentationCompleteness(unittest.TestCase):
         )
 
 
+class TestPublicDocsAccuracyRegressions(unittest.TestCase):
+    """Regression guards for public-doc accuracy fixes (SDK#1903/#1904/#1907)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.project_root = PROJECT_ROOT
+        cls.readme_path = cls.project_root / "README.md"
+        cls.injection_modes_path = (
+            cls.project_root / "docs" / "user-guide" / "injection_modes.md"
+        )
+
+    def test_readme_api_key_export_uses_straight_ascii_quotes(self):
+        """SDK#1903: the API-key export must use straight ASCII quotes, not curly ones."""
+        content = self.readme_path.read_text(encoding="utf-8")
+        export_lines = [
+            line for line in content.splitlines() if "export TRAIGENT_API_KEY=" in line
+        ]
+        self.assertTrue(export_lines, "API-key export instruction not found in README")
+        for line in export_lines:
+            # U+201C / U+201D are the curly smart-quote characters.
+            self.assertNotIn("“", line, f"Curly opening quote in: {line!r}")
+            self.assertNotIn("”", line, f"Curly closing quote in: {line!r}")
+            self.assertIn('TRAIGENT_API_KEY="sk_', line)
+
+    def test_public_docs_advertise_only_catalog_model_ids(self):
+        """SDK#1904: public examples must advertise real catalog model IDs.
+
+        Earlier this guard was a two-literal denylist (``claude-2`` /
+        ``gemini-pro``). That let non-catalog stand-ins slip through: e.g.
+        ``claude-3-sonnet`` satisfies the anthropic provider regex in
+        ``models.yaml`` yet is absent from ``known_models`` (only the dated
+        ``claude-3-sonnet-20240229`` exists), and ``gemini/gemini-pro`` is not a
+        catalog ID at all. Instead of a hand-maintained denylist we parse the
+        model registry (``traigent/config/models.yaml``) and require every model
+        ID advertised in the public injection-mode and README examples to be an
+        exact ``known_models`` member. Exact membership — not a bare pattern
+        match — is required precisely because retired IDs can still satisfy a
+        provider's permissive regex.
+        """
+        from traigent.config.provider_support import load_models_yaml
+
+        try:
+            registry = load_models_yaml()
+        except ImportError:  # pragma: no cover - PyYAML is a dev/extra dep only
+            self.skipTest("PyYAML unavailable; model registry check skipped")
+
+        if not registry:
+            self.skipTest("model registry (models.yaml) missing or unparseable")
+
+        known_models = {
+            model_id
+            for provider in registry.values()
+            if isinstance(provider, dict)
+            for model_id in provider.get("known_models", [])
+        }
+        # Sanity-check the registry actually parsed before trusting the guard.
+        self.assertIn(
+            "gpt-4o", known_models, "model registry parsed without known_models"
+        )
+
+        model_list_re = re.compile(r'"model"\s*:\s*\[([^\]]*)\]')
+        default_re = re.compile(r'\.get\(\s*"model"\s*,\s*"([^"]+)"\s*\)')
+        quoted_re = re.compile(r'"([^"]+)"')
+
+        offenders = []
+        for doc_path in (self.injection_modes_path, self.readme_path):
+            content = doc_path.read_text(encoding="utf-8")
+            advertised = set()
+            for list_body in model_list_re.findall(content):
+                advertised.update(quoted_re.findall(list_body))
+            advertised.update(default_re.findall(content))
+            for model_id in sorted(advertised):
+                if model_id not in known_models:
+                    offenders.append(f"{doc_path.name}: {model_id}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Public docs advertise model IDs absent from "
+            f"traigent/config/models.yaml known_models: {offenders}",
+        )
+
+    def test_readme_cli_cheatsheet_results_is_a_group(self):
+        """SDK#1907: the cheat-sheet must not call bare `traigent results` a listing command."""
+        from traigent.cli.main import results
+
+        # Ground truth: `results` is a Click command group with no default
+        # subcommand, and `list` is the subcommand that lists past runs.
+        self.assertTrue(
+            hasattr(results, "commands"),
+            "`traigent results` should be a Click command group",
+        )
+        self.assertIn("list", results.commands)
+        self.assertFalse(
+            getattr(results, "invoke_without_command", False),
+            "`traigent results` has no default subcommand; bare invocation shows help",
+        )
+
+        content = self.readme_path.read_text(encoding="utf-8")
+        # The bare group must not be documented as if it lists past runs.
+        self.assertNotRegex(
+            content,
+            r"traigent results\s+#\s*List past runs",
+            "README cheat-sheet still describes bare `traigent results` as a listing command",
+        )
+        self.assertRegex(content, r"traigent results list\s+#\s*List past runs")
+
+
 if __name__ == "__main__":
     unittest.main()
