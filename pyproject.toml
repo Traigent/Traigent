@@ -129,12 +129,12 @@ visualization = [
 hybrid = [
     "httpx[http2]>=0.24.0",
     "claude-code-sdk>=0.0.14",
-    "mcp>=1.27.0",  # CVE-2025-66416, AIKIDO-2026-10472 fix (claude-code-sdk dependency)
+    "mcp>=1.28.1,<2.0.0",  # CVE-2025-66416, AIKIDO-2026-10472, CVE-2026-59950, CVE-2026-52870 (claude-code-sdk dependency)
 ]
 
 # Local stdio MCP server for coding agents.
 mcp = [
-    "mcp>=1.27.0",
+    "mcp>=1.28.1,<2.0.0",  # CVE-2026-59950 (websocket Host/Origin), CVE-2026-52870 (task-handler session scoping)
 ]
 
 # Internal schema validation support for DTO strict-validation paths.
