@@ -111,6 +111,12 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
     ),
     "anthropic": frozenset(
         {
+            # Current SDK default fallback IDs (#1936) — keep in sync with
+            # parameter_ranges.Choices.model / providers._FALLBACK_MODELS so the
+            # SDK never warns "unknown" on its own defaults.
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
             # Claude 4 series (2025)
             "claude-sonnet-4-20250514",
             "claude-opus-4-20250514",
@@ -133,8 +139,7 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "gemini-1.5-pro-latest",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
-            "gemini-1.0-pro",
-            "gemini-pro",
+            # Retired gemini-1.0-pro / gemini-pro pruned (#1936).
         }
     ),
     "mistral": frozenset(
