@@ -17,7 +17,8 @@ resolve to ``LOCAL_ONLY`` and ``_try_cloud_execution`` is skipped.
 from __future__ import annotations
 
 import itertools
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -26,6 +27,8 @@ from traigent.api.types import (
     OptimizationResult,
     OptimizationStatus,
 )
+from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.core.session_types import SessionCreationResult
 from traigent.config.types import (
     ExecutionIntent,
     ExecutionMode,
@@ -357,3 +360,130 @@ class TestRuntimeGridExhaustiveEndToEnd:
             f"missing/extra grid cells. got={set(recorded)} "
             f"expected={_EXPECTED_CONFIGS}"
         )
+
+
+class _TrackedFakeBackendClient:
+    """Backend TRACKING client stub for #1938: mints trial slots until
+    ``complete_after``, then reports ``optimization_complete``
+    (``max_trials_reached``) — the exact server-side truncation the issue
+    observed on connected grid runs."""
+
+    def __init__(self, complete_after: int) -> None:
+        self.complete_after = complete_after
+        self.slot_calls = 0
+        self.submitted: list[dict] = []
+        self.created_metadata: dict | None = None
+        self.no_egress = False
+        self.cloud_egress_intent = False
+        self.enable_fallback = False
+        self.local_storage = None
+        auth = Mock()
+        auth.has_api_key = Mock(return_value=True)
+        self.auth_manager = auth
+        self.auth = auth
+        self.submit_result = Mock()
+
+    def create_session(
+        self,
+        function_name,
+        search_space,
+        optimization_goal,
+        metadata=None,
+        **kwargs,
+    ):
+        self.created_metadata = dict(metadata or {})
+        return SessionCreationResult.connected(session_id="bs-1938")
+
+    def get_session_mapping(self, session_id):
+        return SimpleNamespace(experiment_id="exp-1938", experiment_run_id="run-1938")
+
+    def request_trial_slot(self, session_id):
+        self.slot_calls += 1
+        if self.slot_calls > self.complete_after:
+            return SimpleNamespace(
+                trial_id=None,
+                optimization_complete=True,
+                reason="max_trials_reached",
+            )
+        return f"bt-{self.slot_calls}"
+
+    def _submit_trial_result_via_session(self, **kwargs):
+        self.submitted.append(kwargs)
+        return True
+
+
+class TestTrackedGridSurvivesBackendCompletion1938:
+    """#1938 TRACKED variant: a real backend tracking session that closes
+    early (``max_trials_reached``) must NOT truncate the local grid — the run
+    completes the full enumeration, stops hammering the closed session, and
+    marks backend tracking as partial."""
+
+    @pytest.mark.asyncio
+    async def test_tracked_grid_completes_enumeration_when_backend_closes_early(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_API_KEY", "tg-fake-portal-key-1938")
+        monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+        monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
+
+        # The backend truncates after 2 of the 6 grid cells — the issue's
+        # observed "~4 of 18" pattern, scaled down.
+        fake = _TrackedFakeBackendClient(complete_after=2)
+
+        @traigent.optimize(
+            eval_dataset=_dataset(),
+            objectives=["accuracy"],
+            configuration_space=_GRID_SPACE,
+            injection_mode="parameter",
+        )
+        def answer(text: str, config) -> str:
+            return "ok"
+
+        with (
+            patch.object(
+                BackendSessionManager,
+                "create_backend_client",
+                staticmethod(lambda _config: fake),
+            ),
+            patch(
+                "traigent.optimizers.interactive_optimizer.InteractiveOptimizer"
+            ) as MockInteractive,
+            patch("traigent.cloud.client.TraigentCloudClient") as MockClient,
+        ):
+            result = await answer.optimize(algorithm="grid")
+
+        # Grid stayed local: no cloud optimization session.
+        MockInteractive.assert_not_called()
+        MockClient.assert_not_called()
+
+        assert isinstance(result, OptimizationResult)
+        assert result.status is OptimizationStatus.COMPLETED
+
+        # THE regression: every grid cell evaluated exactly once despite the
+        # backend closing the tracking session after 2 slots.
+        recorded = [_config_key(t.config) for t in result.trials]
+        assert len(recorded) == len(_EXPECTED_CONFIGS), (
+            f"backend completion truncated the grid: got {len(recorded)} of "
+            f"{len(_EXPECTED_CONFIGS)} trials: {recorded}"
+        )
+        assert len(set(recorded)) == len(recorded), f"duplicate configs: {recorded}"
+        assert set(recorded) == _EXPECTED_CONFIGS
+
+        # The closed session was not hammered: 2 minted slots + exactly one
+        # completion response, then zero further remote attempts.
+        assert fake.slot_calls == 3
+        assert len(fake.submitted) == 2
+
+        # Result is honest about partial backend coverage.
+        assert result.metadata.get("backend_tracking") == "partial"
+        assert result.metadata.get("persistence_status") == "degraded"
+
+        # #1938 session-create contract: client-owned sequencing declared, and
+        # the wire budget is the PLANNED local trial count (grid size 6 — the
+        # decorator's default cap of 10 must not overstate the plan).
+        assert fake.created_metadata is not None
+        assert fake.created_metadata.get("trial_sequencing") == "client"
+        assert fake.created_metadata.get("client_algorithm") == "grid"
+        assert fake.created_metadata.get("max_trials") == len(_EXPECTED_CONFIGS)

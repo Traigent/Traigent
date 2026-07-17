@@ -21,10 +21,11 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.config.types import TraigentConfig
+from traigent.config.types import ExecutionIntent, TraigentConfig
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
+    from traigent.storage.local_storage import LocalStorageManager
 
 from traigent.config.backend_config import get_no_credentials_hint
 from traigent.core.execution_policy_runtime import (
@@ -662,6 +663,22 @@ class BackendSessionManager:
         self._degraded_warning_emitted: bool = False
         self._backend_rejection_reason: str | None = None
 
+        # Issue #1939: the LOCAL session store must exist independently of any
+        # backend client — offline runs have no BackendIntegratedClient, yet
+        # they must persist a syncable session so `traigent sync` can upload
+        # them later. Lazily initialized; a storage failure never breaks a run.
+        self._local_storage_manager: LocalStorageManager | None = None
+        self._local_storage_init_failed: bool = False
+
+        # Issue #1938: backend sessions the backend declared complete while the
+        # LOCAL optimizer still owns sequencing (connected grid/random). Once a
+        # session lands here, all further remote slot/result/finalize attempts
+        # for it are skipped — the local enumeration continues to completion
+        # and trials keep persisting locally (sync-eligible later).
+        self._remote_completed_sessions: set[str] = set()
+        self._remote_early_complete_reason: str | None = None
+        self._remote_early_complete_warned: bool = False
+
     @property
     def backend_tracking_enabled(self) -> bool:
         """Whether remote backend tracking is active for this run."""
@@ -686,6 +703,30 @@ class BackendSessionManager:
             self._traigent_config, "fallback_reason", None
         )
 
+    @property
+    def backend_remote_early_complete(self) -> bool:
+        """Whether the backend closed a session while local sequencing was active.
+
+        True marks a run with PARTIAL backend tracking (#1938): the local
+        enumeration finished, but trials after the backend-side completion were
+        persisted locally only.
+        """
+        return bool(getattr(self, "_remote_completed_sessions", None))
+
+    def _remote_session_completed(self, session_id: str | None) -> bool:
+        """Whether the backend already declared ``session_id`` complete (#1938).
+
+        getattr-based like ``_egress_disabled`` so partially-constructed
+        instances (tests build the manager via ``__new__``) stay supported.
+        """
+        completed = getattr(self, "_remote_completed_sessions", None)
+        return bool(completed and session_id is not None and session_id in completed)
+
+    @property
+    def backend_remote_early_complete_reason(self) -> str | None:
+        """Backend-supplied reason for the early session completion, if any."""
+        return self._remote_early_complete_reason
+
     def _egress_disabled(self) -> bool:
         """Return true when this manager must not touch backend egress paths."""
 
@@ -693,6 +734,72 @@ class BackendSessionManager:
             return True
         config = getattr(self, "_traigent_config", None)
         return bool(config is not None and backend_egress_disabled(config))
+
+    def _local_storage(self) -> LocalStorageManager | None:
+        """Own local-storage handle, independent of any backend client (#1939).
+
+        The offline orchestrator never initializes a BackendIntegratedClient,
+        so the session manager needs a first-class LocalStorageManager built
+        from ``config.get_local_storage_path()``. Lazy + best-effort: a storage
+        failure is logged once and never breaks the optimization run.
+        """
+        if self._local_storage_manager is not None or self._local_storage_init_failed:
+            return self._local_storage_manager
+        try:
+            from traigent.storage.local_storage import LocalStorageManager
+
+            self._local_storage_manager = LocalStorageManager(
+                self._traigent_config.get_local_storage_path()
+            )
+        except Exception as exc:
+            self._local_storage_init_failed = True
+            logger.warning(
+                "Local session storage unavailable; this run will not produce "
+                "a syncable local session: %s",
+                exc,
+            )
+        return self._local_storage_manager
+
+    def _local_sequencing_active(self) -> bool:
+        """True when the LOCAL optimizer owns trial sequencing and stop (#1938).
+
+        Resolved-intent guard (never algorithm-name strings): connected
+        grid/random resolve to ``LOCAL_ONLY`` with ``offline=False``. For these
+        runs the backend is a tracking sink — its ``optimization_complete``
+        must not terminate the local enumeration. Offline runs never reach
+        remote submission; cloud-brain / cloud-required runs keep full backend
+        authority over completion.
+        """
+        policy = policy_from_config(self._traigent_config)
+        return bool(
+            policy is not None
+            and policy.intent is ExecutionIntent.LOCAL_ONLY
+            and not policy.offline
+        )
+
+    def _note_remote_early_completion(self, session_id: str, reason: Any) -> None:
+        """Record a backend-side completion for a locally-sequenced run (#1938).
+
+        Warns exactly once, and marks the session so every subsequent remote
+        slot/result/finalize attempt is skipped (a server-side-closed session
+        must not be hammered). Local persistence of subsequent trials is
+        unaffected — they stay sync-eligible via ``traigent sync``.
+        """
+        self._remote_completed_sessions.add(session_id)
+        if reason is not None and self._remote_early_complete_reason is None:
+            self._remote_early_complete_reason = str(reason)
+        if self._remote_early_complete_warned:
+            return
+        self._remote_early_complete_warned = True
+        logger.warning(
+            "⚠️  Backend closed tracking session %s early (reason=%s), but this "
+            "run's sequencing is LOCAL — continuing the full local enumeration. "
+            "Remaining trials are persisted locally and are NOT tracked live on "
+            "the backend; portal coverage for this run is PARTIAL. Upload the "
+            "locally-persisted results later with `traigent sync`.",
+            session_id,
+            reason,
+        )
 
     @staticmethod
     def _cost_budget_is_armed(cost_limit: float | None) -> bool:
@@ -1150,8 +1257,18 @@ class BackendSessionManager:
         function_slug = function_descriptor.slug
 
         if self._egress_disabled():
+            # #1939: offline/no-egress runs still persist a LOCAL session so
+            # `traigent local list` sees them and `traigent sync` can upload
+            # them later. Best-effort — a storage failure yields session_id
+            # None exactly like the legacy behavior.
+            local_session_id = self._create_offline_local_session(
+                function_identifier=function_identifier,
+                function_display_name=function_display_name,
+                dataset=dataset,
+                max_trials=max_trials,
+            )
             return SessionContext(
-                session_id=None,
+                session_id=local_session_id,
                 dataset_name=(getattr(dataset, "name", None) or "default_evaluation"),
                 function_name=function_identifier,
                 optimization_id=self._optimization_id,
@@ -1194,6 +1311,14 @@ class BackendSessionManager:
                 "function_slug": function_slug,
                 "evaluation_set": evaluation_set_name,
             }
+            # #1938: declare client-owned sequencing so the backend knows this
+            # session is a tracking sink for a locally-enumerated run
+            # (connected grid/random), not a backend-guided optimization.
+            if self._local_sequencing_active():
+                _local_policy = policy_from_config(self._traigent_config)
+                session_metadata["trial_sequencing"] = "client"
+                if _local_policy is not None:
+                    session_metadata["client_algorithm"] = _local_policy.algorithm
             if agent_configuration is not None:
                 session_metadata["agent_configuration"] = agent_configuration.to_dict()
             if self._strategy_preset_metadata is not None:
@@ -1315,6 +1440,109 @@ class BackendSessionManager:
             start_time=start_time,
         )
 
+    def _create_offline_local_session(
+        self,
+        *,
+        function_identifier: str,
+        function_display_name: str | None,
+        dataset: Dataset,
+        max_trials: int | None,
+    ) -> str | None:
+        """Create the syncable LOCAL session for a no-egress run (#1939).
+
+        Mirrors the shape ``session_operations`` writes for connected local
+        mirrors so ``traigent local list`` / ``traigent sync`` treat both
+        uniformly. The id is minted by ``LocalStorageManager.create_session``
+        (timestamp+uuid) — no custom scheme. Returns None on storage failure.
+        """
+        storage = self._local_storage()
+        if storage is None:
+            return None
+        policy = policy_from_config(self._traigent_config)
+        evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
+        try:
+            optimization_config: dict[str, Any] = {
+                "search_space": dict(
+                    getattr(self._optimizer, "config_space", {}) or {}
+                ),
+                "optimization_goal": "maximize",
+                "baseline_config": None,
+                "objectives": list(self._objectives or []),
+            }
+            metadata: dict[str, Any] = {
+                "optimization_id": self._optimization_id,
+                "max_trials": max_trials,
+                "dataset_size": len(dataset),
+                "function_name": function_identifier,
+                "function_display_name": function_display_name,
+                "evaluation_set": evaluation_set_name,
+                "execution_mode": "offline",
+                "offline": True,
+                "algorithm": getattr(policy, "algorithm", None),
+                "created_with_version": get_version(),
+            }
+            session_id = storage.create_session(
+                function_name=function_identifier,
+                optimization_config=optimization_config,
+                metadata=metadata,
+            )
+            logger.info(
+                "Created offline local session %s (upload later with `traigent sync`)",
+                session_id,
+            )
+            return str(session_id)
+        except Exception as exc:
+            logger.warning(
+                "Failed to create offline local session for %s; this run will "
+                "not be syncable: %s",
+                function_identifier,
+                exc,
+            )
+            return None
+
+    def finalize_local_session(
+        self,
+        session_id: str | None,
+        optimization_status: OptimizationStatus,
+    ) -> None:
+        """Flip the LOCAL session record to a terminal status (#1939).
+
+        Connected, tracking-enabled runs finalize their local mirror through
+        the backend client's own finalize path; this covers every run whose
+        backend finalize will NOT happen — offline / egress disabled /
+        tracking disabled / backend-closed-early (#1938) — so `traigent sync`
+        sees a finished, sync-eligible session instead of one stuck at
+        "pending". Best-effort: storage failures never break the run.
+        """
+        if not session_id:
+            return
+        remote_finalize_owns_mirror = (
+            self._backend_client is not None
+            and self._backend_tracking_enabled
+            and not self._egress_disabled()
+            and not self._remote_session_completed(session_id)
+        )
+        if remote_finalize_owns_mirror:
+            return
+        storage = self._local_storage()
+        if storage is None:
+            return
+        if optimization_status == OptimizationStatus.COMPLETED:
+            local_status = OptimizationStatus.COMPLETED.value
+        elif optimization_status == OptimizationStatus.CANCELLED:
+            local_status = OptimizationStatus.CANCELLED.value
+        else:
+            local_status = OptimizationStatus.FAILED.value
+        try:
+            storage.finalize_session(session_id, local_status)
+        except Exception as exc:
+            logger.warning(
+                "Failed to finalize local session %s as %s: %s",
+                session_id,
+                local_status,
+                exc,
+            )
+
     def update_backend_client(
         self, backend_client: BackendIntegratedClient | None
     ) -> None:
@@ -1423,7 +1651,7 @@ class BackendSessionManager:
             optimization-complete outcome when the backend gracefully closed the
             cloud run.
         """
-        if self._egress_disabled() or not self._backend_client or not session_id:
+        if not session_id:
             return False
 
         _ = content_scores
@@ -1443,12 +1671,17 @@ class BackendSessionManager:
         if self._strategy_preset_metadata is not None:
             trial_metadata["strategy_preset"] = dict(self._strategy_preset_metadata)
 
+        # #1939: the LOCAL write is unconditional — offline runs must produce a
+        # syncable session. Only the REMOTE submission below is egress-gated.
         self._persist_trial_locally(
             session_id=session_id,
             trial_result=trial_result,
             score=score,
             metadata=trial_metadata,
         )
+
+        if self._egress_disabled() or not self._backend_client:
+            return False
 
         if not self._backend_tracking_enabled:
             backend_disabled_label = _backend_disabled_label(
@@ -1479,9 +1712,16 @@ class BackendSessionManager:
         score: float | None,
         metadata: dict[str, Any],
     ) -> None:
-        """Record local analytics before any remote backend breaker can short-circuit."""
+        """Record the trial locally before any remote breaker can short-circuit.
 
-        if self._egress_disabled() or not self._backend_client or not session_id:
+        #1939: the local write is NOT egress-gated. Connected runs keep the
+        legacy path through the backend client's fallback storage (which also
+        maintains its in-memory session counters); offline / no-client /
+        egress-disabled runs write through the manager's own local store so the
+        trial stays durable and sync-eligible.
+        """
+
+        if not session_id:
             return
 
         sanitized_score = float(score) if score is not None else None
@@ -1489,20 +1729,44 @@ class BackendSessionManager:
         if score is None:
             metadata_payload["primary_objective_missing"] = True
 
+        if self._backend_client is not None and not self._egress_disabled():
+            try:
+                self._backend_client.submit_result(
+                    session_id=session_id,
+                    config=trial_result.config,
+                    score=sanitized_score,
+                    metadata=metadata_payload,
+                )
+            except Exception as exc:
+                # #1279: a failed local write means the trial's only record is
+                # the breaker-gated remote submit — if that also fails the
+                # completed (paid-for) trial is lost. Never silent.
+                logger.warning(
+                    "Local trial logging failed for session %s trial %s — trial "
+                    "has no durable local record if the remote submit also "
+                    "fails: %s",
+                    session_id,
+                    trial_result.trial_id,
+                    exc,
+                )
+            return
+
+        storage = self._local_storage()
+        if storage is None:
+            return
         try:
-            self._backend_client.submit_result(
+            storage.add_trial_result(
                 session_id=session_id,
-                config=trial_result.config,
+                config=dict(trial_result.config or {}),
                 score=sanitized_score,
                 metadata=metadata_payload,
+                error=trial_result.error_message,
             )
         except Exception as exc:
-            # #1279: a failed local write means the trial's only record is the
-            # breaker-gated remote submit — if that also fails the completed
-            # (paid-for) trial is lost. This must never be silent.
+            # Offline runs have no remote fallback at all — a dropped local
+            # write is the trial's only record vanishing. Never silent.
             logger.warning(
-                "Local trial logging failed for session %s trial %s — trial has "
-                "no durable local record if the remote submit also fails: %s",
+                "Local trial persistence failed for session %s trial %s: %s",
                 session_id,
                 trial_result.trial_id,
                 exc,
@@ -1591,6 +1855,19 @@ class BackendSessionManager:
             return None
 
         if not self._backend_tracking_enabled:
+            return None
+
+        if self._remote_session_completed(session_id):
+            # #1938: the backend already declared this session complete while
+            # the local optimizer kept sequencing — do not hammer the closed
+            # session with further slot/result requests. The trial was already
+            # persisted locally by _persist_trial_locally.
+            logger.debug(
+                "Skipping remote submission for session %s trial %s "
+                "(backend already reported optimization complete)",
+                session_id,
+                trial_result.trial_id,
+            )
             return None
 
         sanitized_score = float(score) if score is not None else None
@@ -1701,6 +1978,14 @@ class BackendSessionManager:
             # owns the config; the slot is purely the backend's trial handle.
             acquisition = await self._acquire_backend_trial_id(session_id, trial_result)
             if acquisition.optimization_complete:
+                if self._local_sequencing_active():
+                    # #1938: connected grid/random — the LOCAL optimizer owns
+                    # sequencing and stop. The backend's completion closes the
+                    # remote tracking session only; it must not truncate the
+                    # local enumeration. Non-terminal: warn once, stop remote
+                    # attempts for this session, keep persisting locally.
+                    self._note_remote_early_completion(session_id, acquisition.reason)
+                    return None
                 logger.info(
                     "Backend reported optimization complete for session %s while "
                     "submitting client trial %s (reason=%s)",
@@ -1828,6 +2113,7 @@ class BackendSessionManager:
             self._egress_disabled()
             or not self._backend_client
             or session_id is None
+            or self._remote_session_completed(session_id)
             or len(self._objectives) <= 1
         ):
             return 0
@@ -2081,6 +2367,7 @@ class BackendSessionManager:
             self._egress_disabled()
             or not self._backend_client
             or session_id is None
+            or self._remote_session_completed(session_id)
             or self._traigent_config.is_local_mode()
             or not self._backend_tracking_enabled
         ):
@@ -2198,11 +2485,16 @@ class BackendSessionManager:
         ):
             return None
 
-        if (
-            not self._backend_client
-            or session_id is None
-            or not self._backend_tracking_enabled
-        ):
+        if self._remote_session_completed(session_id):
+            # #1938: the backend already terminally closed this session while
+            # the local optimizer kept sequencing — a remote finalize would hit
+            # a server-side-completed session. Skip it; local finalization is
+            # handled by finalize_local_session.
+            logger.debug(
+                "Skipping backend finalize for session %s "
+                "(backend already reported optimization complete)",
+                session_id,
+            )
             return None
 
         final_status = (
