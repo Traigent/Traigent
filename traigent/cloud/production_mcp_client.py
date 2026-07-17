@@ -19,12 +19,21 @@ from typing import Any, cast
 
 # Optional dependencies
 try:
-    from mcp import ClientSession, StdioServerParameters
+    from mcp import ClientSession, McpError, StdioServerParameters
     from mcp.client.stdio import StdioClientTransport
 
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
+
+    class McpError(Exception):  # type: ignore[no-redef]
+        """Stub MCP error when the ``mcp`` package is not installed.
+
+        Never raised at runtime without ``mcp`` present; defined only so
+        ``except McpError`` clauses remain valid when MCP is unavailable.
+        """
+
+        pass
 
     # Mock MCP classes for type hints
     class ClientSession:  # type: ignore[no-redef]
@@ -411,8 +420,17 @@ class ProductionMCPClient:
             except Exception as e:
                 self._stats["failed_requests"] += 1
 
+                # Preserve the structured JSON-RPC error code (when the
+                # failure is an McpError) so the transport layer can classify
+                # not-found/expiry without sniffing the free-text message.
+                error_data = (
+                    {"error_code": e.error.code} if isinstance(e, McpError) else None
+                )
                 response = MCPResponse(
-                    success=False, error_message=str(e), request_id=operation_id
+                    success=False,
+                    error_message=str(e),
+                    data=error_data,
+                    request_id=operation_id,
                 )
 
                 if self.enable_fallback:
@@ -488,6 +506,16 @@ class ProductionMCPClient:
                 },
             )
 
+        except McpError as e:
+            # Preserve the structured JSON-RPC error code so the transport
+            # layer can classify not-found/unsupported without sniffing the
+            # human-readable message.
+            logger.error(f"Failed to read MCP resource {uri}: {e}")
+            return MCPResponse(
+                success=False,
+                error_message=e.error.message,
+                data={"error_code": e.error.code},
+            )
         except Exception as e:
             logger.error(f"Failed to read MCP resource {uri}: {e}")
             return MCPResponse(success=False, error_message=str(e))

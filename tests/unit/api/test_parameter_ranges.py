@@ -828,3 +828,40 @@ class TestAutoNamingFromKwargs:
         returned = _process_param_entry("model", ["a", "b"], result, defaults)
         assert returned is None
         assert result["model"] == ["a", "b"]
+
+
+class TestChoicesModelFallback:
+    """Fallback model table must not ship retired/404-ing IDs (#1932)."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_model_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Ensure TRAIGENT_MODELS_* env overrides don't mask the fallback table.
+        for provider in ("OPENAI", "DEFAULT"):
+            for tier in ("FAST", "BALANCED", "QUALITY"):
+                monkeypatch.delenv(f"TRAIGENT_MODELS_{provider}_{tier}", raising=False)
+
+    def test_openai_quality_fallback_excludes_retired_o1_preview(self) -> None:
+        models = Choices.model(provider="openai", tier="quality").to_list()
+        assert "o1-preview" not in models, (
+            "retired o1-preview must not be in the runtime fallback (#1932)"
+        )
+        assert models, "quality fallback must not be empty"
+
+    @pytest.mark.parametrize("tier", ["fast", "balanced", "quality"])
+    def test_openai_fallback_ids_are_in_shipped_snapshot(self, tier: str) -> None:
+        # Every OpenAI fallback ID must exist in the shipped known-models
+        # snapshot the SDK validates against, so it will not 404.
+        from traigent.providers.validation import _KNOWN_MODELS
+
+        snapshot = _KNOWN_MODELS["openai"]
+        models = Choices.model(provider="openai", tier=tier).to_list()
+        unknown = [m for m in models if m not in snapshot]
+        assert not unknown, (
+            f"OpenAI {tier} fallback ships IDs absent from the model "
+            f"snapshot: {unknown}"
+        )
+
+    def test_no_openai_tier_returns_o1_preview(self) -> None:
+        for tier in ("fast", "balanced", "quality"):
+            models = Choices.model(provider="openai", tier=tier).to_list()
+            assert "o1-preview" not in models
