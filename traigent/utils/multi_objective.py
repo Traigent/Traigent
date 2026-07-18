@@ -186,11 +186,28 @@ class ParetoFrontCalculator:
         if not pareto_front:
             return 0.0
 
-        if len(pareto_front[0].objectives) > 2:
-            # For > 2D, use approximation
-            return self._approximate_hypervolume(pareto_front, reference_point)
+        # Explicit mixed-completeness semantic (#1941 follow-up): with ragged
+        # metric sets, complete and partial points legitimately coexist on the
+        # front (they are non-comparable), but hypervolume is defined over the
+        # front's FULL objective space — so it is computed over the union of
+        # declared objectives using only the points complete in that space.
+        # A partial point contributes zero volume. Deriving the objective list
+        # from whichever point happened to be first made the result
+        # order-dependent: complete-first raised KeyError on the partial
+        # point; partial-first silently misclassified the front as
+        # lower-dimensional and returned a wrong (often 0.0) volume.
+        declared: set[str] = set()
+        for point in pareto_front:
+            declared.update(point.objectives)
+        complete_points = [p for p in pareto_front if declared <= set(p.objectives)]
+        if not complete_points:
+            return 0.0
 
-        return self._exact_hypervolume_2d(pareto_front, reference_point)
+        if len(declared) > 2:
+            # For > 2D, use approximation
+            return self._approximate_hypervolume(complete_points, reference_point)
+
+        return self._exact_hypervolume_2d(complete_points, reference_point)
 
     def _exact_hypervolume_2d(
         self, pareto_front: list[ParetoPoint], reference_point: dict[str, float] | None

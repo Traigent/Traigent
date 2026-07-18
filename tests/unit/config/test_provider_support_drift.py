@@ -237,18 +237,32 @@ class TestMappingOnlyValidatorStatus:
 # provider KEY-SETs, so every retired ID here passed CI green.
 RETIRED_MODEL_IDS = frozenset(
     {
-        # OpenAI o1 preview line (superseded)
+        # OpenAI o1 preview line (superseded), incl. dated aliases
         "o1-preview",
         "o1-mini",
-        # Anthropic Claude 3 Opus (retirement track)
+        "o1-preview-2024-09-12",
+        "o1-mini-2024-09-12",
+        # Anthropic Claude 3 Opus (retirement track), incl. -latest alias
         "claude-3-opus-20240229",
-        # Gemini 1.x (deprecated) + 2.0 preview
+        "claude-3-opus-latest",
+        # Gemini 1.x (deprecated) + 2.0 preview, incl. -latest and
+        # "models/"-prefixed aliases of the same retired models
         "gemini-1.5-flash",
         "gemini-1.5-flash-8b",
+        "gemini-1.5-flash-latest",
         "gemini-1.5-pro",
+        "gemini-1.5-pro-latest",
+        "models/gemini-1.5-flash",
+        "models/gemini-1.5-flash-latest",
+        "models/gemini-1.5-pro",
+        "models/gemini-1.5-pro-latest",
         "gemini-2.0-flash-exp",
+        "models/gemini-2.0-flash-exp",
         "gemini-1.0-pro",
         "gemini-pro",
+        "gemini-pro-vision",
+        "models/gemini-pro",
+        "models/gemini-pro-vision",
     }
 )
 
@@ -333,3 +347,23 @@ class TestModelCatalogCurrency:
         }
         missing = table_anthropic - yaml_anthropic
         assert not missing, f"Anthropic IDs absent from models.yaml catalog: {missing}"
+
+    def test_models_yaml_serves_no_retired_ids(self) -> None:
+        # config/models.yaml known_models is not just a recognition allowlist:
+        # BaseModelDiscovery.list_models() SERVES it as the discovery fallback
+        # when SDK discovery fails, so a retired ID here is *offered* as an
+        # available model (#1936/#1937). Explicit user references to swept
+        # versioned IDs still validate via each provider's regex pattern.
+        # No silent exemptions: a back-compat entry that must stay needs an
+        # inline models.yaml justification AND removal from RETIRED_MODEL_IDS
+        # with the reason recorded there.
+        config = ps.load_models_yaml()
+        offenders: dict[str, set[str]] = {}
+        for provider, provider_cfg in config.items():
+            if not isinstance(provider_cfg, dict):
+                continue
+            known = set(provider_cfg.get("known_models") or [])
+            hit = known & RETIRED_MODEL_IDS
+            if hit:
+                offenders[provider] = hit
+        assert not offenders, f"models.yaml serves retired model IDs: {offenders}"

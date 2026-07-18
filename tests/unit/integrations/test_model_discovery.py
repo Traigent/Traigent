@@ -360,11 +360,18 @@ class TestGeminiDiscovery:
         reset_global_cache()
 
     def test_pattern_validation_valid_models(self) -> None:
-        """Valid Gemini models should pass pattern validation."""
+        """Versioned Gemini IDs stay pattern-valid; dead 1.0 bare IDs do not.
+
+        #1936 swept the dead Gemini 1.0 family from the models.yaml catalog.
+        Versioned IDs (deprecated 1.5 included) still validate via the
+        ``^(gemini-[0-9]|models/gemini-)`` pattern for explicit user
+        references; the bare dead ``gemini-pro`` intentionally no longer
+        validates (it matches neither branch of the pattern).
+        """
         discovery = GeminiDiscovery()
 
         valid_models = [
-            "gemini-pro",
+            "gemini-2.0-flash",
             "gemini-1.5-pro",
             "gemini-1.5-flash",
             "models/gemini-pro",
@@ -373,6 +380,10 @@ class TestGeminiDiscovery:
 
         for model in valid_models:
             assert discovery.is_valid_model(model), f"Model {model} should be valid"
+
+        # Dead Gemini 1.0 bare ID: swept from the catalog and outside the
+        # pattern — must NOT validate (#1936).
+        assert not discovery.is_valid_model("gemini-pro")
 
     @patch("traigent.integrations.model_discovery.gemini_discovery.os.getenv")
     def test_sdk_discovery_without_api_key(self, mock_getenv: MagicMock) -> None:

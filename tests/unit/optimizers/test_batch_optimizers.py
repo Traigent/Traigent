@@ -1,6 +1,7 @@
 """Tests for batch optimization strategies."""
 
 import asyncio
+import math
 from datetime import UTC, datetime
 
 import pytest
@@ -1005,6 +1006,62 @@ class TestBatchDominanceMissingMetric:
         opt._update_pareto_frontier(_trial({"accuracy": 0.91}, score=0.91))
         frontier_scores = [t.metadata["objective_scores"] for t in opt.pareto_frontier]
         assert {"accuracy": 0.90, "cost": 0.5} in frontier_scores
+
+
+class TestZeroWeightMissingMetricRejection:
+    """Regression for the NaN scalarization leak (terra review of the #1944 fix).
+
+    With an ALLOWED zero objective weight, a missing metric's orientation-worst
+    sentinel (±inf) reached scalarization and ``0.0 * -inf`` produced NaN; the
+    frontier gate only checked ``score == -inf`` (every NaN comparison is
+    False), so the metric-incomplete trial entered the frontier and — inserted
+    first — ``max()`` could even SELECT it (NaN comparisons keep first place).
+    Metric-incomplete / non-finite trials must be rejected BEFORE
+    scalarization, and the frontier must admit finite scores only.
+    """
+
+    def _optimizer(self):
+        return MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+            objective_weights={"accuracy": 1.0, "cost": 0.0},
+        )
+
+    def test_zero_weighted_missing_metric_trial_is_rejected(self):
+        opt = self._optimizer()
+        # cost is MISSING and carries weight 0.0 — the old sentinel path
+        # scalarized 0.0 * inf into NaN; now the trial is rejected outright.
+        assert opt._compose_trial_scores({"accuracy": 0.9}) is None
+
+    def test_non_finite_metric_values_are_rejected(self):
+        opt = self._optimizer()
+        assert (
+            opt._compose_trial_scores({"accuracy": 0.9, "cost": float("nan")}) is None
+        )
+        assert (
+            opt._compose_trial_scores({"accuracy": 0.9, "cost": float("inf")}) is None
+        )
+
+    def test_complete_trial_composes_finite_score(self):
+        opt = self._optimizer()
+        composed = opt._compose_trial_scores({"accuracy": 0.9, "cost": 5.0})
+        assert composed is not None
+        scores, composite = composed
+        assert scores == {"accuracy": 0.9, "cost": 5.0}
+        assert math.isfinite(composite)
+
+    def test_nan_scored_trial_cannot_enter_frontier_or_win(self):
+        opt = self._optimizer()
+        # Inserted FIRST — under the old ``== -inf`` gate this NaN trial
+        # entered the frontier and max() kept it as the selected best.
+        nan_trial = _trial({"accuracy": 0.9, "cost": float("nan")}, score=float("nan"))
+        opt._update_pareto_frontier(nan_trial)
+        assert opt.pareto_frontier == []
+
+        good = _trial({"accuracy": 0.8, "cost": 5.0}, score=0.8)
+        opt._update_pareto_frontier(good)
+        assert opt.pareto_frontier == [good]
+        assert opt._select_best_from_pareto() is good
 
 
 class TestParetoFrontierTrimByCrowding:

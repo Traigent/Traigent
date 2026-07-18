@@ -580,43 +580,35 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 dataset,  # type: ignore[arg-type]
             )
 
-            # Extract objective scores. A metric the evaluator omitted must NOT
-            # default to 0.0 (#1944): for a minimize objective (cost/latency)
-            # 0.0 is the *best* possible value, so a metric-incomplete trial
-            # would falsely dominate complete trials and evict them from the
-            # frontier. Default to the orientation-*worst* sentinel instead so a
-            # missing metric can never win on that objective.
-            objective_scores = {}
-            metrics = evaluation_result.metrics or {}
-            for objective in self.objectives:
-                should_maximize = self.objective_directions.get(objective, True)
-                worst = float("-inf") if should_maximize else float("inf")
-                objective_scores[objective] = metrics.get(objective, worst)
-
-            # Calculate composite score using weighted averaging
-            # Import the scalarize_objectives function for proper weighted scoring
-            from traigent.utils.multi_objective import scalarize_objectives
-
-            # Get weights from config or use equal weights by default
-            objective_weights = getattr(self, "objective_weights", {})
-            if not objective_weights:
-                # Equal weights for all objectives if not specified
-                objective_weights = dict.fromkeys(self.objectives, 1.0)
-
-            # Use the scalarize_objectives function for proper weighted
-            # averaging, honoring objective orientation so minimize objectives
-            # (cost/latency/error) lower the composite instead of raising it
-            # (#1466). This keeps the composite consistent with the
-            # orientation-aware Pareto dominance in ``_dominates`` and the
-            # ``max(score)`` pick in ``_select_best_from_pareto``.
-            composite_score = scalarize_objectives(
-                objective_scores,
-                objective_weights,
-                minimize_objectives=self._minimize_objectives,
-            )
-
+            # Extract objective scores and scalarize, rejecting the trial
+            # outright when a metric is missing or non-finite (#1944 hardening).
+            composed = self._compose_trial_scores(evaluation_result.metrics or {})
             trial_duration = time.time() - trial_start
 
+            if composed is None:
+                metrics = evaluation_result.metrics or {}
+                missing = [o for o in self.objectives if o not in metrics]
+                logger.warning(
+                    "Multi-objective trial %s rejected: metric-incomplete or "
+                    "non-finite objectives (missing=%s) — a partial trial must "
+                    "never enter the Pareto frontier.",
+                    trial_idx,
+                    missing,
+                )
+                return Trial(
+                    configuration=config,
+                    score=float("-inf"),
+                    duration=trial_duration,
+                    metadata={
+                        "evaluation_result": evaluation_result,
+                        "failed": True,
+                        "metric_incomplete": missing,
+                        "trial_index": trial_idx,
+                        "batch_processing": True,
+                    },
+                )
+
+            objective_scores, composite_score = composed
             return Trial(
                 configuration=config,
                 score=composite_score,
@@ -638,15 +630,64 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 metadata={"error": str(e), "failed": True, "trial_index": trial_idx},
             )
 
+    def _compose_trial_scores(
+        self, metrics: dict[str, Any]
+    ) -> tuple[dict[str, float], float] | None:
+        """Extract objective scores and the scalarized composite for one trial.
+
+        Returns ``None`` — reject the trial — when any declared objective is
+        missing from ``metrics``, has a non-finite value, or the composite
+        itself is non-finite. Rejection must happen HERE, before the trial is
+        built: the previous orientation-worst sentinel (±inf) approach (#1944)
+        leaked through scalarization when an objective carried an *allowed*
+        zero weight — ``0.0 * ±inf = nan`` — and the downstream
+        ``score == -inf`` gate cannot see NaN (every NaN comparison is False),
+        so the metric-incomplete trial entered the frontier and, inserted
+        first, could even be SELECTED by ``max()`` (NaN keeps first place).
+        """
+        for objective in self.objectives:
+            value = metrics.get(objective)
+            if value is None or not math.isfinite(value):
+                return None
+
+        objective_scores = {
+            objective: float(metrics[objective]) for objective in self.objectives
+        }
+
+        from traigent.utils.multi_objective import scalarize_objectives
+
+        objective_weights = getattr(self, "objective_weights", None) or {}
+        if not objective_weights:
+            objective_weights = dict.fromkeys(self.objectives, 1.0)
+
+        # Weighted, orientation-aware scalarization (#1466): minimize
+        # objectives lower the composite, consistent with ``_dominates`` and
+        # the ``max(score)`` pick in ``_select_best_from_pareto``.
+        composite_score = scalarize_objectives(
+            objective_scores,
+            objective_weights,
+            minimize_objectives=self._minimize_objectives,
+        )
+        if not math.isfinite(composite_score):
+            return None
+        return objective_scores, composite_score
+
     def _update_pareto_frontier(self, new_trial: Trial) -> None:
         """Update Pareto frontier with new trial."""
+        # Fail-closed admission (#1944 hardening): gate on ``isfinite``, not a
+        # ``== -inf`` sentinel comparison — NaN compares False to everything,
+        # so a NaN-scored trial sailed through the old gate. Also reject any
+        # non-finite *objective* value so ±inf/NaN can never sit on the
+        # frontier regardless of how the trial was constructed.
         if (
-            new_trial.score == float("-inf")
+            not math.isfinite(new_trial.score)
             or "objective_scores" not in new_trial.metadata
         ):
             return
 
         new_scores = new_trial.metadata["objective_scores"]
+        if any(v is None or not math.isfinite(v) for v in new_scores.values()):
+            return
 
         # Check if new trial is dominated by existing solutions
         is_dominated = False

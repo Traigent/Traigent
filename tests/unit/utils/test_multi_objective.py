@@ -907,6 +907,19 @@ class TestExactHypervolume2DCorrectness:
         hv = calc.calculate_hypervolume([_pt(a=2.0, b=2.0)])
         assert hv == pytest.approx(1.0)
 
+    def test_mixed_orientation_asymmetric_front_exact_value(self):
+        # Asymmetric mixed max/min case — revert-proof where a symmetric
+        # front coincidentally agrees under old and new math. a maximize,
+        # b minimize; points (10,10),(5,5); explicit ref (4,11).
+        # Correct staircase (sorted by a desc, prev_b seeded at ref):
+        #   |10-4| * |10-11| = 6*1 = 6, then |5-4| * |5-10| = 1*5 = 5 → 11.
+        # The pre-#1940 decomposition (incremental width x full height under
+        # the same sort) yields 6*1 + 5*6 = 36.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": False})
+        front = [_pt(a=10.0, b=10.0), _pt(a=5.0, b=5.0)]
+        hv = calc.calculate_hypervolume(front, {"a": 4.0, "b": 11.0})
+        assert hv == pytest.approx(11.0)
+
 
 @pytest.mark.unit
 class TestApproximateHypervolumeOrientation:
@@ -977,3 +990,25 @@ class TestDominanceMissingObjectiveNonComparable:
         ids = {p.trial.trial_id for p in front}
         # The complete point must NOT be evicted by the partial one.
         assert "complete" in ids
+
+    def test_hypervolume_with_partial_point_is_order_independent(self):
+        # #1941 keeps complete and partial points as non-comparable, so both
+        # can sit on the front. Hypervolume must then use the UNION of
+        # declared objectives and only the points complete in that space —
+        # never a KeyError (complete point first) and never a silently
+        # misclassified lower-dimensional front returning a wrong volume
+        # (partial point first).
+        maximize = {"accuracy": True, "cost": False}
+        calc = ParetoFrontCalculator(maximize=maximize)
+        complete = _pt(accuracy=0.8, cost=100.0)
+        partial = _pt(accuracy=0.9)  # cost MISSING
+        ref = {"accuracy": 0.0, "cost": 200.0}
+        # Complete point only: |0.8-0| * |100-200| = 80. The partial point
+        # contributes zero volume in the full (accuracy, cost) space.
+        expected = 80.0
+        assert calc.calculate_hypervolume([complete, partial], ref) == pytest.approx(
+            expected
+        )
+        assert calc.calculate_hypervolume([partial, complete], ref) == pytest.approx(
+            expected
+        )
