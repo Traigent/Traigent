@@ -30,13 +30,19 @@ _STATUS_REPLAYED = {200: True, 201: False, 422: False}
 class Rejection:
     """One rejected event, with the closed backend reason code.
 
-    ``detail`` is advisory-only and, per contract, never quotes a payload value.
+    The backend's advisory ``detail`` string is validated for shape on the wire
+    but then DISCARDED — it is deliberately NOT a field of this public type. Per
+    the response schema ``detail`` is ``x-privacy-classification: user_content``
+    and its no-payload-echo rule is prose-only (not machine-enforced), so a
+    ``detail`` that quoted a value the client's characterization sharing policy
+    withheld would hand that value straight back through the public result, its
+    ``repr``, or logs. Only the machine-readable identifiers survive here. The
+    accepted JS SDK likewise drops ``detail`` from its public rejection type.
     """
 
     event_index: int
     reason: str
     event_id: str | None = None
-    detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -268,16 +274,16 @@ def _parse_rejections(
                 "ingest response rejection event_id does not match the request "
                 "event at that index"
             )
+        # Validate `detail`'s shape exactly as before (a non-string still fails
+        # closed), then DISCARD it — see the Rejection docstring. It is never
+        # copied into the public result, so no user_content value can leak through
+        # a field, repr, or log line downstream.
         detail = item.get("detail")
         if detail is not None and not isinstance(detail, str):
             raise EconomicsResponseError(
                 "ingest response rejection detail is not a string"
             )
-        parsed.append(
-            Rejection(
-                event_index=index, reason=reason, event_id=event_id, detail=detail
-            )
-        )
+        parsed.append(Rejection(event_index=index, reason=reason, event_id=event_id))
     return tuple(parsed)
 
 

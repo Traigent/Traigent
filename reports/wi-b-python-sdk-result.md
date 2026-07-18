@@ -63,6 +63,10 @@ Modified:
   `…?rev=c0a70a1…` (4.10.0). (Incidental: recorded self-version 0.22.0→0.23.0.)
 - `traigent/__init__.py` — comment documenting why the emitter is intentionally
   NOT a root export (schema-owned parity manifest); no functional change.
+  **[SUPERSEDED by Fix round 2, below.]** The "no JS counterpart / subpackage-only"
+  rationale was stale: the JS SDK does root-export `EconomicsTelemetryClient`, and
+  the parity manifest now classifies it `matched`. Fix round 2 adds the Python root
+  lazy export; this bullet's original claim no longer holds.
 
 ## Captain-verification blockers — remediation
 
@@ -135,6 +139,16 @@ contract tests use the exact contract:
 ## Owner decisions
 
 ### Public-export placement for the economics telemetry client
+
+> **[SUPERSEDED 2026-07-18 — Fix round 2.]** This decision's load-bearing premise —
+> "There is no JS counterpart for this emitter yet" — was **false**. The accepted JS
+> SDK (`traigent-js` `08d8931`, `src/index.ts`) root-exports `EconomicsTelemetryClient`,
+> and TraigentSchema `c27a034` classifies the symbol `matched` and lists it in
+> `javascript.requiredRootExports`. Option A was chosen on a stale fact. Fix round 2
+> implements the true-parity outcome (manifest `matched` classification in the Schema
+> branch + Python root **lazy** export), so the emitter is now
+> `traigent.EconomicsTelemetryClient` **and** `traigent.economics.EconomicsTelemetryClient`.
+> The text below is retained as the original (now-corrected) record.
 
 **Context.** The new emitter is a Python-only WI-B surface. The Traigent SDK's
 `traigent` root exports are governed by a schema-owned Python/JS parity manifest
@@ -833,3 +847,116 @@ Repo `.venv` (Python 3.13), exact economics Schema (`traigent-schema==4.10.0`).
   re-derivation/egress/Schema still bound a forged batch. The remaining forge paths
   all require deliberate closure/class-internal introspection, not import or a
   normal call.
+
+---
+
+# Fix round 2 — Terra final-gate findings (on HEAD f2d5caaf)
+
+Terra's final gate (`runs/econ-model-2026-07-17/python-sdk-terra-final-verdict.md`,
+all three findings captain-verified real) BLOCKED with three items. Remediated on
+top of `f2d5caaf`, left **uncommitted**. Repo `.venv` (Python 3.13), exact
+economics Schema installed (`traigent-schema==4.10.0`). Files changed this round:
+`traigent/economics/client.py`, `traigent/economics/result.py`,
+`traigent/economics/__init__.py`, `traigent/__init__.py`,
+`tests/unit/economics/test_client.py`, `tests/unit/economics/test_public_surface.py`.
+No behavior changed beyond the three fixes; all prior sealing / egress / idempotency
+/ retry / response-reconciliation invariants and their tests remain intact and
+unmodified (no prior test asserted the removed `detail` field or the root lockout).
+
+## P1 (finding 1) — PreparedTelemetryBatch repr leaked payload / evidence
+`PreparedTelemetryBatch` used the default dataclass repr, so `content` (raw wire
+bytes) and `body` (raw payload mapping, incl. shared evidence pointers) appeared in
+`repr()`, `str()`, `f"{batch!r}"`, and `%r` log records. Fix: `content` and `body`
+are now `field(repr=False)` (import `field` added). This changes the repr ONLY —
+the fields stay ordinary init/eq fields, wire bytes are unchanged, and the
+identity-bound issuance token (an instance attribute set outside the dataclass
+fields via `object.__setattr__`) is untouched, so issuance/sealing semantics and
+their tests are preserved. Identifiers (project_id, idempotency_key, batch_id,
+submitted, event_ids) remain visible. New test
+`test_prepared_batch_repr_does_not_leak_payload_or_evidence`: a batch built from the
+sensitive `_FULL_RUN_EVENT` — its unique evidence-pointer sentinel is genuinely in
+`prepared.content` (wire preserved) — asserts the sentinel is in NONE of
+`repr()`/`str()`/`f"{batch!r}"` nor a `%r` logging call (`caplog`), while identifiers
+still render. Existing byte-identity tests (`test_reordered_events_*`,
+`test_retries_send_identical_bytes_and_key`, `test_exact_prepared_object_submits_and_retries_identical`)
+pass unmodified.
+
+## P1 (finding 2) — backend `detail` retained and became loggable
+`result.py` stored the response rejection `detail` string on the public `Rejection`
+dataclass. Per the response schema, `detail` is `x-privacy-classification:
+user_content` with a prose-only (not machine-enforced) no-payload-echo rule, so a
+`detail` quoting a withheld value leaked through the public result / its repr / logs.
+Fix: `detail`'s shape is still validated exactly as before (string-or-absent, else
+`EconomicsResponseError`) but is then **DISCARDED** — the `detail` field is removed
+from `Rejection` entirely (matching the accepted JS SDK, which drops `detail` from
+its public rejection type: `traigent-js` `src/economics/telemetry-client.ts`
+`EconomicsTelemetryRejection`). `event_index` / `reason` / `event_id` are kept. No
+existing test referenced `detail` (grep-confirmed), so none needed updating. New
+tests: `test_rejection_detail_is_discarded_and_never_surfaced` (a schema-valid 422
+whose rejection `detail` carries a unique sentinel yields a result where the sentinel
+is in NO public field, `repr`, `str`, or `rejection_reasons`, `hasattr(rej,"detail")`
+is False, while index/reason/event_id are surfaced correctly) and
+`test_malformed_rejection_detail_still_fails_closed` (a non-string `detail` still
+fails closed).
+
+## P2 (finding 3) — Python/JS root-export parity incorrectly diverged
+The SDK claimed subpackage-only with a stale "no JS counterpart" rationale and a
+test that LOCKED OUT the root import, but the JS SDK root-exports
+`EconomicsTelemetryClient` (`traigent-js` `08d8931`, `src/index.ts:566`) and
+TraigentSchema `c27a034` now classifies it `matched` (and lists it in
+`javascript.requiredRootExports`). Fix (true parity): added `EconomicsTelemetryClient`
+as a `traigent` root **lazy** export following the existing `_LAZY_EXPORTS` pattern
+exactly — entry `("traigent.economics", "EconomicsTelemetryClient")` plus a
+`traigent.__all__` membership — so plain `import traigent` still does not import
+`traigent.economics` until the symbol is accessed. Rewrote the stale
+`traigent.economics` module docstring (now: matched-manifest + JS-root-export
+rationale; subpackage import still supported). Replaced
+`test_client_is_not_a_root_export_by_policy` with three tests:
+`test_client_is_a_root_export` (in `traigent.__all__`),
+`test_root_client_resolves_to_the_same_object_as_the_subpackage` (lazy
+`traigent.EconomicsTelemetryClient is traigent.economics.EconomicsTelemetryClient`),
+and `test_root_import_does_not_eagerly_import_economics_subpackage` (fresh-interpreter
+subprocess asserting `traigent.economics` absent from `sys.modules` after
+`import traigent`, present only after attribute access — mirrors
+`test_init_imports.py::test_main_module_import_stays_cold`). The stale report
+rationale flagged by Terra is corrected inline above (changed-files bullet + Owner
+decisions SUPERSEDED note).
+
+## Commands and results (this round)
+- Focused: `.venv/bin/python -m pytest tests/unit/economics -q`
+  → **157 passed** (was 152; +5: repr-leak, detail-discard, malformed-detail, and
+  net +2 in public-surface — removed 1 lockout test, added 3 parity tests).
+- Econ + parity + init:
+  `.venv/bin/python -m pytest tests/unit/economics tests/cross_sdk_oracles/test_js_public_parity_manifest.py tests/unit/test_init_imports.py -q`
+  → **186 passed** (0 skipped — the parity-manifest classification test PASSES, not
+  skips: `EconomicsTelemetryClient` is now both in `traigent.__all__` and `matched`
+  in the resolved sibling manifest at `c27a034`).
+- Broader lane (root `__init__` changed): `.venv/bin/python -m pytest tests/unit/cloud -q`
+  → **1884 passed, 2 skipped** (pre-existing env skips: httpx-absent guard;
+  memory-variance test).
+- Ruff: `.venv/bin/python -m ruff check traigent/economics tests/unit/economics traigent/__init__.py`
+  → **All checks passed**;
+  `.venv/bin/ruff format --check traigent/economics tests/unit/economics traigent/__init__.py`
+  → **17 files already formatted**.
+- Mypy: `.venv/bin/python -m mypy traigent/economics`
+  → **Success: no issues found in 8 source files**.
+- `git diff --check` → clean. Generated `__pycache__` removed before handoff.
+
+## Residuals (this round)
+- The parity-manifest classification lives in the **sibling TraigentSchema branch**
+  (`c27a034`, read-only here). This Python packet's root export is correct only once
+  that Schema change lands on the matching branch; the captain sequences the
+  cross-repo merge. The local parity test resolves the sibling worktree manifest and
+  passes; if a stale manifest (no economics classification) were resolved instead,
+  `test_python_public_root_symbols_are_classified_in_parity_manifest` would `skip`
+  locally (CI would fail), not silently pass.
+- The `detail` shape check in `_parse_rejections` is now defense-in-depth: the
+  per-status response schema (`detail` typed `string`) already rejects a non-string
+  `detail` at `validate_response_or_fail`, before the hand-parse check. It is kept
+  (validate-exactly-as-today per the finding), and the malformed-detail test
+  exercises the end-to-end fail-closed behavior.
+
+## Owner decisions
+None — all three fixes had a single clearly-correct implementation (true parity was
+the captain-chosen resolution recorded in the Terra verdict); no genuine owner
+decision arose this round.

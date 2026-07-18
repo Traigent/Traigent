@@ -566,6 +566,52 @@ async def test_no_sensitive_values_are_logged(caplog: pytest.LogCaptureFixture) 
     assert "4000" not in caplog.text
 
 
+# --- P1: PreparedTelemetryBatch repr must not leak payload / evidence -----------
+#
+# The default dataclass repr exposed `content`/`body` — the raw payload including
+# shared evidence pointers — through repr(), str(), f"{batch!r}", and `%r` logging.
+# `content`/`body` are now `field(repr=False)`; only identifiers appear. The wire
+# bytes are unchanged (redaction is repr-only), so byte-identity is preserved.
+
+
+async def test_prepared_batch_repr_does_not_leak_payload_or_evidence(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = _client()
+    # _FULL_RUN_EVENT carries a unique sensitive evidence pointer inside its
+    # payload body (NOT in any identifier field). An alphabetic sentinel cannot
+    # collide with the hex-only idempotency_key/batch_id, so the absence checks
+    # are robust regardless of the run-varying hashes.
+    prepared = client.prepare([_FULL_RUN_EVENT], project_id="proj-1")
+    sentinel = "SENSITIVE-incident-ledger-4k-escalation"
+
+    # The sentinel is genuinely on the wire — redaction is repr-only, not a payload
+    # change — so the existing byte-identity guarantee is untouched.
+    assert sentinel.encode("utf-8") in prepared.content
+
+    renderings = [
+        repr(prepared),
+        str(prepared),
+        f"{prepared!r}",
+    ]
+    for rendering in renderings:
+        assert sentinel not in rendering, rendering
+
+    # A logging call formatted with %r must not leak the payload either. (logging
+    # renders the record via %-formatting, so this exercises the %r path directly.)
+    with caplog.at_level(logging.DEBUG):
+        logging.getLogger("traigent.economics.client").info(
+            "prepared batch %r", prepared
+        )
+    assert sentinel not in caplog.text
+
+    # Identifiers stay visible so the repr remains useful for debugging.
+    shown = repr(prepared)
+    assert prepared.batch_id in shown
+    assert prepared.idempotency_key in shown
+    assert "evt-run-1" in shown  # the event id is an identifier, not payload
+
+
 # --- HIGH 1: canonical key vs wire bytes ---------------------------------------
 
 
@@ -712,6 +758,72 @@ async def test_rejection_with_matching_event_id_is_accepted() -> None:
     result = await client.submit_prepared(prepared)
     assert result.all_rejected
     assert result.rejections[0].event_id == prepared.event_ids[0]
+
+
+# --- P1: backend rejection `detail` is validated then discarded, never surfaced -
+
+
+async def test_rejection_detail_is_discarded_and_never_surfaced() -> None:
+    # A schema-valid 422 whose rejection `detail` carries a unique sensitive
+    # sentinel (a would-be echoed payload value). index/reason/event_id must still
+    # surface; the sentinel must appear in NO public field, repr, str, or the
+    # rejection reasons.
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    sentinel = "SENSITIVE-REJECT-DETAIL-loss_per_bad_output_usd=88888"
+    body = _ingest_body(
+        prepared,
+        status=422,
+        accepted=0,
+        rejected=1,
+        rejections=[
+            {
+                "event_index": 0,
+                "reason": "tenant_scope_violation",
+                "event_id": prepared.event_ids[0],
+                "detail": sentinel,
+            }
+        ],
+    )
+    _mock_transport(client, _resp(422, body))
+    result = await client.submit_prepared(prepared)
+
+    rejection = result.rejections[0]
+    # Identifiers are surfaced correctly.
+    assert rejection.event_index == 0
+    assert rejection.reason == "tenant_scope_violation"
+    assert rejection.event_id == prepared.event_ids[0]
+
+    # `detail` is not even a field of the public type, and the sentinel appears in
+    # no public field, repr, or str of the rejection or the whole result.
+    assert not hasattr(rejection, "detail")
+    haystack = " ".join([repr(rejection), str(rejection), repr(result), str(result)])
+    assert sentinel not in haystack
+    assert "88888" not in haystack
+    assert sentinel not in result.rejection_reasons
+
+
+async def test_malformed_rejection_detail_still_fails_closed() -> None:
+    # The `detail` shape check is preserved: a non-string detail (which could smuggle
+    # structured payload) still raises before any result is returned.
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    body = _ingest_body(
+        prepared,
+        status=422,
+        accepted=0,
+        rejected=1,
+        rejections=[
+            {
+                "event_index": 0,
+                "reason": "tenant_scope_violation",
+                "detail": {"nested": "SENSITIVE-structured-leak"},
+            }
+        ],
+    )
+    _mock_transport(client, _resp(422, body))
+    with pytest.raises(EconomicsResponseError):
+        await client.submit_prepared(prepared)
 
 
 # --- HIGH 3: exact-Schema fingerprint fails closed before transport ------------

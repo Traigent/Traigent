@@ -293,13 +293,15 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     ),
     "CoreMetricsClient": ("traigent.core_metrics", "CoreMetricsClient"),
     "CoreMetricsConfig": ("traigent.core_metrics", "CoreMetricsConfig"),
-    # NOTE: the economics telemetry emitter is deliberately NOT a root export.
-    # Root symbols are governed by the schema-owned Python/JS parity manifest
-    # (TraigentSchema `parity/python-js-sdk.json`, pinned to a target SHA); a new
-    # root symbol must be classified there or CI parity fails. This WI-B Python
-    # emitter has no JS counterpart yet, so it ships under the documented
-    # subpackage-only surface `traigent.economics.EconomicsTelemetryClient`.
-    # Promote to a root lazy export in a coordinated Schema-manifest change.
+    # Economics telemetry emitter (WI-B). Root-exported to match the schema-owned
+    # Python/JS parity manifest, which classifies EconomicsTelemetryClient as a
+    # `matched` root export, and the JS SDK, which root-exports it from
+    # `@traigent/sdk`. Lazy (like the other client surfaces): plain `import
+    # traigent` does not import `traigent.economics` until this symbol is accessed.
+    "EconomicsTelemetryClient": (
+        "traigent.economics",
+        "EconomicsTelemetryClient",
+    ),
     "EnterpriseAdminClient": ("traigent.admin", "EnterpriseAdminClient"),
     "EnterpriseAdminConfig": ("traigent.admin", "EnterpriseAdminConfig"),
     "EvaluationClient": ("traigent.evaluation", "EvaluationClient"),
@@ -557,6 +559,7 @@ __all__ = [
     "copy_context_to_thread",
     "CoreMetricsClient",
     "CoreMetricsConfig",
+    "EconomicsTelemetryClient",
     "EnterpriseAdminClient",
     "EnterpriseAdminConfig",
     "ObservabilityClient",

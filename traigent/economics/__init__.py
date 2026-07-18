@@ -15,14 +15,16 @@ project-level ``eligible`` funnel entry today and fails closed for stages and
 receipts lacking an authoritative producer; this emitter can represent the full
 contract but never disguises a backend rejection as success.
 
-Public-surface policy — SUBPACKAGE-ONLY (deliberate). The emitter is imported
-as ``traigent.economics.EconomicsTelemetryClient``, NOT as a ``traigent`` root
-export. Root symbols are governed by the schema-owned Python/JS parity manifest
-(``TraigentSchema parity/python-js-sdk.json``, pinned to a target SHA), so a new
-root symbol must be classified there or the parity gate fails in CI. This WI-B
-Python emitter has no JS counterpart yet, so it stays under this stable
-subpackage surface; promoting it to a root lazy export is a coordinated
-Schema-manifest change owned outside this SDK packet.
+Public-surface policy — ROOT LAZY EXPORT + subpackage. ``EconomicsTelemetryClient``
+is exported both as ``traigent.EconomicsTelemetryClient`` (a lazy root export, so
+plain ``import traigent`` does not eagerly import this subpackage) and as
+``traigent.economics.EconomicsTelemetryClient``; both names resolve to the same
+class. Root symbols are governed by the schema-owned Python/JS parity manifest
+(``TraigentSchema parity/python-js-sdk.json``, pinned to a target SHA), which now
+classifies ``EconomicsTelemetryClient`` as a ``matched`` root export, and the JS
+SDK root-exports the same symbol from ``@traigent/sdk`` (``traigent-js``
+``src/index.ts``) — so the Python root export is true parity, not a unilateral
+add. The subpackage import remains supported for callers that prefer it.
 """
 
 from __future__ import annotations

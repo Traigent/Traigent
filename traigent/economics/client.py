@@ -30,7 +30,7 @@ import logging
 import math
 import secrets
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from types import MappingProxyType
@@ -102,14 +102,27 @@ class PreparedTelemetryBatch:
     ``dataclasses.replace``-d, or unpickled instance is a different identity, so
     it carries no valid identity-bound issuance token and is refused before any
     transport (fail closed).
+
+    Repr safety: ``content`` (the raw serialized payload) and ``body`` (the raw
+    payload mapping, including shared evidence pointers) are marked
+    ``field(repr=False)`` so they never appear in ``repr()``/``str()`` or a ``%r``
+    log record — a batch payload could otherwise leak the exact values the
+    characterization sharing policy governs. Only the identifiers (project_id,
+    idempotency_key, batch_id, submitted, event_ids) are shown. This changes the
+    repr ONLY: the fields remain ordinary init/eq fields, the exact wire bytes are
+    unchanged, and the identity-bound issuance token (an instance attribute set
+    outside the dataclass fields) is unaffected.
     """
 
     project_id: str
     idempotency_key: str
     batch_id: str
     submitted: int
-    content: bytes
-    body: Mapping[str, Any]
+    #: The exact serialized payload sent on every attempt. Redacted from repr:
+    #: it carries payload values / evidence pointers that must not be logged.
+    content: bytes = field(repr=False)
+    #: A read-only view of the raw payload. Redacted from repr for the same reason.
+    body: Mapping[str, Any] = field(repr=False)
     #: Ordered submitted event ids (identifiers only, no payload) used to
     #: reconcile the backend's per-event rejections against this exact batch.
     event_ids: tuple[str, ...]
