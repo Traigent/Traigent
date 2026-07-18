@@ -323,3 +323,88 @@ endpoint description states the all-rejected semantics. If the Schema later give
   tampered) claimed fields; it is informational only and is NOT used by the
   transport path (headers are rebuilt from the re-validated body in
   `_reverify_prepared`). Left public for API compatibility.
+
+---
+
+# Terra final review remediation (on captain commit aaacd1c7)
+
+Fresh detached gpt-5.6-terra xhigh full-range review BLOCKED one critical issue on
+`aaacd1c7925e6777b80eafefd489aa245966c869`; remediated on top, left uncommitted.
+Files changed this round: `traigent/economics/client.py`,
+`tests/unit/economics/test_client.py`.
+
+## CRITICAL — a fully self-consistent hand-built batch was still submittable
+The prior `_reverify_prepared` compared canonical content, key, batch id, event
+ids, count, and project — but a directly-constructed (or `dataclasses.replace`-d)
+`PreparedTelemetryBatch` can supply ALL of those consistently, so it passed and
+reached POST.
+
+Fix — an internal, non-constructor PROVENANCE capability issued only by
+`prepare()`:
+- Added a module-private sentinel `client._PREPARE_PROVENANCE = object()` and a
+  dataclass field `_provenance: Any = field(default=None, init=False,
+  compare=False, repr=False)`. The class stays publicly constructible (the field
+  is not a constructor argument; equality/repr are unaffected), but a direct
+  instance defaults to the invalid `None`.
+- `prepare()` is the ONLY place that grants it, via
+  `object.__setattr__(prepared, "_provenance", _PREPARE_PROVENANCE)` after
+  construction.
+- `submit_prepared` calls `_require_provenance` FIRST (before any field work or
+  transport): a batch whose `_provenance` is not the exact module sentinel is
+  refused with a payload-free `EconomicsTelemetryContractError`, POST not called.
+- `dataclasses.replace` produces a new instance whose `init=False` provenance
+  field is re-defaulted to `None` (verified: not copied), so any replace — even
+  one that recomputes every public/body/content/key/id/count/scope field
+  self-consistently — loses the capability and is non-submittable.
+
+Trust-boundary scope (documented in code): this closes normal public construction
+and replacement; it does NOT claim cryptographic defense against a caller who
+reaches in with `object.__setattr__` or module introspection. The existing
+re-derivation checks (content/key/ids/project/schema-fingerprint/egress) remain as
+defense-in-depth for a provenanced-but-inconsistent object.
+
+In-process, cross-client rule (smallest compatible): the sentinel is module-level,
+so a batch prepared by one `EconomicsTelemetryClient` instance is submittable by
+another instance in the SAME process. It does not survive pickling or crossing a
+process boundary (a fresh import gets a new sentinel object) — acceptable because
+cross-call recovery is defined as resubmitting the exact in-process object or
+rebuilding via `prepare()`.
+
+Replay preserved: the exact object returned by `prepare()` carries provenance and
+submits; retries replay byte-identical content and key.
+
+## Decisive tests (all assert POST not called on refusal)
+Primary gate: `test_direct_construction_fully_valid_is_non_submittable`,
+`test_replace_with_no_changes_loses_provenance`,
+`test_replace_all_fields_recomputed_loses_provenance`,
+`test_provenance_refusal_is_payload_free` (asserts the sensitive evidence pointer
+and magnitude appear nowhere in the error or its cause/context chain),
+`test_exact_prepared_object_submits_and_retries_identical`.
+Defense-in-depth (white-box, provenance minted then a field tampered):
+`test_provenanced_content_tamper_is_refused`,
+`test_provenanced_arbitrary_body_is_refused`,
+`test_provenanced_withheld_value_body_is_refused`,
+`test_provenanced_idempotency_key_tamper_is_refused`,
+`test_provenanced_event_ids_tamper_is_refused`,
+`test_provenanced_project_tamper_is_refused`,
+`test_prepared_submit_fails_closed_when_schema_unavailable`.
+
+All prior protections (revalidation, egress, Schema fingerprint, project/status/
+Retry-After/redirect) are unchanged and still enforced.
+
+## Commands and results (this round)
+- Focused: `pytest tests/unit/economics/ -q` → **129 passed** (was 125).
+- Ruff `check` + `format --check` → clean (16 files). Mypy `traigent/economics` →
+  **Success: no issues found in 8 source files**. Compile → OK.
+- Parity/init → **29 passed**. Broader `tests/unit/cloud` → **1884 passed, 2 skipped**
+  (pre-existing env skips). `git diff --check` → clean. Caches removed before handoff.
+
+## Residual risk (this round)
+- Provenance is an API trust boundary, not a cryptographic seal: a caller who
+  deliberately runs `object.__setattr__(batch, "_provenance", <the module
+  sentinel>)` can forge it. This is out of scope by the finding's own terms; the
+  re-derivation + egress + Schema checks still bound what such a forged batch
+  could actually transmit (schema-valid, egress-clean, self-consistent only).
+- `PreparedTelemetryBatch.headers` remains an informational property reflecting the
+  object's claimed fields; the transport path rebuilds headers from the
+  re-validated body and never uses it.

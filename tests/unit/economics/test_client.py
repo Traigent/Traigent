@@ -765,11 +765,37 @@ async def test_future_http_date_retry_after_is_clamped(
     assert delays and max(delays) == client_mod._MAX_RETRY_AFTER_SECONDS
 
 
-# --- CRITICAL 1: prepared batch is untrusted; every field re-validated ---------
+# --- CRITICAL 1: only prepare()-issued batches are submittable -----------------
+#
+# The PRIMARY gate is provenance: a public/constructed/replaced batch is not
+# submittable even when every field is internally consistent. The re-derivation
+# checks (content/key/ids/project/schema/egress) are defense-in-depth for a batch
+# that carries provenance yet is internally inconsistent (e.g. tampered via
+# object.__setattr__); the tests below mint provenance explicitly to reach them.
+
+
+def _mint_provenance(batch: PreparedTelemetryBatch) -> PreparedTelemetryBatch:
+    """Grant the module provenance capability (white-box, for defense-in-depth tests)."""
+    object.__setattr__(batch, "_provenance", client_mod._PREPARE_PROVENANCE)
+    return batch
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """Return the exception and its __cause__/__context__ chain (bounded)."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and not any(c is current for c in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
 
 
 def _prepared_from_body(
-    body: dict[str, Any], *, project_id: str = "proj-1", **overrides: Any
+    body: dict[str, Any],
+    *,
+    project_id: str = "proj-1",
+    provenanced: bool = False,
+    **overrides: Any,
 ) -> PreparedTelemetryBatch:
     """Construct a PreparedTelemetryBatch directly from a (possibly forged) body."""
     events = body["events"]
@@ -783,23 +809,125 @@ def _prepared_from_body(
         "event_ids": tuple(str(e["event_id"]) for e in events),
     }
     fields.update(overrides)
-    return PreparedTelemetryBatch(**fields)
+    batch = PreparedTelemetryBatch(**fields)
+    if provenanced:
+        _mint_provenance(batch)
+    return batch
 
 
-async def test_directly_constructed_non_schema_batch_is_refused() -> None:
-    # A hand-built batch whose body carries an arbitrary non-schema key, with a
-    # self-consistent content/key/ids, is still refused by re-validation.
+# -- primary gate: provenance --------------------------------------------------
+
+
+async def test_direct_construction_fully_valid_is_non_submittable() -> None:
+    # Fully schema-valid, canonical, self-consistent — but not issued by prepare().
     client = _client()
     mock_http = _mock_transport(client, _resp(201))
     body = build_telemetry_request([_event()])
-    body["events"][0]["surprise_non_schema_key"] = "leaked"
-    forged = _prepared_from_body(body)
-    with pytest.raises(EconomicsTelemetryContractError):
+    forged = _prepared_from_body(body)  # no provenance
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
         await client.submit_prepared(forged)
     mock_http.post.assert_not_called()
 
 
-async def test_directly_constructed_withheld_value_batch_is_refused() -> None:
+async def test_replace_with_no_changes_loses_provenance() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    tampered = dataclasses.replace(prepared)  # every public field identical
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_replace_all_fields_recomputed_loses_provenance() -> None:
+    # Rebuild every public/body/content/key/id/count/scope field self-consistently.
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    body = dict(prepared.body)
+    events = body["events"]
+    tampered = dataclasses.replace(
+        prepared,
+        project_id="proj-1",
+        idempotency_key=body["idempotency_key"],
+        batch_id=body["batch_id"],
+        submitted=len(events),
+        content=canonical_json(body).encode("utf-8"),
+        body=body,
+        event_ids=tuple(str(e["event_id"]) for e in events),
+    )
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_provenance_refusal_is_payload_free() -> None:
+    # A hand-built batch carrying a sensitive-looking value is refused without
+    # the value (or its evidence pointer) appearing in the error or its chain.
+    client = _client()
+    _mock_transport(client, _resp(201))
+    body = build_telemetry_request([_event()])
+    body["events"] = [_FULL_RUN_EVENT]  # carries the SENSITIVE evidence pointer
+    forged = _prepared_from_body(body, event_ids=("evt-run-1",))
+    with pytest.raises(EconomicsTelemetryContractError) as excinfo:
+        await client.submit_prepared(forged)
+    chain = " ".join(str(e) for e in _exception_chain(excinfo.value))
+    assert "SENSITIVE-incident-ledger-4k-escalation" not in chain
+    assert "4000" not in chain
+
+
+async def test_exact_prepared_object_submits_and_retries_identical() -> None:
+    # The object returned by prepare() carries provenance and submits; a retry
+    # replays byte-identical content and key.
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    mock_http = _mock_transport(
+        client, [_resp(503), _resp(201, _ingest_body(prepared))]
+    )
+    result = await client.submit_prepared(prepared)
+    assert result.fully_accepted
+    calls = mock_http.post.call_args_list
+    assert calls[0].kwargs["content"] == calls[1].kwargs["content"]
+    assert (
+        calls[0].kwargs["headers"][IDEMPOTENCY_KEY_HEADER]
+        == calls[1].kwargs["headers"][IDEMPOTENCY_KEY_HEADER]
+    )
+
+
+# -- defense-in-depth: provenanced but internally inconsistent -----------------
+
+
+async def test_provenanced_content_tamper_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    tampered = _mint_provenance(
+        dataclasses.replace(prepared, content=b'{"forged":true}')
+    )
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="content does not match"):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_provenanced_arbitrary_body_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    forged_body = dict(prepared.body)
+    forged_body["events"] = [dict(forged_body["events"][0], surprise="x")]
+    tampered = _mint_provenance(
+        dataclasses.replace(
+            prepared,
+            body=forged_body,
+            content=canonical_json(forged_body).encode("utf-8"),
+        )
+    )
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_provenanced_withheld_value_body_is_refused() -> None:
     client = _client()
     mock_http = _mock_transport(client, _resp(201))
     forged_run = dict(_FULL_RUN_EVENT)
@@ -810,70 +938,46 @@ async def test_directly_constructed_withheld_value_batch_is_refused() -> None:
                 "field": "loss_per_bad_output_usd",
                 "provenance": "asked",
                 "confidence": 1.0,
-                "sharing_outcome": "withheld_by_policy",  # withheld BUT present -> refused
+                "sharing_outcome": "withheld_by_policy",  # withheld BUT present
             }
         ],
     }
-    # build_telemetry_request would refuse this; bypass it to forge the body.
     body = build_telemetry_request([_event()])
     body["events"] = [forged_run]
-    forged = _prepared_from_body(body, event_ids=("evt-run-1",))
+    forged = _prepared_from_body(body, provenanced=True, event_ids=("evt-run-1",))
     with pytest.raises((EgressPolicyError, EconomicsTelemetryContractError)):
         await client.submit_prepared(forged)
     mock_http.post.assert_not_called()
 
 
-async def test_replace_content_mismatch_is_refused() -> None:
+async def test_provenanced_idempotency_key_tamper_is_refused() -> None:
     client = _client()
     prepared = client.prepare([_event()], project_id="proj-1")
-    tampered = dataclasses.replace(prepared, content=b'{"forged":true}')
-    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
-    with pytest.raises(EconomicsTelemetryContractError, match="content does not match"):
-        await client.submit_prepared(tampered)
-    mock_http.post.assert_not_called()
-
-
-async def test_replace_body_with_arbitrary_json_is_refused() -> None:
-    client = _client()
-    prepared = client.prepare([_event()], project_id="proj-1")
-    forged_body = dict(prepared.body)
-    forged_body["events"] = [dict(forged_body["events"][0], surprise="x")]
-    # Recompute content so only the schema check can catch it.
-    tampered = dataclasses.replace(
-        prepared,
-        body=forged_body,
-        content=canonical_json(forged_body).encode("utf-8"),
+    tampered = _mint_provenance(
+        dataclasses.replace(prepared, idempotency_key="econ-tel-differentkey")
     )
-    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
-    with pytest.raises(EconomicsTelemetryContractError):
-        await client.submit_prepared(tampered)
-    mock_http.post.assert_not_called()
-
-
-async def test_replace_idempotency_key_mismatch_is_refused() -> None:
-    client = _client()
-    prepared = client.prepare([_event()], project_id="proj-1")
-    tampered = dataclasses.replace(prepared, idempotency_key="econ-tel-differentkey")
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
     with pytest.raises(EconomicsTelemetryContractError, match="idempotency key"):
         await client.submit_prepared(tampered)
     mock_http.post.assert_not_called()
 
 
-async def test_replace_event_ids_mismatch_is_refused() -> None:
+async def test_provenanced_event_ids_tamper_is_refused() -> None:
     client = _client()
     prepared = client.prepare([_event()], project_id="proj-1")
-    tampered = dataclasses.replace(prepared, event_ids=("evt-other",))
+    tampered = _mint_provenance(dataclasses.replace(prepared, event_ids=("evt-other",)))
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
     with pytest.raises(EconomicsTelemetryContractError, match="event ids"):
         await client.submit_prepared(tampered)
     mock_http.post.assert_not_called()
 
 
-async def test_replace_project_id_mismatch_is_refused() -> None:
+async def test_provenanced_project_tamper_is_refused() -> None:
     client = _client()
     prepared = client.prepare([_event("proj-1")], project_id="proj-1")
-    tampered = dataclasses.replace(prepared, project_id="other-project")
+    tampered = _mint_provenance(
+        dataclasses.replace(prepared, project_id="other-project")
+    )
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
     with pytest.raises(EconomicsTelemetryContractError, match="project_ref"):
         await client.submit_prepared(tampered)
@@ -886,7 +990,7 @@ async def test_prepared_submit_fails_closed_when_schema_unavailable(
     client = _client()
     prepared = client.prepare(
         [_event()], project_id="proj-1"
-    )  # built while schema present
+    )  # built while schema present, carries provenance
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
     monkeypatch.setattr(
         schema_mod, "compute_economics_schema_fingerprint", lambda *a, **k: "0" * 64
