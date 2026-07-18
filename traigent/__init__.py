@@ -293,6 +293,13 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     ),
     "CoreMetricsClient": ("traigent.core_metrics", "CoreMetricsClient"),
     "CoreMetricsConfig": ("traigent.core_metrics", "CoreMetricsConfig"),
+    # NOTE: the economics telemetry emitter is deliberately NOT a root export.
+    # Root symbols are governed by the schema-owned Python/JS parity manifest
+    # (TraigentSchema `parity/python-js-sdk.json`, pinned to a target SHA); a new
+    # root symbol must be classified there or CI parity fails. This WI-B Python
+    # emitter has no JS counterpart yet, so it ships under the documented
+    # subpackage-only surface `traigent.economics.EconomicsTelemetryClient`.
+    # Promote to a root lazy export in a coordinated Schema-manifest change.
     "EnterpriseAdminClient": ("traigent.admin", "EnterpriseAdminClient"),
     "EnterpriseAdminConfig": ("traigent.admin", "EnterpriseAdminConfig"),
     "EvaluationClient": ("traigent.evaluation", "EvaluationClient"),

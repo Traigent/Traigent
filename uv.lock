@@ -6020,7 +6020,7 @@ wheels = [
 
 [[package]]
 name = "traigent"
-version = "0.22.0"
+version = "0.23.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -6387,7 +6387,7 @@ requires-dist = [
     { name = "traigent", extras = ["bayesian", "analytics"], marker = "extra == 'ml'" },
     { name = "traigent", extras = ["integrations", "analytics", "bayesian", "visualization", "hybrid", "pydanticai"], marker = "extra == 'recommended'" },
     { name = "traigent", extras = ["security"], marker = "extra == 'cloud'" },
-    { name = "traigent-schema", marker = "extra == 'internal-schema'", specifier = "==4.7.1" },
+    { name = "traigent-schema", marker = "extra == 'internal-schema'", git = "https://github.com/Traigent/TraigentSchema.git?rev=c0a70a1d759774cb23f7f3d0943fbfc022d37f39" },
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
@@ -6398,16 +6398,12 @@ provides-extras = ["analytics", "bayesian", "integrations", "chroma", "dspy", "p
 
 [[package]]
 name = "traigent-schema"
-version = "4.7.1"
-source = { registry = "https://pypi.org/simple" }
+version = "4.10.0"
+source = { git = "https://github.com/Traigent/TraigentSchema.git?rev=c0a70a1d759774cb23f7f3d0943fbfc022d37f39#c0a70a1d759774cb23f7f3d0943fbfc022d37f39" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
     { name = "referencing" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d4/c4/3732cb1553be688053b8c0ee005a1fa1529ab025fc161a66668db65fba17/traigent_schema-4.7.1.tar.gz", hash = "sha256:66d5361a254e5037083aabb97955bcc127ed9609b9414280704f435155ed0d49", size = 191374, upload-time = "2026-06-29T19:52:52.387Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/75/a4cb1d403921a31e8293927070f8252a9b0af22e4f78899663b960ee93d6/traigent_schema-4.7.1-py3-none-any.whl", hash = "sha256:ab27fa62117034ca5c84ab192235fc081c7039047e29036c70c5f9617cdbd638", size = 362061, upload-time = "2026-06-29T19:52:50.882Z" },
 ]
 
 [[package]]
