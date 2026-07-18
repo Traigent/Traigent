@@ -692,9 +692,9 @@ class CloudOptimizer(BaseOptimizer):
 
             # A ``band`` (target-range) primary objective is not directional:
             # "best" means closeness to a target interval, so neither the
-            # maximize (``best_recent < best_overall - delta``) nor the minimize
-            # (``best_recent > best_overall + delta``) plateau test is
-            # meaningful. Running the raw maximize arithmetic here would treat a
+            # maximize (``best_recent <= baseline_best + delta``) nor the
+            # minimize (``best_recent >= baseline_best - delta``) plateau test
+            # is meaningful. Running the raw maximize arithmetic here would treat a
             # run correctly parked inside the band as "no improvement" and stop
             # it (or refuse to stop a drifting run). Bypass ONLY this patience
             # plateau gate; the budget checks above and the remote/fallback stop
@@ -727,20 +727,30 @@ class CloudOptimizer(BaseOptimizer):
             recent_scores = _valid_scores(history[-strategy.early_stopping_patience :])
 
             if recent_scores:
-                # Find best overall score (finite, rankable values only).
-                all_scores = _valid_scores(history)
+                # Baseline = best score BEFORE the patience window. The window
+                # must be compared against the pre-window prefix: comparing it
+                # against the best of ALL history (which contains the window
+                # itself) made a flat plateau read as "still at the best"
+                # (best_recent == best_overall), so the canonical no-improvement
+                # case never stopped and only a material REGRESSION did — and a
+                # larger min_delta made stopping LESS likely instead of more.
+                baseline_scores = _valid_scores(
+                    history[: -strategy.early_stopping_patience]
+                )
 
-                if all_scores:
+                if baseline_scores:
                     if minimize:
                         best_recent = min(recent_scores)
-                        best_overall = min(all_scores)
-                        # No improvement: recent best not meaningfully below overall
-                        no_improvement = best_recent > best_overall + min_delta
+                        baseline_best = min(baseline_scores)
+                        # No improvement: the window never got more than
+                        # min_delta below the pre-window best.
+                        no_improvement = best_recent >= baseline_best - min_delta
                     else:
                         best_recent = max(recent_scores)
-                        best_overall = max(all_scores)
-                        # No improvement: recent best not meaningfully above overall
-                        no_improvement = best_recent < best_overall - min_delta
+                        baseline_best = max(baseline_scores)
+                        # No improvement: the window never got more than
+                        # min_delta above the pre-window best.
+                        no_improvement = best_recent <= baseline_best + min_delta
                     if no_improvement:
                         logger.info(
                             f"Stopping: no improvement in {strategy.early_stopping_patience} trials"

@@ -1922,62 +1922,143 @@ class TestStrategyEarlyStoppingOrientation:
 
     def test_configurable_min_delta(self, mock_remote_service):
         """The improvement epsilon is driven by ``early_stopping_min_delta``
-        (default 0.01) rather than a hard-coded literal.
+        (default 0.01) rather than a hard-coded literal, and it is an
+        IMPROVEMENT threshold: the recent window must beat the pre-window
+        baseline by MORE than min_delta to keep going, so a larger delta makes
+        stopping MORE likely, never less.
         """
-        # Overall best (0.90) sits in t1, outside the patience=2 recent window;
-        # the recent best (0.88) dips 0.02 below it.
+        # Baseline best (0.90) sits in t1, before the patience=2 recent window;
+        # the recent best (0.92) rises 0.02 above it.
         history = [
             self._trial("t1", "accuracy", 0.90),
             self._trial("t2", "accuracy", 0.87),
-            self._trial("t3", "accuracy", 0.88),
+            self._trial("t3", "accuracy", 0.92),
         ]
-        # Default delta (0.01): 0.88 < 0.90 - 0.01 -> stop.
+        # Default delta (0.01): 0.92 > 0.90 + 0.01 -> real improvement -> keep going.
         opt_default = self._optimizer(
             ["accuracy"],
             OptimizationStrategy(early_stopping_patience=2),
             mock_remote_service,
         )
-        assert opt_default._check_strategy_stopping_conditions(history) is True
-        # Larger delta (0.05): 0.88 is within tolerance -> keep going.
-        opt_tolerant = self._optimizer(
+        assert opt_default._check_strategy_stopping_conditions(history) is False
+        # Larger delta (0.05): 0.92 <= 0.90 + 0.05 -> marginal gain ignored -> stop.
+        opt_demanding = self._optimizer(
             ["accuracy"],
             OptimizationStrategy(
                 early_stopping_patience=2, early_stopping_min_delta=0.05
             ),
             mock_remote_service,
         )
-        assert opt_tolerant._check_strategy_stopping_conditions(history) is False
+        assert opt_demanding._check_strategy_stopping_conditions(history) is True
 
     def test_minimize_configurable_min_delta_respects_direction(
         self, mock_remote_service
     ):
-        """The same improvement band applies in the lower-is-better direction."""
-        # Overall best (0.100) sits in t1; the recent window is slightly worse.
+        """The same improvement threshold applies in the lower-is-better
+        direction: the window must get more than min_delta BELOW the pre-window
+        baseline to count as improving.
+        """
+        # Baseline best (0.100) sits in t1; the recent window's best (0.095)
+        # drops 0.005 below it.
         history = [
             self._trial("t1", "cost", 0.100),
             self._trial("t2", "cost", 0.105),
-            self._trial("t3", "cost", 0.108),
+            self._trial("t3", "cost", 0.095),
         ]
 
-        # Small delta (0.001): 0.105 > 0.100 + 0.001 -> stop.
-        opt_strict = self._optimizer(
+        # Small delta (0.001): 0.095 < 0.100 - 0.001 -> real improvement -> keep going.
+        opt_lenient = self._optimizer(
             ["cost"],
             OptimizationStrategy(
                 early_stopping_patience=2, early_stopping_min_delta=0.001
             ),
             mock_remote_service,
         )
-        assert opt_strict._check_strategy_stopping_conditions(history) is True
+        assert opt_lenient._check_strategy_stopping_conditions(history) is False
 
-        # Larger delta (0.01): 0.105 is within tolerance -> keep going.
-        opt_tolerant = self._optimizer(
+        # Larger delta (0.01): 0.095 >= 0.100 - 0.01 -> marginal gain ignored -> stop.
+        opt_demanding = self._optimizer(
             ["cost"],
             OptimizationStrategy(
                 early_stopping_patience=2, early_stopping_min_delta=0.01
             ),
             mock_remote_service,
         )
-        assert opt_tolerant._check_strategy_stopping_conditions(history) is False
+        assert opt_demanding._check_strategy_stopping_conditions(history) is True
+
+    def test_flat_plateau_stops_maximize(self, mock_remote_service):
+        """The canonical no-improvement case: a completely flat maximize history
+        of length > patience MUST stop. Under the pre-fix arithmetic
+        (window compared against the best of ALL history, window included) a
+        plateau had ``best_recent == best_overall`` and never stopped.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial(f"t{i}", "accuracy", 0.8) for i in range(1, 6)
+        ]  # 5 identical scores, patience window [t3..t5], baseline [t1, t2]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_flat_plateau_stops_minimize(self, mock_remote_service):
+        """Same canonical plateau in the lower-is-better direction stops."""
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        history = [self._trial(f"t{i}", "cost", 0.3) for i in range(1, 6)]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_sub_min_delta_improvement_still_stops(self, mock_remote_service):
+        """A gain smaller than min_delta inside the window does NOT count as
+        improvement (and must not defer stopping)."""
+        strategy = OptimizationStrategy(
+            early_stopping_patience=3, early_stopping_min_delta=0.01
+        )
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", 0.800),
+            self._trial("t2", "accuracy", 0.790),
+            self._trial("t3", "accuracy", 0.805),  # +0.005 <= min_delta
+            self._trial("t4", "accuracy", 0.795),
+            self._trial("t5", "accuracy", 0.800),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_material_improvement_does_not_stop(self, mock_remote_service):
+        """A gain larger than min_delta inside the window IS improvement."""
+        strategy = OptimizationStrategy(
+            early_stopping_patience=3, early_stopping_min_delta=0.01
+        )
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", 0.800),
+            self._trial("t2", "accuracy", 0.790),
+            self._trial("t3", "accuracy", 0.850),  # +0.05 > min_delta
+            self._trial("t4", "accuracy", 0.795),
+            self._trial("t5", "accuracy", 0.800),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_history_equal_to_patience_does_not_stop(self, mock_remote_service):
+        """With history no longer than the patience window there is no
+        pre-window baseline to compare against -> not enough evidence to stop,
+        even on a flat plateau."""
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [self._trial(f"t{i}", "accuracy", 0.8) for i in range(1, 4)]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_invalid_baseline_scores_do_not_stop(self, mock_remote_service):
+        """If every pre-window score coerces to invalid, there is no usable
+        baseline -> do not stop (and do not crash on min()/max() of nothing)."""
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", float("nan")),
+            self._trial("t2", "accuracy", "bad"),
+            self._trial("t3", "accuracy", 0.8),
+            self._trial("t4", "accuracy", 0.8),
+            self._trial("t5", "accuracy", 0.8),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
 
     def test_empty_objectives_guarded(self, mock_remote_service):
         """No objectives + a patience gate must not raise IndexError (sibling of
@@ -2085,7 +2166,7 @@ class TestStrategyEarlyStoppingRobustness:
             self._trial("t5", "accuracy", 0.80),  # recent, valid
         ]
         optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
-        # Valid recent best 0.80 < overall best 0.90 - 0.01 -> stop.
+        # Valid recent best 0.80 <= baseline best 0.90 + 0.01 -> stop.
         assert optimizer._check_strategy_stopping_conditions(history) is True
 
     def test_minimize_ignores_invalid_metric_values(self, mock_remote_service):
@@ -2102,7 +2183,7 @@ class TestStrategyEarlyStoppingRobustness:
             self._trial("t5", "cost", 0.20),  # recent, valid
         ]
         optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
-        # Valid recent best 0.20 > overall best 0.10 + 0.01 -> stop.
+        # Valid recent best 0.20 >= baseline best 0.10 - 0.01 -> stop.
         assert optimizer._check_strategy_stopping_conditions(history) is True
 
     def test_insufficient_valid_data_does_not_stop_or_crash(self, mock_remote_service):

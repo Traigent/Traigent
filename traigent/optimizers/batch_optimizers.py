@@ -173,16 +173,27 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         trial = future.result()
                         completed_trials.append(trial)
 
-                        # Update best result
+                        # Patience counter resets only on a MATERIAL improvement
+                        # (> min_delta over the previous best); sub-delta creep
+                        # must not defer early stopping. Previously min_delta was
+                        # declared in BatchConfig but never read, so any epsilon
+                        # gain reset the counter.
+                        if (
+                            trial.score
+                            > best_score + self.batch_config.early_stopping_min_delta
+                        ):
+                            trials_without_improvement = 0
+                        else:
+                            trials_without_improvement += 1
+
+                        # Best-result tracking stays exact: even a sub-delta gain
+                        # is still the best config seen so far.
                         if trial.score > best_score:
                             best_score = trial.score
                             best_config = config
-                            trials_without_improvement = 0
                             logger.info(
                                 f"New best score: {best_score:.4f} with config: {config}"
                             )
-                        else:
-                            trials_without_improvement += 1
 
                         # Early stopping check
                         if (

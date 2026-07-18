@@ -217,6 +217,64 @@ class TestParallelBatchOptimizer:
 
         asyncio.run(run_test())
 
+    def test_early_stopping_min_delta_ignores_sub_delta_creep(self):
+        """``early_stopping_min_delta`` must gate the patience counter: score
+        gains smaller than min_delta do NOT count as improvement (the field was
+        previously declared but never read, so any epsilon creep deferred
+        stopping forever), while material gains DO keep the run alive.
+        """
+
+        class _SequencedEvaluator:
+            """Evaluator emitting a controlled accuracy sequence per call."""
+
+            def __init__(self, start: float, step: float) -> None:
+                self._value = start
+                self._step = step
+
+            async def evaluate(self, invocation_results, expected_outputs, dataset):
+                self._value += self._step
+                total = len(invocation_results)
+                return EvaluationResult(
+                    config={},
+                    total_examples=total,
+                    successful_examples=total,
+                    duration=1.0,
+                    aggregated_metrics={"accuracy": self._value},
+                )
+
+        async def run_case(step: float):
+            optimizer = ParallelBatchOptimizer(
+                base_optimizer=self.base_optimizer,
+                batch_config=BatchOptimizationConfig(
+                    max_parallel_trials=1,  # deterministic completion order
+                    early_stopping_patience=3,
+                    early_stopping_min_delta=0.001,
+                ),
+            )
+
+            def mock_func(value, config: TraigentConfig):
+                return f"result_{value}"
+
+            return await optimizer.optimize(
+                func=mock_func,
+                dataset=self.dataset,
+                invoker=MockInvoker(),
+                evaluator=_SequencedEvaluator(start=0.5, step=step),
+                max_trials=10,
+            )
+
+        # Sub-delta creep (+0.0001 per trial, min_delta=0.001): after the first
+        # trial seeds the best, every later gain is ignored -> patience=3
+        # consecutive non-improvements -> early stop well before max_trials.
+        creep_result = asyncio.run(run_case(step=0.0001))
+        assert creep_result.convergence_info["early_stopped"] is True
+        assert len(creep_result.trials) < 10
+
+        # Material gains (+0.1 per trial) reset the counter every time -> the
+        # run is never early-stopped.
+        improving_result = asyncio.run(run_case(step=0.1))
+        assert improving_result.convergence_info["early_stopped"] is False
+
 
 class TestMultiObjectiveBatchOptimizer:
     """Test suite for MultiObjectiveBatchOptimizer."""
