@@ -242,6 +242,24 @@ def _weighted_session_extras(
     }
 
 
+def _schema_orientations(
+    objective_schema: ObjectiveSchema | None,
+) -> dict[str, str]:
+    """Extract declared per-objective orientation from a schema.
+
+    Used by the weighted-aggregation tie-break path (issue #1955), which holds
+    the declared :class:`ObjectiveSchema` but not the pre-built orientation map,
+    so its tie-breaker honors declared orientation like every other path.
+    """
+    orientations: dict[str, str] = {}
+    for objective in getattr(objective_schema, "objectives", None) or []:
+        name = getattr(objective, "name", None)
+        orientation = getattr(objective, "orientation", None)
+        if isinstance(name, str) and isinstance(orientation, str):
+            orientations[name] = orientation
+    return orientations
+
+
 def _declared_secondary_objectives(
     primary_objective: str,
     objective_order: Iterable[str] | None,
@@ -449,6 +467,7 @@ def apply_tie_breaker(
     *,
     band_target: float | None = None,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> TrialResult:
     """Apply tie-breaker rules to select among equally-scored trials.
 
@@ -482,6 +501,7 @@ def apply_tie_breaker(
             primary_objective,
             band_target,
             objective_order,
+            objective_orientations,
         )
 
     # For "custom" or unknown, return the first trial
@@ -491,8 +511,17 @@ def apply_tie_breaker(
 def _secondary_metric_total(
     metrics: dict[str, Any],
     exclude_objective: str,
+    objective_orientations: dict[str, str] | None = None,
 ) -> float:
-    """Sum secondary metrics, subtracting minimization objectives."""
+    """Sum secondary metrics, subtracting minimization objectives.
+
+    Orientation is taken from the DECLARED schema (``objective_orientations``)
+    when available — the same source of truth the primary selector honors
+    (issue #1955). Name-pattern guessing is only the schema-less fallback, so a
+    custom-named declared-minimize secondary (e.g. ``token_budget``) is no
+    longer silently inverted in tie-breaks.
+    """
+    orientations = objective_orientations or {}
     total = 0.0
     for name, value in metrics.items():
         if (
@@ -501,7 +530,7 @@ def _secondary_metric_total(
             or name == exclude_objective
         ):
             continue
-        if is_minimization_objective(name):
+        if is_minimization_objective(name, orientation=orientations.get(name)):
             total -= float(value)
         else:
             total += float(value)
@@ -512,6 +541,7 @@ def _secondary_metric_key(
     metrics: dict[str, Any],
     exclude_objective: str,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> tuple[float, ...]:
     """Return a secondary-objective ordering key.
 
@@ -523,7 +553,11 @@ def _secondary_metric_key(
         exclude_objective, objective_order
     )
     if not declared_secondaries:
-        return (_secondary_metric_total(metrics, exclude_objective),)
+        return (
+            _secondary_metric_total(
+                metrics, exclude_objective, objective_orientations
+            ),
+        )
 
     ordered_scores: list[float] = []
     for objective in declared_secondaries:
@@ -532,7 +566,9 @@ def _secondary_metric_key(
             ordered_scores.append(float("-inf"))
             continue
         ordered_scores.append(
-            _secondary_metric_total({objective: value}, exclude_objective)
+            _secondary_metric_total(
+                {objective: value}, exclude_objective, objective_orientations
+            )
         )
     return tuple(ordered_scores)
 
@@ -542,6 +578,7 @@ def _apply_min_abs_deviation(
     objective: str,
     band_target: float | None,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> TrialResult:
     """Select trial with minimum absolute deviation from target or best stability."""
     if band_target is not None:
@@ -554,7 +591,12 @@ def _apply_min_abs_deviation(
 
     def secondary_score(t: TrialResult) -> tuple[Any, ...]:
         return (
-            *_secondary_metric_key(t.metrics or {}, objective, objective_order),
+            *_secondary_metric_key(
+                t.metrics or {},
+                objective,
+                objective_order,
+                objective_orientations,
+            ),
             t.trial_id or "",
         )
 
@@ -618,6 +660,7 @@ def _select_best_single_trial(
             primary_objective,
             band_target=band_target,
             objective_order=objective_order,
+            objective_orientations=objective_orientations,
         )
         if not tie_breakers and not _declared_secondary_objectives(
             primary_objective, objective_order
@@ -690,6 +733,7 @@ def _apply_aggregated_tie_breaker(
     primary_objective: str,
     band_target: float | None,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Apply tie-breaker rules to aggregated entries with equal primary scores.
 
@@ -723,7 +767,10 @@ def _apply_aggregated_tie_breaker(
 
     def agg_secondary_score(entry: dict[str, Any]) -> tuple[float, ...]:
         return _secondary_metric_key(
-            _compute_mean_metrics(entry), primary_objective, objective_order
+            _compute_mean_metrics(entry),
+            primary_objective,
+            objective_order,
+            objective_orientations,
         )
 
     return max(tied_entries, key=agg_secondary_score)
@@ -868,6 +915,7 @@ def _select_best_weighted_aggregated(
             primary_objective,
             None,
             objective_order,
+            _schema_orientations(schema),
         )
     else:
         best_entry = tied_entries[0]
@@ -979,6 +1027,7 @@ def _select_best_aggregated(
             primary_objective,
             band_target,
             objective_order,
+            objective_orientations,
         )
         if not tie_breakers and not _declared_secondary_objectives(
             primary_objective, objective_order

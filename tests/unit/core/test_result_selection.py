@@ -704,6 +704,46 @@ class TestSelectBestConfigurationWithTieBreakers:
         # B and C both have 0.9, tie-breaker picks C (lower latency)
         assert result.best_config["model"] == "C"
 
+    @pytest.mark.parametrize("aggregate_configs", [False, True])
+    def test_custom_named_declared_minimize_secondary_tie_breaks_downward(
+        self, aggregate_configs: bool
+    ) -> None:
+        """Regression #1955 (unported tie-breaker half of #1852).
+
+        A custom-named declared-minimize secondary (``token_budget``) whose name
+        matches none of the ``_MINIMIZE_OBJECTIVE_PATTERNS`` substrings would,
+        under the old name-only heuristic, be treated as maximize and *added* to
+        the tie-break score — crowning the trial with the LARGER (worse) budget.
+        The tie-breaker must instead honor the DECLARED orientation, like the
+        primary path, and pick the SMALLER budget.
+        """
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 0.9, "token_budget": 5000.0},
+                config={"model": "wasteful"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.9, "token_budget": 500.0},
+                config={"model": "frugal"},
+            ),
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=aggregate_configs,
+            tie_breakers=None,
+            objective_order=["accuracy", "token_budget"],
+            objective_orientations={
+                "accuracy": "maximize",
+                "token_budget": "minimize",
+            },
+        )
+
+        # Declared minimize honored -> smaller token_budget wins.
+        assert result.best_config["model"] == "frugal"
+
 
 def test_missing_primary_objective_excluded_not_zero_coerced():
     trial_missing = FakeTrial(metrics={"latency": 10.0}, config={"model": "A"})
