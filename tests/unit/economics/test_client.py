@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import logging
@@ -24,6 +25,7 @@ from traigent.economics import (  # noqa: E402
     EconomicsTelemetryContractError,
     EconomicsTelemetryTransportError,
     EgressPolicyError,
+    PreparedTelemetryBatch,
     funnel_eligible_event,
 )
 from traigent.economics import client as client_mod  # noqa: E402
@@ -31,6 +33,10 @@ from traigent.economics import schema as schema_mod  # noqa: E402
 from traigent.economics.contract import (  # noqa: E402
     IDEMPOTENCY_KEY_HEADER,
     PROJECT_ID_HEADER,
+)
+from traigent.economics.payload import (  # noqa: E402
+    build_telemetry_request,
+    canonical_json,
 )
 
 _FULL_RUN_EVENT = {
@@ -757,3 +763,214 @@ async def test_future_http_date_retry_after_is_clamped(
     _mock_transport(client, [far_future, _resp(201, _ingest_body(prepared))])
     await client.submit_prepared(prepared)
     assert delays and max(delays) == client_mod._MAX_RETRY_AFTER_SECONDS
+
+
+# --- CRITICAL 1: prepared batch is untrusted; every field re-validated ---------
+
+
+def _prepared_from_body(
+    body: dict[str, Any], *, project_id: str = "proj-1", **overrides: Any
+) -> PreparedTelemetryBatch:
+    """Construct a PreparedTelemetryBatch directly from a (possibly forged) body."""
+    events = body["events"]
+    fields: dict[str, Any] = {
+        "project_id": project_id,
+        "idempotency_key": body["idempotency_key"],
+        "batch_id": body["batch_id"],
+        "submitted": len(events),
+        "content": canonical_json(body).encode("utf-8"),
+        "body": body,
+        "event_ids": tuple(str(e["event_id"]) for e in events),
+    }
+    fields.update(overrides)
+    return PreparedTelemetryBatch(**fields)
+
+
+async def test_directly_constructed_non_schema_batch_is_refused() -> None:
+    # A hand-built batch whose body carries an arbitrary non-schema key, with a
+    # self-consistent content/key/ids, is still refused by re-validation.
+    client = _client()
+    mock_http = _mock_transport(client, _resp(201))
+    body = build_telemetry_request([_event()])
+    body["events"][0]["surprise_non_schema_key"] = "leaked"
+    forged = _prepared_from_body(body)
+    with pytest.raises(EconomicsTelemetryContractError):
+        await client.submit_prepared(forged)
+    mock_http.post.assert_not_called()
+
+
+async def test_directly_constructed_withheld_value_batch_is_refused() -> None:
+    client = _client()
+    mock_http = _mock_transport(client, _resp(201))
+    forged_run = dict(_FULL_RUN_EVENT)
+    forged_run["characterization"] = {
+        "overrides": {"loss_per_bad_output_usd": 4000},
+        "field_reports": [
+            {
+                "field": "loss_per_bad_output_usd",
+                "provenance": "asked",
+                "confidence": 1.0,
+                "sharing_outcome": "withheld_by_policy",  # withheld BUT present -> refused
+            }
+        ],
+    }
+    # build_telemetry_request would refuse this; bypass it to forge the body.
+    body = build_telemetry_request([_event()])
+    body["events"] = [forged_run]
+    forged = _prepared_from_body(body, event_ids=("evt-run-1",))
+    with pytest.raises((EgressPolicyError, EconomicsTelemetryContractError)):
+        await client.submit_prepared(forged)
+    mock_http.post.assert_not_called()
+
+
+async def test_replace_content_mismatch_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    tampered = dataclasses.replace(prepared, content=b'{"forged":true}')
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="content does not match"):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_replace_body_with_arbitrary_json_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    forged_body = dict(prepared.body)
+    forged_body["events"] = [dict(forged_body["events"][0], surprise="x")]
+    # Recompute content so only the schema check can catch it.
+    tampered = dataclasses.replace(
+        prepared,
+        body=forged_body,
+        content=canonical_json(forged_body).encode("utf-8"),
+    )
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_replace_idempotency_key_mismatch_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    tampered = dataclasses.replace(prepared, idempotency_key="econ-tel-differentkey")
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="idempotency key"):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_replace_event_ids_mismatch_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    tampered = dataclasses.replace(prepared, event_ids=("evt-other",))
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="event ids"):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_replace_project_id_mismatch_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event("proj-1")], project_id="proj-1")
+    tampered = dataclasses.replace(prepared, project_id="other-project")
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="project_ref"):
+        await client.submit_prepared(tampered)
+    mock_http.post.assert_not_called()
+
+
+async def test_prepared_submit_fails_closed_when_schema_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client()
+    prepared = client.prepare(
+        [_event()], project_id="proj-1"
+    )  # built while schema present
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    monkeypatch.setattr(
+        schema_mod, "compute_economics_schema_fingerprint", lambda *a, **k: "0" * 64
+    )
+    schema_mod.reset_request_validator_cache()
+    try:
+        with pytest.raises(EconomicsSchemaUnavailable):
+            await client.submit_prepared(prepared)
+        mock_http.post.assert_not_called()
+    finally:
+        schema_mod.reset_request_validator_cache()
+
+
+# --- HIGH 2: all-rejected must be 422, never a fresh 201 -----------------------
+
+
+async def test_all_rejected_fresh_201_is_refused() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    body = _ingest_body(
+        prepared,
+        status=201,
+        accepted=0,
+        rejected=1,
+        rejections=[{"event_index": 0, "reason": "tenant_scope_violation"}],
+    )
+    _mock_transport(client, _resp(201, body))
+    with pytest.raises(EconomicsResponseError):
+        await client.submit_prepared(prepared)
+
+
+async def test_partial_rejection_201_is_accepted() -> None:
+    client = _client()
+    e_a = funnel_eligible_event(
+        "proj-1", event_id="evt-1", occurred_at="2026-07-18T10:00:00.000Z"
+    )
+    e_b = funnel_eligible_event(
+        "proj-1", event_id="evt-2", occurred_at="2026-07-18T10:00:00.000Z"
+    )
+    prepared = client.prepare([e_a, e_b], project_id="proj-1")
+    body = _ingest_body(
+        prepared,
+        status=201,
+        accepted=1,
+        rejected=1,
+        rejections=[{"event_index": 1, "reason": "unknown_reference"}],
+    )
+    _mock_transport(client, _resp(201, body))
+    result = await client.submit_prepared(prepared)
+    assert result.any_rejected
+    assert not result.all_rejected
+    assert result.accepted == 1
+
+
+async def test_duplicate_only_replay_200_is_accepted() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    body = _ingest_body(prepared, status=200, replayed=True, accepted=0, duplicate=1)
+    _mock_transport(client, _resp(200, body))
+    result = await client.submit_prepared(prepared)
+    assert result.replayed
+    assert result.all_duplicate
+    assert result.no_rejections
+
+
+# --- redirect/credential safety -------------------------------------------------
+
+
+async def test_redirect_is_not_treated_as_success() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    _mock_transport(client, _resp(302, headers={"Location": "https://evil.example"}))
+    with pytest.raises(EconomicsTelemetryTransportError):
+        await client.submit_prepared(prepared)
+
+
+def test_http_client_does_not_follow_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeAsyncClient)
+    client = _client()
+    client._get_client()
+    assert captured.get("follow_redirects") is False

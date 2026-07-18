@@ -48,6 +48,7 @@ from traigent.economics.errors import (
     EconomicsTelemetryContractError,
     EconomicsTelemetryTransportError,
 )
+from traigent.economics.egress import enforce_characterization_egress
 from traigent.economics.payload import build_telemetry_request, canonical_json
 from traigent.economics.result import TelemetryIngestResult
 from traigent.economics.schema import validate_request_or_fail
@@ -190,6 +191,10 @@ class EconomicsTelemetryClient:
                 base_url=self.backend_url,
                 headers=headers,
                 timeout=self.timeout,
+                # Never auto-follow redirects: a 3xx would otherwise re-send the
+                # auth credential (X-API-Key / Authorization) to a redirect target.
+                # A redirect surfaces as a transport error instead.
+                follow_redirects=False,
             )
         return self._client
 
@@ -279,21 +284,101 @@ class EconomicsTelemetryClient:
     async def submit_prepared(
         self, prepared: PreparedTelemetryBatch
     ) -> TelemetryIngestResult:
-        """Submit an already-prepared batch, replaying on retry with identical bytes."""
-        response = await self._post_with_retry(prepared)
+        """Submit an already-prepared batch, replaying on retry with identical bytes.
+
+        The prepared batch is treated as UNTRUSTED input: ``PreparedTelemetryBatch``
+        is a public, constructible/``dataclasses.replace``-able dataclass, so every
+        transport field is re-derived and re-validated from its body immediately
+        before transport (see :meth:`_reverify_prepared`). A directly-constructed
+        or tampered batch — forged bytes, withheld/non-schema JSON, a mismatched
+        key, event ids, or project scope, or an absent Schema — fails closed here,
+        so no forged byte reaches the wire.
+        """
+        content, headers = self._reverify_prepared(prepared)
+        response = await self._post_with_retry(content, headers)
         return self._interpret(response, prepared)
+
+    def _reverify_prepared(
+        self, prepared: PreparedTelemetryBatch
+    ) -> tuple[bytes, dict[str, str]]:
+        """Re-derive and validate every transport field from the batch body.
+
+        Returns the canonical bytes and headers to transmit, computed FROM the
+        re-validated body (never the object's precomputed ``content``/headers).
+        Fails closed on any tamper or on an unavailable exact Schema.
+        """
+        body_map = prepared.body
+        if not isinstance(body_map, Mapping):
+            raise EconomicsTelemetryContractError(
+                "prepared batch body is not a mapping"
+            )
+        body = dict(body_map)
+
+        events = body.get("events")
+        if not isinstance(events, list) or not events:
+            raise EconomicsTelemetryContractError("prepared batch carries no events")
+
+        # Re-run egress on every run_economics characterization (fail closed) so a
+        # withheld value can never leave even via a hand-built batch.
+        for event in events:
+            if (
+                isinstance(event, Mapping)
+                and event.get("event_type") == "run_economics"
+            ):
+                enforce_characterization_egress(event.get("characterization") or {})
+
+        # Re-validate against the exact Schema: rejects arbitrary non-schema JSON
+        # and fails closed when the exact Schema is unavailable.
+        validate_request_or_fail(body)
+
+        # Project binding: the scope must be present and every event must name it.
+        scope = _require_non_empty(prepared.project_id, "project_id")
+        self._guard_project_scope(events, scope)
+
+        # Derive the transport fields from the validated body and require the
+        # object's claimed fields to match exactly.
+        content = canonical_json(body).encode("utf-8")
+        event_ids = tuple(str(event["event_id"]) for event in events)
+        key = body.get("idempotency_key")
+        batch_id = body.get("batch_id")
+        if content != prepared.content:
+            raise EconomicsTelemetryContractError(
+                "prepared content does not match its body"
+            )
+        if prepared.idempotency_key != key:
+            raise EconomicsTelemetryContractError(
+                "prepared idempotency key does not match its body"
+            )
+        if prepared.batch_id != batch_id:
+            raise EconomicsTelemetryContractError(
+                "prepared batch id does not match its body"
+            )
+        if prepared.event_ids != event_ids:
+            raise EconomicsTelemetryContractError(
+                "prepared event ids do not match its body"
+            )
+        if prepared.submitted != len(events):
+            raise EconomicsTelemetryContractError(
+                "prepared submitted count does not match its body"
+            )
+
+        headers = {
+            PROJECT_ID_HEADER: scope,
+            IDEMPOTENCY_KEY_HEADER: str(key),
+            "Content-Type": _JSON_CONTENT_TYPE,
+        }
+        return content, headers
 
     # -- request / response -----------------------------------------------------
 
-    async def _post_with_retry(self, prepared: PreparedTelemetryBatch) -> Any:
+    async def _post_with_retry(self, content: bytes, headers: dict[str, str]) -> Any:
         client = self._get_client()
-        headers = prepared.headers
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             is_last = attempt + 1 >= self.max_retries
             try:
                 response = await client.post(
-                    TELEMETRY_ENDPOINT, content=prepared.content, headers=headers
+                    TELEMETRY_ENDPOINT, content=content, headers=headers
                 )
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_exc = exc

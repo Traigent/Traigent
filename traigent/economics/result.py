@@ -170,6 +170,12 @@ class TelemetryIngestResult:
             raise EconomicsResponseError("ingest response counts do not reconcile")
         if http_status == 422 and not (submitted > 0 and rejected == submitted):
             raise EconomicsResponseError("422 response is not an all-rejected batch")
+        # All-rejected is the 422 status contract, never a fresh 201. (A 200 may
+        # legitimately be all-rejected: it replays a prior 422 ingest.)
+        if http_status == 201 and submitted > 0 and rejected == submitted:
+            raise EconomicsResponseError(
+                "all-rejected batch must be reported as 422, not a fresh 201"
+            )
 
         rejections = _parse_rejections(
             body.get("rejections"),

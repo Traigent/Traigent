@@ -248,3 +248,78 @@ date, past→zero), `test_future_http_date_retry_after_is_clamped`, existing
   worktree == c0a70a1 for this environment). If the exact Git pin is ever bumped,
   recompute `EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT` per the schema-module docstring
   in the same change.
+
+---
+
+# Terra final review remediation (on captain commit 627f3e8a)
+
+Fresh detached gpt-5.6-terra xhigh review of the committed range BLOCKED on three
+findings; remediated on top of `627f3e8af3d13cb1a548daf7c7c80535a1799269`, left
+uncommitted. Files changed this round: `traigent/economics/client.py`,
+`traigent/economics/result.py`, `tests/unit/economics/test_client.py`,
+`tests/unit/economics/test_contract_drift.py`.
+
+## CRITICAL 1 — PreparedTelemetryBatch is untrusted at the POST boundary
+`PreparedTelemetryBatch` stays a public, constructible/`dataclasses.replace`-able
+dataclass (API compatibility preserved), but `submit_prepared` no longer trusts
+its precomputed fields. New `EconomicsTelemetryClient._reverify_prepared` runs
+immediately before every POST and, from the batch BODY: (a) re-runs
+characterization egress on every `run_economics` event; (b) re-validates the body
+against the exact economics Schema (fails closed when the Schema is absent/
+mismatched); (c) re-checks project binding (every `project_ref` == scope);
+(d) re-derives canonical wire bytes, event ids, key, batch id, and submitted count
+and requires the object's claimed values to match exactly — otherwise a
+payload-free `EconomicsTelemetryContractError`/`EgressPolicyError`/
+`EconomicsSchemaUnavailable`. The bytes transmitted are the RE-DERIVED canonical
+bytes, never the object's `content`, so no forged byte reaches transport.
+Adversarial tests: `test_directly_constructed_non_schema_batch_is_refused`,
+`test_directly_constructed_withheld_value_batch_is_refused`,
+`test_replace_content_mismatch_is_refused`,
+`test_replace_body_with_arbitrary_json_is_refused`,
+`test_replace_idempotency_key_mismatch_is_refused`,
+`test_replace_event_ids_mismatch_is_refused`,
+`test_replace_project_id_mismatch_is_refused`,
+`test_prepared_submit_fails_closed_when_schema_unavailable` (all assert
+`post` not called).
+
+## HIGH 2 — all-rejected must be 422, never a fresh 201
+`TelemetryIngestResult.from_response` now rejects a 201 whose
+`rejected == submitted > 0` (`EconomicsResponseError`). A 200 all-rejected stays
+valid (it replays a prior 422 ingest); partial/fresh 201 and duplicate-only 200
+are preserved. Tests: `test_all_rejected_fresh_201_is_refused`,
+`test_partial_rejection_201_is_accepted`,
+`test_duplicate_only_replay_200_is_accepted`.
+
+## MEDIUM 3 — 422 drift bound to the endpoint, not a literal
+`test_response_status_schema_map_matches_endpoint_bindings` now derives all three
+statuses from the endpoint: 200/201 bind to their response `$ref` stems; 422 reads
+`responses["422"]` (a `KeyError` fails the test if the endpoint drops it) and, since
+the endpoint declares 422 as a bare all-rejected status with no body `$ref`, asserts
+the SDK maps it to the same replayed=false initial schema as 201 and that the
+endpoint description states the all-rejected semantics. If the Schema later gives
+422 its own body `$ref`, the test binds to it and fails on drift.
+
+## Surrounding security premise re-checked (not narrow patching)
+- Canonical exact transmitted bytes: POST now sends re-derived canonical bytes.
+- Per-status response validation + installed-Schema content fingerprint: unchanged,
+  still enforced (and now also re-enforced on the prepared path).
+- Redirect/credential safety: `httpx.AsyncClient(follow_redirects=False)` set
+  explicitly so a 3xx never re-sends the auth credential; a redirect surfaces as a
+  transport error. Tests: `test_redirect_is_not_treated_as_success`,
+  `test_http_client_does_not_follow_redirects`.
+- No sleep after the final retry attempt; payload-free errors/logs: unchanged. No
+  gate weakened.
+
+## Commands and results (this round)
+- Focused: `pytest tests/unit/economics/ -q` → **125 passed** (was 112).
+- Ruff `check` + `format --check` → clean (16 files formatted).
+- Mypy `traigent/economics` → **Success: no issues found in 8 source files**.
+- Compile `py_compile` → OK.
+- Parity/init → **29 passed**. Broader `tests/unit/cloud` → **1884 passed, 2 skipped**
+  (pre-existing env skips). `git diff --check` → clean. Caches removed before handoff.
+
+## Residual risk (this round)
+- `PreparedTelemetryBatch.headers` property still reflects the object's (possibly
+  tampered) claimed fields; it is informational only and is NOT used by the
+  transport path (headers are rebuilt from the re-validated body in
+  `_reverify_prepared`). Left public for API compatibility.

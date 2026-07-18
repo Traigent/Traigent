@@ -126,20 +126,46 @@ def test_replay_status_bindings_match_schema(local_contract) -> None:
     )
 
 
+def _response_ref_stem(response_entry: dict) -> str | None:
+    ref = (
+        response_entry.get("content", {})
+        .get("application/json", {})
+        .get("schema", {})
+        .get("$ref")
+    )
+    if ref is None:
+        return None
+    return ref.rsplit("/", 1)[-1].removesuffix(".json")
+
+
 def test_response_status_schema_map_matches_endpoint_bindings(local_contract) -> None:
     from traigent.economics import schema as schema_mod
 
     endpoints = local_contract.endpoints()
     responses = endpoints["paths"][TELEMETRY_ENDPOINT]["post"]["responses"]
+
+    # 200 and 201 bind directly to the endpoint's response $ref.
     for status, expected_name in ((200, "replay"), (201, "initial")):
-        ref = responses[str(status)]["content"]["application/json"]["schema"]["$ref"]
+        stem = _response_ref_stem(responses[str(status)])
         mapped = schema_mod.RESPONSE_SCHEMA_BY_STATUS[status]
-        assert ref.endswith(f"{mapped}.json")
+        assert stem == mapped
         assert expected_name in mapped
-    # The 422 all-rejected body is the initial (replayed=false) shape.
-    assert schema_mod.RESPONSE_SCHEMA_BY_STATUS[422] == (
-        "economics_telemetry_ingest_response_initial_schema"
-    )
+
+    # 422 is bound to the endpoint too, not a literal: the endpoint MUST declare
+    # a 422, and the SDK's 422 schema must track it. Today the endpoint declares
+    # 422 as a bare all-rejected status with no body $ref, so the SDK validates
+    # its body against the same replayed=false initial shape the 201 uses; if the
+    # Schema later gives 422 its own body $ref, this binds to it and fails on drift.
+    entry_422 = responses["422"]  # KeyError here fails the test if 422 is dropped.
+    ref_stem_422 = _response_ref_stem(entry_422)
+    if ref_stem_422 is not None:
+        assert schema_mod.RESPONSE_SCHEMA_BY_STATUS[422] == ref_stem_422
+    else:
+        assert (
+            schema_mod.RESPONSE_SCHEMA_BY_STATUS[422]
+            == schema_mod.RESPONSE_SCHEMA_BY_STATUS[201]
+        )
+        assert "rejected" in entry_422["description"].lower()
 
 
 def test_runtime_fingerprint_binds_to_local_c0a70a1_material(local_contract) -> None:
