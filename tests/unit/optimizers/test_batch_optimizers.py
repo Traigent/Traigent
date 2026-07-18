@@ -1,7 +1,9 @@
 """Tests for batch optimization strategies."""
 
 import asyncio
+from datetime import UTC, datetime
 
+from traigent.api.types import TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import Dataset, EvaluationExample, EvaluationResult
 from traigent.invokers.base import InvocationResult
@@ -16,6 +18,25 @@ from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import get_optimizer
 from traigent.optimizers.results import Trial
 from traigent.utils.multi_objective import scalarize_objectives
+
+
+def _dummy_history(count: int) -> list[TrialResult]:
+    """Build a ``count``-long trial history for resumed-run stop checks.
+
+    ``should_stop`` only inspects ``len(history)`` for the resumed-history cap,
+    so the trial contents are placeholders.
+    """
+    return [
+        TrialResult(
+            trial_id=f"resumed_{i}",
+            config={"param1": i},
+            metrics={"accuracy": 0.5},
+            status=TrialStatus.COMPLETED,
+            duration=0.0,
+            timestamp=datetime.now(UTC),
+        )
+        for i in range(count)
+    ]
 
 
 class MockInvoker:
@@ -350,6 +371,48 @@ class TestMultiObjectiveBatchOptimizer:
             objectives=["accuracy"],
         )
         assert optimizer._base_optimizer.max_trials == 100
+
+    def test_should_stop_honours_resumed_history(self):
+        """#1916 follow-up: a resumed run passes a pre-populated history but
+        drives trials through a *local* optimizer inside ``optimize``, so the
+        injected base optimizer's trial counter stays at zero. The legacy
+        ``len(history) >= budget`` cap must still fire; delegating solely to the
+        base optimizer's trial count (the earlier fix) would never stop a
+        resumed run.
+        """
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(200))},
+            objectives=["accuracy"],
+            max_trials=5,
+        )
+
+        # The base optimizer never saw these trials; its counter is still 0.
+        assert optimizer._base_optimizer._trial_count == 0
+
+        resumed_history = _dummy_history(5)
+        assert optimizer.should_stop(resumed_history) is True
+        # One short of the budget must NOT stop.
+        assert optimizer.should_stop(_dummy_history(4)) is False
+
+    def test_should_stop_none_max_trials_normalized_to_100(self):
+        """#1916 follow-up: a direct-constructor ``max_trials=None`` must not
+        crash ``should_stop``. RandomSearchOptimizer.should_stop evaluates
+        ``count >= max_trials`` and would raise TypeError on ``None``; the
+        constructor normalises it to the historical 100-trial cap.
+        """
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(500))},
+            objectives=["accuracy"],
+            max_trials=None,
+        )
+
+        # Normalised to 100 for both the resumed-history cap and the delegate.
+        assert optimizer._max_trials == 100
+        assert optimizer._base_optimizer.max_trials == 100
+
+        # Would raise ``TypeError: '>=' not supported ...`` under a None budget.
+        assert optimizer.should_stop([]) is False
+        assert optimizer.should_stop(_dummy_history(100)) is True
 
 
 class TestAdaptiveBatchOptimizer:

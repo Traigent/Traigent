@@ -1948,6 +1948,37 @@ class TestStrategyEarlyStoppingOrientation:
         )
         assert opt_tolerant._check_strategy_stopping_conditions(history) is False
 
+    def test_minimize_configurable_min_delta_respects_direction(
+        self, mock_remote_service
+    ):
+        """The same improvement band applies in the lower-is-better direction."""
+        # Overall best (0.100) sits in t1; the recent window is slightly worse.
+        history = [
+            self._trial("t1", "cost", 0.100),
+            self._trial("t2", "cost", 0.105),
+            self._trial("t3", "cost", 0.108),
+        ]
+
+        # Small delta (0.001): 0.105 > 0.100 + 0.001 -> stop.
+        opt_strict = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(
+                early_stopping_patience=2, early_stopping_min_delta=0.001
+            ),
+            mock_remote_service,
+        )
+        assert opt_strict._check_strategy_stopping_conditions(history) is True
+
+        # Larger delta (0.01): 0.105 is within tolerance -> keep going.
+        opt_tolerant = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(
+                early_stopping_patience=2, early_stopping_min_delta=0.01
+            ),
+            mock_remote_service,
+        )
+        assert opt_tolerant._check_strategy_stopping_conditions(history) is False
+
     def test_empty_objectives_guarded(self, mock_remote_service):
         """No objectives + a patience gate must not raise IndexError (sibling of
         #1909's ``objectives[0]`` guard)."""
@@ -1957,6 +1988,135 @@ class TestStrategyEarlyStoppingOrientation:
             self._trial("t1", "cost", 0.5),
             self._trial("t2", "cost", 0.4),
         ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+
+class TestStrategyEarlyStoppingRobustness:
+    """Follow-up hardening of the patience-based early-stop gate:
+
+    * a ``band`` (target-range) primary objective is not directional, so the raw
+      maximize/minimize plateau arithmetic must be bypassed for it; and
+    * every metric value is filtered through ``coerce_finite_objective_score`` so
+      NaN / infinities / bool / str / None values cannot poison or crash the min/max
+      comparisons.
+    """
+
+    @staticmethod
+    def _trial(trial_id: str, obj: str, value) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config={},
+            metrics={obj: value},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+
+    def _optimizer(
+        self, objectives, strategy, mock_remote_service, objective_schema=None
+    ):
+        return CloudOptimizer(
+            config_space={"temperature": {"min": 0.0, "max": 1.0, "type": "float"}},
+            objectives=objectives,
+            remote_service=mock_remote_service,
+            optimization_strategy=strategy,
+            objective_schema=objective_schema,
+        )
+
+    @staticmethod
+    def _band_schema(name: str):
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+        from traigent.tvl.models import BandTarget
+
+        return ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name=name,
+                    orientation="band",
+                    weight=1.0,
+                    band=BandTarget(low=0.7, high=0.9),
+                )
+            ]
+        )
+
+    def test_band_primary_bypasses_patience_plateau_gate(self, mock_remote_service):
+        """A band primary objective must NOT run the raw maximize plateau test.
+
+        The identical plateau history stops a maximize objective, but for a band
+        objective, whose "best" is closeness to a target interval, not a
+        direction, the gate must be bypassed. Running the raw-max arithmetic
+        would stop a run that is correctly parked inside the band.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        # Overall best (0.90) sits in t1; the recent window plateaus below it.
+        history = [
+            self._trial("t1", "accuracy", 0.90),
+            self._trial("t2", "accuracy", 0.80),
+            self._trial("t3", "accuracy", 0.80),
+            self._trial("t4", "accuracy", 0.80),
+        ]
+
+        # Control: maximize orientation (no schema, name heuristic) DOES stop;
+        # this is exactly the raw-max verdict the band path must avoid.
+        maximize_opt = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        assert maximize_opt._check_strategy_stopping_conditions(history) is True
+
+        # Band orientation bypasses only the plateau gate -> does not stop here.
+        band_opt = self._optimizer(
+            ["accuracy"],
+            strategy,
+            mock_remote_service,
+            objective_schema=self._band_schema("accuracy"),
+        )
+        assert band_opt._check_strategy_stopping_conditions(history) is False
+
+    def test_maximize_ignores_invalid_metric_values(self, mock_remote_service):
+        """NaN / bool / str values among a maximize objective's recent trials are
+        dropped, not allowed to poison or crash ``max()``; the valid values still
+        drive a correct stop.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=4)
+        history = [
+            self._trial("t1", "accuracy", 0.90),  # valid best overall
+            self._trial("t2", "accuracy", float("nan")),  # recent, dropped
+            self._trial("t3", "accuracy", True),  # recent bool, dropped
+            self._trial("t4", "accuracy", "oops"),  # recent str, would crash max()
+            self._trial("t5", "accuracy", 0.80),  # recent, valid
+        ]
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        # Valid recent best 0.80 < overall best 0.90 - 0.01 -> stop.
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_minimize_ignores_invalid_metric_values(self, mock_remote_service):
+        """Infinities / None among a minimize objective's recent trials are dropped
+        rather than poison (``-inf`` would win ``min``) or crash (``None``) the
+        comparison; the valid values still drive a correct stop.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=4)
+        history = [
+            self._trial("t1", "cost", 0.10),  # valid best overall (lowest)
+            self._trial("t2", "cost", float("-inf")),  # recent, dropped
+            self._trial("t3", "cost", float("inf")),  # recent, dropped
+            self._trial("t4", "cost", None),  # recent, would crash min()
+            self._trial("t5", "cost", 0.20),  # recent, valid
+        ]
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        # Valid recent best 0.20 > overall best 0.10 + 0.01 -> stop.
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_insufficient_valid_data_does_not_stop_or_crash(self, mock_remote_service):
+        """When every recent trial's metric is invalid, the coerced recent set is
+        empty and the gate falls through to "do not stop" instead of crashing on
+        ``max()`` / ``min()`` of unrankable values.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        history = [
+            self._trial("t1", "accuracy", float("nan")),
+            self._trial("t2", "accuracy", "bad"),
+            self._trial("t3", "accuracy", None),
+        ]
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
         assert optimizer._check_strategy_stopping_conditions(history) is False
 
 

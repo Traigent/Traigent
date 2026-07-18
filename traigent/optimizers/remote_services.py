@@ -197,6 +197,20 @@ class OptimizationStrategy:
 
     def __post_init__(self) -> None:
         """Validate fields that feed early-stopping arithmetic."""
+        # ``early_stopping_patience`` is used directly as a negative-index slice
+        # bound (``history[-patience:]``) and as a length threshold in
+        # CloudOptimizer._check_strategy_stopping_conditions. A float or string
+        # would raise deep inside the stop check, and a negative value would
+        # silently corrupt the "recent trials" slice. bool subclasses int, so an
+        # unguarded ``isinstance(int)`` would let True/False through and act as
+        # 1/0. Require a real non-negative int; 0 keeps its existing meaning of
+        # "early stopping disabled".
+        patience = self.early_stopping_patience
+        if isinstance(patience, bool) or not isinstance(patience, int) or patience < 0:
+            raise ValueError(
+                f"early_stopping_patience must be a non-negative int, got {patience!r}"
+            )
+
         # A negative or NaN min_delta silently inverts or disables the
         # no-improvement test in CloudOptimizer._check_strategy_stopping_conditions
         # (NaN comparisons are always False, so optimization never early-stops).

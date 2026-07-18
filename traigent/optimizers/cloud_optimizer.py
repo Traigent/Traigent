@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Coroutine
 from datetime import UTC, datetime
 from random import SystemRandom
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
@@ -30,7 +30,10 @@ from traigent.optimizers.remote_services import (
 )
 from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
-from traigent.utils.objectives import is_minimization_objective
+from traigent.utils.objectives import (
+    coerce_finite_objective_score,
+    is_minimization_objective,
+)
 
 if TYPE_CHECKING:
     # Annotation-only: the optimizers layer must not import traigent.core at
@@ -263,7 +266,7 @@ class CloudOptimizer(BaseOptimizer):
                 self._trial_count += 1
 
                 logger.debug(f"Fallback suggestion used: {config}")
-                return config
+                return cast(dict[str, Any], config)
 
             except Exception as e:
                 logger.error(f"Fallback suggestion also failed: {e}")
@@ -412,8 +415,8 @@ class CloudOptimizer(BaseOptimizer):
 
         # Use fallback stopping logic
         if self.fallback_optimizer:
-            return await self.fallback_optimizer.should_stop_async(
-                history, remote_context
+            return bool(
+                await self.fallback_optimizer.should_stop_async(history, remote_context)
             )
 
         # Default stopping condition
@@ -547,7 +550,7 @@ class CloudOptimizer(BaseOptimizer):
                 )
                 self._fallback_uses += 1
                 logger.debug(f"Generated {len(candidates)} candidates via fallback")
-                return candidates
+                return cast(list[dict[str, Any]], candidates)
 
             except Exception as e:
                 logger.error(f"Fallback candidate generation also failed: {e}")
@@ -556,7 +559,10 @@ class CloudOptimizer(BaseOptimizer):
                 ) from e
 
         # No fallback available, use base class implementation
-        return await super().generate_candidates_async(max_candidates, remote_context)
+        return cast(
+            list[dict[str, Any]],
+            await super().generate_candidates_async(max_candidates, remote_context),
+        )
 
     def get_optimization_stats(self) -> dict[str, Any]:
         """Get optimization performance statistics.
@@ -682,24 +688,47 @@ class CloudOptimizer(BaseOptimizer):
             # orientation wins; name patterns are only a fallback for objectives
             # no schema declares.
             primary_obj = self.objectives[0]
+            orientation = self._primary_objective_orientation(primary_obj)
+
+            # A ``band`` (target-range) primary objective is not directional:
+            # "best" means closeness to a target interval, so neither the
+            # maximize (``best_recent < best_overall - delta``) nor the minimize
+            # (``best_recent > best_overall + delta``) plateau test is
+            # meaningful. Running the raw maximize arithmetic here would treat a
+            # run correctly parked inside the band as "no improvement" and stop
+            # it (or refuse to stop a drifting run). Bypass ONLY this patience
+            # plateau gate; the budget checks above and the remote/fallback stop
+            # decisions in ``should_stop_async`` still apply.
+            if orientation == "band":
+                return False
+
             minimize = is_minimization_objective(
                 primary_obj,
-                orientation=self._primary_objective_orientation(primary_obj),
+                orientation=orientation,
             )
             min_delta = strategy.early_stopping_min_delta
-            recent_scores = []
 
-            for trial in history[-strategy.early_stopping_patience :]:
-                if trial.is_successful and primary_obj in trial.metrics:
-                    recent_scores.append(trial.metrics[primary_obj])
+            # Coerce every metric through ``coerce_finite_objective_score`` so
+            # NaN / infinities / bool / str / None values are dropped instead of
+            # poisoning or crashing the min/max comparisons below: a single NaN
+            # makes every comparison False (silently disabling stopping), and a
+            # str raises TypeError inside min()/max().
+            def _valid_scores(trials: list[TrialResult]) -> list[float]:
+                scores: list[float] = []
+                for trial in trials:
+                    if trial.is_successful and primary_obj in trial.metrics:
+                        coerced = coerce_finite_objective_score(
+                            trial.metrics[primary_obj]
+                        )
+                        if coerced is not None:
+                            scores.append(coerced)
+                return scores
+
+            recent_scores = _valid_scores(history[-strategy.early_stopping_patience :])
 
             if recent_scores:
-                # Find best overall score
-                all_scores = [
-                    trial.metrics[primary_obj]
-                    for trial in history
-                    if trial.is_successful and primary_obj in trial.metrics
-                ]
+                # Find best overall score (finite, rankable values only).
+                all_scores = _valid_scores(history)
 
                 if all_scores:
                     if minimize:
@@ -722,7 +751,7 @@ class CloudOptimizer(BaseOptimizer):
 
     def get_algorithm_info(self) -> dict[str, Any]:
         """Get information about this remote optimization algorithm."""
-        info = super().get_algorithm_info()
+        info: dict[str, Any] = super().get_algorithm_info()
         info.update(
             {
                 "remote_service": self.remote_service.service_name,

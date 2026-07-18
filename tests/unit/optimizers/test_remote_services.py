@@ -658,6 +658,58 @@ class TestOptimizationStrategyMinDeltaValidation:
             OptimizationStrategy(early_stopping_min_delta=-5.0)
 
 
+class TestOptimizationStrategyPatienceValidation:
+    """``early_stopping_patience`` is used directly as a negative-index slice
+    bound (``history[-patience:]``) and length threshold in
+    CloudOptimizer._check_strategy_stopping_conditions.
+
+    A float or string bound raises deep in the stop check; a negative bound
+    silently corrupts the "recent trials" slice; a bool slips through a naive
+    ``isinstance(int)`` and acts as 1/0. All are rejected at construction so the
+    caller learns the strategy is wrong instead of getting a broken run. Zero
+    keeps its meaning of "early stopping disabled".
+    """
+
+    @pytest.mark.parametrize("bad_patience", [-1, -10])
+    def test_rejects_negative(self, bad_patience):
+        with pytest.raises(ValueError, match="early_stopping_patience"):
+            OptimizationStrategy(early_stopping_patience=bad_patience)
+
+    @pytest.mark.parametrize("bad_patience", [True, False])
+    def test_rejects_bool(self, bad_patience):
+        # bool subclasses int, so an unguarded isinstance(int) check would let
+        # True/False through and use them as a slice bound of 1/0.
+        with pytest.raises(ValueError, match="early_stopping_patience"):
+            OptimizationStrategy(early_stopping_patience=bad_patience)
+
+    @pytest.mark.parametrize(
+        "bad_patience",
+        [
+            3.0,
+            0.5,
+            "3",
+            None,
+            [3],
+            float("nan"),
+            float("inf"),
+        ],
+    )
+    def test_rejects_non_int(self, bad_patience):
+        with pytest.raises(ValueError, match="early_stopping_patience"):
+            OptimizationStrategy(early_stopping_patience=bad_patience)
+
+    @pytest.mark.parametrize("good_patience", [0, 1, 3, 10, 100])
+    def test_accepts_zero_and_positive_int(self, good_patience):
+        strategy = OptimizationStrategy(early_stopping_patience=good_patience)
+
+        # No coercion: the value survives construction exactly as supplied.
+        assert strategy.early_stopping_patience == good_patience
+        assert type(strategy.early_stopping_patience) is int
+
+    def test_default_is_valid(self):
+        assert OptimizationStrategy().early_stopping_patience == 10
+
+
 class TestRemoteOptimizationServiceAbstract:
     """Test RemoteOptimizationService abstract base class."""
 

@@ -399,10 +399,20 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         # ``max_trials`` (default 100, matching the historical hard-coded cap) so
         # the delegated ``should_stop`` honours the configured budget and
         # config-space exhaustion instead of a magic constant (#1916).
+        #
+        # Normalise a direct-constructor ``max_trials=None`` to the historical
+        # 100-trial cap. ``RandomSearchOptimizer.should_stop`` evaluates
+        # ``self._trial_count >= self.max_trials``, which raises
+        # ``TypeError: '>=' not supported between 'int' and 'NoneType'`` on a
+        # ``None`` budget; 100 matches the legacy ``len(history) >= 100`` cap.
+        requested_max_trials = kwargs.get("max_trials", 100)
+        if requested_max_trials is None:
+            requested_max_trials = 100
+        self._max_trials = requested_max_trials
         self._base_optimizer = RandomSearchOptimizer(
             configuration_space,
             resolved_objectives,
-            max_trials=kwargs.get("max_trials", 100),
+            max_trials=requested_max_trials,
         )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
@@ -412,10 +422,21 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop.
 
-        Delegates to the injected base optimizer (like the sibling batch
-        optimizers) so the configured ``max_trials`` and config-space
-        exhaustion are honoured instead of a hard-coded 100-trial cap (#1916).
+        Combines two budgets so neither the resumed-history nor the fresh-run
+        path regresses (#1916 follow-up):
+
+        * Legacy resumed-history cap - stop once ``len(history)`` reaches the
+          configured budget. ``optimize`` drives trials through a *local*
+          RandomSearchOptimizer, so the injected ``_base_optimizer`` trial
+          counter stays at zero on a resumed run; without this check a
+          pre-populated history would never trigger a stop (the historical
+          behaviour was ``len(history) >= 100``).
+        * Delegate budget / exhaustion - otherwise defer to the injected base
+          optimizer so its configured ``max_trials`` and discrete config-space
+          exhaustion are honoured instead of a hard-coded 100-trial cap.
         """
+        if len(history) >= self._max_trials:
+            return True
         return bool(self._base_optimizer.should_stop(history))
 
     async def optimize(
