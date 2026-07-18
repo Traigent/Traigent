@@ -907,6 +907,29 @@ class TestExactHypervolume2DCorrectness:
         hv = calc.calculate_hypervolume([_pt(a=2.0, b=2.0)])
         assert hv == pytest.approx(1.0)
 
+    def test_one_dimensional_front_maximize(self):
+        # A genuinely 1-D front used to fall into the 2-D helper's
+        # ``len(objectives) != 2`` guard and silently return 0.0. Correct
+        # 1-D hypervolume = oriented distance from reference to the best.
+        calc = ParetoFrontCalculator(maximize={"a": True})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        assert calc.calculate_hypervolume(front, {"a": 2.0}) == pytest.approx(5.0)
+        # Auto reference = min-1 = 2 → same value.
+        assert calc.calculate_hypervolume(front) == pytest.approx(5.0)
+
+    def test_one_dimensional_front_minimize(self):
+        calc = ParetoFrontCalculator(maximize={"a": False})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        # Best (lowest) = 3, ref = 10 → 7.
+        assert calc.calculate_hypervolume(front, {"a": 10.0}) == pytest.approx(7.0)
+        # Auto reference = max+1 = 8 → 8-3 = 5.
+        assert calc.calculate_hypervolume(front) == pytest.approx(5.0)
+
+    def test_one_dimensional_front_clamps_at_zero(self):
+        # Every point on the wrong (worse) side of the reference → 0.0.
+        calc = ParetoFrontCalculator(maximize={"a": True})
+        assert calc.calculate_hypervolume([_pt(a=3.0)], {"a": 5.0}) == 0.0
+
     def test_mixed_orientation_asymmetric_front_exact_value(self):
         # Asymmetric mixed max/min case — revert-proof where a symmetric
         # front coincidentally agrees under old and new math. a maximize,

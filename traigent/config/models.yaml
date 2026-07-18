@@ -189,10 +189,12 @@ bedrock:
   # Authenticates via AWS credentials; recognized for routing, not validated.
   support_level: mapping_only
   known_models:
-    # Anthropic on Bedrock
+    # Anthropic on Bedrock. The claude-3-opus Bedrock alias
+    # (anthropic.claude-3-opus-20240229-v1:0) is swept — provider-prefixed
+    # forms normalize to the retired base ID (#1936/#1937); see
+    # traigent.config.retired_models.normalize_model_id.
     - anthropic.claude-3-5-sonnet-20241022-v2:0
     - anthropic.claude-3-5-haiku-20241022-v1:0
-    - anthropic.claude-3-opus-20240229-v1:0
     - anthropic.claude-3-sonnet-20240229-v1:0
     - anthropic.claude-3-haiku-20240307-v1:0
     - anthropic.claude-v2:1

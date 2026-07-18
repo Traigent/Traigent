@@ -688,6 +688,13 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         new_scores = new_trial.metadata["objective_scores"]
         if any(v is None or not math.isfinite(v) for v in new_scores.values()):
             return
+        # Completeness is enforced HERE at the choke point, not only in
+        # _compose_trial_scores: direct callers could otherwise insert a
+        # finite-but-INCOMPLETE mapping (e.g. {"accuracy": 0.91} with cost
+        # declared), which is non-comparable under _dominates and would sit on
+        # the frontier as an unmeasured, falsely-attractive point.
+        if any(objective not in new_scores for objective in self.objectives):
+            return
 
         # Check if new trial is dominated by existing solutions
         is_dominated = False

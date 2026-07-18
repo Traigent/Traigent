@@ -1050,6 +1050,21 @@ class TestZeroWeightMissingMetricRejection:
         assert scores == {"accuracy": 0.9, "cost": 5.0}
         assert math.isfinite(composite)
 
+    def test_direct_frontier_insert_rejects_incomplete_mapping(self):
+        # Completeness must be enforced at _update_pareto_frontier itself
+        # (the choke point), not only in _compose_trial_scores: a direct
+        # caller could insert a finite-but-INCOMPLETE mapping which is
+        # non-comparable under _dominates and would sit on the frontier as
+        # an unmeasured, falsely-attractive point.
+        opt = self._optimizer()
+        opt._update_pareto_frontier(_trial({"accuracy": 0.91}, score=0.91))
+        assert opt.pareto_frontier == []
+
+        complete = _trial({"accuracy": 0.90, "cost": 0.5}, score=0.9)
+        opt._update_pareto_frontier(complete)
+        opt._update_pareto_frontier(_trial({"accuracy": 0.99}, score=0.99))
+        assert opt.pareto_frontier == [complete]
+
     def test_nan_scored_trial_cannot_enter_frontier_or_win(self):
         opt = self._optimizer()
         # Inserted FIRST — under the old ``== -inf`` gate this NaN trial

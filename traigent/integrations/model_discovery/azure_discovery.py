@@ -30,9 +30,8 @@ KNOWN_AZURE_BASE_MODELS = [
     # GPT-3.5 family
     "gpt-35-turbo",  # Azure uses "35" not "3.5"
     "gpt-35-turbo-16k",
-    # O1 family
-    "o1-preview",
-    "o1-mini",
+    # O1 family: retired o1-preview/o1-mini swept from this served snapshot
+    # (#1936/#1937); see traigent.config.retired_models.
     # Legacy
     "text-davinci-003",
     "text-davinci-002",

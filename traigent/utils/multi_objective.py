@@ -203,11 +203,45 @@ class ParetoFrontCalculator:
         if not complete_points:
             return 0.0
 
+        if len(declared) == 1:
+            # A genuinely 1-D front previously fell into the 2-D helper's
+            # ``len(objectives) != 2`` guard and returned 0.0 silently.
+            return self._hypervolume_1d(
+                complete_points, next(iter(declared)), reference_point
+            )
+
         if len(declared) > 2:
             # For > 2D, use approximation
             return self._approximate_hypervolume(complete_points, reference_point)
 
         return self._exact_hypervolume_2d(complete_points, reference_point)
+
+    def _hypervolume_1d(
+        self,
+        pareto_front: list[ParetoPoint],
+        objective: str,
+        reference_point: dict[str, float] | None,
+    ) -> float:
+        """Exact 1-D hypervolume: oriented distance from reference to the best.
+
+        For a single objective the dominated "volume" is the interval between
+        the reference and the best point on the front — ``best - ref`` for a
+        maximize objective, ``ref - best`` for minimize — clamped at zero when
+        every point is on the wrong (worse) side of the reference. The auto
+        reference is the orientation-aware nadir (min-1 / max+1), matching the
+        2-D and Monte-Carlo paths (#1940/#1945).
+        """
+        maximize = self.maximize.get(objective, True)
+        values = [p.objectives[objective] for p in pareto_front]
+
+        if reference_point is not None and objective in reference_point:
+            ref = reference_point[objective]
+        else:
+            ref = (min(values) - 1) if maximize else (max(values) + 1)
+
+        best = max(values) if maximize else min(values)
+        length = (best - ref) if maximize else (ref - best)
+        return max(0.0, length)
 
     def _exact_hypervolume_2d(
         self, pareto_front: list[ParetoPoint], reference_point: dict[str, float] | None
