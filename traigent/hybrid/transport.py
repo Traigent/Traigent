@@ -217,6 +217,24 @@ class TransportServerError(TransportError):
     pass
 
 
+class TransportNotFoundError(TransportError):
+    """Definitively-absent resource, tool, or session.
+
+    The transport-agnostic equivalent of an HTTP 404: the requested target
+    does not exist / the session has expired. Callers may treat this as a
+    definitive "absent" (e.g. fall back to safe capability defaults, or
+    report a session as expired). It is distinct from transient
+    :class:`TransportConnectionError`/:class:`TransportServerError`, which
+    must be surfaced or retried — never silently treated as "absent".
+
+    On HTTP this maps to ``status_code == 404``; on MCP (which has no status
+    line) it is classified from a structured error code in the response
+    payload, never from the free-text error message.
+    """
+
+    pass
+
+
 # Cloud-metadata service hosts must never be reachable through user-supplied
 # hybrid base URLs. The hybrid transport is the most likely SSRF amplifier
 # because it issues authenticated HTTP requests on behalf of the SDK to a

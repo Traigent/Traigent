@@ -71,10 +71,11 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     ("openai", "fast"): ["gpt-4o-mini"],
     ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
     ("openai", "quality"): ["gpt-4o"],
-    # Anthropic tiers
-    ("anthropic", "fast"): ["claude-3-haiku-20240307"],
-    ("anthropic", "balanced"): ["claude-3-5-sonnet-20241022"],
-    ("anthropic", "quality"): ["claude-3-opus-20240229"],
+    # Anthropic tiers (current Claude 4 family; see model_discovery/anthropic_discovery.py
+    # and config/models.yaml for the shipped snapshot)
+    ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
+    ("anthropic", "balanced"): ["claude-sonnet-4-6"],
+    ("anthropic", "quality"): ["claude-opus-4-8"],
     # Gemini tiers
     ("gemini", "fast"): ["gemini-1.5-flash"],
     ("gemini", "balanced"): ["gemini-1.5-flash", "gemini-1.5-pro"],
@@ -114,12 +115,17 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     "openai": {
         "fast": ["gpt-4o-mini", "gpt-3.5-turbo"],
         "balanced": ["gpt-4o-mini", "gpt-4o"],
-        "quality": ["gpt-4o", "o1-preview", "o1-mini"],
+        # o1-preview is retired (see the Choices.model() fallback fix, #1932);
+        # gpt-5.2 is the current OpenAI flagship in _KNOWN_MODELS.
+        "quality": ["gpt-4o", "gpt-5.2", "o1-mini"],
     },
+    # Current Claude 4 family (see model_discovery/anthropic_discovery.py and
+    # config/models.yaml for the shipped snapshot); previously pinned to
+    # retired Claude 3 IDs.
     "anthropic": {
-        "fast": ["claude-3-haiku-20240307"],
-        "balanced": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
-        "quality": ["claude-3-opus-20240229", "claude-3-5-sonnet-20241022"],
+        "fast": ["claude-haiku-4-5-20251001"],
+        "balanced": ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "quality": ["claude-opus-4-8", "claude-sonnet-4-6"],
     },
     "gemini": {
         "fast": ["gemini-1.5-flash", "gemini-1.5-flash-8b"],

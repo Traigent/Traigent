@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.24.0"
+version = "0.25.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -38,6 +38,7 @@ dependencies = [
     "click>=8.0.0",
     "rich>=12.0.0",
     "aiohttp>=3.14.0,<4.0",  # CVE-2026-34993/CVE-2026-47265 fixed in 3.14.0
+    "anyio>=4.14.2",  # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching (fixed 4.14.2; transitive via httpx/anthropic/mcp)
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
@@ -128,12 +129,12 @@ visualization = [
 hybrid = [
     "httpx[http2]>=0.24.0",
     "claude-code-sdk>=0.0.14",
-    "mcp>=1.27.0",  # CVE-2025-66416, AIKIDO-2026-10472 fix (claude-code-sdk dependency)
+    "mcp>=1.28.1,<2.0.0",  # CVE-2025-66416, AIKIDO-2026-10472, CVE-2026-59950, CVE-2026-52870 (claude-code-sdk dependency)
 ]
 
 # Local stdio MCP server for coding agents.
 mcp = [
-    "mcp>=1.27.0",
+    "mcp>=1.28.1,<2.0.0",  # CVE-2026-59950 (websocket Host/Origin), CVE-2026-52870 (task-handler session scoping)
 ]
 
 # Internal schema validation support for DTO strict-validation paths.

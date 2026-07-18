@@ -43,7 +43,7 @@ if TYPE_CHECKING:
         WorkflowTracesTracker,
     )
 
-from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.config.types import ExecutionIntent, ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import (
     BackendSessionManager,
     session_aggregation_echoed,
@@ -878,6 +878,50 @@ class OptimizationOrchestrator:
             getattr(self.optimizer, "remote_service", None) is not None
             and callable(getattr(self.optimizer, "get_next_suggestion", None))
         )
+
+    def _local_optimizer_planned_trials(self) -> int | None:
+        """Trial count the LOCAL optimizer plans to run when unconstrained.
+
+        Grid exposes ``total_combinations`` (the exhaustive cartesian size);
+        random exposes its configured ``max_trials``. Returns None when the
+        optimizer declares neither.
+        """
+        total = getattr(self.optimizer, "total_combinations", None)
+        if isinstance(total, int) and not isinstance(total, bool) and total > 0:
+            return total
+        configured = getattr(self.optimizer, "max_trials", None)
+        if (
+            isinstance(configured, int)
+            and not isinstance(configured, bool)
+            and configured > 0
+        ):
+            return configured
+        return None
+
+    def _planned_backend_max_trials(self) -> int | None:
+        """Wire ``max_trials`` for backend session-create.
+
+        #1938: for connected local-decision runs (grid/random with egress
+        enabled) the backend is a tracking sink, not the sequencer — the wire
+        budget must equal the PLANNED local trial count so server-side budget
+        logic never under- or over-states the plan. The plan is the local
+        optimizer's own count (exhaustive grid size / configured random count)
+        bounded by the run's ``max_trials`` cap when one is set. Cloud-brain /
+        cloud-required runs pass the user's value through untouched.
+        """
+        policy = policy_from_config(self.traigent_config)
+        if (
+            policy is None
+            or policy.intent is not ExecutionIntent.LOCAL_ONLY
+            or policy.offline
+        ):
+            return self.max_trials
+        planned = self._local_optimizer_planned_trials()
+        if planned is None:
+            return self.max_trials
+        if self.max_trials is None:
+            return planned
+        return min(self.max_trials, planned)
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
@@ -1853,7 +1897,10 @@ class OptimizationOrchestrator:
             self._record_provider_failure_signal(trial_result)
 
         submission_outcome: Any = None
-        if submit_to_backend and self.backend_client and session_id:
+        # #1939: no backend-client requirement — submit_trial persists the
+        # trial LOCALLY even when there is no backend client (offline runs),
+        # and only performs the remote submission when egress is enabled.
+        if submit_to_backend and session_id:
             pre_submit_trial_id = (
                 str(trial_result.trial_id)
                 if getattr(trial_result, "trial_id", None) is not None
@@ -2627,7 +2674,10 @@ class OptimizationOrchestrator:
             func=func,
             dataset=dataset,
             function_descriptor=descriptor,
-            max_trials=self.max_trials,
+            # #1938: connected local runs advertise the PLANNED local trial
+            # count (never an over-/under-stated budget); other runs pass the
+            # user's max_trials through unchanged.
+            max_trials=self._planned_backend_max_trials(),
             max_total_examples=self.max_total_examples,
             start_time=self._start_time or time.time(),
             agent_configuration=self._agent_configuration,
@@ -3303,6 +3353,16 @@ class OptimizationOrchestrator:
                 exc_info=True,
             )
 
+        # #1939: finalize the LOCAL session record first — offline / degraded
+        # runs have no backend finalize path, and sync eligibility requires a
+        # terminal local status ("completed"). No-op for connected
+        # tracking-enabled runs (their backend finalize owns the local mirror).
+        self.backend_session_manager.finalize_local_session(session_id, self._status)
+        if session_id is not None and backend_egress_disabled(self.traigent_config):
+            # Surface the syncable local session id on the result so offline
+            # users can run `traigent sync <session_id>` directly.
+            result.metadata["local_session_id"] = session_id
+
         persistence_status = "skipped"
         if (
             self.backend_session_manager.backend_tracking_enabled
@@ -3393,13 +3453,30 @@ class OptimizationOrchestrator:
             self.traigent_config.persistence_reason = "rejected"
             self.traigent_config.persistence_rejection_reason = rejection_reason
 
+        # #1938: the backend closed the tracking session while the LOCAL
+        # optimizer kept sequencing — the run completed its full local
+        # enumeration, but backend tracking is only PARTIAL. Mark it so.
+        if self.backend_session_manager.backend_remote_early_complete:
+            if persistence_status in {"skipped", "succeeded"}:
+                persistence_status = "degraded"
+            result.metadata["backend_tracking"] = "partial"
+            result.metadata["backend_tracking_partial_reason"] = (
+                self.backend_session_manager.backend_remote_early_complete_reason
+                or "backend closed the tracking session before the local "
+                "enumeration finished"
+            )
+
         result.metadata["persistence_status"] = persistence_status
         self.traigent_config.persistence_status = persistence_status
 
         await self._submit_usage_analytics()
 
         # Submit collected workflow traces and graph to backend
-        if self.backend_session_manager.backend_tracking_enabled:
+        # (#1938: never to a session the backend already closed server-side)
+        if (
+            self.backend_session_manager.backend_tracking_enabled
+            and not self.backend_session_manager.backend_remote_early_complete
+        ):
             await self._submit_workflow_traces(session_id)
 
         self.callback_manager.on_optimization_complete(result)
@@ -3443,6 +3520,11 @@ class OptimizationOrchestrator:
         failure: BaseException,
     ) -> None:
         """Best-effort terminal finalize for exception exits."""
+        # #1939: the LOCAL record must go terminal even when the backend
+        # finalize below is skipped (offline / tracking disabled).
+        self.backend_session_manager.finalize_local_session(
+            session_id, OptimizationStatus.FAILED
+        )
         if (
             getattr(self, "_session_finalized", False)
             or not self.backend_session_manager.backend_tracking_enabled

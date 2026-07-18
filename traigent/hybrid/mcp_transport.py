@@ -12,6 +12,7 @@ import asyncio
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from traigent.hybrid.protocol import (
     BenchmarksResponse,
@@ -23,7 +24,11 @@ from traigent.hybrid.protocol import (
     HybridExecuteResponse,
     ServiceCapabilities,
 )
-from traigent.hybrid.transport import TransportConnectionError, TransportError
+from traigent.hybrid.transport import (
+    TransportConnectionError,
+    TransportError,
+    TransportNotFoundError,
+)
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -39,6 +44,66 @@ logger = get_logger(__name__)
 CONFIG_SPACE_URI = "traigent://config-space"
 CAPABILITIES_URI = "traigent://capabilities"
 HEALTH_URI = "traigent://health"
+
+
+# Structured error codes a well-behaved MCP server uses to signal a
+# definitively-absent resource/tool or an expired session — the transport-
+# agnostic equivalent of HTTP 404. We classify from these structured fields
+# (never the free-text error message) so a transient blip is not mistaken for
+# a permanent "not found" (see issues #1930/#1933).
+#
+# Numeric values are JSON-RPC / MCP error codes:
+#   -32601  METHOD_NOT_FOUND     (tool/method not exposed → unsupported)
+#   -32602  INVALID_PARAMS       (e.g. unknown session_id argument)
+#   -32002  RESOURCE_NOT_FOUND   (MCP resource-not-found convention)
+_NOT_FOUND_NUMERIC_CODES = frozenset({-32601, -32602, -32002, 404})
+_NOT_FOUND_STRING_CODES = frozenset(
+    {
+        "not_found",
+        "notfound",
+        "resource_not_found",
+        "tool_not_found",
+        "method_not_found",
+        "unknown_session",
+        "session_not_found",
+        "session_expired",
+        "expired",
+        "gone",
+        "404",
+        "410",
+    }
+)
+
+
+def _is_structured_not_found(data: Any) -> bool:
+    """Return ``True`` if a structured MCP payload signals a definitive not-found.
+
+    Inspects structured fields only — a numeric JSON-RPC/HTTP-style status or
+    code, or a string status/code/error_code — never the free-text error
+    message. This is the MCP analogue of the HTTP transport's
+    ``status_code == 404`` check.
+
+    Args:
+        data: The ``data`` payload from an ``MCPResponse`` (or a parsed tool
+            result). Anything that is not a mapping yields ``False``.
+
+    Returns:
+        Whether the payload structurally indicates a not-found/expired target.
+    """
+    if not isinstance(data, dict):
+        return False
+
+    for key in ("error_code", "code", "status_code", "statusCode", "status"):
+        value = data.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value in _NOT_FOUND_NUMERIC_CODES:
+            return True
+        if isinstance(value, str):
+            normalized = value.strip().lower().replace("-", "_")
+            if normalized in _NOT_FOUND_STRING_CODES:
+                return True
+    return False
 
 
 class MCPTransport:
@@ -118,10 +183,12 @@ class MCPTransport:
             response = await client.read_resource(uri)
 
             if not response.success:
-                raise TransportError(
-                    f"MCP read_resource failed: {response.error_message}",
-                    response_body=str(response.data),
-                )
+                message = f"MCP read_resource failed: {response.error_message}"
+                if _is_structured_not_found(response.data):
+                    raise TransportNotFoundError(
+                        message, response_body=str(response.data)
+                    )
+                raise TransportError(message, response_body=str(response.data))
 
             content = response.data.get("content") if response.data else None
             if content is None:
@@ -167,10 +234,12 @@ class MCPTransport:
             response = await client.call_tool(tool_name, arguments, operation_id)
 
             if not response.success:
-                raise TransportError(
-                    f"MCP call_tool({tool_name}) failed: {response.error_message}",
-                    response_body=str(response.data),
-                )
+                message = f"MCP call_tool({tool_name}) failed: {response.error_message}"
+                if _is_structured_not_found(response.data):
+                    raise TransportNotFoundError(
+                        message, response_body=str(response.data)
+                    )
+                raise TransportError(message, response_body=str(response.data))
 
             return response.data or {}
 
@@ -207,8 +276,13 @@ class MCPTransport:
                 self._capabilities.supports_keep_alive,
             )
             return self._capabilities
-        except TransportError:
-            # Missing capabilities must not claim support for optional endpoints.
+        except TransportNotFoundError:
+            # Definitive: the service does not expose a capabilities resource.
+            # Only then may we cache safe defaults — mirroring the HTTP
+            # transport, which falls back solely on a 404. Transient
+            # connection/server errors propagate instead of being cached, so a
+            # blip on the first (lazy) read does not permanently disable
+            # evaluate/keep_alive for the whole session (see #1930).
             logger.warning("Capabilities resource not available, using safe defaults")
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
@@ -232,7 +306,11 @@ class MCPTransport:
         """
         uri = CONFIG_SPACE_URI
         if tunable_id is not None:
-            uri = f"{CONFIG_SPACE_URI}?tunable_id={tunable_id}"
+            # URL-encode the value so special characters (space, ``&``, ``=``,
+            # ``?``) do not corrupt the resource URI query. The HTTP sibling
+            # gets this for free via httpx ``params=`` (see #1931).
+            encoded_tunable_id = quote(tunable_id, safe="")
+            uri = f"{CONFIG_SPACE_URI}?tunable_id={encoded_tunable_id}"
         data = await self._read_resource(uri)
         return ConfigSpaceResponse.from_dict(data)
 
@@ -339,17 +417,25 @@ class MCPTransport:
 
         try:
             data = await self._call_tool("keep_alive", {"session_id": session_id})
-            status = data.get("status")
-            if isinstance(status, str):
-                return status.lower() == "alive"
+        except TransportNotFoundError:
+            # Definitive, structured expiry signal (e.g. RESOURCE_NOT_FOUND or
+            # an unknown session_id surfaced as a JSON-RPC error code). Mirrors
+            # the HTTP transport's ``status_code == 404`` check instead of
+            # substring-matching the free-text error message, which produced
+            # both false-expiry and missed-expiry (see #1933). Other
+            # TransportErrors are genuine transport failures and propagate as a
+            # missed heartbeat rather than a false "session expired".
+            return False
 
-            # Backward compatibility with older integrations.
-            return bool(data.get("alive", False))
-        except TransportError as e:
-            # Session expired or invalid
-            if "not found" in str(e).lower():
-                return False
-            raise
+        status = data.get("status")
+        if isinstance(status, str):
+            # Structured status field: only the explicit "alive" state keeps
+            # the session; any other reported status (expired, gone, …) is a
+            # definitive "not alive".
+            return status.strip().lower() == "alive"
+
+        # Backward compatibility with older integrations that return a bool.
+        return bool(data.get("alive", False))
 
     async def close(self) -> None:
         """Cleanup MCP client resources.

@@ -235,7 +235,11 @@ class BaseOptimizer(ABC):
         if not trial.is_successful:
             return
 
-        # Get primary objective score
+        # Get primary objective score. When the optimizer was created without
+        # objectives (weighted scoring disabled), there is no primary objective
+        # to rank trials by, so leave best tracking untouched.
+        if not self.objectives:
+            return
         primary_objective = self.objectives[0]
         score = coerce_finite_objective_score(trial.get_metric(primary_objective))
         if score is None:

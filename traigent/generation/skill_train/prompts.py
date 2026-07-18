@@ -25,6 +25,11 @@ JSON_OUTPUT_CONTRACT = """Return ONLY JSON with this shape:
 }
 Do not include markdown fences or commentary."""
 
+# The accept/reject histories grow one record per edit, per step, per epoch and
+# are never trimmed. Serialize only the most recent records into the meta-skill
+# prompt so its token cost does not grow with the cumulative edit count.
+MAX_META_SKILL_HISTORY = 50
+
 
 def _format_rollout(rollout: Any) -> list[str]:
     example_id = getattr(rollout, "example_id", None)
@@ -166,10 +171,10 @@ def build_meta_skill_prompt(
         prior_meta or "(none)",
         "",
         "Accepted edit history:",
-        repr(list(accept_history)),
+        repr(list(accept_history)[-MAX_META_SKILL_HISTORY:]),
         "",
         "Rejected edit history:",
-        repr(list(reject_history)),
+        repr(list(reject_history)[-MAX_META_SKILL_HISTORY:]),
         "",
         "Return ONLY JSON with this shape:",
         '{ "meta_skill_content": "guidance for future optimizer calls" }',

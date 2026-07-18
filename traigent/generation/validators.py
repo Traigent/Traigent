@@ -11,10 +11,70 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any
 
 MAX_PROMPT_CHARS = 8000
 MAX_EXAMPLE_CHARS = 20000
+
+# Default-ignorable/format code points that render invisibly (or as zero
+# width) but survive lowercasing + whitespace collapse. An attacker can
+# interleave these mid-word inside a marker phrase -- e.g.
+# "ig" + ZERO WIDTH SPACE + "nore previous instructions" -- to defeat a plain
+# substring scan while the text still *looks* clean to a human.
+#
+# Most of these are the Unicode "Format" (Cf) general category, which
+# `_strip_scan_ignorables` removes wholesale by category (so newly assigned
+# Cf code points are covered without a code change). But Unicode's
+# Default_Ignorable_Code_Point (DICP) property -- the property the JS SDK's
+# `/\p{Default_Ignorable_Code_Point}/gu` scan strips -- is broader than Cf:
+# it also covers variation selectors, Hangul fillers, a couple of Khmer/
+# Mongolian marks, and a handful of code points Unicode reserves for future
+# default-ignorable assignment. `_NON_CF_DEFAULT_IGNORABLE_RANGES` below
+# closes that gap (sol re-review on PR #1929: a variation selector, e.g.
+# VARIATION SELECTOR-16 splitting "ignore", bypassed the Cf-only strip).
+#
+# Table generated once via the `regex` PyPI package's
+# `\p{Default_Ignorable_Code_Point}` support (used only as an offline
+# codegen tool -- NOT a runtime dependency of this module; `looks_like_
+# injection` only ever needs stdlib `unicodedata`), filtered to
+# `unicodedata.category(c) != "Cf"` (Cf is already handled above) and
+# collapsed to contiguous ranges. Unicode data version 15.0.0. Ranges are
+# hex (start, end) inclusive, never literal invisible characters, so the
+# source stays human-auditable:
+#   0x034F         COMBINING GRAPHEME JOINER (Mn)
+#   0x115F-0x1160  HANGUL CHOSEONG/JUNGSEONG FILLER (Lo)
+#   0x17B4-0x17B5  KHMER VOWEL INHERENT AQ/AA (Mn)
+#   0x180B-0x180D  MONGOLIAN FREE VARIATION SELECTOR ONE..THREE (Mn)
+#   0x180F         MONGOLIAN FREE VARIATION SELECTOR FOUR (Mn)
+#   0x2065         reserved (future default-ignorable)
+#   0x3164         HANGUL FILLER (Lo)
+#   0xFE00-0xFE0F  VARIATION SELECTOR-1..16 (Mn)
+#   0xFFA0         HALFWIDTH HANGUL FILLER (Lo)
+#   0xFFF0-0xFFF8  reserved (future default-ignorable)
+#   0xE0000        reserved (language tag block)
+#   0xE0002-0xE001F   reserved (language tag block)
+#   0xE0080-0xE0FFF   VARIATION SELECTOR-17..256 (Mn) + reserved tag block
+# The language-tag block's *assigned* subrange U+E0020-U+E007F sits outside
+# the ranges above, but that is NOT a scan exception: tag characters are
+# general category Cf, so the category-based strip removes them before
+# marker matching (pinned by the tag-character regression test). The ranges
+# above only need to cover the non-Cf remainder of DICP.
+_NON_CF_DEFAULT_IGNORABLE_RANGES: tuple[tuple[int, int], ...] = (
+    (0x034F, 0x034F),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180D),
+    (0x180F, 0x180F),
+    (0x2065, 0x2065),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0xE0000, 0xE0000),
+    (0xE0002, 0xE001F),
+    (0xE0080, 0xE0FFF),
+)
 
 # Prompt-injection marker phrases, matched after whitespace normalization via
 # plain substring search (no backtracking regex -> no ReDoS surface). Each entry
@@ -52,9 +112,47 @@ _INJECTION_MARKERS = (
 )
 
 
+def _is_non_cf_default_ignorable(cp: int) -> bool:
+    """True if ``cp`` falls in one of the ``_NON_CF_DEFAULT_IGNORABLE_RANGES``."""
+    return any(start <= cp <= end for start, end in _NON_CF_DEFAULT_IGNORABLE_RANGES)
+
+
+def _strip_scan_ignorables(text: str) -> str:
+    """Return a normalized COPY of ``text`` for injection-marker scanning only.
+
+    NFKC-folds compatibility/fullwidth forms, then drops every Unicode
+    "Format" (Cf) code point plus every code point in
+    ``_NON_CF_DEFAULT_IGNORABLE_RANGES`` (see module-level comment) -- the
+    non-Cf remainder of Unicode's Default_Ignorable_Code_Point property.
+    This closes the gap where a marker phrase is split by an invisible or
+    default-ignorable character -- e.g. "ig" + VARIATION SELECTOR-16 +
+    "nore previous instructions" -- which survives plain lowercasing +
+    whitespace collapse untouched.
+
+    This function never mutates or returns anything the caller stores: it
+    only feeds the marker scan below. Callers keep persisting their own
+    original (non-normalized) text when it is clean.
+    """
+    folded = unicodedata.normalize("NFKC", text)
+    return "".join(
+        ch
+        for ch in folded
+        if unicodedata.category(ch) != "Cf"
+        and not _is_non_cf_default_ignorable(ord(ch))
+    )
+
+
 def looks_like_injection(text: str) -> bool:
-    """True if the text contains an obvious prompt-injection marker."""
-    normalized = re.sub(r"\s+", " ", text.lower())
+    """True if the text contains an obvious prompt-injection marker.
+
+    Scans a normalized COPY of ``text`` (NFKC + default-ignorable strip, see
+    ``_strip_scan_ignorables``) so zero-width/bidi/format characters cannot
+    be used to split a marker past the substring match. The caller's own
+    ``text`` is untouched by this check -- only a bool is returned, so clean
+    text is stored exactly as received.
+    """
+    scan_copy = _strip_scan_ignorables(text)
+    normalized = re.sub(r"\s+", " ", scan_copy.lower())
     return any(marker in normalized for marker in _INJECTION_MARKERS)
 
 
