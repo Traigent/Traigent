@@ -55,7 +55,10 @@ def test_old_schema_without_economics_fails_closed(
 
 def test_validator_that_raises_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Throwing:
-        available_schemas = [_REQUEST_SCHEMA]
+        available_schemas = [
+            _REQUEST_SCHEMA,
+            *schema_mod.RESPONSE_SCHEMA_BY_STATUS.values(),
+        ]
 
         def validate_json(self, body: dict, name: str) -> list[str]:
             raise RuntimeError("boom")
@@ -93,3 +96,98 @@ def test_successful_validator_is_cached(monkeypatch: pytest.MonkeyPatch) -> None
     schema_mod.get_request_validator()
     schema_mod.get_request_validator()
     assert calls["n"] == 1
+
+
+# --- exact-Schema content fingerprint ------------------------------------------
+
+
+def test_installed_fingerprint_matches_pinned_expected() -> None:
+    # The runtime-computed fingerprint of the installed exact-commit contract
+    # equals the pinned constant — the version string is never trusted alone.
+    assert (
+        schema_mod.compute_economics_schema_fingerprint()
+        == schema_mod.EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT
+    )
+
+
+def test_fingerprint_mismatch_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A name-only impostor (right schema names, different content) is rejected.
+    monkeypatch.setattr(
+        schema_mod,
+        "compute_economics_schema_fingerprint",
+        lambda *a, **k: "0" * 64,
+    )
+    schema_mod.reset_request_validator_cache()
+    with pytest.raises(EconomicsSchemaUnavailable):
+        schema_mod.validate_request_or_fail(_valid_body())
+
+
+def test_fingerprint_is_content_sensitive(tmp_path) -> None:
+    import json
+    import os
+
+    import traigent_schema
+
+    src = os.path.join(
+        os.path.dirname(traigent_schema.__file__), "schemas", "economics"
+    )
+    for name in os.listdir(src):
+        if name.endswith(".json"):
+            with open(os.path.join(src, name), encoding="utf-8") as fh:
+                doc = json.load(fh)
+            # Mutate one file's content.
+            if name == "economics_common_schema.json":
+                doc["definitions"]["ContractId"]["const"] = "tampered"
+            with open(tmp_path / name, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+    mutated = schema_mod.compute_economics_schema_fingerprint(str(tmp_path))
+    assert mutated != schema_mod.EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT
+
+
+# --- response validation --------------------------------------------------------
+
+
+def _valid_response(*, status: int = 201) -> dict:
+    return {
+        "contract": "economics_telemetry",
+        "contract_version": "1.0.0",
+        "batch_id": "batch-1",
+        "idempotency_key": "econ-tel-abcdefgh",
+        "received_at": "2026-07-18T10:00:00.000Z",
+        "replayed": status == 200,
+        "counts": {"submitted": 1, "accepted": 1, "duplicate": 0, "rejected": 0},
+        "rejections": [],
+    }
+
+
+def test_valid_response_passes_schema() -> None:
+    schema_mod.validate_response_or_fail(_valid_response(status=201), http_status=201)
+    schema_mod.validate_response_or_fail(_valid_response(status=200), http_status=200)
+
+
+def test_response_unknown_top_level_key_rejected() -> None:
+    from traigent.economics.errors import EconomicsResponseError
+
+    body = _valid_response()
+    body["surprise"] = "extra"
+    with pytest.raises(EconomicsResponseError):
+        schema_mod.validate_response_or_fail(body, http_status=201)
+
+
+def test_response_malformed_timestamp_rejected() -> None:
+    from traigent.economics.errors import EconomicsResponseError
+
+    body = _valid_response()
+    body["received_at"] = "not-a-timestamp"
+    with pytest.raises(EconomicsResponseError):
+        schema_mod.validate_response_or_fail(body, http_status=201)
+
+
+def test_response_status_flag_binding_enforced_by_schema() -> None:
+    from traigent.economics.errors import EconomicsResponseError
+
+    # A 200 body with replayed=false violates the replay schema's const.
+    body = _valid_response(status=200)
+    body["replayed"] = False
+    with pytest.raises(EconomicsResponseError):
+        schema_mod.validate_response_or_fail(body, http_status=200)

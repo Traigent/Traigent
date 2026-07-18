@@ -20,6 +20,7 @@ from traigent.economics.contract import (
     REJECTION_REASONS,
 )
 from traigent.economics.errors import EconomicsResponseError
+from traigent.economics.schema import validate_response_or_fail
 
 # HTTP status -> the value the contract binds `replayed` to on that path.
 _STATUS_REPLAYED = {200: True, 201: False, 422: False}
@@ -102,18 +103,27 @@ class TelemetryIngestResult:
         expected_idempotency_key: str,
         expected_batch_id: str,
         expected_submitted: int,
+        expected_event_ids: tuple[str, ...],
     ) -> TelemetryIngestResult:
         """Parse and VALIDATE an ingest-response body (200 / 201 / 422).
 
+        The body is first validated against the exact per-status economics
+        response schema (shape, unknown keys, timestamps, closed reasons), then
+        semantically reconciled against the request (identity, counts, and — per
+        rejection — a unique index and an event_id that matches the request event
+        at that index). The body is never included in an error message.
+
         Raises:
-            EconomicsResponseError: On any identity/version/status/count/
-                rejection-shape violation. The body is never included in the
-                error message.
+            EconomicsResponseError: On any schema or reconciliation violation.
+            EconomicsSchemaUnavailable: If the exact response schema is
+                unavailable/mismatched (fail closed).
         """
         if http_status not in _STATUS_REPLAYED:
             raise EconomicsResponseError(
                 f"unexpected ingest status {http_status} for a result body"
             )
+        # Schema-validate the exact response shape BEFORE any hand parsing.
+        validate_response_or_fail(body, http_status=http_status)
         if not isinstance(body, dict):
             raise EconomicsResponseError("ingest response was not a JSON object")
 
@@ -162,7 +172,10 @@ class TelemetryIngestResult:
             raise EconomicsResponseError("422 response is not an all-rejected batch")
 
         rejections = _parse_rejections(
-            body.get("rejections"), submitted=submitted, rejected=rejected
+            body.get("rejections"),
+            submitted=submitted,
+            rejected=rejected,
+            expected_event_ids=expected_event_ids,
         )
 
         return cls(
@@ -195,7 +208,7 @@ def _parse_counts(counts: Any) -> tuple[int, int, int, int]:
 
 
 def _parse_rejections(
-    raw: Any, *, submitted: int, rejected: int
+    raw: Any, *, submitted: int, rejected: int, expected_event_ids: tuple[str, ...]
 ) -> tuple[Rejection, ...]:
     if not isinstance(raw, list):
         raise EconomicsResponseError(
@@ -207,6 +220,7 @@ def _parse_rejections(
         )
 
     parsed: list[Rejection] = []
+    seen_indices: set[int] = set()
     for item in raw:
         if not isinstance(item, dict):
             raise EconomicsResponseError("ingest response rejection is not an object")
@@ -219,6 +233,13 @@ def _parse_rejections(
             raise EconomicsResponseError(
                 "ingest response rejection event_index is out of range"
             )
+        # A stage may reject an event once; two rejections for one index is a
+        # malformed disposition, not two failures of the same event.
+        if index in seen_indices:
+            raise EconomicsResponseError(
+                "ingest response has duplicate rejection event_index"
+            )
+        seen_indices.add(index)
         reason = item.get("reason")
         if reason not in REJECTION_REASONS:
             raise EconomicsResponseError(
@@ -228,6 +249,18 @@ def _parse_rejections(
         if event_id is not None and not isinstance(event_id, str):
             raise EconomicsResponseError(
                 "ingest response rejection event_id is not a string"
+            )
+        # When the backend echoes the rejected event_id, it must be the event WE
+        # submitted at that index — otherwise the rejection addresses something
+        # other than our batch.
+        if (
+            event_id is not None
+            and index < len(expected_event_ids)
+            and event_id != expected_event_ids[index]
+        ):
+            raise EconomicsResponseError(
+                "ingest response rejection event_id does not match the request "
+                "event at that index"
             )
         detail = item.get("detail")
         if detail is not None and not isinstance(detail, str):

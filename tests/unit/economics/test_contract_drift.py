@@ -126,6 +126,31 @@ def test_replay_status_bindings_match_schema(local_contract) -> None:
     )
 
 
+def test_response_status_schema_map_matches_endpoint_bindings(local_contract) -> None:
+    from traigent.economics import schema as schema_mod
+
+    endpoints = local_contract.endpoints()
+    responses = endpoints["paths"][TELEMETRY_ENDPOINT]["post"]["responses"]
+    for status, expected_name in ((200, "replay"), (201, "initial")):
+        ref = responses[str(status)]["content"]["application/json"]["schema"]["$ref"]
+        mapped = schema_mod.RESPONSE_SCHEMA_BY_STATUS[status]
+        assert ref.endswith(f"{mapped}.json")
+        assert expected_name in mapped
+    # The 422 all-rejected body is the initial (replayed=false) shape.
+    assert schema_mod.RESPONSE_SCHEMA_BY_STATUS[422] == (
+        "economics_telemetry_ingest_response_initial_schema"
+    )
+
+
+def test_runtime_fingerprint_binds_to_local_c0a70a1_material(local_contract) -> None:
+    from traigent.economics import schema as schema_mod
+
+    computed = schema_mod.compute_economics_schema_fingerprint(
+        local_contract.economics_dir
+    )
+    assert computed == schema_mod.EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT
+
+
 def test_eligible_funnel_batch_validates_against_request_schema(local_contract) -> None:
     event = funnel_eligible_event(
         "proj-1",

@@ -1,17 +1,38 @@
-"""Fail-closed request validation against the exact economics Schema (WI-B).
+"""Fail-closed validation against the exact economics Schema (WI-B).
 
 The closed-pipe design only holds if the client can prove, before transmission,
 that a batch conforms to the authoritative contract — including that no key
-outside the schema (``additionalProperties: false`` everywhere) rides along. So
-this emitter REQUIRES the exact ``traigent-schema`` economics contract and fails
-closed when it is absent, too old to carry the economics schemas, raises while
-validating, or reports the payload invalid. There is no fail-open path and no
-dependence on a generic strict-validation toggle: an unvalidated economics batch
-is never transmitted.
+outside the schema (``additionalProperties: false`` everywhere) rides along — and
+that the schema it validated against is the exact accepted contract, not merely a
+package that happens to expose the right schema NAMES.
+
+So this emitter:
+
+* REQUIRES the ``traigent-schema`` economics contract and fails closed when it is
+  absent, too old to carry the economics schemas, or raises while validating;
+* verifies a deterministic CONTENT FINGERPRINT of the economics contract material
+  actually used (request + response + referenced definitions + endpoint bindings)
+  against the pinned commit, so a name-only impostor or any mutation fails closed
+  before transport — the version string is never trusted on its own;
+* validates the request AND every ingest response body against the exact schema.
+
+There is no fail-open path and no dependence on a generic strict-validation
+toggle. Errors are payload-free (schema digests are public contract hashes, never
+request/response content).
+
+Bumping the fingerprint (only when the exact Git pin in ``pyproject.toml`` /
+``uv.lock`` changes): install the new pinned ``traigent-schema`` and recompute::
+
+    python -c "from traigent.economics.schema import compute_economics_schema_fingerprint as f; print(f())"
+
+then set ``EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT`` to the printed digest.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from typing import Any
 
 from traigent.economics.errors import (
@@ -19,20 +40,102 @@ from traigent.economics.errors import (
     EconomicsTelemetryContractError,
 )
 
-#: Schema name (file stem) the request contract is published under.
+#: Request schema name (file stem).
 REQUEST_SCHEMA_NAME = "economics_telemetry_ingest_request_schema"
 
+#: Response schema name per HTTP status. 200 replays (replayed=true); 201 and the
+#: all-rejected 422 are initial (replayed=false).
+RESPONSE_SCHEMA_BY_STATUS = {
+    200: "economics_telemetry_ingest_response_replay_schema",
+    201: "economics_telemetry_ingest_response_initial_schema",
+    422: "economics_telemetry_ingest_response_initial_schema",
+}
+
+# Ordered economics contract material the emitter depends on. The fingerprint is
+# computed over exactly this set, so it is meaningful: it covers the request and
+# response envelopes, every referenced event/definition schema, and the endpoint
+# bindings. Order is fixed so the digest is deterministic.
+_FINGERPRINT_FILES = (
+    "economics_common_schema",
+    "economics_characterization_vocabulary_schema",
+    "economics_funnel_event_schema",
+    "economics_run_event_schema",
+    "economics_receipt_event_schema",
+    "economics_telemetry_event_schema",
+    "economics_telemetry_ingest_request_schema",
+    "economics_telemetry_ingest_response_schema",
+    "economics_telemetry_ingest_response_initial_schema",
+    "economics_telemetry_ingest_response_replay_schema",
+    "economics_endpoints",
+)
+
+#: Expected content fingerprint of the accepted economics contract
+#: (TraigentSchema c0a70a1d759774cb23f7f3d0943fbfc022d37f39). See module docstring
+#: for how to recompute when the exact Git pin changes.
+EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT = (
+    "0ad15f00ff6d5a467f144cd29c9f663f67adec51fc95421872b43e31de96d9a9"
+)
+
 _UNSET = object()
-_VALIDATOR_CACHE: Any = _UNSET
+_BUNDLE_CACHE: Any = _UNSET
 
 
-def _load_validator() -> Any:
-    """Load a SchemaValidator that carries the economics request schema.
+def _economics_schema_dir() -> str:
+    try:
+        import traigent_schema
+    except Exception as exc:  # noqa: BLE001 - any import failure is fail-closed
+        raise EconomicsSchemaUnavailable(
+            "the economics telemetry contract requires the exact traigent-schema "
+            "economics schemas, which are not importable"
+        ) from exc
+    return os.path.join(
+        os.path.dirname(traigent_schema.__file__), "schemas", "economics"
+    )
 
-    Raises:
-        EconomicsSchemaUnavailable: If ``traigent-schema`` is not importable or
-            predates the economics contract (schema absent).
+
+def compute_economics_schema_fingerprint(schema_dir: str | None = None) -> str:
+    """Compute the deterministic content fingerprint of the economics contract.
+
+    Reads each pinned schema file, canonicalizes its JSON (sorted keys, compact),
+    and folds ``name\\0canonical\\n`` into a single SHA-256. Raises
+    :class:`EconomicsSchemaUnavailable` when the material is missing or unreadable.
     """
+    directory = schema_dir if schema_dir is not None else _economics_schema_dir()
+    digest = hashlib.sha256()
+    for stem in _FINGERPRINT_FILES:
+        path = os.path.join(directory, stem + ".json")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                document = json.load(handle)
+            canonical = json.dumps(
+                document, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            )
+        except (OSError, ValueError) as exc:
+            raise EconomicsSchemaUnavailable(
+                f"the economics contract material is missing or unreadable ({stem})"
+            ) from exc
+        digest.update(stem.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(canonical.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _load_bundle() -> Any:
+    """Load and verify the exact-contract validator, fail-closed.
+
+    Verifies the content fingerprint BEFORE trusting the validator, so a package
+    that merely exposes the right schema names but differs in content is rejected.
+    """
+    actual = compute_economics_schema_fingerprint()
+    if actual != EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT:
+        # Digests are public contract hashes, not payload — safe to name.
+        raise EconomicsSchemaUnavailable(
+            "installed economics contract fingerprint does not match the pinned "
+            f"commit (expected {EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT}, "
+            f"got {actual})"
+        )
+
     try:
         from traigent_schema.validator import SchemaValidator
     except Exception as exc:  # noqa: BLE001 - any import failure is fail-closed
@@ -48,44 +151,46 @@ def _load_validator() -> Any:
             "the traigent-schema validator could not be constructed"
         ) from exc
 
-    if REQUEST_SCHEMA_NAME not in getattr(validator, "available_schemas", []):
+    available = getattr(validator, "available_schemas", [])
+    required = {REQUEST_SCHEMA_NAME, *RESPONSE_SCHEMA_BY_STATUS.values()}
+    if not required.issubset(set(available)):
         raise EconomicsSchemaUnavailable(
             "the installed traigent-schema predates the economics telemetry "
-            "contract (economics request schema is absent)"
+            "contract (a required economics schema is absent)"
         )
     return validator
 
 
-def get_request_validator() -> Any:
-    """Return the cached request validator, loading it fail-closed on first use.
-
-    Only a successful load is cached; a failure re-raises on every call so a
-    fixed environment recovers without a stale negative cache.
-    """
-    global _VALIDATOR_CACHE
-    if _VALIDATOR_CACHE is not _UNSET:
-        return _VALIDATOR_CACHE
-    validator = _load_validator()
-    _VALIDATOR_CACHE = validator
+def _get_bundle() -> Any:
+    global _BUNDLE_CACHE
+    if _BUNDLE_CACHE is not _UNSET:
+        return _BUNDLE_CACHE
+    validator = _load_bundle()
+    _BUNDLE_CACHE = validator
     return validator
 
 
+def get_request_validator() -> Any:
+    """Return the cached, fingerprint-verified validator (fail-closed on load)."""
+    return _get_bundle()
+
+
 def reset_request_validator_cache() -> None:
-    """Test hook: drop the cached validator so discovery is re-evaluated."""
-    global _VALIDATOR_CACHE
-    _VALIDATOR_CACHE = _UNSET
+    """Test hook: drop the cached validator/bundle so discovery is re-evaluated."""
+    global _BUNDLE_CACHE
+    _BUNDLE_CACHE = _UNSET
 
 
 def validate_request_or_fail(body: dict[str, Any]) -> None:
     """Validate a request body against the exact economics request schema.
 
     Raises:
-        EconomicsSchemaUnavailable: If the exact schema is absent/old, or the
-            validator raises while checking (fail closed — no transmission).
+        EconomicsSchemaUnavailable: If the exact schema is absent/old/mismatched,
+            or the validator raises (fail closed — no transmission).
         EconomicsTelemetryContractError: If the body is present-and-invalid
             against the schema (e.g. an arbitrary extra key).
     """
-    validator = get_request_validator()
+    validator = _get_bundle()
     try:
         errors = validator.validate_json(body, REQUEST_SCHEMA_NAME)
     except Exception as exc:  # noqa: BLE001 - a validator that throws fails closed
@@ -100,9 +205,51 @@ def validate_request_or_fail(body: dict[str, Any]) -> None:
         )
 
 
+def response_schema_name(http_status: int) -> str:
+    """Return the response schema name bound to an ingest-result status."""
+    try:
+        return RESPONSE_SCHEMA_BY_STATUS[http_status]
+    except KeyError as exc:
+        raise EconomicsSchemaUnavailable(
+            f"no economics response schema is bound to status {http_status}"
+        ) from exc
+
+
+def validate_response_or_fail(body: Any, *, http_status: int) -> None:
+    """Validate an ingest response body against the exact per-status schema.
+
+    Fails closed on schema unavailability/mismatch (``EconomicsSchemaUnavailable``)
+    and on a validator exception or a schema-invalid body
+    (``EconomicsSchemaUnavailable`` / ``EconomicsTelemetryContractError``
+    respectively is avoided here: a malformed RESPONSE is the backend's contract
+    breach, so it surfaces as the response error the caller expects). The body is
+    never logged.
+    """
+    from traigent.economics.errors import EconomicsResponseError
+
+    validator = _get_bundle()
+    schema_name = response_schema_name(http_status)
+    try:
+        errors = validator.validate_json(body, schema_name)
+    except Exception as exc:  # noqa: BLE001 - a validator that throws fails closed
+        raise EconomicsResponseError(
+            "the economics schema validator raised while validating the response"
+        ) from exc
+    if errors:
+        raise EconomicsResponseError(
+            f"economics telemetry response failed schema validation "
+            f"({len(errors)} error(s))"
+        )
+
+
 __all__ = [
+    "EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT",
     "REQUEST_SCHEMA_NAME",
+    "RESPONSE_SCHEMA_BY_STATUS",
+    "compute_economics_schema_fingerprint",
     "get_request_validator",
     "reset_request_validator_cache",
+    "response_schema_name",
     "validate_request_or_fail",
+    "validate_response_or_fail",
 ]

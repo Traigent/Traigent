@@ -161,3 +161,90 @@ coordinated follow-up that lands the Schema parity-manifest classification
 alongside — the load-bearing reason is that the root surface is contractually
 owned by TraigentSchema, so a root add is only correct as a cross-repo change the
 captain sequences, not a unilateral SDK edit.
+
+---
+
+# Terra final review remediation (on captain commit 23e171a3)
+
+Fresh detached Terra review BLOCKED `1563e929..23e171a3`; remediated on top,
+left uncommitted. Files changed this round: `traigent/economics/schema.py`,
+`traigent/economics/result.py`, `traigent/economics/client.py`,
+`tests/unit/economics/test_schema.py`, `tests/unit/economics/test_client.py`,
+`tests/unit/economics/test_contract_drift.py`.
+
+## HIGH 1 — canonical key vs wire bytes
+`client._serialize` now emits the SAME canonical (sorted-key, compact) JSON the
+idempotency key and batch id are derived from (`payload.canonical_json`). Two
+mappings equal in content but differing in insertion order now produce identical
+batch id, idempotency key, AND wire bytes — the key can no longer agree while the
+bytes diverge. Regression: `test_reordered_events_yield_identical_batch_key_and_wire_bytes`,
+`test_reordered_batch_replays_with_identical_wire_bytes` (retries/cross-call replay
+identical), plus the existing `test_retries_send_identical_bytes_and_key`.
+
+## HIGH 2 — response validated against the exact schema before parsing
+`TelemetryIngestResult.from_response` now calls `schema.validate_response_or_fail`
+FIRST, validating every 200/201/422 body against the exact per-status response
+schema (200→replay, 201/422→initial). That rejects unknown top-level/count/
+rejection keys (`additionalProperties:false`) and malformed timestamps
+(`UtcTimestamp`). Semantic reconciliation is preserved and extended: duplicate
+rejection `event_index` is rejected, and a supplied rejection `event_id` must
+equal the request event at that index. `PreparedTelemetryBatch` now carries an
+immutable ordered `event_ids` tuple (identifiers only, no payload) for this.
+Tests: `test_response_unknown_top_level_key_fails_closed`,
+`test_response_malformed_timestamp_fails_closed`,
+`test_duplicate_rejection_index_fails_closed`,
+`test_rejection_event_id_mismatch_fails_closed`,
+`test_rejection_with_matching_event_id_is_accepted`; schema-level
+`test_response_*` cases; drift `test_response_status_schema_map_matches_endpoint_bindings`.
+
+## HIGH 3 — exact-Schema content fingerprint (not name-only)
+`schema.compute_economics_schema_fingerprint` folds the canonical JSON of the 11
+economics contract files actually used (request + all response variants + every
+referenced event/definition schema + endpoint bindings) into one SHA-256.
+`_load_bundle` verifies it against the pinned
+`EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT`
+(`0ad15f00ff6d5a467f144cd29c9f663f67adec51fc95421872b43e31de96d9a9`, computed from
+the accepted c0a70a1 material) BEFORE trusting the validator, and fails closed on
+any mismatch even when the schema names exist. The version string is never trusted
+alone. Errors carry only public contract hashes. Bump procedure documented in the
+module docstring. Tests: `test_installed_fingerprint_matches_pinned_expected`,
+`test_fingerprint_mismatch_fails_closed`, `test_fingerprint_is_content_sensitive`,
+client `test_fingerprint_mismatch_blocks_before_transport` (zero transport), drift
+`test_runtime_fingerprint_binds_to_local_c0a70a1_material`.
+
+## MEDIUM 4 — Retry-After (delta-seconds + HTTP-date, injectable clock)
+`_parse_retry_after(value, now)` now parses both delta-seconds and an HTTP-date
+(`email.utils.parsedate_to_datetime`); a past date yields zero, invalid/non-finite
+yields fallback (None → computed backoff), and `_backoff` clamps the honored delay
+to a finite `_MAX_RETRY_AFTER_SECONDS` (30s) and never sleeps after the final
+attempt. Time is injectable via `client._utcnow` for deterministic tests. Tests:
+`test_retry_after_parsing_variants` (numeric, oversized, inf/nan/garbage, future
+date, past→zero), `test_future_http_date_retry_after_is_clamped`, existing
+`test_bounded_retry_after_is_clamped`, `test_no_sleep_after_final_attempt`.
+
+## Consequences addressed
+- Response schema unavailability/mismatch/validator exceptions fail closed
+  (`EconomicsSchemaUnavailable` / `EconomicsResponseError`); a malformed response
+  is never coerced into an accepted batch, and no body/secret/evidence is logged.
+- Exact Git pin unchanged (`pyproject.toml` / `uv.lock` at c0a70a1); compatibility
+  stays subpackage-only (`traigent.economics`); no root export added this round.
+
+## Commands and results (this round)
+- Focused: `.venv/bin/python -m pytest tests/unit/economics/ -q` → **112 passed**
+  (was 93).
+- Ruff: `ruff check traigent/economics tests/unit/economics` → **All checks passed**;
+  `ruff format --check …` → **16 files already formatted**.
+- Mypy: `mypy traigent/economics` → **Success: no issues found in 8 source files**.
+- Compile: `py_compile traigent/economics/*.py tests/unit/economics/*.py` → **OK**.
+- Parity/init: `pytest tests/cross_sdk_oracles/test_js_public_parity_manifest.py
+  tests/unit/test_init_imports.py` → **29 passed**.
+- Broader lane: `pytest tests/unit/cloud -q` → **1884 passed, 2 skipped**
+  (pre-existing env skips).
+- `git diff --check` → clean. Generated `__pycache__`/`.pyc` removed before handoff.
+
+## Residuals (this round)
+- The runtime fingerprint is realized against the installed exact-commit
+  `traigent-schema` (git-pinned in metadata; installed into `.venv` from the local
+  worktree == c0a70a1 for this environment). If the exact Git pin is ever bumped,
+  recompute `EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT` per the schema-module docstring
+  in the same change.

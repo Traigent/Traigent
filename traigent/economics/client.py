@@ -24,11 +24,12 @@ codes are.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -47,7 +48,7 @@ from traigent.economics.errors import (
     EconomicsTelemetryContractError,
     EconomicsTelemetryTransportError,
 )
-from traigent.economics.payload import build_telemetry_request
+from traigent.economics.payload import build_telemetry_request, canonical_json
 from traigent.economics.result import TelemetryIngestResult
 from traigent.economics.schema import validate_request_or_fail
 
@@ -88,6 +89,9 @@ class PreparedTelemetryBatch:
     submitted: int
     content: bytes
     body: Mapping[str, Any]
+    #: Ordered submitted event ids (identifiers only, no payload) used to
+    #: reconcile the backend's per-event rejections against this exact batch.
+    event_ids: tuple[str, ...]
 
     @property
     def headers(self) -> dict[str, str]:
@@ -236,6 +240,8 @@ class EconomicsTelemetryClient:
         # are serialized for transport. Arbitrary extra keys are rejected here.
         validate_request_or_fail(body)
         content = _serialize(body)
+        # Identifiers only (schema-validated present), for response reconciliation.
+        event_ids = tuple(str(event["event_id"]) for event in body["events"])
         return PreparedTelemetryBatch(
             project_id=scope,
             idempotency_key=body["idempotency_key"],
@@ -243,6 +249,7 @@ class EconomicsTelemetryClient:
             submitted=len(body["events"]),
             content=content,
             body=MappingProxyType(dict(body)),
+            event_ids=event_ids,
         )
 
     async def submit(
@@ -319,7 +326,9 @@ class EconomicsTelemetryClient:
     async def _backoff(attempt: int, response: Any) -> None:
         delay = min(_MAX_BACKOFF_SECONDS, 0.25 * (2**attempt))
         if response is not None:
-            retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+            retry_after = _parse_retry_after(
+                response.headers.get("Retry-After"), _utcnow()
+            )
             if retry_after is not None:
                 # Honor the server, but never longer than a finite safe ceiling.
                 delay = min(_MAX_RETRY_AFTER_SECONDS, max(delay, retry_after))
@@ -343,6 +352,7 @@ class EconomicsTelemetryClient:
                 expected_idempotency_key=prepared.idempotency_key,
                 expected_batch_id=prepared.batch_id,
                 expected_submitted=prepared.submitted,
+                expected_event_ids=prepared.event_ids,
             )
             logger.info(
                 "economics telemetry ingested: status=%d replayed=%s "
@@ -402,30 +412,54 @@ class EconomicsTelemetryClient:
 # -- module helpers -------------------------------------------------------------
 
 
+def _utcnow() -> datetime:
+    """Current UTC instant. Indirected so tests can inject a deterministic clock."""
+    return datetime.now(UTC)
+
+
 def _serialize(body: Mapping[str, Any]) -> bytes:
-    """Serialize the batch to the exact bytes sent on every attempt."""
-    try:
-        text = json.dumps(
-            body, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-        )
-    except (TypeError, ValueError) as exc:
-        raise EconomicsTelemetryContractError(
-            "economics telemetry batch is not serializable"
-        ) from exc
-    return text.encode("utf-8")
+    """Serialize the batch to the exact CANONICAL bytes sent on every attempt.
+
+    Uses the same canonical (sorted-key, compact) representation the idempotency
+    key and batch id are derived from, so two equivalent mappings that differ
+    only in insertion order produce identical batch id, idempotency key, AND wire
+    bytes — the key can never agree while the bytes diverge.
+    """
+    return canonical_json(body).encode("utf-8")
 
 
-def _parse_retry_after(value: str | None) -> float | None:
-    """Parse a numeric Retry-After to a finite, non-negative float, or None."""
+def _parse_retry_after(value: str | None, now: datetime) -> float | None:
+    """Parse a Retry-After header to a finite, non-negative delay (seconds).
+
+    Supports both HTTP forms: delta-seconds and an HTTP-date. A past date is
+    treated as zero; an invalid or non-finite value returns None (caller falls
+    back to computed backoff). The caller clamps the result to a finite ceiling.
+    """
     if not value:
         return None
+    text = value.strip()
+    # delta-seconds
     try:
-        parsed = float(value)
+        parsed = float(text)
     except (TypeError, ValueError):
+        parsed = None
+    if parsed is not None:
+        if not math.isfinite(parsed):
+            return None
+        return max(0.0, parsed)
+    # HTTP-date
+    try:
+        retry_at = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError, OverflowError):
         return None
-    if not math.isfinite(parsed):
+    if retry_at is None:
         return None
-    return max(0.0, parsed)
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    delta = (retry_at - now).total_seconds()
+    if not math.isfinite(delta):
+        return None
+    return max(0.0, delta)
 
 
 def _require_non_empty(value: str, field: str) -> str:

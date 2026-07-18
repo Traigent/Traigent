@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -26,6 +27,7 @@ from traigent.economics import (  # noqa: E402
     funnel_eligible_event,
 )
 from traigent.economics import client as client_mod  # noqa: E402
+from traigent.economics import schema as schema_mod  # noqa: E402
 from traigent.economics.contract import (  # noqa: E402
     IDEMPOTENCY_KEY_HEADER,
     PROJECT_ID_HEADER,
@@ -550,3 +552,208 @@ async def test_no_sensitive_values_are_logged(caplog: pytest.LogCaptureFixture) 
         await client.submit_prepared(prepared)
     assert "SENSITIVE-incident-ledger-4k-escalation" not in caplog.text
     assert "4000" not in caplog.text
+
+
+# --- HIGH 1: canonical key vs wire bytes ---------------------------------------
+
+
+def test_reordered_events_yield_identical_batch_key_and_wire_bytes() -> None:
+    client = _client()
+    ordered = {
+        "event_type": "funnel_event",
+        "event_id": "evt-1",
+        "occurred_at": "2026-07-18T10:00:00.000Z",
+        "project_ref": "proj-1",
+        "stage": "eligible",
+        "outcome": "entered",
+    }
+    reordered = {
+        "outcome": "entered",
+        "stage": "eligible",
+        "project_ref": "proj-1",
+        "occurred_at": "2026-07-18T10:00:00.000Z",
+        "event_id": "evt-1",
+        "event_type": "funnel_event",
+    }
+    a = client.prepare(
+        [ordered], project_id="proj-1", sent_at="2026-07-18T10:00:01.000Z"
+    )
+    b = client.prepare(
+        [reordered], project_id="proj-1", sent_at="2026-07-18T10:00:01.000Z"
+    )
+    # Same content, any key order -> same id, same key, and IDENTICAL wire bytes.
+    assert a.batch_id == b.batch_id
+    assert a.idempotency_key == b.idempotency_key
+    assert a.content == b.content
+
+
+async def test_reordered_batch_replays_with_identical_wire_bytes() -> None:
+    client = _client()
+    e1 = {
+        "event_type": "funnel_event",
+        "event_id": "evt-1",
+        "occurred_at": "2026-07-18T10:00:00.000Z",
+        "project_ref": "proj-1",
+        "stage": "eligible",
+        "outcome": "entered",
+    }
+    e2 = {k: e1[k] for k in reversed(list(e1))}
+    a = client.prepare([e1], project_id="proj-1", sent_at="2026-07-18T10:00:01.000Z")
+    b = client.prepare([e2], project_id="proj-1", sent_at="2026-07-18T10:00:01.000Z")
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(a)))
+    await client.submit_prepared(a)
+    await client.submit_prepared(b)
+    calls = mock_http.post.call_args_list
+    # Cross-call replay: reordered mapping sends byte-identical content and key.
+    assert calls[0].kwargs["content"] == calls[1].kwargs["content"]
+    assert (
+        calls[0].kwargs["headers"][IDEMPOTENCY_KEY_HEADER]
+        == calls[1].kwargs["headers"][IDEMPOTENCY_KEY_HEADER]
+    )
+
+
+# --- HIGH 2: response schema + rejection reconciliation -------------------------
+
+
+async def test_response_unknown_top_level_key_fails_closed() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    body = _ingest_body(prepared)
+    body["surprise_key"] = "x"
+    _mock_transport(client, _resp(201, body))
+    with pytest.raises(EconomicsResponseError):
+        await client.submit_prepared(prepared)
+
+
+async def test_response_malformed_timestamp_fails_closed() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    body = _ingest_body(prepared)
+    body["received_at"] = "2026-07-18 10:00:00"  # missing T/Z
+    _mock_transport(client, _resp(201, body))
+    with pytest.raises(EconomicsResponseError):
+        await client.submit_prepared(prepared)
+
+
+async def test_duplicate_rejection_index_fails_closed() -> None:
+    client = _client()
+    e_a = funnel_eligible_event(
+        "proj-1", event_id="evt-1", occurred_at="2026-07-18T10:00:00.000Z"
+    )
+    e_b = funnel_eligible_event(
+        "proj-1", event_id="evt-2", occurred_at="2026-07-18T10:00:00.000Z"
+    )
+    prepared = client.prepare([e_a, e_b], project_id="proj-1")
+    body = _ingest_body(
+        prepared,
+        status=422,
+        accepted=0,
+        rejected=2,
+        rejections=[
+            {"event_index": 0, "reason": "tenant_scope_violation"},
+            {"event_index": 0, "reason": "tenant_scope_violation"},
+        ],
+    )
+    _mock_transport(client, _resp(422, body))
+    with pytest.raises(EconomicsResponseError):
+        await client.submit_prepared(prepared)
+
+
+async def test_rejection_event_id_mismatch_fails_closed() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")  # event_id evt-1
+    body = _ingest_body(
+        prepared,
+        status=422,
+        accepted=0,
+        rejected=1,
+        rejections=[
+            {
+                "event_index": 0,
+                "reason": "tenant_scope_violation",
+                "event_id": "not-the-submitted-id",
+            }
+        ],
+    )
+    _mock_transport(client, _resp(422, body))
+    with pytest.raises(EconomicsResponseError):
+        await client.submit_prepared(prepared)
+
+
+async def test_rejection_with_matching_event_id_is_accepted() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    body = _ingest_body(
+        prepared,
+        status=422,
+        accepted=0,
+        rejected=1,
+        rejections=[
+            {
+                "event_index": 0,
+                "reason": "tenant_scope_violation",
+                "event_id": prepared.event_ids[0],
+            }
+        ],
+    )
+    _mock_transport(client, _resp(422, body))
+    result = await client.submit_prepared(prepared)
+    assert result.all_rejected
+    assert result.rejections[0].event_id == prepared.event_ids[0]
+
+
+# --- HIGH 3: exact-Schema fingerprint fails closed before transport ------------
+
+
+async def test_fingerprint_mismatch_blocks_before_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        schema_mod, "compute_economics_schema_fingerprint", lambda *a, **k: "0" * 64
+    )
+    schema_mod.reset_request_validator_cache()
+    try:
+        client = _client()
+        mock_http = _mock_transport(client, _resp(201))
+        with pytest.raises(EconomicsSchemaUnavailable):
+            await client.submit([_event()], project_id="proj-1")
+        mock_http.post.assert_not_called()
+    finally:
+        schema_mod.reset_request_validator_cache()
+
+
+# --- MEDIUM 4: Retry-After (delta-seconds + HTTP-date, injectable clock) --------
+
+
+def test_retry_after_parsing_variants() -> None:
+    now = datetime(2026, 7, 18, 10, 0, 0, tzinfo=UTC)
+    parse = client_mod._parse_retry_after
+    assert parse("5", now) == 5.0
+    assert parse("100000", now) == 100000.0  # clamping happens in _backoff
+    assert parse("inf", now) is None
+    assert parse("nan", now) is None
+    assert parse("garbage", now) is None
+    assert parse(None, now) is None
+    # HTTP-date: future -> delta seconds; past -> zero.
+    assert parse("Sat, 18 Jul 2026 10:00:30 GMT", now) == 30.0
+    assert parse("Sat, 18 Jul 2026 09:59:00 GMT", now) == 0.0
+
+
+async def test_future_http_date_retry_after_is_clamped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        client_mod, "_utcnow", lambda: datetime(2026, 7, 18, 10, 0, 0, tzinfo=UTC)
+    )
+    delays: list[float] = []
+
+    async def _capture(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", _capture)
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    far_future = _resp(503, headers={"Retry-After": "Sat, 18 Jul 2026 11:00:00 GMT"})
+    _mock_transport(client, [far_future, _resp(201, _ingest_body(prepared))])
+    await client.submit_prepared(prepared)
+    assert delays and max(delays) == client_mod._MAX_RETRY_AFTER_SECONDS
