@@ -408,3 +408,82 @@ Retry-After/redirect) are unchanged and still enforced.
 - `PreparedTelemetryBatch.headers` remains an informational property reflecting the
   object's claimed fields; the transport path rebuilds headers from the
   re-validated body and never uses it.
+
+---
+
+# Terra final review remediation (on captain commit aaacd1c7 — round 2)
+
+Fresh Terra final review BLOCKED two issues; remediated on top, uncommitted.
+Files changed this round: `traigent/economics/client.py`,
+`traigent/economics/schema.py`, `traigent/economics/payload.py`,
+`tests/unit/economics/test_client.py`, `tests/unit/economics/test_schema.py`,
+`tests/unit/economics/test_payload.py`.
+
+## CRITICAL — copy.copy(prepared) carried the sentinel and could submit
+The prior fix marked a per-instance `_provenance` field; `copy.copy`/`copy.deepcopy`
+copy the instance dict, so a copy carried the sentinel and passed. Replaced the
+field-sentinel with an in-process **identity issuance registry**:
+- `client._ISSUED_BATCHES: weakref.WeakValueDictionary[int, PreparedTelemetryBatch]`.
+  `prepare()` records the EXACT returned instance (`_ISSUED_BATCHES[id(prepared)] =
+  prepared`) — the only place identity is granted. The `_provenance` field is
+  removed.
+- `submit_prepared` gates on `_ISSUED_BATCHES.get(id(prepared)) is prepared`
+  (identity, never equality). A directly-constructed, `copy.copy`d,
+  `copy.deepcopy`d, `dataclasses.replace`d, or unpickled batch is a different
+  object with a different id → absent from the registry → refused (payload-free),
+  POST not called.
+- Leak-free + stale-id-safe: the weak value is dropped the instant the batch is
+  GC'd, so the registry never grows unbounded AND a later object reusing that id
+  resolves to nothing rather than a stale batch. Not equality-based.
+- Copy/pickle policy (defined + tested): `copy.copy`/`copy.deepcopy`/`pickle`
+  round-trip all yield a non-issued identity (or cannot be reconstructed at all —
+  the read-only `MappingProxyType` body cannot be deep-copied/pickled) → never
+  submittable. In-process cross-client rule: the registry is module-level, so a
+  batch prepared by one client instance submits via another in the SAME process;
+  it does not cross a process boundary. The exact `prepare()` object still submits
+  and retries byte-identical content/key.
+- Trust boundary (documented): a caller who deliberately registers a forged object
+  under its own id can still submit — out of scope by the finding's terms; the
+  re-derivation/egress/Schema checks still bound what it could transmit.
+- Tests: `test_copy_copy_of_prepared_is_non_submittable`,
+  `test_deepcopy_of_prepared_is_non_submittable`,
+  `test_pickle_roundtrip_of_prepared_is_non_submittable`,
+  `test_cross_client_issued_batch_is_submittable`,
+  `test_issuance_registry_is_leak_free`, plus the existing direct-construction /
+  replace primary-gate tests (now via the registry).
+
+## HIGH — boundary exceptions chained raw payload via cause/context
+`response.json()` (JSONDecodeError.doc) and schema-validator exceptions were
+chained with `from exc`, exposing the raw payload through
+`__cause__`/`__context__`. Sanitized every payload-bearing boundary by confining
+the third-party exception to its handler and RAISING the typed error OUTSIDE it
+(sentinel pattern), so `__cause__` is None and `__context__` is not populated:
+- `client._interpret`: invalid-JSON → `EconomicsResponseError`, chain payload-free.
+- `schema.validate_request_or_fail` / `validate_response_or_fail`: validator
+  exception → `EconomicsSchemaUnavailable` / `EconomicsResponseError`, chain
+  payload-free (the invalid-body path already reported only an error count).
+- `payload.canonical_json` / `_json_roundtrip`: `json` serialization error →
+  `EconomicsTelemetryContractError`, chain payload-free.
+- Tests: `test_invalid_json_response_error_is_payload_free` (JSONDecodeError.doc
+  carries a sensitive marker; asserts absent from the whole chain and no
+  JSONDecodeError in it), `test_request_validator_exception_is_payload_free`,
+  `test_response_validator_exception_is_payload_free`,
+  `test_serialization_error_is_payload_free`.
+
+Exact Schema / egress / retry / replay behavior unchanged; WI-B-only.
+
+## Commands and results (this round)
+- Focused: `pytest tests/unit/economics/ -q` → **138 passed** (was 129).
+- Ruff `check` + `format --check` → clean (16 files). Mypy `traigent/economics` →
+  **Success: no issues found in 8 source files**. Compile → OK.
+- Parity/init → **29 passed**. Broader `tests/unit/cloud` → **1884 passed, 2 skipped**
+  (pre-existing env skips). `git diff --check` → clean. Caches removed.
+
+## Residual risk (this round)
+- Identity registry is an API trust boundary, not a cryptographic seal: a caller
+  who deliberately does `client._ISSUED_BATCHES[id(x)] = x` can forge issuance.
+  Out of scope per the finding; re-derivation + egress + Schema still bound what
+  such a batch could transmit.
+- Provenance/identity is per-process (module-level registry); it deliberately does
+  not survive pickling or a process boundary. Cross-process "recovery" means
+  rebuilding via `prepare()` from the same stable tuple, not shipping the object.

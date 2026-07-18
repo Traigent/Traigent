@@ -191,3 +191,53 @@ def test_response_status_flag_binding_enforced_by_schema() -> None:
     body["replayed"] = False
     with pytest.raises(EconomicsResponseError):
         schema_mod.validate_response_or_fail(body, http_status=200)
+
+
+# --- boundary errors are payload-free (no cause/context leak) -------------------
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and not any(c is current for c in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def test_request_validator_exception_is_payload_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = "SENSITIVE-REQUEST-VALUE-9931"
+
+    class _Throwing:
+        available_schemas = [
+            _REQUEST_SCHEMA,
+            *schema_mod.RESPONSE_SCHEMA_BY_STATUS.values(),
+        ]
+
+        def validate_json(self, body: dict, name: str) -> list[str]:
+            raise RuntimeError(f"validator blew up on {marker}")
+
+    monkeypatch.setattr(tsv, "SchemaValidator", _Throwing)
+    schema_mod.reset_request_validator_cache()
+    with pytest.raises(EconomicsSchemaUnavailable) as excinfo:
+        schema_mod.validate_request_or_fail(_valid_body())
+    assert all(marker not in str(link) for link in _exception_chain(excinfo.value))
+
+
+def test_response_validator_exception_is_payload_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.economics.errors import EconomicsResponseError
+
+    marker = "SENSITIVE-RESPONSE-VALUE-7777"
+
+    class _Throwing:
+        def validate_json(self, body: dict, name: str) -> list[str]:
+            raise RuntimeError(f"validator blew up on {marker}")
+
+    monkeypatch.setattr(schema_mod, "_get_bundle", lambda: _Throwing())
+    with pytest.raises(EconomicsResponseError) as excinfo:
+        schema_mod.validate_response_or_fail({"any": "body"}, http_status=201)
+    assert all(marker not in str(link) for link in _exception_chain(excinfo.value))

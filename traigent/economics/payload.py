@@ -198,6 +198,10 @@ def canonical_json(value: Any) -> str:
     Rejects NaN/Infinity (``allow_nan=False``): a non-finite number cannot be
     represented in the contract's bounded numeric types and must fail locally,
     not travel as an invalid JSON token.
+
+    The serialization exception is confined to its handler and NOT chained: a
+    ``json`` error can carry the offending value, so the raised contract error is
+    payload-free (no ``__cause__``/``__context__``).
     """
     try:
         return json.dumps(
@@ -207,10 +211,11 @@ def canonical_json(value: Any) -> str:
             ensure_ascii=False,
             allow_nan=False,
         )
-    except (TypeError, ValueError) as exc:
-        raise EconomicsTelemetryContractError(
-            "telemetry payload is not serializable to canonical JSON"
-        ) from exc
+    except (TypeError, ValueError):
+        pass
+    raise EconomicsTelemetryContractError(
+        "telemetry payload is not serializable to canonical JSON"
+    )
 
 
 def _derive_idempotency_key(body_without_key: Mapping[str, Any]) -> str:
@@ -236,14 +241,17 @@ def _json_roundtrip(event: Mapping[str, Any], index: int) -> dict[str, Any]:
     """Deep-copy an event through JSON so the body carries no live references.
 
     Rejects non-serializable and non-finite (NaN/Infinity) values as a typed
-    local contract error rather than letting them reach the wire.
+    local contract error rather than letting them reach the wire. The
+    serialization exception is confined to its handler and NOT chained, so the
+    raised error cannot carry the offending value.
     """
     try:
         return json.loads(json.dumps(event, allow_nan=False))  # type: ignore[no-any-return]
-    except (TypeError, ValueError) as exc:
-        raise EconomicsTelemetryContractError(
-            f"event {index} is not JSON-serializable or contains a non-finite value"
-        ) from exc
+    except (TypeError, ValueError):
+        pass
+    raise EconomicsTelemetryContractError(
+        f"event {index} is not JSON-serializable or contains a non-finite value"
+    )
 
 
 def _require_non_empty(value: str, field: str) -> str:

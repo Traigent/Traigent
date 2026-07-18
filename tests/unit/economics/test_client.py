@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
+import gc
 import importlib.util
 import json
+import pickle
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -774,9 +777,13 @@ async def test_future_http_date_retry_after_is_clamped(
 # object.__setattr__); the tests below mint provenance explicitly to reach them.
 
 
-def _mint_provenance(batch: PreparedTelemetryBatch) -> PreparedTelemetryBatch:
-    """Grant the module provenance capability (white-box, for defense-in-depth tests)."""
-    object.__setattr__(batch, "_provenance", client_mod._PREPARE_PROVENANCE)
+def _register_issued(batch: PreparedTelemetryBatch) -> PreparedTelemetryBatch:
+    """Register this exact instance as prepare()-issued (white-box helper).
+
+    Used by defense-in-depth tests to reach the re-derivation checks with a batch
+    that has valid IDENTITY but an inconsistent field.
+    """
+    client_mod._ISSUED_BATCHES[id(batch)] = batch
     return batch
 
 
@@ -811,7 +818,7 @@ def _prepared_from_body(
     fields.update(overrides)
     batch = PreparedTelemetryBatch(**fields)
     if provenanced:
-        _mint_provenance(batch)
+        _register_issued(batch)
     return batch
 
 
@@ -900,7 +907,7 @@ async def test_exact_prepared_object_submits_and_retries_identical() -> None:
 async def test_provenanced_content_tamper_is_refused() -> None:
     client = _client()
     prepared = client.prepare([_event()], project_id="proj-1")
-    tampered = _mint_provenance(
+    tampered = _register_issued(
         dataclasses.replace(prepared, content=b'{"forged":true}')
     )
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
@@ -914,7 +921,7 @@ async def test_provenanced_arbitrary_body_is_refused() -> None:
     prepared = client.prepare([_event()], project_id="proj-1")
     forged_body = dict(prepared.body)
     forged_body["events"] = [dict(forged_body["events"][0], surprise="x")]
-    tampered = _mint_provenance(
+    tampered = _register_issued(
         dataclasses.replace(
             prepared,
             body=forged_body,
@@ -953,7 +960,7 @@ async def test_provenanced_withheld_value_body_is_refused() -> None:
 async def test_provenanced_idempotency_key_tamper_is_refused() -> None:
     client = _client()
     prepared = client.prepare([_event()], project_id="proj-1")
-    tampered = _mint_provenance(
+    tampered = _register_issued(
         dataclasses.replace(prepared, idempotency_key="econ-tel-differentkey")
     )
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
@@ -965,7 +972,7 @@ async def test_provenanced_idempotency_key_tamper_is_refused() -> None:
 async def test_provenanced_event_ids_tamper_is_refused() -> None:
     client = _client()
     prepared = client.prepare([_event()], project_id="proj-1")
-    tampered = _mint_provenance(dataclasses.replace(prepared, event_ids=("evt-other",)))
+    tampered = _register_issued(dataclasses.replace(prepared, event_ids=("evt-other",)))
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
     with pytest.raises(EconomicsTelemetryContractError, match="event ids"):
         await client.submit_prepared(tampered)
@@ -975,7 +982,7 @@ async def test_provenanced_event_ids_tamper_is_refused() -> None:
 async def test_provenanced_project_tamper_is_refused() -> None:
     client = _client()
     prepared = client.prepare([_event("proj-1")], project_id="proj-1")
-    tampered = _mint_provenance(
+    tampered = _register_issued(
         dataclasses.replace(prepared, project_id="other-project")
     )
     mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
@@ -1078,3 +1085,98 @@ def test_http_client_does_not_follow_redirects(monkeypatch: pytest.MonkeyPatch) 
     client = _client()
     client._get_client()
     assert captured.get("follow_redirects") is False
+
+
+# --- CRITICAL: identity issuance — copies/deepcopies/unpickled are refused ------
+
+
+async def test_copy_copy_of_prepared_is_non_submittable() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    shallow = copy.copy(prepared)
+    assert shallow is not prepared
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(shallow)
+    mock_http.post.assert_not_called()
+
+
+async def test_deepcopy_of_prepared_is_non_submittable() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    try:
+        deep = copy.deepcopy(prepared)
+    except Exception:
+        # The read-only MappingProxyType body cannot be deep-copied at all —
+        # a prepared batch cannot even be reconstituted this way. Nothing to submit.
+        mock_http.post.assert_not_called()
+        return
+    assert deep is not prepared
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(deep)
+    mock_http.post.assert_not_called()
+
+
+async def test_pickle_roundtrip_of_prepared_is_non_submittable() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    try:
+        data = pickle.dumps(prepared)
+    except Exception:
+        # Policy: a batch that cannot even be pickled cannot be reconstituted and
+        # submitted across a round-trip. Nothing reaches transport.
+        mock_http.post.assert_not_called()
+        return
+    restored = pickle.loads(data)
+    assert restored is not prepared
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(restored)
+    mock_http.post.assert_not_called()
+
+
+async def test_cross_client_issued_batch_is_submittable() -> None:
+    # Documented in-process rule: a batch prepared by one client instance is
+    # submittable by another client instance in the same process.
+    issuer = _client()
+    submitter = _client()
+    prepared = issuer.prepare([_event()], project_id="proj-1")
+    _mock_transport(submitter, _resp(201, _ingest_body(prepared)))
+    result = await submitter.submit_prepared(prepared)
+    assert result.fully_accepted
+
+
+def test_issuance_registry_is_leak_free() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    key = id(prepared)
+    assert client_mod._ISSUED_BATCHES.get(key) is prepared
+    del prepared
+    gc.collect()
+    # The weak entry is dropped on collection: no unbounded growth, and a later
+    # object that reuses this id resolves to nothing rather than a stale batch.
+    assert client_mod._ISSUED_BATCHES.get(key) is None
+
+
+# --- HIGH: boundary errors are payload-free (no cause/context leak) -------------
+
+
+async def test_invalid_json_response_error_is_payload_free() -> None:
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    marker = "SENSITIVE-RAW-RESPONSE-BODY-4242"
+    bad = MagicMock()
+    bad.status_code = 201
+    # JSONDecodeError.doc carries the raw response body — it must not leak.
+    bad.json.side_effect = json.JSONDecodeError("Expecting value", marker, 0)
+    bad.headers = {}
+    _mock_transport(client, bad)
+    with pytest.raises(EconomicsResponseError) as excinfo:
+        await client.submit_prepared(prepared)
+    chain = _exception_chain(excinfo.value)
+    assert all(marker not in str(link) for link in chain)
+    # No JSONDecodeError (with its .doc) rides along the cause/context chain.
+    for link in chain:
+        assert getattr(link, "doc", None) != marker
+    assert not any(isinstance(link, json.JSONDecodeError) for link in chain)

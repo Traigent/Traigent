@@ -193,3 +193,23 @@ def test_non_finite_values_are_rejected_locally(bad: float) -> None:
     }
     with pytest.raises(EconomicsTelemetryContractError):
         build_telemetry_request([event])
+
+
+def test_serialization_error_is_payload_free() -> None:
+    # A non-serializable value must fail as a typed contract error whose
+    # cause/context chain does not carry the offending payload.
+    from traigent.economics.payload import canonical_json
+
+    class _Sensitive:
+        def __repr__(self) -> str:  # pragma: no cover - must never be chained
+            return "SENSITIVE-REPR-55521"
+
+    with pytest.raises(EconomicsTelemetryContractError) as excinfo:
+        canonical_json({"x": _Sensitive()})
+    chain: list[BaseException] = []
+    current: BaseException | None = excinfo.value
+    while current is not None and not any(c is current for c in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    assert all("SENSITIVE-REPR-55521" not in str(link) for link in chain)
+    assert not any(isinstance(link, TypeError) for link in chain)

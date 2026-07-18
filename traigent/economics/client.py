@@ -26,8 +26,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import weakref
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from types import MappingProxyType
@@ -73,16 +74,29 @@ _TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
 _MAX_BACKOFF_SECONDS = 2.0
 _MAX_RETRY_AFTER_SECONDS = 30.0
 
-# Module-private, non-constructable provenance capability. It is issued ONLY by
-# EconomicsTelemetryClient.prepare() (via object.__setattr__ after construction),
-# and submit only proceeds when a batch carries this exact object. A public
-# `PreparedTelemetryBatch(...)` gets the invalid `None` default; `dataclasses.replace`
-# produces a NEW instance whose init=False provenance field is re-defaulted to
-# None (not copied), so a replaced batch also loses the capability. This is an
-# API trust boundary, not cryptographic: it deliberately closes normal public
-# construction and replacement, and does not claim to defend a caller who reaches
-# in with object.__setattr__ or module introspection.
-_PREPARE_PROVENANCE = object()
+# Sentinel: response body failed to decode as JSON. Used so the decode exception
+# is confined to its handler and never chained into the public error.
+_JSON_PARSE_FAILED = object()
+
+# In-process IDENTITY issuance registry. prepare() records the EXACT instance it
+# returns, keyed by id(); submit only proceeds when the submitted object IS that
+# same instance (`is`, never `==`). This is what a copied/replaced/unpickled batch
+# cannot satisfy: it is a different object with a different id.
+#
+# WeakValueDictionary makes this leak-free and stale-id-safe: the entry is dropped
+# the instant the issued batch is garbage-collected (weak value), so the registry
+# never grows unbounded AND an id later reused by a new, unrelated object resolves
+# to nothing (the dead entry is already gone) rather than to a stale batch. The
+# registry is module-level, so a batch prepared by one EconomicsTelemetryClient is
+# submittable by another client instance in the SAME process; it does not survive
+# copy, dataclasses.replace, pickling, or crossing a process boundary.
+#
+# This is an API trust boundary, not a cryptographic seal: a caller who reaches in
+# and registers a forged object under its own id could still submit it (the
+# re-derivation/egress/Schema checks still bound what such a batch could transmit).
+_ISSUED_BATCHES: weakref.WeakValueDictionary[int, PreparedTelemetryBatch] = (
+    weakref.WeakValueDictionary()
+)
 
 
 @dataclass(frozen=True)
@@ -94,10 +108,12 @@ class PreparedTelemetryBatch:
     the honest cross-call recovery path: identical bytes and key mean the
     backend replays rather than writing a second batch.
 
-    The class is publicly constructible for API compatibility, but only a batch
-    returned by :meth:`EconomicsTelemetryClient.prepare` is submittable: a
-    directly-constructed or ``dataclasses.replace``-d instance loses the internal
-    provenance capability and is refused before any transport (fail closed).
+    The class is publicly constructible for API compatibility, but only the exact
+    object returned by :meth:`EconomicsTelemetryClient.prepare` is submittable:
+    a directly-constructed, ``copy.copy``/``copy.deepcopy``-ed,
+    ``dataclasses.replace``-d, or unpickled instance is a different identity, is
+    not in the issuance registry, and is refused before any transport (fail
+    closed).
     """
 
     project_id: str
@@ -109,10 +125,6 @@ class PreparedTelemetryBatch:
     #: Ordered submitted event ids (identifiers only, no payload) used to
     #: reconcile the backend's per-event rejections against this exact batch.
     event_ids: tuple[str, ...]
-    #: Provenance capability — NOT a constructor argument. Defaults invalid and is
-    #: marked only by prepare(); excluded from equality/repr so it never leaks and
-    #: never affects value semantics. See ``_PREPARE_PROVENANCE``.
-    _provenance: Any = field(default=None, init=False, compare=False, repr=False)
 
     @property
     def headers(self) -> dict[str, str]:
@@ -276,8 +288,10 @@ class EconomicsTelemetryClient:
             body=MappingProxyType(dict(body)),
             event_ids=event_ids,
         )
-        # Issue the provenance capability: this is the ONLY place it is granted.
-        object.__setattr__(prepared, "_provenance", _PREPARE_PROVENANCE)
+        # Record the EXACT issued instance: this is the ONLY place identity is
+        # granted. Keyed by id() with a weak value, so it is leak-free and a
+        # later-reused id cannot resolve to this (by then dead) batch.
+        _ISSUED_BATCHES[id(prepared)] = prepared
         return prepared
 
     async def submit(
@@ -317,24 +331,27 @@ class EconomicsTelemetryClient:
         key, event ids, or project scope, or an absent Schema — fails closed here,
         so no forged byte reaches the wire.
         """
-        self._require_provenance(prepared)
+        self._require_issued(prepared)
         content, headers = self._reverify_prepared(prepared)
         response = await self._post_with_retry(content, headers)
         return self._interpret(response, prepared)
 
     @staticmethod
-    def _require_provenance(prepared: PreparedTelemetryBatch) -> None:
-        """Refuse a batch not issued by ``prepare()`` — the primary trust gate.
+    def _require_issued(prepared: PreparedTelemetryBatch) -> None:
+        """Refuse a batch that is not the exact object issued by ``prepare()``.
 
-        A directly-constructed or ``dataclasses.replace``-d batch (even one whose
-        every public field is internally consistent) lacks the module-private
-        provenance capability and is refused here before any field work or
-        transport. The error is payload-free.
+        The primary trust gate, checked before any field work or transport. Uses
+        object IDENTITY against the issuance registry (``is``, never ``==``), so a
+        directly-constructed, copied, ``dataclasses.replace``-d, or unpickled
+        batch — even one whose every public field is internally consistent — is
+        a different identity, is absent from the registry, and is refused. The
+        error is payload-free.
         """
-        if getattr(prepared, "_provenance", None) is not _PREPARE_PROVENANCE:
+        if _ISSUED_BATCHES.get(id(prepared)) is not prepared:
             raise EconomicsTelemetryContractError(
                 "telemetry batch was not issued by EconomicsTelemetryClient.prepare(); "
-                "construct it via prepare() rather than directly or via dataclasses.replace"
+                "only the exact object returned by prepare() may be submitted "
+                "(copies, dataclasses.replace results, and unpickled batches are refused)"
             )
 
     def _reverify_prepared(
@@ -463,13 +480,17 @@ class EconomicsTelemetryClient:
     ) -> TelemetryIngestResult:
         status = response.status_code
         if status in _INGEST_RESULT_STATUSES:
+            # Decode inside the handler but RAISE outside it, so the invalid-JSON
+            # exception (whose JSONDecodeError.doc carries the raw payload) never
+            # rides along as __cause__ or __context__. Never log the body either.
             try:
-                body = response.json()
-            except ValueError as exc:
-                # Never log the body; report a stable, payload-free error.
+                body: Any = response.json()
+            except ValueError:
+                body = _JSON_PARSE_FAILED
+            if body is _JSON_PARSE_FAILED:
                 raise EconomicsResponseError(
                     f"economics telemetry response (HTTP {status}) was not JSON"
-                ) from exc
+                )
             result = TelemetryIngestResult.from_response(
                 http_status=status,
                 body=body,

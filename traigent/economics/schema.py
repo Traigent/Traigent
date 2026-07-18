@@ -79,6 +79,11 @@ EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT = (
 _UNSET = object()
 _BUNDLE_CACHE: Any = _UNSET
 
+# Sentinel: the validator raised while checking a body. Used so the validator
+# exception (which can carry the request/response payload) is confined to its
+# handler and never chained into the public error.
+_VALIDATOR_RAISED = object()
+
 
 def _economics_schema_dir() -> str:
     try:
@@ -191,12 +196,17 @@ def validate_request_or_fail(body: dict[str, Any]) -> None:
             against the schema (e.g. an arbitrary extra key).
     """
     validator = _get_bundle()
+    # Confine any validator exception to its handler and RAISE outside it: a
+    # jsonschema failure can carry the offending instance value, so it must never
+    # ride along as __cause__/__context__.
     try:
         errors = validator.validate_json(body, REQUEST_SCHEMA_NAME)
-    except Exception as exc:  # noqa: BLE001 - a validator that throws fails closed
+    except Exception:  # noqa: BLE001 - a validator that throws fails closed
+        errors = _VALIDATOR_RAISED
+    if errors is _VALIDATOR_RAISED:
         raise EconomicsSchemaUnavailable(
             "the economics schema validator raised while validating the request"
-        ) from exc
+        )
     if errors:
         # Never echo the offending payload: the count and a fixed message only.
         raise EconomicsTelemetryContractError(
@@ -229,12 +239,17 @@ def validate_response_or_fail(body: Any, *, http_status: int) -> None:
 
     validator = _get_bundle()
     schema_name = response_schema_name(http_status)
+    # Confine any validator exception to its handler and RAISE outside it: the
+    # validator failure can carry the response payload, so it must never ride
+    # along as __cause__/__context__.
     try:
         errors = validator.validate_json(body, schema_name)
-    except Exception as exc:  # noqa: BLE001 - a validator that throws fails closed
+    except Exception:  # noqa: BLE001 - a validator that throws fails closed
+        errors = _VALIDATOR_RAISED
+    if errors is _VALIDATOR_RAISED:
         raise EconomicsResponseError(
             "the economics schema validator raised while validating the response"
-        ) from exc
+        )
     if errors:
         raise EconomicsResponseError(
             f"economics telemetry response failed schema validation "
