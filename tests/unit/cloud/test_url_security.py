@@ -416,6 +416,40 @@ def test_mapped_alibaba_imds_blocked_in_production() -> None:
 @pytest.mark.parametrize(
     "url",
     [
+        # NAT64 64:ff9b::/96 embedding 127.0.0.1 -> loopback via a NAT64 gateway.
+        # Rejected on the production is_global gate (not the always-blocked set),
+        # so this pins the private/loopback path through a transition prefix,
+        # which the metadata-IP cases above do not exercise (issue #1914).
+        "https://[64:ff9b::7f00:1]/api",
+        # NAT64 embedding 169.254.169.254 -> cloud IMDS via a NAT64 gateway.
+        "https://[64:ff9b::a9fe:a9fe]/api",
+        # IPv4-mapped Alibaba metadata IP; is_global reports True on the outer
+        # IPv6 literal, so the embedded IPv4 must be re-classified.
+        "https://[::ffff:100.100.100.200]/api",
+        # 6to4 2002::/16 embedding a link-local metadata IPv4 (169.254.169.254).
+        "https://[2002:a9fe:a9fe::]/api",
+    ],
+)
+def test_validate_cloud_base_url_rejects_ipv6_transition_metadata_ips(
+    url: str,
+) -> None:
+    # Regression for issue #1914: ``is_global`` reports True on these IPv6
+    # transition / embedded-IPv4 literals, so without unwrapping the embedded
+    # IPv4 the SSRF / credential-egress gate could be bypassed to loopback or a
+    # metadata (IMDS) endpoint in production. The unwrap classifies the address
+    # the request actually reaches, so every vector is rejected — some as a
+    # metadata service (blocked in every environment), the pure-loopback NAT64
+    # form on the production private/loopback gate.
+    with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
+        with pytest.raises(
+            ValueError, match="metadata service|private or loopback|link-local"
+        ):
+            validate_cloud_base_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
         # Loopback: ::1 lives in ::/96 but embeds no IPv4 address — unwrapping it
         # would yield 0.0.0.1 and change how it is classified.
         "http://[::1]:8000",
