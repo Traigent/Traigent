@@ -800,7 +800,9 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         fallbacks: dict[tuple[str | None, str], list[str]] = {
             ("openai", "fast"): ["gpt-4o-mini"],
             ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
-            ("openai", "quality"): ["gpt-4o", "o1-preview"],
+            # o1-preview is retired and 404s on every real call; use the
+            # current OpenAI flagship quality model instead (see #1932).
+            ("openai", "quality"): ["gpt-4o", "gpt-5.2"],
             ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
             ("anthropic", "balanced"): ["claude-sonnet-4-6"],
             ("anthropic", "quality"): ["claude-opus-4-8"],

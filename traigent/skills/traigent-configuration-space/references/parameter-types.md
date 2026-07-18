@@ -153,10 +153,10 @@ Choices(
 
 | Method                                           | Returns         | Values                                                |
 | ------------------------------------------------ | --------------- | ----------------------------------------------------- |
-| `Choices.model()`                                | `Choices[str]`  | gpt-4o-mini, gpt-4o, claude-3-5-sonnet-20241022      |
+| `Choices.model()`                                | `Choices[str]`  | gpt-4o-mini, gpt-4o, claude-sonnet-4-6               |
 | `Choices.model(provider="openai", tier="fast")`  | `Choices[str]`  | gpt-4o-mini                                           |
-| `Choices.model(provider="openai", tier="quality")`| `Choices[str]` | gpt-4o, o1-preview                                    |
-| `Choices.model(provider="anthropic", tier="quality")` | `Choices[str]` | claude-3-opus-20240229                           |
+| `Choices.model(provider="openai", tier="quality")`| `Choices[str]` | gpt-4o, gpt-5.2                                       |
+| `Choices.model(provider="anthropic", tier="quality")` | `Choices[str]` | claude-opus-4-8                                  |
 | `Choices.prompting_strategy()`                   | `Choices[str]`  | direct, chain_of_thought, react, self_consistency     |
 | `Choices.context_format()`                       | `Choices[str]`  | bullet, numbered, xml, markdown, json                 |
 | `Choices.retriever_type()`                       | `Choices[str]`  | similarity, mmr, bm25, hybrid                         |

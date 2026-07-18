@@ -6,13 +6,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.hybrid.mcp_transport import CONFIG_SPACE_URI, HEALTH_URI, MCPTransport
+from traigent.hybrid.mcp_transport import (
+    CONFIG_SPACE_URI,
+    HEALTH_URI,
+    MCPTransport,
+    _is_structured_not_found,
+)
 from traigent.hybrid.protocol import (
     HybridEvaluateRequest,
     HybridExecuteRequest,
     ServiceCapabilities,
 )
-from traigent.hybrid.transport import TransportConnectionError, TransportError
+from traigent.hybrid.transport import (
+    TransportConnectionError,
+    TransportError,
+    TransportNotFoundError,
+)
 
 
 @dataclass
@@ -329,13 +338,16 @@ class TestMCPTransportCapabilities:
         assert transport._client.read_resource.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_capabilities_fallback_on_error(
+    async def test_capabilities_fallback_on_structured_not_found(
         self, transport: MCPTransport
     ) -> None:
-        """Test capabilities returns defaults on error."""
+        """Safe defaults ONLY on a definitive, structured not-found (#1930)."""
+        # A well-behaved server surfaces the JSON-RPC RESOURCE_NOT_FOUND code
+        # (-32002) in the response payload.
         mock_response = MockMCPResponse(
             success=False,
             error_message="Resource not found",
+            data={"error_code": -32002},
         )
         transport._client.read_resource = AsyncMock(return_value=mock_response)
 
@@ -344,6 +356,56 @@ class TestMCPTransportCapabilities:
         assert caps.version == "1.0"
         assert caps.supports_evaluate is False  # Safe default
         assert caps.supports_keep_alive is False  # Default
+
+    @pytest.mark.asyncio
+    async def test_capabilities_reraises_transient_error_and_does_not_cache(
+        self, transport: MCPTransport
+    ) -> None:
+        """A transient blip must propagate and NOT cache safe defaults (#1930).
+
+        Previously any TransportError was swallowed and version="1.0" cached,
+        permanently disabling evaluate/keep_alive for the whole session. Now a
+        transient error (no structured not-found signal) surfaces and is not
+        cached, so a later successful read still discovers real capabilities.
+        """
+        transient = MockMCPResponse(
+            success=False,
+            error_message="Connection reset by peer",
+        )
+        transport._client.read_resource = AsyncMock(return_value=transient)
+
+        with pytest.raises(TransportError):
+            await transport.capabilities()
+
+        # Nothing cached — a subsequent successful read wins.
+        assert transport._capabilities is None
+        caps_data = {
+            "version": "1.0",
+            "supports_evaluate": True,
+            "supports_keep_alive": True,
+        }
+        transport._client.read_resource = AsyncMock(
+            return_value=MockMCPResponse(
+                success=True, data={"content": json.dumps(caps_data)}
+            )
+        )
+        caps = await transport.capabilities()
+        assert caps.supports_evaluate is True
+        assert caps.supports_keep_alive is True
+
+    @pytest.mark.asyncio
+    async def test_capabilities_reraises_connection_error_and_does_not_cache(
+        self, transport: MCPTransport
+    ) -> None:
+        """A raised TransportConnectionError must propagate uncached (#1930)."""
+        transport._client.read_resource = AsyncMock(
+            side_effect=TransportConnectionError("connection refused")
+        )
+
+        with pytest.raises(TransportConnectionError):
+            await transport.capabilities()
+
+        assert transport._capabilities is None
 
 
 class TestMCPTransportDiscoverConfigSpace:
@@ -376,6 +438,47 @@ class TestMCPTransportDiscoverConfigSpace:
         assert result.tunable_id == "test_agent"
         assert len(result.tvars) == 1
         transport._client.read_resource.assert_called_with(CONFIG_SPACE_URI)
+
+    @pytest.mark.asyncio
+    async def test_discover_config_space_encodes_tunable_id(
+        self, transport: MCPTransport
+    ) -> None:
+        """tunable_id with special chars is URL-encoded into the URI (#1931)."""
+        config_space = {
+            "schema_version": "0.9",
+            "tunable_id": "team a&b=c?d",
+            "tvars": [],
+        }
+        transport._client.read_resource = AsyncMock(
+            return_value=MockMCPResponse(
+                success=True, data={"content": json.dumps(config_space)}
+            )
+        )
+
+        await transport.discover_config_space(tunable_id="team a&b=c?d")
+
+        called_uri = transport._client.read_resource.call_args.args[0]
+        # Special characters must be percent-encoded, never passed raw.
+        assert called_uri == (f"{CONFIG_SPACE_URI}?tunable_id=team%20a%26b%3Dc%3Fd")
+        assert " " not in called_uri
+        assert "&" not in called_uri.split("?tunable_id=")[1]
+
+    @pytest.mark.asyncio
+    async def test_discover_config_space_simple_id_unchanged(
+        self, transport: MCPTransport
+    ) -> None:
+        """A plain tunable_id round-trips without spurious encoding."""
+        config_space = {"schema_version": "0.9", "tunable_id": "agent1", "tvars": []}
+        transport._client.read_resource = AsyncMock(
+            return_value=MockMCPResponse(
+                success=True, data={"content": json.dumps(config_space)}
+            )
+        )
+
+        await transport.discover_config_space(tunable_id="agent1")
+
+        called_uri = transport._client.read_resource.call_args.args[0]
+        assert called_uri == f"{CONFIG_SPACE_URI}?tunable_id=agent1"
 
 
 class TestMCPTransportBenchmarks:
@@ -590,8 +693,10 @@ class TestMCPTransportKeepAlive:
             await transport.keep_alive("session-123")
 
     @pytest.mark.asyncio
-    async def test_keep_alive_session_not_found(self, transport: MCPTransport) -> None:
-        """Test keep-alive returns False when session not found."""
+    async def test_keep_alive_structured_not_found_returns_false(
+        self, transport: MCPTransport
+    ) -> None:
+        """Structured not-found (typed error) → expired, returns False (#1933)."""
         caps_data = {"version": "1.0", "supports_keep_alive": True}
         caps_response = MockMCPResponse(
             success=True,
@@ -600,8 +705,55 @@ class TestMCPTransportKeepAlive:
 
         transport._client.read_resource = AsyncMock(return_value=caps_response)
         transport._client.call_tool = AsyncMock(
-            side_effect=TransportError("Session not found")
+            side_effect=TransportNotFoundError("session gone")
         )
+
+        alive = await transport.keep_alive("session-123")
+
+        assert alive is False
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_reraises_transient_error(
+        self, transport: MCPTransport
+    ) -> None:
+        """A non-structured transport error must propagate, not read as expiry.
+
+        Previously a message merely containing "not found" returned False
+        (false-expiry), and a genuine transport blip without that substring was
+        mis-handled. Now only a structured not-found means expiry; everything
+        else propagates as a missed heartbeat (#1933).
+        """
+        caps_data = {"version": "1.0", "supports_keep_alive": True}
+        caps_response = MockMCPResponse(
+            success=True,
+            data={"content": json.dumps(caps_data)},
+        )
+
+        transport._client.read_resource = AsyncMock(return_value=caps_response)
+        transport._client.call_tool = AsyncMock(
+            side_effect=TransportError("upstream 503 not found in cache")
+        )
+
+        with pytest.raises(TransportError):
+            await transport.keep_alive("session-123")
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_structured_status_expired_returns_false(
+        self, transport: MCPTransport
+    ) -> None:
+        """A structured status='expired' in the result payload → False (#1933)."""
+        caps_data = {"version": "1.0", "supports_keep_alive": True}
+        caps_response = MockMCPResponse(
+            success=True,
+            data={"content": json.dumps(caps_data)},
+        )
+        keep_alive_response = MockMCPResponse(
+            success=True,
+            data={"status": "expired", "session_id": "session-123"},
+        )
+
+        transport._client.read_resource = AsyncMock(return_value=caps_response)
+        transport._client.call_tool = AsyncMock(return_value=keep_alive_response)
 
         alive = await transport.keep_alive("session-123")
 
@@ -735,3 +887,93 @@ class TestMCPTransportContextManager:
 
         async with MCPTransport(mcp_client=mock_client) as transport:
             assert isinstance(transport, MCPTransport)
+
+
+class TestStructuredNotFoundClassifier:
+    """Tests for the structured not-found classifier (#1930/#1933)."""
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"error_code": -32002},  # RESOURCE_NOT_FOUND
+            {"error_code": -32601},  # METHOD_NOT_FOUND (unsupported tool)
+            {"error_code": -32602},  # INVALID_PARAMS (e.g. unknown session_id)
+            {"error_code": 404},
+            {"status_code": 404},
+            {"status": "expired"},
+            {"status": "not_found"},
+            {"code": "SESSION_NOT_FOUND"},  # case/hyphen-insensitive
+            {"error_code": "unknown-session"},
+            {"status": "410"},
+        ],
+    )
+    def test_structured_not_found_true(self, data: dict) -> None:
+        assert _is_structured_not_found(data) is True
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            None,
+            {},
+            "not found",  # free-text must NOT be classified
+            {"error_message": "resource not found"},  # message field ignored
+            {"status": "alive"},
+            {"error_code": -32000},  # generic server error → transient
+            {"status_code": 503},
+            {"status": True},  # bool is not a status code
+        ],
+    )
+    def test_structured_not_found_false(self, data: object) -> None:
+        assert _is_structured_not_found(data) is False
+
+
+class TestTransportErrorClassification:
+    """_read_resource / _call_tool raise a typed error on structured not-found."""
+
+    @pytest.fixture
+    def transport(self) -> MCPTransport:
+        mock_client = AsyncMock()
+        return MCPTransport(mcp_client=mock_client)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_structured_not_found_raises_typed(
+        self, transport: MCPTransport
+    ) -> None:
+        transport._client.read_resource = AsyncMock(
+            return_value=MockMCPResponse(
+                success=False,
+                error_message="Resource not found",
+                data={"error_code": -32002},
+            )
+        )
+        with pytest.raises(TransportNotFoundError):
+            await transport._read_resource("traigent://capabilities")
+
+    @pytest.mark.asyncio
+    async def test_read_resource_generic_failure_raises_plain(
+        self, transport: MCPTransport
+    ) -> None:
+        transport._client.read_resource = AsyncMock(
+            return_value=MockMCPResponse(
+                success=False,
+                error_message="upstream 503",
+                data={"error_code": -32000},
+            )
+        )
+        with pytest.raises(TransportError) as exc:
+            await transport._read_resource("traigent://capabilities")
+        assert not isinstance(exc.value, TransportNotFoundError)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_structured_not_found_raises_typed(
+        self, transport: MCPTransport
+    ) -> None:
+        transport._client.call_tool = AsyncMock(
+            return_value=MockMCPResponse(
+                success=False,
+                error_message="unknown session_id",
+                data={"error_code": "session_not_found"},
+            )
+        )
+        with pytest.raises(TransportNotFoundError):
+            await transport._call_tool("keep_alive", {"session_id": "x"})

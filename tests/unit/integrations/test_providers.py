@@ -400,6 +400,38 @@ class TestFallbackModels:
             assert "balanced" in tiers, f"{provider} missing 'balanced' tier"
             assert "quality" in tiers, f"{provider} missing 'quality' tier"
 
+    def test_no_retired_openai_o1_preview(self) -> None:
+        """o1-preview is retired and 404s on every real call (see #1932's
+        analogous fix in parameter_ranges.py); it must not ship in either
+        provider-tier table."""
+        for key, models in _FALLBACK_MODELS.items():
+            assert "o1-preview" not in models, (
+                f"retired o1-preview found in _FALLBACK_MODELS{key}"
+            )
+        for provider, tiers in _MODEL_TIERS.items():
+            for tier, models in tiers.items():
+                assert "o1-preview" not in models, (
+                    f"retired o1-preview found in _MODEL_TIERS['{provider}']['{tier}']"
+                )
+
+    def test_no_retired_anthropic_claude_3_ids(self) -> None:
+        """Claude 3-era IDs (claude-3-*) are retired from the tier tables in
+        favor of the current Claude 4 family (claude-opus-4-8,
+        claude-sonnet-4-6, claude-haiku-4-5-20251001) already used by
+        Choices.model()'s fallback table in parameter_ranges.py."""
+        for key, models in _FALLBACK_MODELS.items():
+            for model in models:
+                assert not model.startswith("claude-3-"), (
+                    f"retired {model!r} found in _FALLBACK_MODELS{key}"
+                )
+        for provider, tiers in _MODEL_TIERS.items():
+            for tier, models in tiers.items():
+                for model in models:
+                    assert not model.startswith("claude-3-"), (
+                        f"retired {model!r} found in "
+                        f"_MODEL_TIERS['{provider}']['{tier}']"
+                    )
+
 
 class TestIntegrationWithChoices:
     """Integration tests with Choices parameter range."""
