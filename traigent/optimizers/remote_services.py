@@ -175,9 +175,6 @@ class OptimizationStrategy:
     # Exploration strategy
     exploration_ratio: float = 0.3  # 0.0 = pure exploitation, 1.0 = pure exploration
     early_stopping_patience: int = 10  # Stop if no improvement for N trials
-    early_stopping_min_delta: float = (
-        0.01  # Min primary-objective change counted as an improvement
-    )
     confidence_threshold: float = 0.95  # Stop when this confident about optimum
 
     # Dataset usage strategy
@@ -192,6 +189,11 @@ class OptimizationStrategy:
     # Metadata
     strategy_name: str = "smart_optimization"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Appended after every pre-existing field so the historical positional
+    # constructor ABI (positions 0..12 above) is preserved; new callers pass
+    # this by keyword. Min primary-objective change counted as an improvement.
+    early_stopping_min_delta: float = 0.01
 
     def __post_init__(self) -> None:
         """Validate fields that feed early-stopping arithmetic."""

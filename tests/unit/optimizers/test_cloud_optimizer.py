@@ -1960,6 +1960,76 @@ class TestStrategyEarlyStoppingOrientation:
         assert optimizer._check_strategy_stopping_conditions(history) is False
 
 
+class TestOptimizationStrategyPositionalABI:
+    """``early_stopping_min_delta`` must be appended AFTER every pre-existing
+    field so the historical positional-constructor ABI is preserved.
+
+    The field was originally inserted between ``early_stopping_patience`` and
+    ``confidence_threshold``, which silently shifted ``confidence_threshold``
+    and all later positional values by one slot. This constructs the full
+    legacy positional form (the field order as it shipped on ``develop``) and
+    proves every legacy field keeps its old binding while the new field takes
+    its default. The distinct sentinel per slot makes any off-by-one shift a
+    hard failure rather than a coincidental pass.
+    """
+
+    def test_legacy_full_positional_construction_preserves_bindings(self):
+        strategy = OptimizationStrategy(
+            123,  # max_total_evaluations
+            45.6,  # max_cost_budget
+            78.9,  # max_time_budget
+            0.42,  # exploration_ratio
+            7,  # early_stopping_patience
+            0.88,  # confidence_threshold
+            3,  # min_examples_per_trial
+            99,  # max_examples_per_trial
+            False,  # adaptive_sample_size
+            "speed",  # pareto_preference
+            {"accuracy": 2.0},  # objective_weights
+            "legacy_name",  # strategy_name
+            {"k": "v"},  # metadata
+        )
+
+        assert strategy.max_total_evaluations == 123
+        assert strategy.max_cost_budget == 45.6
+        assert strategy.max_time_budget == 78.9
+        assert strategy.exploration_ratio == 0.42
+        assert strategy.early_stopping_patience == 7
+        # The bug bound this positional slot to early_stopping_min_delta.
+        assert strategy.confidence_threshold == 0.88
+        assert strategy.min_examples_per_trial == 3
+        assert strategy.max_examples_per_trial == 99
+        assert strategy.adaptive_sample_size is False
+        assert strategy.pareto_preference == "speed"
+        assert strategy.objective_weights == {"accuracy": 2.0}
+        assert strategy.strategy_name == "legacy_name"
+        assert strategy.metadata == {"k": "v"}
+        # New field is not part of the legacy positional ABI: it defaults.
+        assert strategy.early_stopping_min_delta == 0.01
+
+    def test_new_field_is_last_positional_slot(self):
+        """A 14th positional argument binds to the new field, confirming it was
+        appended rather than inserted mid-sequence."""
+        strategy = OptimizationStrategy(
+            123,
+            45.6,
+            78.9,
+            0.42,
+            7,
+            0.88,
+            3,
+            99,
+            False,
+            "speed",
+            {"accuracy": 2.0},
+            "legacy_name",
+            {"k": "v"},
+            0.05,  # early_stopping_min_delta (new trailing slot)
+        )
+        assert strategy.early_stopping_min_delta == 0.05
+        assert strategy.confidence_threshold == 0.88
+
+
 class TestDeclaredOrientationOverridesHeuristic:
     """The patience-based early-stop must honour the orientation declared in the
     user's ``ObjectiveSchema``, not the name-pattern heuristic.
