@@ -5,10 +5,13 @@ from __future__ import annotations
 import copy
 import dataclasses
 import gc
+import hashlib
+import hmac
 import importlib.util
 import json
-import pickle
 import logging
+import pickle
+import weakref
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -777,13 +780,64 @@ async def test_future_http_date_retry_after_is_clamped(
 # object.__setattr__); the tests below mint provenance explicitly to reach them.
 
 
-def _register_issued(batch: PreparedTelemetryBatch) -> PreparedTelemetryBatch:
-    """Register this exact instance as prepare()-issued (white-box helper).
+def _recover_issuance_secret() -> bytes:
+    """Recover the closure-held issuance secret via deliberate introspection.
 
-    Used by defense-in-depth tests to reach the re-derivation checks with a batch
-    that has valid IDENTITY but an inconsistent field.
+    This is the honest statement of the trust boundary. Minting is NOT reachable
+    through any module global: there is no ``_ISSUED_BATCHES`` registry, no
+    ``_verify_issuance`` module global, and no module-level mint/stamp callable.
+    The verifier and the secret live only inside closures installed ON THE CLASS
+    (``prepare`` and ``_require_issued``). To forge a token a white-box attacker
+    (or this test) must walk those class-attribute closures to reach the secret,
+    exactly as the client docstring states — an ordinary import cannot. Used only
+    to exercise defense-in-depth (a forged-provenance but internally inconsistent
+    batch must still fail the re-derivation checks).
     """
-    client_mod._ISSUED_BATCHES[id(batch)] = batch
+    seen: list[Any] = []
+    # Start from the installed class-attribute closures, never a module global.
+    stack: list[Any] = [
+        client_mod.EconomicsTelemetryClient.prepare,
+        client_mod.EconomicsTelemetryClient._require_issued,
+    ]
+    while stack:
+        fn = stack.pop()
+        for cell in getattr(fn, "__closure__", None) or ():
+            try:
+                val = cell.cell_contents
+            except ValueError:  # pragma: no cover - empty cell
+                continue
+            if isinstance(val, (bytes, bytearray)) and len(val) == 32:
+                return bytes(val)
+            if callable(val) and all(val is not s for s in seen):
+                seen.append(val)
+                stack.append(val)
+    raise AssertionError(
+        "issuance secret is not reachable even via closure introspection"
+    )
+
+
+def _is_issued(batch: PreparedTelemetryBatch) -> bool:
+    """True iff the installed class verifier accepts this batch's issuance token."""
+    try:
+        client_mod.EconomicsTelemetryClient._require_issued(batch)
+        return True
+    except EconomicsTelemetryContractError:
+        return False
+
+
+def _register_issued(batch: PreparedTelemetryBatch) -> PreparedTelemetryBatch:
+    """Forge a valid identity-bound issuance token on an arbitrary batch.
+
+    White-box helper: mints the HMAC directly from the recovered closure secret
+    (see :func:`_recover_issuance_secret`) and stamps it, so defense-in-depth
+    tests can reach the re-derivation checks with a batch that has valid IDENTITY
+    provenance but an internally inconsistent field. Reaching the secret requires
+    closure introspection; no module-global mint exists.
+    """
+    token = hmac.new(
+        _recover_issuance_secret(), str(id(batch)).encode("ascii"), hashlib.sha256
+    ).digest()
+    object.__setattr__(batch, client_mod._ISSUANCE_ATTR, token)
     return batch
 
 
@@ -1147,16 +1201,214 @@ async def test_cross_client_issued_batch_is_submittable() -> None:
     assert result.fully_accepted
 
 
-def test_issuance_registry_is_leak_free() -> None:
+def test_no_module_global_issuance_registry_or_mint() -> None:
+    # The removed vulnerable primitives are gone: no writable registry, no
+    # sentinel, no minting authority reachable from module globals.
+    assert not hasattr(client_mod, "_ISSUED_BATCHES")
+    assert not hasattr(client_mod, "_PREPARE_PROVENANCE")
+    # No module global is a mutable container that could serve as a forge-able
+    # issuance registry. Immutable constants (frozensets, ints, strings) are fine;
+    # a dict/list/set/weak-map that maps identity -> batch is exactly the removed
+    # attack surface.
+    mutable_containers = (
+        dict,
+        list,
+        set,
+        weakref.WeakValueDictionary,
+        weakref.WeakKeyDictionary,
+    )
+    for name, val in vars(client_mod).items():
+        if name.startswith("__"):  # skip dunders (e.g. __all__)
+            continue
+        assert not isinstance(val, mutable_containers), (
+            f"module global {name!r} is a mutable container reachable for forging "
+            "issuance"
+        )
+    # No module-global verifier/mint remains (the old `_verify_issuance` surface
+    # is gone); the verifier lives only in a class-installed closure.
+    assert not hasattr(client_mod, "_verify_issuance")
+    # The installed class verifier refuses an unissued batch (fail-closed), and it
+    # is the ONLY issuance capability — there is no module-level mint.
+    unissued = _prepared_from_body(build_telemetry_request([_event()]))
+    assert _is_issued(unissued) is False
+
+
+def test_no_module_global_verifier_or_mint_to_reassign() -> None:
+    # Module-global reassignment/bypass audit: there is nothing at module scope to
+    # monkeypatch into an always-accept verifier or a mint. The verifier + secret
+    # live inside class-attribute closures only.
+    assert not hasattr(client_mod, "_verify_issuance")
+    assert not hasattr(client_mod, "_ISSUED_BATCHES")
+    assert not hasattr(client_mod, "_PREPARE_PROVENANCE")
+    # The one-shot installer is deleted after its single import-time call, so it is
+    # not a module-global that could be re-invoked to recapture a hostile builder.
+    assert not hasattr(client_mod, "_install_issuance")
+    # No module global is a callable that verifies/mints, and none is the 32-byte
+    # secret. (Any callable named like the removed surface would be a bypass hook.)
+    for name, val in vars(client_mod).items():
+        if name.startswith("__"):
+            continue
+        assert not (isinstance(val, (bytes, bytearray)) and len(val) == 32), (
+            f"module global {name!r} looks like the issuance secret"
+        )
+        assert "verify_issuance" not in name
+        assert "install_issuance" not in name
+        assert "mint" not in name.lower()
+    # The verifier IS reachable only by deliberately walking class closures.
+    assert isinstance(_recover_issuance_secret(), bytes)
+
+
+async def test_installer_is_not_reinvokable_after_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Exact re-install bypass: monkeypatch _build_prepared to return a forged
+    # batch, then try to re-run the installer to recapture that hostile builder
+    # into the mint. The one-shot installer is gone, so the recapture cannot happen.
+    client = _client()
+    mock_http = _mock_transport(client, _resp(201))
+    forged = _prepared_from_body(build_telemetry_request([_event()]))
+    assert not _is_issued(forged)
+
+    # There is no installer name left in module globals to re-invoke.
+    assert not hasattr(client_mod, "_install_issuance")
+    monkeypatch.setattr(
+        client_mod.EconomicsTelemetryClient,
+        "_build_prepared",
+        lambda self, *args, **kwargs: forged,
+    )
+    with pytest.raises(AttributeError):
+        client_mod._install_issuance()  # type: ignore[attr-defined]
+
+    # The mint was never re-pointed at the hostile builder: forged stays unissued
+    # and cannot be submitted.
+    assert not _is_issued(forged)
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(forged)
+    mock_http.post.assert_not_called()
+
+
+def test_issuance_secret_is_not_a_module_global() -> None:
+    # Honest boundary: the process-random secret is never a plain module attribute
+    # (an ordinary import cannot read it), yet it IS recoverable by deliberately
+    # walking the verifier's closure — an API trust boundary, not a crypto seal.
+    module_secrets = [
+        name
+        for name, val in vars(client_mod).items()
+        if isinstance(val, (bytes, bytearray)) and len(val) == 32
+    ]
+    assert module_secrets == []
+    assert isinstance(_recover_issuance_secret(), bytes)
+
+
+async def test_exact_import_and_register_reproducer_cannot_post() -> None:
+    # The precise prior exploit: `import ...client as m; m._ISSUED_BATCHES[
+    # id(forged)] = forged; submit`. A fully schema-valid, self-consistent forged
+    # batch is built, then the registry write is attempted.
+    client = _client()
+    mock_http = _mock_transport(client, _resp(201))
+    body = build_telemetry_request([_event()])
+    forged = _prepared_from_body(body)  # self-consistent, unissued
+    # The registry the exploit wrote to no longer exists.
+    with pytest.raises(AttributeError):
+        client_mod._ISSUED_BATCHES[id(forged)] = forged  # type: ignore[attr-defined]
+    # With no mint/registry reachable, the forged batch is refused before transport.
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(forged)
+    mock_http.post.assert_not_called()
+
+
+async def test_evil_issuer_normal_call_cannot_mint_forged_object() -> None:
+    # Normal-call mint bypass: an object whose _build_prepared returns a pre-forged
+    # batch must NOT get that forged object returned or HMAC-stamped. The issuing
+    # prepare calls the captured genuine builder, never self._build_prepared.
+    client = _client()
+    mock_http = _mock_transport(client, _resp(201))
+    forged = _prepared_from_body(build_telemetry_request([_event()]))
+    assert not _is_issued(forged)
+
+    class EvilIssuer:
+        def _build_prepared(self, *args: Any, **kwargs: Any) -> PreparedTelemetryBatch:
+            return forged
+
+    # The exact reproducer: call the unbound issuing prepare with an evil self.
+    try:
+        maybe = EconomicsTelemetryClient.prepare(
+            EvilIssuer(), [_event()], project_id="proj-1"
+        )
+    except (AttributeError, TypeError, EconomicsTelemetryContractError):
+        # The genuine, dispatch-free builder rejects a self lacking the real
+        # client machinery — the forged object is never produced.
+        maybe = None
+    # Whatever happened, prepare NEVER returned the pre-forged object...
+    assert maybe is not forged
+    # ...and the forged object was never stamped, so it stays non-submittable.
+    assert not _is_issued(forged)
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(forged)
+    mock_http.post.assert_not_called()
+
+
+async def test_evil_subclass_prepare_uses_genuine_builder_not_override() -> None:
+    # A subclass that overrides _build_prepared to return a forged batch: prepare
+    # uses the CAPTURED genuine builder, so the override is bypassed — the forged
+    # object is neither returned nor stamped.
+    forged = _prepared_from_body(build_telemetry_request([_event()]))
+
+    class EvilSubclass(EconomicsTelemetryClient):
+        def _build_prepared(self, *args: Any, **kwargs: Any) -> PreparedTelemetryBatch:
+            return forged
+
+    evil = EvilSubclass(backend_url="https://api.traigent.ai", api_key="k")
+    result = evil.prepare([_event()], project_id="proj-1")
+    assert result is not forged  # subclass override bypassed
+    assert not _is_issued(forged)  # the injected object was never stamped
+    assert _is_issued(result)  # the genuinely-built batch is issued
+
+    submitter = _client()
+    mock_http = _mock_transport(submitter, _resp(201))
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await submitter.submit_prepared(forged)
+    mock_http.post.assert_not_called()
+
+
+async def test_equal_but_distinct_batch_is_non_submittable() -> None:
+    # Equality trick: a twin that compares == to the issued batch (dataclass eq)
+    # but is a different object. Verification is identity-bound, not equality-based,
+    # so the twin is refused.
     client = _client()
     prepared = client.prepare([_event()], project_id="proj-1")
-    key = id(prepared)
-    assert client_mod._ISSUED_BATCHES.get(key) is prepared
+    twin = _prepared_from_body(dict(prepared.body), project_id=prepared.project_id)
+    assert twin == prepared  # equal by value (dict == MappingProxyType)...
+    assert twin is not prepared  # ...but a distinct identity
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryContractError, match="was not issued by"):
+        await client.submit_prepared(twin)
+    mock_http.post.assert_not_called()
+
+
+def test_prepared_batch_is_not_retained_by_module() -> None:
+    # Lifetime / leak-free: no module-level registry retains the batch, so it is
+    # collected once the caller drops it (and its identity-bound token dies with
+    # it). This is the direct proof that issuance holds no memory.
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    ref = weakref.ref(prepared)
     del prepared
     gc.collect()
-    # The weak entry is dropped on collection: no unbounded growth, and a later
-    # object that reuses this id resolves to nothing rather than a stale batch.
-    assert client_mod._ISSUED_BATCHES.get(key) is None
+    assert ref() is None
+
+
+def test_repeated_prepare_grows_no_module_state() -> None:
+    # No per-batch module bookkeeping accumulates across many prepares.
+    client = _client()
+    baseline = len(vars(client_mod))
+    kept = [client.prepare([_event()], project_id="proj-1") for _ in range(50)]
+    assert len(vars(client_mod)) == baseline
+    # And the batches are collectable — nothing pins them at module scope.
+    refs = [weakref.ref(batch) for batch in kept]
+    del kept
+    gc.collect()
+    assert all(ref() is None for ref in refs)
 
 
 # --- HIGH: boundary errors are payload-free (no cause/context leak) -------------
@@ -1180,3 +1432,51 @@ async def test_invalid_json_response_error_is_payload_free() -> None:
     for link in chain:
         assert getattr(link, "doc", None) != marker
     assert not any(isinstance(link, json.JSONDecodeError) for link in chain)
+
+
+# --- HIGH: canonical UTF-8 chokepoint — lone surrogates fail closed, no leak ----
+#
+# `ensure_ascii=False` lets a lone surrogate through json.dumps as a valid str;
+# the later `.encode("utf-8")` raises UnicodeEncodeError whose `.object` carries
+# the ENTIRE canonical payload. The wire path routes through
+# `canonical_json_bytes`, which confines that error to its handler and raises a
+# fresh payload-free contract error OUTSIDE it (cause/context both None).
+
+_LONE_SURROGATE = "\ud800"  # valid Python str, invalid UTF-8
+
+
+def test_wire_serialize_lone_surrogate_is_payload_free() -> None:
+    # The wire serialization path (_serialize -> canonical_json_bytes) fails closed
+    # on a lone surrogate without leaking the payload via message/cause/context.
+    marker = f"SENSITIVE-WIRE-{_LONE_SURROGATE}-9999"
+    body = {"contract": "economics_telemetry", "events": [{"note": marker}]}
+    with pytest.raises(EconomicsTelemetryContractError) as excinfo:
+        client_mod._serialize(body)
+    chain = _exception_chain(excinfo.value)
+    assert all("SENSITIVE-WIRE" not in str(link) for link in chain)
+    assert not any(isinstance(link, UnicodeError) for link in chain)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+async def test_submit_lone_surrogate_event_fails_closed_zero_post(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # End-to-end: a lone surrogate anywhere in an event fails closed during build
+    # (batch-id derivation), so nothing is serialized or POSTed, and neither the
+    # error chain nor the logs carry the payload.
+    client = _client()
+    mock_http = _mock_transport(client, _resp(201))
+    marker = f"SENSITIVE-SUBMIT-{_LONE_SURROGATE}-1212"
+    event = _event()
+    event["note"] = marker
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(EconomicsTelemetryContractError) as excinfo:
+            await client.submit([event], project_id="proj-1")
+    mock_http.post.assert_not_called()
+    chain = _exception_chain(excinfo.value)
+    assert all("SENSITIVE-SUBMIT" not in str(link) for link in chain)
+    assert not any(isinstance(link, UnicodeError) for link in chain)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+    assert "SENSITIVE-SUBMIT" not in caplog.text

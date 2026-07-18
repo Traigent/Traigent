@@ -218,6 +218,34 @@ def canonical_json(value: Any) -> str:
     )
 
 
+def canonical_json_bytes(value: Any) -> bytes:
+    """Canonical JSON encoded to UTF-8 bytes — the ONE payload-safe chokepoint.
+
+    Every batch-id, idempotency-key, and wire serialization path routes through
+    here so none diverge. Beyond the ``json`` errors ``canonical_json`` catches,
+    this also catches ``UnicodeError`` at the ``.encode`` step: with
+    ``ensure_ascii=False`` a lone surrogate is a valid ``str`` but not valid
+    UTF-8, and the resulting ``UnicodeEncodeError.object`` would carry the ENTIRE
+    canonical payload. The failure is confined to its handler and a fresh
+    contract error is raised OUTSIDE it, so the payload never rides along in the
+    message, in ``__cause__``/``__context__``, or in an exception attribute.
+    """
+    try:
+        text = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        return text.encode("utf-8")
+    except (TypeError, ValueError, UnicodeError):
+        pass
+    raise EconomicsTelemetryContractError(
+        "telemetry payload is not serializable to canonical UTF-8 JSON"
+    )
+
+
 def _derive_idempotency_key(body_without_key: Mapping[str, Any]) -> str:
     """Derive a stable idempotency key from the body (excluding the key itself).
 
@@ -225,15 +253,13 @@ def _derive_idempotency_key(body_without_key: Mapping[str, Any]) -> str:
     by construction and re-sending the identical built body replays. A byte-level
     change yields a fresh key (a distinct batch), never a silent 409.
     """
-    digest = hashlib.sha256(
-        canonical_json(body_without_key).encode("utf-8")
-    ).hexdigest()
+    digest = hashlib.sha256(canonical_json_bytes(body_without_key)).hexdigest()
     return f"econ-tel-{digest[:48]}"
 
 
 def _derive_batch_id(events: Sequence[Mapping[str, Any]]) -> str:
     """Derive a content-stable batch id from the events."""
-    digest = hashlib.sha256(canonical_json(list(events)).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(canonical_json_bytes(list(events))).hexdigest()
     return f"batch-{digest[:32]}"
 
 
@@ -264,6 +290,7 @@ __all__ = [
     "build_source",
     "build_telemetry_request",
     "canonical_json",
+    "canonical_json_bytes",
     "funnel_eligible_event",
     "utc_now_z",
 ]

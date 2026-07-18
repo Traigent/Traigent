@@ -487,3 +487,349 @@ Exact Schema / egress / retry / replay behavior unchanged; WI-B-only.
 - Provenance/identity is per-process (module-level registry); it deliberately does
   not survive pickling or a process boundary. Cross-process "recovery" means
   rebuilding via `prepare()` from the same stable tuple, not shipping the object.
+
+---
+
+# Terra final review remediation — closure issuance + UTF-8 chokepoint (on HEAD 4cc29cb6)
+
+Fresh Terra full-range review BLOCKED two issues on `4cc29cb6`; remediated,
+left **uncommitted**. Files changed this round: `traigent/economics/client.py`,
+`traigent/economics/payload.py`, `tests/unit/economics/test_client.py`,
+`tests/unit/economics/test_payload.py`. Exact TraigentSchema pin/fingerprint,
+egress, retry, replay, redirect, and project-scoping behavior are unchanged
+(WI-B-only); the client diff touches no preserved-invariant line
+(`git diff` grep for `follow_redirects|Retry-After|fingerprint|
+validate_request_or_fail|enforce_characterization|guard_project|max_retries`
+returns nothing).
+
+## CRITICAL — module-exposed mutable `_ISSUED_BATCHES` minting authority
+The prior identity-registry fix left a **module-global, writable** registry:
+`client._ISSUED_BATCHES: weakref.WeakValueDictionary`. The exact reproducer —
+`import ...client as m; m._ISSUED_BATCHES[id(forged)] = forged` on a
+fully-consistent hand-built `PreparedTelemetryBatch`, then `submit_prepared` —
+minted issuance and reached POST. Any ordinary import held the minting authority.
+
+Fix — an **opaque, non-public, identity-bound issuance capability** with no
+module-reachable mint (`_install_issuance()` in `client.py`):
+- A process-random `secrets.token_bytes(32)` secret is created inside the factory
+  and captured by two closures: the stamping `prepare` (installed onto the class)
+  and a **verify-only** function returned as `_verify_issuance`. The secret, the
+  token function, and the stamping wrapper are all **locals of the factory** —
+  none is bound to module globals. `_ISSUED_BATCHES` and the old `_PREPARE_PROVENANCE`
+  sentinel are gone; there is **no writable registry and no module-level mint/stamp
+  callable** to write to.
+- The token is `HMAC(secret, str(id(batch)))` — bound to the exact object identity.
+  `prepare()` is the ONLY minting site; it stamps the token via
+  `object.__setattr__` and is inlined in the closure so no standalone "stamp
+  arbitrary batch" callable exists. `submit_prepared` calls `_require_issued`
+  FIRST, which invokes the verify-only closure; verification is the sole exposed
+  capability.
+- Identity binding defeats copy/replace/deepcopy/pickle/equality: a
+  `copy.copy`/`copy.deepcopy`/`dataclasses.replace`/unpickled/equal-by-value twin
+  has a different `id()`, so a copied token no longer matches and an absent token
+  fails outright — refused payload-free, POST not called. `dataclasses.replace`
+  (`init=False`)/copy/pickle all lose valid issuance.
+- **No retained state / leak-free / lifetime**: the token lives on the batch
+  instance (fixed-size bytes) and is collected with it; the secret is one
+  fixed-size constant. There is no per-batch module bookkeeping, so nothing to
+  leak. In-process cross-client acceptance is preserved (module-scoped secret); it
+  does not survive pickling or a process boundary.
+
+**Introspection boundary (stated honestly).** The secret is not a module
+attribute (an ordinary import cannot read it), but it IS recoverable by
+deliberately walking `_verify_issuance.__closure__` (proven by
+`_recover_issuance_secret` in the tests). This is an API trust boundary, exactly
+as `object.__setattr__` can stamp any attribute — not a cryptographic seal
+against a caller who reaches into interpreter internals. It DOES close the
+normal-import mint path the finding requires; the re-derivation + egress + Schema
+checks still bound what any forged-provenance batch could transmit.
+
+Adversarial tests (all assert POST not called on refusal):
+- No authority exists: `test_no_module_global_issuance_registry_or_mint`
+  (asserts `_ISSUED_BATCHES`/`_PREPARE_PROVENANCE` gone, **no** module global is a
+  mutable `dict`/`list`/`set`/weak-map, verify returns False for an unissued
+  batch), `test_issuance_secret_is_not_a_module_global` (secret is not a module
+  attribute yet is reachable only via closure introspection — the honest boundary).
+- Exact reproducer dead:
+  `test_exact_import_and_register_reproducer_cannot_post`
+  (`m._ISSUED_BATCHES[id(forged)] = forged` raises `AttributeError`; the forged
+  batch is then refused before transport).
+- Construction/replace/copy/deepcopy/pickle/equality:
+  `test_direct_construction_fully_valid_is_non_submittable`,
+  `test_replace_with_no_changes_loses_provenance`,
+  `test_replace_all_fields_recomputed_loses_provenance`,
+  `test_copy_copy_of_prepared_is_non_submittable`,
+  `test_deepcopy_of_prepared_is_non_submittable`,
+  `test_pickle_roundtrip_of_prepared_is_non_submittable`,
+  `test_equal_but_distinct_batch_is_non_submittable` (a value-`==` twin with a
+  distinct identity is refused).
+- Lifetime/leak-free: `test_prepared_batch_is_not_retained_by_module` (the batch
+  is GC'd once the caller drops it — nothing pins it), and
+  `test_repeated_prepare_grows_no_module_state` (50 prepares add zero module
+  attributes and all batches remain collectable).
+- Positive/cross-client/defense-in-depth:
+  `test_exact_prepared_object_submits_and_retries_identical`,
+  `test_cross_client_issued_batch_is_submittable`, and the six
+  `test_provenanced_*_is_refused` white-box tests (issuance forged via closure
+  introspection, then a single field tampered — the re-derivation checks still
+  refuse).
+
+## HIGH — lone surrogate leaks the canonical payload via `UnicodeEncodeError`
+`canonical_json(..., ensure_ascii=False)` lets a lone surrogate (e.g. `"\ud800"`,
+a valid `str` but invalid UTF-8) pass `json.dumps`; the later `.encode("utf-8")`
+raised a raw `UnicodeEncodeError` whose `.object` carries the ENTIRE canonical
+payload, and it propagated outside `canonical_json`'s handler.
+
+Fix — a single payload-safe UTF-8 chokepoint (`payload.canonical_json_bytes`):
+- Wraps `json.dumps` **and** `.encode("utf-8")` in one `try`, catching
+  `(TypeError, ValueError, UnicodeError)`, and raises a fresh
+  `EconomicsTelemetryContractError` **outside** the handler (sentinel/`pass`-then-
+  raise), so `__cause__` and `__context__` are both `None` and no
+  `UnicodeError.object` rides along.
+- Every bytes-producing path routes through it so wire bytes cannot diverge:
+  batch-id derivation (`_derive_batch_id`), idempotency-key derivation
+  (`_derive_idempotency_key`), and wire serialization (`client._serialize`,
+  and the re-derivation in `_reverify_prepared`).
+
+Tests (sensitive marker + lone surrogate, complete attributes/cause/context/logs,
+zero POST):
+- `test_canonical_json_bytes_lone_surrogate_is_payload_free` (helper unit),
+- `test_batch_id_derivation_lone_surrogate_is_payload_free` (no `batch_id` → derive
+  path; asserts clean `caplog`),
+- `test_idempotency_key_derivation_lone_surrogate_is_payload_free` (explicit
+  `batch_id` isolates the key-derivation path; asserts clean `caplog`),
+- `test_wire_serialize_lone_surrogate_is_payload_free` (`client._serialize`),
+- `test_submit_lone_surrogate_event_fails_closed_zero_post` (end-to-end
+  `client.submit`: `post` not called, error chain + `caplog` carry no marker,
+  `__cause__`/`__context__` both `None`).
+
+## Note on starting state / lint
+The two code fixes (closure issuance in `client.py`, `canonical_json_bytes` in
+`payload.py`) were already present in the working tree at session start
+(uncommitted, atop `4cc29cb6`, whose committed source still had the vulnerable
+`_ISSUED_BATCHES`). This round: (a) completed the client fix with a documented
+`# noqa: B010` on the deliberate `setattr(EconomicsTelemetryClient, "prepare",
+...)` method-rebind — `setattr` is required because plain assignment trips mypy's
+`method-assign`, and the closure keeps the mint non-module-visible; (b) rewrote
+the 7 tests that referenced the removed `_ISSUED_BATCHES` (the white-box helper
+now mints via honest closure introspection); (c) added the adversarial coverage
+above.
+
+## Commands and results (this round)
+Repo `.venv` (Python 3.13), exact economics Schema installed (`traigent-schema==4.10.0`).
+- Focused: `.venv/bin/python -m pytest tests/unit/economics/ -q` → **148 passed**
+  (was 138; +11 adversarial tests, −1 obsolete registry test).
+- Econ + parity + init: `pytest tests/unit/economics
+  tests/cross_sdk_oracles/test_js_public_parity_manifest.py
+  tests/unit/test_init_imports.py` → **177 passed**.
+- Ruff: `ruff check traigent/economics tests/unit/economics traigent/__init__.py`
+  → **All checks passed**; `ruff format --check traigent/economics
+  tests/unit/economics` → **16 files already formatted**.
+- Mypy: `mypy traigent/economics` → **Success: no issues found in 8 source files**.
+- Compile: `py_compile traigent/economics/*.py traigent/__init__.py
+  tests/unit/economics/*.py` → **OK**.
+- Broader lane: `pytest tests/unit/cloud -q` → **1884 passed, 2 skipped**
+  (pre-existing env skips: httpx-absent guard; memory-variance test).
+- `git diff --check` → clean. `__pycache__`/`.pyc` removed before handoff.
+
+## Residual risk (this round)
+- The issuance capability is an **API trust boundary, not a cryptographic seal**:
+  a caller who deliberately walks `_verify_issuance.__closure__` to recover the
+  secret (or uses `object.__setattr__`) can forge a token. Out of scope by the
+  finding's own terms; the re-derivation + egress + exact-Schema checks still
+  bound what such a batch could transmit (schema-valid, egress-clean,
+  self-consistent only), and no ordinary import can reach the mint.
+- Issuance is per-process (module-scoped closure secret); it deliberately does not
+  survive pickling or a process boundary. Cross-process "recovery" means
+  rebuilding via `prepare()` from the same stable tuple, not shipping the object.
+- `PreparedTelemetryBatch.headers` remains an informational property reflecting the
+  object's claimed fields; the transport path rebuilds headers from the
+  re-validated body and never uses it.
+- The standalone `payload.canonical_json` (str) remains public for callers, but no
+  production wire/derivation path uses it followed by a raw `.encode`; all
+  bytes-producing paths go through `canonical_json_bytes`.
+
+---
+
+# Captain verification remediation — normal-call mint bypass + module-global verifier
+
+Captain verification found a remaining CRITICAL bypass in the closure-issuance
+repair. Remediated narrowly, left **uncommitted**. Files changed this round:
+`traigent/economics/client.py`, `tests/unit/economics/test_client.py`. The
+surrogate fix (`payload.py` + its tests) and all prior cases are preserved
+unchanged; the `client.py` diff touches no preserved-invariant line
+(schema pin/fingerprint, egress, retry/Retry-After, replay, redirect, project
+scoping, `_reverify_prepared` — grep confirms none changed). WI-B-only.
+
+## CRITICAL — normal-call mint bypass via dynamically-dispatched `self._build_prepared`
+The issuing `prepare` (installed by `_install_issuance`) called
+`self._build_prepared(...)`. Because `prepare` is a plain function, an attacker
+could call it unbound with a hostile `self`:
+
+```python
+forged = <fully consistent forged PreparedTelemetryBatch>
+class EvilIssuer:
+    def _build_prepared(self, events, **kw):
+        return forged
+EconomicsTelemetryClient.prepare(EvilIssuer(), events, project_id="proj-1")
+```
+
+The wrapper dispatched to `EvilIssuer._build_prepared`, so it received the
+attacker's forged object and HMAC-stamped it: `same_object=True`,
+verification `True`, submittable. A subclass overriding `_build_prepared` was the
+same hole.
+
+Fix (exactly as directed) — the mint only ever stamps a batch from a
+**captured, dispatch-free** builder:
+- Inside `_install_issuance`, the GENUINE builder is captured BEFORE any wrapper
+  is installed: `_genuine_build = EconomicsTelemetryClient._build_prepared`. The
+  issuing `prepare` calls `_genuine_build(self, events, ...)` directly — never a
+  dynamically-dispatched `self._build_prepared`. A caller-supplied `self` or a
+  subclass override can no longer substitute the object that gets stamped; the
+  mint stamps only a batch produced by the captured builder.
+- Result: the exact duck-typed reproducer now raises (the genuine builder rejects
+  a `self` lacking the real client machinery) and the forged object is never
+  returned/stamped; a subclass whose `_build_prepared` returns a forged batch gets
+  a **genuinely-built** batch back instead — the injected object stays
+  non-submittable.
+
+## CRITICAL (same finding) — module-global `_verify_issuance` reassignment surface
+`_verify_issuance` was a module global that `_require_issued` called, so
+`client_mod._verify_issuance = lambda b: True` would monkeypatch an always-accept
+bypass.
+
+Fix — the verifier is installed as a **class-attribute closure**, not a module
+global:
+- `_install_issuance` now defines a verifier-backed `_require_issued` closure over
+  the secret and installs it on the class via
+  `setattr(EconomicsTelemetryClient, "_require_issued", staticmethod(...))`. It
+  **returns nothing** — no verifier, secret, key, mint, or registry is bound to
+  module scope. The `_verify_issuance` module global is removed entirely.
+- The in-class `_require_issued` is now a fail-closed FALLBACK that refuses
+  unconditionally (if installation were skipped, every submission is refused).
+- Introspection boundary (restated honestly): the verifier/secret are reachable
+  only by deliberately walking the installed class-attribute closures
+  (`EconomicsTelemetryClient.prepare.__closure__` /
+  `._require_issued.__closure__`) — an API trust boundary, not a crypto seal;
+  ordinary import/reassignment cannot reach it.
+
+## Tests (all assert zero POST on refusal)
+- Exact reproducer / subclass regression:
+  `test_evil_issuer_normal_call_cannot_mint_forged_object` (the unbound-`prepare`
+  duck-typed `EvilIssuer` reproducer — prepare never returns/stamps the forged
+  object; `forged` stays non-issued; `submit_prepared(forged)` refused, POST not
+  called), `test_evil_subclass_prepare_uses_genuine_builder_not_override` (subclass
+  override bypassed → a genuine batch is returned and IS issued, the injected
+  `forged` is not, POST not called).
+- Module-global reassignment/bypass audit:
+  `test_no_module_global_verifier_or_mint_to_reassign` (no `_verify_issuance` /
+  `_ISSUED_BATCHES` / `_PREPARE_PROVENANCE`; no module global is the 32-byte
+  secret or a verifier/mint-named callable; the verifier is reachable only via
+  class-closure introspection). `test_no_module_global_issuance_registry_or_mint`
+  updated to assert `not hasattr(client_mod, "_verify_issuance")` and verify an
+  unissued batch through the installed class verifier (`_is_issued`).
+- White-box helpers updated: `_recover_issuance_secret` now walks the installed
+  class-attribute closures (not the removed module global); new `_is_issued`
+  checks issuance through `EconomicsTelemetryClient._require_issued`. All six
+  `test_provenanced_*_is_refused` defense-in-depth cases and the
+  copy/deepcopy/pickle/replace/equality/lifetime cases are preserved and pass.
+
+## Commands and results (this round)
+Repo `.venv` (Python 3.13), exact economics Schema (`traigent-schema==4.10.0`).
+- Focused: `pytest tests/unit/economics/ -q` → **151 passed** (was 148; +3
+  regression/audit tests).
+- Econ + parity + init: `pytest tests/unit/economics
+  tests/cross_sdk_oracles/test_js_public_parity_manifest.py
+  tests/unit/test_init_imports.py` → **180 passed**.
+- Ruff: `ruff check traigent/economics tests/unit/economics traigent/__init__.py`
+  → **All checks passed**; `ruff format --check …` → **16 files already formatted**
+  (2 files reformatted during the round, then clean).
+- Mypy: `mypy traigent/economics` → **Success: no issues found in 8 source files**.
+- Compile: `py_compile` → **OK**.
+- Broader lane: `pytest tests/unit/cloud -q` → **1884 passed, 2 skipped**
+  (pre-existing env skips). `git diff --check` → clean. Caches removed.
+
+## Residual risk (this round)
+- Issuance remains an **API trust boundary, not a cryptographic seal**: a caller
+  who deliberately walks `EconomicsTelemetryClient.prepare.__closure__` /
+  `._require_issued.__closure__` (or uses `object.__setattr__`, or overrides
+  `_require_issued`/`_reverify_prepared` on a subclass they fully control and then
+  drives the whole transport themselves) can still forge. Out of scope by the
+  finding's terms — an ordinary import/normal call can no longer mint, and the
+  re-derivation + egress + exact-Schema checks still bound what any forged batch
+  could transmit.
+- Issuance is per-process (module-scoped closure secret installed on the class);
+  it deliberately does not survive pickling or a process boundary.
+
+---
+
+# Captain verification remediation — one-shot installer self-removal
+
+Captain verification found one remaining exact bypass. The prior handoff claim
+that "no module mint/installer is bound" was **false**: `_install_issuance`
+itself stayed in module globals after initialization, so an attacker could
+`EconomicsTelemetryClient._build_prepared = lambda ...: forged; client_mod.
+_install_issuance()` to reinstall the mint around the hostile builder, then
+`prepare(object(), ...)` returned and HMAC-stamped `forged`
+(`installer_exported=True, same_object=True, verifies=True`).
+
+Remediated narrowly, left **uncommitted**. Files changed this round:
+`traigent/economics/client.py` (one-shot `del` + docstrings) and
+`tests/unit/economics/test_client.py`. No transport/behavior logic changed; the
+surrogate fix and all prior cases are preserved.
+
+## Fix — delete the installer after its single import-time call
+`client.py` now runs the installer exactly once and immediately removes the name:
+
+```python
+_install_issuance()
+del _install_issuance
+```
+
+After import there is no `_install_issuance` attribute on the module, so an
+ordinary import cannot re-invoke it to recapture a monkeypatched `_build_prepared`
+into the mint. The capability lives only in the class-attribute closures
+(`prepare`, `_require_issued`); nothing at module scope can re-mint.
+
+## Test — exact monkeypatch + reinstall regression
+`test_installer_is_not_reinvokable_after_import`: asserts the module has no
+`_install_issuance` attribute; monkeypatches `_build_prepared` to return a forged
+batch, then asserts `client_mod._install_issuance()` raises `AttributeError` (the
+recapture cannot happen); `forged` remains unissued (`_is_issued` False) and
+`submit_prepared(forged)` is refused with **zero POST**. The
+`test_no_module_global_verifier_or_mint_to_reassign` audit is extended to assert
+`not hasattr(client_mod, "_install_issuance")` and that no module-global name
+contains `install_issuance`.
+
+## Claims corrected (stop overclaiming)
+- The exact statement now proven and made true: after import there is **no
+  `_install_issuance`, `_verify_issuance`, `_ISSUED_BATCHES`, or
+  `_PREPARE_PROVENANCE` in module globals**, and no module-global verifier / mint /
+  installer / 32-byte secret. The capability is only on the class closures.
+- What is NOT claimed: this is an **API trust boundary, not a cryptographic seal**.
+  A caller who deliberately walks `EconomicsTelemetryClient.prepare.__closure__` /
+  `._require_issued.__closure__`, uses `object.__setattr__`, or replaces
+  `prepare`/`_require_issued`/`_build_prepared` on the class or a subclass they
+  fully control can still forge — those require reaching into interpreter/class
+  internals, not an ordinary import or normal call. The re-derivation + egress +
+  exact-Schema checks still bound what any forged batch could transmit.
+
+## Commands and results (this round)
+Repo `.venv` (Python 3.13), exact economics Schema (`traigent-schema==4.10.0`).
+- Focused: `pytest tests/unit/economics/ -q` → **152 passed** (was 151; +1 regression).
+- Econ + parity + init: `pytest tests/unit/economics
+  tests/cross_sdk_oracles/test_js_public_parity_manifest.py
+  tests/unit/test_init_imports.py` → **181 passed**.
+- Ruff: `ruff check …` → **All checks passed**; `ruff format --check …` →
+  **16 files already formatted**.
+- Mypy: `mypy traigent/economics` → **Success: no issues found in 8 source files**.
+- Compile: `py_compile` → **OK**.
+- Broader lane (module-init `del` executes at import, so run for safety):
+  `pytest tests/unit/cloud -q` → **1884 passed, 2 skipped** (pre-existing env
+  skips). `git diff --check` → clean. Caches removed.
+
+## Residual risk (this round)
+- Unchanged from above: API trust boundary, not a cryptographic seal; per-process;
+  re-derivation/egress/Schema still bound a forged batch. The remaining forge paths
+  all require deliberate closure/class-internal introspection, not import or a
+  normal call.

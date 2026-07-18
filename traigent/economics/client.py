@@ -24,9 +24,11 @@ codes are.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import math
-import weakref
+import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -50,7 +52,7 @@ from traigent.economics.errors import (
     EconomicsTelemetryTransportError,
 )
 from traigent.economics.egress import enforce_characterization_egress
-from traigent.economics.payload import build_telemetry_request, canonical_json
+from traigent.economics.payload import build_telemetry_request, canonical_json_bytes
 from traigent.economics.result import TelemetryIngestResult
 from traigent.economics.schema import validate_request_or_fail
 
@@ -78,25 +80,11 @@ _MAX_RETRY_AFTER_SECONDS = 30.0
 # is confined to its handler and never chained into the public error.
 _JSON_PARSE_FAILED = object()
 
-# In-process IDENTITY issuance registry. prepare() records the EXACT instance it
-# returns, keyed by id(); submit only proceeds when the submitted object IS that
-# same instance (`is`, never `==`). This is what a copied/replaced/unpickled batch
-# cannot satisfy: it is a different object with a different id.
-#
-# WeakValueDictionary makes this leak-free and stale-id-safe: the entry is dropped
-# the instant the issued batch is garbage-collected (weak value), so the registry
-# never grows unbounded AND an id later reused by a new, unrelated object resolves
-# to nothing (the dead entry is already gone) rather than to a stale batch. The
-# registry is module-level, so a batch prepared by one EconomicsTelemetryClient is
-# submittable by another client instance in the SAME process; it does not survive
-# copy, dataclasses.replace, pickling, or crossing a process boundary.
-#
-# This is an API trust boundary, not a cryptographic seal: a caller who reaches in
-# and registers a forged object under its own id could still submit it (the
-# re-derivation/egress/Schema checks still bound what such a batch could transmit).
-_ISSUED_BATCHES: weakref.WeakValueDictionary[int, PreparedTelemetryBatch] = (
-    weakref.WeakValueDictionary()
-)
+# Attribute name under which prepare() stamps an issued batch's HMAC token. The
+# NAME is not secret (knowing it does not help forge a token); the token VALUE is
+# an HMAC over the batch's object identity keyed by a process-random secret that
+# lives ONLY inside the closures created by ``_install_issuance`` below.
+_ISSUANCE_ATTR = "_economics_issuance_token"
 
 
 @dataclass(frozen=True)
@@ -111,9 +99,9 @@ class PreparedTelemetryBatch:
     The class is publicly constructible for API compatibility, but only the exact
     object returned by :meth:`EconomicsTelemetryClient.prepare` is submittable:
     a directly-constructed, ``copy.copy``/``copy.deepcopy``-ed,
-    ``dataclasses.replace``-d, or unpickled instance is a different identity, is
-    not in the issuance registry, and is refused before any transport (fail
-    closed).
+    ``dataclasses.replace``-d, or unpickled instance is a different identity, so
+    it carries no valid identity-bound issuance token and is refused before any
+    transport (fail closed).
     """
 
     project_id: str
@@ -252,18 +240,48 @@ class EconomicsTelemetryClient:
         sent_at: str | None = None,
         idempotency_key: str | None = None,
     ) -> PreparedTelemetryBatch:
-        """Build, egress-check, and schema-validate an immutable batch.
+        """Build, egress-check, and schema-validate an immutable, ISSUED batch.
 
         No transport happens here. The returned batch is fully validated against
-        the exact economics Schema (fail closed if it is absent/old/raises) and
-        carries the exact bytes and key that will be sent, so it can be
-        resubmitted for an honest cross-call replay.
+        the exact economics Schema (fail closed if it is absent/old/raises),
+        carries the exact bytes and key that will be sent, and is stamped with the
+        issuance token that makes it submittable.
+
+        This method is REPLACED at import time by the issuance-capable variant
+        installed in :func:`_install_issuance` (the token secret lives only in
+        that closure, never in module globals). This in-class definition is the
+        fail-closed fallback: it returns an UNSTAMPED batch, which
+        :meth:`submit_prepared` refuses — so even if installation were skipped,
+        nothing unissued could be transmitted.
 
         Raises:
             EconomicsTelemetryContractError: Malformed batch / project mismatch /
                 schema-invalid body / non-serializable payload.
             EconomicsSchemaUnavailable: Exact economics Schema unavailable.
             EgressPolicyError: Characterization egress violation.
+        """
+        return self._build_prepared(
+            events,
+            project_id=project_id,
+            batch_id=batch_id,
+            sent_at=sent_at,
+            idempotency_key=idempotency_key,
+        )
+
+    def _build_prepared(
+        self,
+        events: Sequence[Mapping[str, Any]],
+        *,
+        project_id: str,
+        batch_id: str | None = None,
+        sent_at: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> PreparedTelemetryBatch:
+        """Build and validate a batch WITHOUT stamping issuance (unsubmittable).
+
+        The heavy lifting shared by ``prepare``. Kept separate so the import-time
+        issuance installer can wrap it with the token stamp. A batch returned by
+        this method alone is not submittable.
         """
         scope = _require_non_empty(project_id, "project_id")
         body = build_telemetry_request(
@@ -279,7 +297,7 @@ class EconomicsTelemetryClient:
         content = _serialize(body)
         # Identifiers only (schema-validated present), for response reconciliation.
         event_ids = tuple(str(event["event_id"]) for event in body["events"])
-        prepared = PreparedTelemetryBatch(
+        return PreparedTelemetryBatch(
             project_id=scope,
             idempotency_key=body["idempotency_key"],
             batch_id=body["batch_id"],
@@ -288,11 +306,6 @@ class EconomicsTelemetryClient:
             body=MappingProxyType(dict(body)),
             event_ids=event_ids,
         )
-        # Record the EXACT issued instance: this is the ONLY place identity is
-        # granted. Keyed by id() with a weak value, so it is leak-free and a
-        # later-reused id cannot resolve to this (by then dead) batch.
-        _ISSUED_BATCHES[id(prepared)] = prepared
-        return prepared
 
     async def submit(
         self,
@@ -340,19 +353,26 @@ class EconomicsTelemetryClient:
     def _require_issued(prepared: PreparedTelemetryBatch) -> None:
         """Refuse a batch that is not the exact object issued by ``prepare()``.
 
-        The primary trust gate, checked before any field work or transport. Uses
-        object IDENTITY against the issuance registry (``is``, never ``==``), so a
-        directly-constructed, copied, ``dataclasses.replace``-d, or unpickled
-        batch — even one whose every public field is internally consistent — is
-        a different identity, is absent from the registry, and is refused. The
-        error is payload-free.
+        The primary trust gate, checked before any field work or transport. It
+        verifies the issuance token: an HMAC over the batch's object identity
+        keyed by a process-random secret held only inside the issuance closures.
+        A directly-constructed, copied, ``dataclasses.replace``-d, or unpickled
+        batch — even one whose every public field is internally consistent — has
+        no valid token for its identity (a copy carries the original's token but
+        a different id, so the HMAC no longer matches), and is refused.
+
+        This in-class definition is the fail-closed FALLBACK: it refuses
+        unconditionally. At import time :func:`_install_issuance` REPLACES it with
+        a verifier-backed closure installed directly on the class. The verifier,
+        the secret, and the mint are captured in that closure and never bound to
+        module globals, so there is no module-reachable verifier/key/mint name to
+        monkeypatch into an always-accept bypass. If installation were skipped,
+        every submission refuses. The error is payload-free.
         """
-        if _ISSUED_BATCHES.get(id(prepared)) is not prepared:
-            raise EconomicsTelemetryContractError(
-                "telemetry batch was not issued by EconomicsTelemetryClient.prepare(); "
-                "only the exact object returned by prepare() may be submitted "
-                "(copies, dataclasses.replace results, and unpickled batches are refused)"
-            )
+        raise EconomicsTelemetryContractError(
+            "telemetry batch issuance verifier is not installed; no batch can be "
+            "submitted (fail closed)"
+        )
 
     def _reverify_prepared(
         self, prepared: PreparedTelemetryBatch
@@ -393,7 +413,7 @@ class EconomicsTelemetryClient:
 
         # Derive the transport fields from the validated body and require the
         # object's claimed fields to match exactly.
-        content = canonical_json(body).encode("utf-8")
+        content = canonical_json_bytes(body)
         event_ids = tuple(str(event["event_id"]) for event in events)
         key = body.get("idempotency_key")
         batch_id = body.get("batch_id")
@@ -565,12 +585,12 @@ def _utcnow() -> datetime:
 def _serialize(body: Mapping[str, Any]) -> bytes:
     """Serialize the batch to the exact CANONICAL bytes sent on every attempt.
 
-    Uses the same canonical (sorted-key, compact) representation the idempotency
-    key and batch id are derived from, so two equivalent mappings that differ
-    only in insertion order produce identical batch id, idempotency key, AND wire
-    bytes — the key can never agree while the bytes diverge.
+    Routes through the single payload-safe ``canonical_json_bytes`` chokepoint
+    (shared with the batch-id and idempotency-key derivations), so the wire path
+    never diverges and a lone surrogate cannot leak the payload via a raw
+    ``UnicodeEncodeError``.
     """
-    return canonical_json(body).encode("utf-8")
+    return canonical_json_bytes(body)
 
 
 def _parse_retry_after(value: str | None, now: datetime) -> float | None:
@@ -611,6 +631,127 @@ def _require_non_empty(value: str, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise EconomicsTelemetryContractError(f"{field} must be a non-empty string")
     return value
+
+
+def _install_issuance() -> None:
+    """Install the issuance capability. NOTHING escapes to module scope.
+
+    A process-random secret is created here and captured by three closures — the
+    stamping ``prepare`` and the verifier-backed ``_require_issued`` (both
+    installed onto the class) and the internal token helpers. The secret, the
+    token function, the verifier, and the stamping wrapper are all LOCALS of this
+    factory: none is bound to module globals and nothing is returned. There is no
+    importable minting authority, no writable issuance registry, and — crucially —
+    **no module-global verifier/key/mint name to reassign** into an always-accept
+    bypass. The prior ``_ISSUED_BATCHES`` registry and the ``_verify_issuance``
+    module global are both gone.
+
+    One-shot installer: this function is called exactly once at import time and
+    then ``del``-eted from module globals (see below), so ordinary import cannot
+    re-invoke it. That closes the re-install bypass — monkeypatching
+    ``_build_prepared`` and calling ``_install_issuance()`` again to recapture a
+    hostile builder into the mint — because after import there is no installer
+    name left to call.
+
+    Dispatch-free build (closes the normal-call mint bypass): the GENUINE builder
+    is captured BEFORE any wrapper is installed and is called directly by the
+    issuing ``prepare``. The wrapper never calls a dynamically dispatched
+    ``self._build_prepared``, so a caller-supplied ``self`` or a subclass cannot
+    override ``_build_prepared`` to return a pre-forged batch and have the mint
+    HMAC-stamp it. The mint only ever stamps a batch produced by this captured,
+    override-proof builder.
+
+    Introspection boundary (stated honestly): the secret is reachable via
+    deliberate closure introspection (e.g. ``EconomicsTelemetryClient.prepare.
+    __closure__`` / ``EconomicsTelemetryClient._require_issued.__closure__``),
+    exactly as ``object.__setattr__`` can stamp any attribute. This is an API
+    trust boundary, not a cryptographic seal against a caller who reaches into
+    interpreter internals. It DOES close the normal-import and normal-call mint
+    paths the findings require.
+
+    No retained object state: the token lives on the batch instance (bounded,
+    fixed-size bytes) and is collected with it. The secret is one fixed-size
+    constant. There is no per-batch module state, so there is nothing to leak and
+    no lifetime bookkeeping to get wrong. The secret is module-scoped, so a batch
+    issued by one client instance verifies for any client in the SAME process; it
+    does not survive copy, replace, pickling, or a process boundary.
+    """
+    # Capture the GENUINE builder BEFORE any wrapper is installed. The issuing
+    # prepare calls THIS captured function directly (never a dispatched
+    # self._build_prepared), so no caller-supplied self/subclass override can
+    # substitute the object that gets stamped.
+    _genuine_build = EconomicsTelemetryClient._build_prepared
+
+    secret = secrets.token_bytes(32)
+
+    def _expected_token(batch: PreparedTelemetryBatch) -> bytes:
+        # Bind to the exact object identity. A copy/replace/unpickle has a
+        # different id(), so its (copied or absent) token cannot match.
+        return hmac.new(secret, str(id(batch)).encode("ascii"), hashlib.sha256).digest()
+
+    def _verify(batch: PreparedTelemetryBatch) -> bool:
+        actual = getattr(batch, _ISSUANCE_ATTR, None)
+        if not isinstance(actual, bytes):
+            return False
+        return hmac.compare_digest(actual, _expected_token(batch))
+
+    def _issuing_prepare(
+        self: EconomicsTelemetryClient,
+        events: Sequence[Mapping[str, Any]],
+        *,
+        project_id: str,
+        batch_id: str | None = None,
+        sent_at: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> PreparedTelemetryBatch:
+        # Build via the captured genuine builder (dispatch-free): a caller cannot
+        # substitute the returned object through a _build_prepared override.
+        prepared = _genuine_build(
+            self,
+            events,
+            project_id=project_id,
+            batch_id=batch_id,
+            sent_at=sent_at,
+            idempotency_key=idempotency_key,
+        )
+        # The ONLY place a valid token is minted — inlined here so no standalone,
+        # module-reachable "stamp arbitrary batch" callable exists.
+        object.__setattr__(prepared, _ISSUANCE_ATTR, _expected_token(prepared))
+        return prepared
+
+    def _require_issued(prepared: PreparedTelemetryBatch) -> None:
+        # Verifier-backed, closure-held. There is no module-global verifier name
+        # to monkeypatch into an always-accept bypass; the verifier is reachable
+        # only by deliberately introspecting this closure.
+        if not _verify(prepared):
+            raise EconomicsTelemetryContractError(
+                "telemetry batch was not issued by EconomicsTelemetryClient.prepare(); "
+                "only the exact object returned by prepare() may be submitted "
+                "(copies, dataclasses.replace results, and unpickled batches are refused)"
+            )
+
+    _issuing_prepare.__doc__ = EconomicsTelemetryClient.prepare.__doc__
+    _require_issued.__doc__ = EconomicsTelemetryClient._require_issued.__doc__
+    # Install both wrappers on the class. setattr (not plain assignment) rebinds
+    # the methods to these closure-capturing functions while keeping the verifier,
+    # secret, and mint inside the closure — never module/class-visible standalone
+    # callables. B010 is suppressed deliberately: direct assignment to a method
+    # trips mypy's method-assign, and the attribute names are fixed by design.
+    setattr(EconomicsTelemetryClient, "prepare", _issuing_prepare)  # noqa: B010
+    setattr(  # noqa: B010
+        EconomicsTelemetryClient, "_require_issued", staticmethod(_require_issued)
+    )
+    # Return nothing: no verifier/secret/mint is exposed to module scope.
+
+
+# Install the issuance capability onto the class exactly once, then DELETE the
+# installer from module globals. This is a one-shot: after import there is no
+# ``_install_issuance`` name to re-invoke, so an attacker cannot monkeypatch
+# ``_build_prepared`` and re-run the installer to recapture a hostile builder into
+# the mint. Nothing is returned to module scope either, so no verifier/key/mint/
+# registry is module-reachable — only the class-attribute closures remain.
+_install_issuance()
+del _install_issuance
 
 
 __all__ = ["EconomicsTelemetryClient", "HTTPX_AVAILABLE", "PreparedTelemetryBatch"]

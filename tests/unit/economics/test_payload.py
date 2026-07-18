@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 import pytest
@@ -206,10 +207,87 @@ def test_serialization_error_is_payload_free() -> None:
 
     with pytest.raises(EconomicsTelemetryContractError) as excinfo:
         canonical_json({"x": _Sensitive()})
+    chain = _exception_chain(excinfo.value)
+    assert all("SENSITIVE-REPR-55521" not in str(link) for link in chain)
+    assert not any(isinstance(link, TypeError) for link in chain)
+
+
+# --- HIGH: lone-surrogate paths fail closed, payload-free -----------------------
+#
+# `canonical_json_bytes` is the single UTF-8 chokepoint shared by batch-id
+# derivation, idempotency-key derivation, and wire serialization. A lone
+# surrogate is a valid `str` but not valid UTF-8; `.encode("utf-8")` would raise
+# a UnicodeEncodeError whose `.object` carries the ENTIRE canonical payload. The
+# helper catches it and raises a fresh, payload-free contract error outside the
+# handler (cause/context both None), so no path can leak the payload.
+
+_LONE_SURROGATE = "\ud800"  # valid Python str, invalid UTF-8
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
     chain: list[BaseException] = []
-    current: BaseException | None = excinfo.value
+    current: BaseException | None = exc
     while current is not None and not any(c is current for c in chain):
         chain.append(current)
         current = current.__cause__ or current.__context__
-    assert all("SENSITIVE-REPR-55521" not in str(link) for link in chain)
-    assert not any(isinstance(link, TypeError) for link in chain)
+    return chain
+
+
+def _assert_surrogate_error_is_payload_free(
+    excinfo: pytest.ExceptionInfo[EconomicsTelemetryContractError], marker: str
+) -> None:
+    chain = _exception_chain(excinfo.value)
+    assert all(marker not in str(link) for link in chain)
+    assert not any(isinstance(link, UnicodeError) for link in chain)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+def test_canonical_json_bytes_lone_surrogate_is_payload_free() -> None:
+    from traigent.economics.payload import canonical_json_bytes
+
+    marker = f"SENSITIVE-BYTES-{_LONE_SURROGATE}-9931"
+    with pytest.raises(EconomicsTelemetryContractError) as excinfo:
+        canonical_json_bytes({"secret_field": marker})
+    _assert_surrogate_error_is_payload_free(excinfo, "SENSITIVE-BYTES")
+
+
+def _event_with_marker(marker: str) -> dict[str, object]:
+    return {
+        "event_type": "funnel_event",
+        "event_id": "evt-1",
+        "occurred_at": "2026-07-18T10:00:00.000Z",
+        "project_ref": "proj-1",
+        "stage": "eligible",
+        "outcome": "entered",
+        "note": marker,
+    }
+
+
+def test_batch_id_derivation_lone_surrogate_is_payload_free(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # No batch_id supplied -> the batch-id derivation routes through the chokepoint.
+    marker = f"SENSITIVE-BATCHID-{_LONE_SURROGATE}-7777"
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(EconomicsTelemetryContractError) as excinfo:
+            build_telemetry_request([_event_with_marker(marker)])
+    _assert_surrogate_error_is_payload_free(excinfo, "SENSITIVE-BATCHID")
+    assert "SENSITIVE-BATCHID" not in caplog.text
+
+
+def test_idempotency_key_derivation_lone_surrogate_is_payload_free(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # An explicit batch_id skips batch-id derivation, so the failure surfaces from
+    # the idempotency-key derivation path (also the chokepoint).
+    marker = f"SENSITIVE-IDKEY-{_LONE_SURROGATE}-8888"
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(EconomicsTelemetryContractError) as excinfo:
+            build_telemetry_request(
+                [_event_with_marker(marker)],
+                batch_id="batch-fixed-1",
+                sent_at="2026-07-18T10:00:01.000Z",
+            )
+    _assert_surrogate_error_is_payload_free(excinfo, "SENSITIVE-IDKEY")
+    assert "SENSITIVE-IDKEY" not in caplog.text
