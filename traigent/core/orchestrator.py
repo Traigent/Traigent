@@ -1019,7 +1019,17 @@ class OptimizationOrchestrator:
         # Find trial with best primary objective (assuming first objective is primary)
         if self.optimizer.objectives:
             primary_objective = self.optimizer.objectives[0]
-            minimization = is_minimization_objective(primary_objective)
+            # Honor the declared orientation (issue #1959) so a minimize
+            # objective whose name misses the heuristic patterns (e.g. 'brier',
+            # 'spend', 'perplexity') is not misclassified as maximize.
+            minimization = is_minimization_objective(
+                primary_objective,
+                orientation=(
+                    self.objective_schema.get_orientation(primary_objective)
+                    if self.objective_schema
+                    else None
+                ),
+            )
             scored_trials = [
                 (trial, score)
                 for trial in rankable_trials
@@ -1477,7 +1487,16 @@ class OptimizationOrchestrator:
         if current_score_value is None:
             return True
 
-        minimization = is_minimization_objective(primary_objective)
+        # Honor the declared orientation (issue #1960) so live incumbent
+        # tracking uses the schema direction rather than a name heuristic.
+        minimization = is_minimization_objective(
+            primary_objective,
+            orientation=(
+                self.objective_schema.get_orientation(primary_objective)
+                if self.objective_schema
+                else None
+            ),
+        )
         if _primary_scores_tied(new_score_value, current_score_value):
             return self._secondary_tie_breaks_incumbent(trial_result, primary_objective)
         if minimization:

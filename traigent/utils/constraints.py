@@ -522,8 +522,6 @@ def _find_fallback_pricing(
         match_len = 0
         if base_model.startswith(key_lower):
             match_len = len(key_lower)
-        elif key_lower.startswith(base_model):
-            match_len = len(base_model)
         if match_len > best_match_len:
             best_match_len = match_len
             pricing = model_pricing
@@ -535,10 +533,18 @@ def _try_fallback_pricing(model: str, max_tokens: int) -> float | None:
     try:
         from traigent.utils.cost_calculator import (
             ESTIMATION_MODEL_PRICING,
+            MODEL_NAME_ALIASES,
             _normalize_model_for_fallback,
         )
 
         base_model = _normalize_model_for_fallback(model)
+        # Resolve canonical aliases before lookup so the constraint path agrees
+        # with the canonical _estimation_cost_from_tokens estimation path
+        # (e.g. 'gpt-4' -> 'gpt-4-turbo'). See issue #1958.
+        for alias, canonical in MODEL_NAME_ALIASES.items():
+            if base_model == alias.lower():
+                base_model = canonical.lower()
+                break
         pricing = _find_fallback_pricing(base_model, ESTIMATION_MODEL_PRICING)
         if pricing:
             input_cost_per_1k = pricing["input_cost_per_token"] * 1000

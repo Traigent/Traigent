@@ -2523,7 +2523,10 @@ _ALLOWED_AST_NODES = (
     ast.Mult,
     ast.Div,
     ast.Mod,
-    ast.Pow,
+    # ast.Pow intentionally excluded (#1966): the ``**`` operator on ints is
+    # unbounded arbitrary-precision and enables integer-explosion DoS from
+    # spec content (e.g. ``9**9**9**9``). Use the bounded float ``math.pow``
+    # (already whitelisted in _SAFE_MATH_CALLS) for legitimate exponentiation.
     ast.USub,
 )
 
