@@ -224,8 +224,7 @@ class TestOpenAIDiscovery:
             "gpt-4o",
             "gpt-4-turbo",
             "gpt-3.5-turbo",
-            "o1-preview",
-            "o1-mini",
+            "o1",
             "text-davinci-003",
             "code-davinci-002",
             "davinci",
@@ -237,6 +236,13 @@ class TestOpenAIDiscovery:
 
         for model in valid_models:
             assert discovery.is_valid_model(model), f"Model {model} should be valid"
+
+        # Retired o1 preview line (#1936/#1937): shape still matches the
+        # pattern, but the canonical denylist rejects it.
+        for retired in ["o1-preview", "o1-mini", "o1-preview-2024-09-12"]:
+            assert not discovery.is_valid_model(retired), (
+                f"Retired model {retired} must not validate"
+            )
 
     def test_pattern_validation_invalid_models(self) -> None:
         """Invalid models should fail pattern validation."""
@@ -290,7 +296,6 @@ class TestAnthropicDiscovery:
             "claude-sonnet-4-6",
             "claude-sonnet-4-5-20250929",
             "claude-haiku-4-5-20251001",
-            "claude-3-opus-20240229",
             "claude-3-5-sonnet-20241022",
             "claude-2.1",
             "claude-instant-1.2",
@@ -298,6 +303,12 @@ class TestAnthropicDiscovery:
 
         for model in valid_models:
             assert discovery.is_valid_model(model), f"Model {model} should be valid"
+
+        # Retired claude-3-opus (#1936/#1937): shape-valid but denylisted.
+        for retired in ["claude-3-opus-20240229", "claude-3-opus-latest"]:
+            assert not discovery.is_valid_model(retired), (
+                f"Retired model {retired} must not validate"
+            )
 
     def test_pattern_validation_invalid_models(self) -> None:
         """Invalid Anthropic-like model names should fail pattern validation."""
@@ -360,19 +371,37 @@ class TestGeminiDiscovery:
         reset_global_cache()
 
     def test_pattern_validation_valid_models(self) -> None:
-        """Valid Gemini models should pass pattern validation."""
+        """Current Gemini IDs validate; retired/deprecated ones do not.
+
+        #1936/#1937 swept the dead Gemini 1.0 family, the deprecated 1.5
+        family, and the 2.0-exp preview. Their shapes still match the
+        ``^(gemini-[0-9]|models/gemini-)`` pattern, but the canonical
+        denylist (traigent.config.retired_models) rejects them — including
+        ``models/``-prefixed alias forms. Unknown-but-plausible NEW versioned
+        IDs still pass the shape fallback.
+        """
         discovery = GeminiDiscovery()
 
         valid_models = [
-            "gemini-pro",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
-            "models/gemini-pro",
-            "models/gemini-1.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.5-pro",  # plausible NEW id — shape fallback accepts
         ]
 
         for model in valid_models:
             assert discovery.is_valid_model(model), f"Model {model} should be valid"
+
+        retired_models = [
+            "gemini-pro",  # dead 1.0 bare id (also outside the pattern)
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "models/gemini-pro",
+            "models/gemini-1.5-pro",
+            "gemini-2.0-flash-exp",
+        ]
+        for model in retired_models:
+            assert not discovery.is_valid_model(model), (
+                f"Retired model {model} must not validate"
+            )
 
     @patch("traigent.integrations.model_discovery.gemini_discovery.os.getenv")
     def test_sdk_discovery_without_api_key(self, mock_getenv: MagicMock) -> None:

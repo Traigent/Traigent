@@ -1,6 +1,7 @@
 """Tests for batch optimization strategies."""
 
 import asyncio
+import math
 from datetime import UTC, datetime
 
 import pytest
@@ -968,3 +969,137 @@ class TestObjectiveOrientationInCompositeScore:
         )
         assert set(optimizer._minimize_objectives) == {"cost", "latency", "error"}
         assert "accuracy" not in optimizer._minimize_objectives
+
+
+def _trial(scores: dict, score: float = 0.0) -> Trial:
+    """Build a Trial carrying objective_scores metadata for frontier tests."""
+    return Trial(
+        configuration={},
+        score=score,
+        duration=0.1,
+        metadata={"objective_scores": dict(scores)},
+    )
+
+
+class TestBatchDominanceMissingMetric:
+    """Regression for #1944: missing metric must NOT default to 0.0 (best-for-minimize)."""
+
+    def _optimizer(self):
+        return MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+        )
+
+    def test_missing_minimize_metric_does_not_falsely_dominate(self):
+        opt = self._optimizer()
+        assert opt.objective_directions["cost"] is False  # minimize
+        complete = {"accuracy": 0.90, "cost": 5.0}
+        partial = {"accuracy": 0.90}  # cost MISSING
+        # With the old 0.0 default, partial's cost=0.0 beat every real cost.
+        assert opt._dominates(partial, complete) is False
+        assert opt._dominates(complete, partial) is True
+
+    def test_complete_cheap_point_not_evicted_by_partial(self):
+        opt = self._optimizer()
+        opt._update_pareto_frontier(_trial({"accuracy": 0.90, "cost": 0.5}, score=0.9))
+        # A higher-accuracy trial that OMITS cost must not dominate/evict it.
+        opt._update_pareto_frontier(_trial({"accuracy": 0.91}, score=0.91))
+        frontier_scores = [t.metadata["objective_scores"] for t in opt.pareto_frontier]
+        assert {"accuracy": 0.90, "cost": 0.5} in frontier_scores
+
+
+class TestZeroWeightMissingMetricRejection:
+    """Regression for the NaN scalarization leak (terra review of the #1944 fix).
+
+    With an ALLOWED zero objective weight, a missing metric's orientation-worst
+    sentinel (±inf) reached scalarization and ``0.0 * -inf`` produced NaN; the
+    frontier gate only checked ``score == -inf`` (every NaN comparison is
+    False), so the metric-incomplete trial entered the frontier and — inserted
+    first — ``max()`` could even SELECT it (NaN comparisons keep first place).
+    Metric-incomplete / non-finite trials must be rejected BEFORE
+    scalarization, and the frontier must admit finite scores only.
+    """
+
+    def _optimizer(self):
+        return MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+            objective_weights={"accuracy": 1.0, "cost": 0.0},
+        )
+
+    def test_zero_weighted_missing_metric_trial_is_rejected(self):
+        opt = self._optimizer()
+        # cost is MISSING and carries weight 0.0 — the old sentinel path
+        # scalarized 0.0 * inf into NaN; now the trial is rejected outright.
+        assert opt._compose_trial_scores({"accuracy": 0.9}) is None
+
+    def test_non_finite_metric_values_are_rejected(self):
+        opt = self._optimizer()
+        assert (
+            opt._compose_trial_scores({"accuracy": 0.9, "cost": float("nan")}) is None
+        )
+        assert (
+            opt._compose_trial_scores({"accuracy": 0.9, "cost": float("inf")}) is None
+        )
+
+    def test_complete_trial_composes_finite_score(self):
+        opt = self._optimizer()
+        composed = opt._compose_trial_scores({"accuracy": 0.9, "cost": 5.0})
+        assert composed is not None
+        scores, composite = composed
+        assert scores == {"accuracy": 0.9, "cost": 5.0}
+        assert math.isfinite(composite)
+
+    def test_direct_frontier_insert_rejects_incomplete_mapping(self):
+        # Completeness must be enforced at _update_pareto_frontier itself
+        # (the choke point), not only in _compose_trial_scores: a direct
+        # caller could insert a finite-but-INCOMPLETE mapping which is
+        # non-comparable under _dominates and would sit on the frontier as
+        # an unmeasured, falsely-attractive point.
+        opt = self._optimizer()
+        opt._update_pareto_frontier(_trial({"accuracy": 0.91}, score=0.91))
+        assert opt.pareto_frontier == []
+
+        complete = _trial({"accuracy": 0.90, "cost": 0.5}, score=0.9)
+        opt._update_pareto_frontier(complete)
+        opt._update_pareto_frontier(_trial({"accuracy": 0.99}, score=0.99))
+        assert opt.pareto_frontier == [complete]
+
+    def test_nan_scored_trial_cannot_enter_frontier_or_win(self):
+        opt = self._optimizer()
+        # Inserted FIRST — under the old ``== -inf`` gate this NaN trial
+        # entered the frontier and max() kept it as the selected best.
+        nan_trial = _trial({"accuracy": 0.9, "cost": float("nan")}, score=float("nan"))
+        opt._update_pareto_frontier(nan_trial)
+        assert opt.pareto_frontier == []
+
+        good = _trial({"accuracy": 0.8, "cost": 5.0}, score=0.8)
+        opt._update_pareto_frontier(good)
+        assert opt.pareto_frontier == [good]
+        assert opt._select_best_from_pareto() is good
+
+
+class TestParetoFrontierTrimByCrowding:
+    """Regression for #1942: size cap must prune by crowding, keep the extremes."""
+
+    def test_cost_minimal_extreme_is_retained(self):
+        opt = MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+            pareto_frontier_size=2,
+        )
+        # Three mutually non-dominated trials (accuracy maximize / cost minimize).
+        # Score is highest for hi_acc so the old score-sort trim would drop cheap.
+        opt._update_pareto_frontier(
+            _trial({"accuracy": 0.95, "cost": 90.0}, score=0.95)
+        )
+        opt._update_pareto_frontier(
+            _trial({"accuracy": 0.80, "cost": 40.0}, score=0.80)
+        )
+        opt._update_pareto_frontier(_trial({"accuracy": 0.60, "cost": 5.0}, score=0.60))
+
+        assert len(opt.pareto_frontier) == 2
+        costs = {t.metadata["objective_scores"]["cost"] for t in opt.pareto_frontier}
+        # The cost-minimal extreme (5.0) must survive; the interior mid (40.0) is pruned.
+        assert 5.0 in costs
+        assert 40.0 not in costs

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from traigent.config.retired_models import is_retired_model
 from traigent.integrations.model_discovery.cache import ModelCache, get_global_cache
 
 if TYPE_CHECKING:
@@ -106,6 +107,16 @@ class ModelDiscovery(ABC):
             True if the model is valid, False otherwise.
         """
         if not model_id:
+            return False
+
+        # Retired-ID denylist FIRST (#1936/#1937): the pattern fallback exists
+        # to accept unknown-but-plausible NEW model IDs, but shape checks also
+        # re-admit retired IDs whose form still matches (claude-3-opus-…,
+        # dated o1-preview, Gemini 1.5, models/gemini-pro) — silently undoing
+        # the catalog sweep. Checked before the known list too, so a stale
+        # user-edited config snapshot cannot resurrect a retired ID either.
+        if is_retired_model(model_id):
+            logger.debug(f"Model {model_id} is retired/delisted for {self.PROVIDER}")
             return False
 
         # Check known models first
