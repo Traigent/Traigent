@@ -459,8 +459,12 @@ class TestTraigentHandlerChatModelCallbacks:
         call = handler._llm_calls[run_id]
         assert call.model == "gpt-4o-mini"
 
-    def test_on_chat_model_end(self, handler):
-        """Test on_chat_model_end callback."""
+    def test_chat_model_finalizes_via_on_llm_end(self, handler):
+        """Chat-model runs finalize through on_llm_end (issue #1973).
+
+        LangChain's BaseCallbackHandler has no on_chat_model_end hook; chat
+        models (ChatOpenAI etc.) route their end event through on_llm_end.
+        """
         run_id = str(uuid4())
         handler.on_chat_model_start(
             serialized={},
@@ -478,14 +482,14 @@ class TestTraigentHandlerChatModelCallbacks:
             "model_name": "gpt-4o",
         }
 
-        handler.on_chat_model_end(response=mock_response, run_id=run_id)
+        handler.on_llm_end(response=mock_response, run_id=run_id)
 
         assert len(handler._completed_llm_calls) == 1
         call = handler._completed_llm_calls[0]
         assert call.total_tokens == 150
         assert call.model == "gpt-4o"
 
-    def test_on_chat_model_end_reads_generation_usage_metadata(self, handler):
+    def test_on_llm_end_reads_generation_usage_metadata(self, handler):
         """Anthropic/Gemini chat usage_metadata should populate tokens and cost."""
         run_id = str(uuid4())
         handler.on_chat_model_start(
@@ -508,7 +512,7 @@ class TestTraigentHandlerChatModelCallbacks:
         )
 
         with patch.object(handler, "_estimate_cost", return_value=0.000123):
-            handler.on_chat_model_end(response=response, run_id=run_id)
+            handler.on_llm_end(response=response, run_id=run_id)
 
         call = handler._completed_llm_calls[0]
         assert call.input_tokens == 12
@@ -516,7 +520,7 @@ class TestTraigentHandlerChatModelCallbacks:
         assert call.total_tokens == 19
         assert call.cost == pytest.approx(0.000123)
 
-    def test_on_chat_model_end_reads_gemini_usage_metadata(self, handler):
+    def test_on_llm_end_reads_gemini_usage_metadata(self, handler):
         """Gemini prompt/candidate token count fields should be counted."""
         run_id = str(uuid4())
         handler.on_chat_model_start(
@@ -538,7 +542,7 @@ class TestTraigentHandlerChatModelCallbacks:
         )
 
         with patch.object(handler, "_estimate_cost", return_value=0.000456):
-            handler.on_chat_model_end(response=response, run_id=run_id)
+            handler.on_llm_end(response=response, run_id=run_id)
 
         call = handler._completed_llm_calls[0]
         assert call.input_tokens == 20
@@ -546,8 +550,8 @@ class TestTraigentHandlerChatModelCallbacks:
         assert call.total_tokens == 28
         assert call.cost == pytest.approx(0.000456)
 
-    def test_on_chat_model_error(self, handler):
-        """Test on_chat_model_error callback."""
+    def test_chat_model_error_finalizes_via_on_llm_error(self, handler):
+        """Chat-model errors route through on_llm_error (issue #1973)."""
         run_id = str(uuid4())
         handler.on_chat_model_start(
             serialized={},
@@ -555,7 +559,7 @@ class TestTraigentHandlerChatModelCallbacks:
             run_id=run_id,
         )
 
-        handler.on_chat_model_error(error=Exception("Chat model failed"), run_id=run_id)
+        handler.on_llm_error(error=Exception("Chat model failed"), run_id=run_id)
 
         assert len(handler._completed_llm_calls) == 1
         call = handler._completed_llm_calls[0]
@@ -958,3 +962,28 @@ class TestCostEstimation:
         ):
             with pytest.raises(UnknownModelError):
                 strict_handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
+
+
+class TestChatModelCallbackContract:
+    """Regression tests for the chat-model callback contract (#1973).
+
+    LangChain's BaseCallbackHandler has on_chat_model_START but no
+    on_chat_model_end / on_chat_model_error hooks — chat-model runs finalize
+    through on_llm_end / on_llm_error. The handler previously defined those two
+    non-existent hooks as dead no-ops with docstrings asserting the inverse;
+    they were removed. This pins that they stay gone and that the real dispatch
+    hooks remain.
+    """
+
+    def test_dead_chat_model_hooks_are_absent(self):
+        from traigent.integrations.langchain.handler import TraigentHandler
+
+        assert not hasattr(TraigentHandler, "on_chat_model_end")
+        assert not hasattr(TraigentHandler, "on_chat_model_error")
+
+    def test_real_dispatch_hooks_present(self):
+        from traigent.integrations.langchain.handler import TraigentHandler
+
+        assert hasattr(TraigentHandler, "on_chat_model_start")
+        assert hasattr(TraigentHandler, "on_llm_end")
+        assert hasattr(TraigentHandler, "on_llm_error")

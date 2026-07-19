@@ -186,22 +186,39 @@ class ResilientClient:
             # For rate limiting, use longer delays
             delay = min(delay * 2, self.max_delay)
 
-            # Check if server provided Retry-After header
-            error_str = str(error)
-            if "retry-after" in error_str.lower():
-                # Try to parse retry-after value (simplified)
+            # Honor a server-provided Retry-After directive. Prefer the
+            # structured value the raiser parsed onto the exception (e.g.
+            # RetryableError("Rate limited", retry_after=...)), which str(error)
+            # does NOT surface — the message is just "Rate limited". Fall back
+            # to scraping the header out of the message string only when no
+            # structured value is present.
+            retry_after = getattr(error, "retry_after", None)
+            if retry_after is not None:
                 try:
-                    import re
-
-                    match = re.search(
-                        r"retry-after[:\s]+(\d+)", error_str, re.IGNORECASE
+                    delay = min(float(retry_after), self.max_delay)
+                    logger.debug(f"Using server-provided Retry-After: {delay}s")
+                except (TypeError, ValueError) as e:
+                    logger.debug(
+                        f"Ignoring unparsable retry_after {retry_after!r}: {e}"
                     )
-                    if match:
-                        server_delay = int(match.group(1))
-                        delay = min(server_delay, self.max_delay)
-                        logger.debug(f"Using server-provided retry-after: {delay}s")
-                except Exception as e:
-                    logger.debug(f"Could not parse retry-after header: {e}")
+                    retry_after = None
+
+            if retry_after is None:
+                # Fall back: parse Retry-After out of the error message text
+                error_str = str(error)
+                if "retry-after" in error_str.lower():
+                    try:
+                        import re
+
+                        match = re.search(
+                            r"retry-after[:\s]+(\d+)", error_str, re.IGNORECASE
+                        )
+                        if match:
+                            server_delay = int(match.group(1))
+                            delay = min(server_delay, self.max_delay)
+                            logger.debug(f"Using server-provided retry-after: {delay}s")
+                    except Exception as e:
+                        logger.debug(f"Could not parse retry-after header: {e}")
 
         # Add jitter to prevent thundering herd
         if self.jitter_factor > 0:

@@ -659,14 +659,17 @@ class TestBaseDiscoveryAbstract:
         # First call to populate cache
         discovery.list_models()
 
-        # Get cache entry
-        entry_before = discovery._cache.get_entry("openai")
+        # Get cache entry under the discovery's actual (credential-scoped) key.
+        # The key is provider-only when no credentials are present, or
+        # "openai-<fingerprint>" when OPENAI_API_KEY/OPENAI_BASE_URL is set.
+        cache_key = discovery._get_cache_key()
+        entry_before = discovery._cache.get_entry(cache_key)
         assert entry_before is not None
 
         # Refresh - should create new entry
         discovery.refresh_cache()
 
-        entry_after = discovery._cache.get_entry("openai")
+        entry_after = discovery._cache.get_entry(cache_key)
         # Entry should exist but timestamp should be newer
         assert entry_after is not None
 

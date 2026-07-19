@@ -2304,6 +2304,12 @@ class OptimizationOrchestrator:
         terminal_completion: CloudBrainOptimizationComplete | None = None
         submit_to_backend = True
 
+        # Capture a stable base for synthetic trial_ids. trial_count is
+        # reassigned every iteration by _handle_trial_result (returns
+        # current_trial_index + 1), so reading it inside the loop would yield
+        # base + 2*offset. Anchor once here so ids stay contiguous.
+        batch_start = trial_count
+
         for batch_offset, (config, permitted_result, optuna_id) in enumerate(
             zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
         ):
@@ -2321,7 +2327,7 @@ class OptimizationOrchestrator:
                         config,
                     )
                     trial_result = TrialResult(
-                        trial_id=f"trial_{trial_count + batch_offset}",
+                        trial_id=f"trial_{batch_start + batch_offset}",
                         config=config,
                         metrics={},
                         status=TrialStatus.CANCELLED,
@@ -2338,10 +2344,10 @@ class OptimizationOrchestrator:
                         exc_info=result,
                     )
                     # Convert exception to failed TrialResult
-                    # Use batch_offset (from enumerate) to ensure unique trial_id even before
-                    # _handle_trial_result increments trial_count
+                    # Use batch_start (anchored before the loop) + batch_offset so
+                    # ids stay contiguous despite per-iteration trial_count updates
                     trial_result = TrialResult(
-                        trial_id=f"trial_{trial_count + batch_offset}",
+                        trial_id=f"trial_{batch_start + batch_offset}",
                         config=config,
                         metrics={},
                         status=TrialStatus.FAILED,

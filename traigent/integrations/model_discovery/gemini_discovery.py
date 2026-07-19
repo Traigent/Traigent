@@ -24,6 +24,15 @@ class GeminiDiscovery(ModelDiscovery):
     PROVIDER = "gemini"
     FRAMEWORK = Framework.GEMINI
 
+    def _get_credential_fingerprint(self) -> str | None:
+        """Scope the cache by API key so different Google/Gemini accounts don't
+        share one cached model list.
+        """
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return None
+        return self._fingerprint(api_key)
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Fetch models from Google Generative AI SDK.
 

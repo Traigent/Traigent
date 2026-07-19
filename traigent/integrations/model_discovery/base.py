@@ -6,6 +6,7 @@ model discovery classes must implement.
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
+import hashlib
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -57,6 +58,37 @@ class ModelDiscovery(ABC):
         self._config_path = config_path or DEFAULT_CONFIG_PATH
         self._config: dict | None = None
 
+    def _get_credential_fingerprint(self) -> str | None:
+        """Return a short, non-sensitive fingerprint of the credentials and/or
+        endpoint that determine the returned model set, or None when the model
+        set is not credential-scoped (e.g. a shipped static snapshot).
+
+        Subclasses whose model list depends on the API key or endpoint (the
+        account/org determines which models are returned) must override this so
+        distinct credentials/endpoints get distinct cache entries. Never return
+        a raw secret — always hash it via ``_fingerprint``.
+        """
+        return None
+
+    @staticmethod
+    def _fingerprint(*parts: str | None) -> str:
+        """Build a short, filesystem-safe hash of the given credential parts.
+
+        Only the hash is retained — raw secrets are never stored or logged.
+        """
+        material = "|".join(part or "" for part in parts)
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+
+    def _get_cache_key(self) -> str:
+        """Cache key for this provider, namespaced by a credential/endpoint
+        fingerprint when available so different credentials/endpoints do not
+        collide on a single shared cache entry (and file).
+        """
+        fingerprint = self._get_credential_fingerprint()
+        if fingerprint:
+            return f"{self.PROVIDER}-{fingerprint}"
+        return self.PROVIDER
+
     def list_models(self, force_refresh: bool = False) -> list[str]:
         """List available models for this provider.
 
@@ -68,9 +100,11 @@ class ModelDiscovery(ABC):
         Returns:
             List of model names.
         """
+        cache_key = self._get_cache_key()
+
         # Try cache first (unless force_refresh)
         if not force_refresh:
-            cached = self._cache.get(self.PROVIDER)
+            cached = self._cache.get(cache_key)
             if cached is not None:
                 return cached
 
@@ -78,7 +112,7 @@ class ModelDiscovery(ABC):
         try:
             models = self._fetch_models_from_sdk()
             if models:
-                self._cache.set(self.PROVIDER, models, self._get_cache_ttl())
+                self._cache.set(cache_key, models, self._get_cache_ttl())
                 return models
         except Exception as e:
             logger.debug(f"SDK model discovery failed for {self.PROVIDER}: {e}")
@@ -87,7 +121,7 @@ class ModelDiscovery(ABC):
         models = self._get_models_from_config()
         if models:
             # Cache config models with longer TTL (they're static)
-            self._cache.set(self.PROVIDER, models, 604800)  # 7 days
+            self._cache.set(cache_key, models, 604800)  # 7 days
             return models
 
         return []
@@ -129,7 +163,7 @@ class ModelDiscovery(ABC):
 
     def refresh_cache(self) -> None:
         """Force refresh the model cache."""
-        self._cache.invalidate(self.PROVIDER)
+        self._cache.invalidate(self._get_cache_key())
         self.list_models(force_refresh=True)
 
     @abstractmethod

@@ -27,6 +27,16 @@ class OpenAIDiscovery(ModelDiscovery):
     PROVIDER = "openai"
     FRAMEWORK = Framework.OPENAI
 
+    def _get_credential_fingerprint(self) -> str | None:
+        """Scope the cache by API key + base URL so different accounts/orgs or
+        endpoints don't share one cached model list.
+        """
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+        if not api_key and not base_url:
+            return None
+        return self._fingerprint(api_key, base_url)
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Fetch models from OpenAI SDK.
 

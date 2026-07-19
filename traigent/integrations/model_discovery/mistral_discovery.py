@@ -27,6 +27,15 @@ class MistralDiscovery(ModelDiscovery):
     PROVIDER = "mistral"
     FRAMEWORK = Framework.MISTRAL
 
+    def _get_credential_fingerprint(self) -> str | None:
+        """Scope the cache by API key so different Mistral accounts don't share
+        one cached model list.
+        """
+        api_key = os.getenv("MISTRAL_API_KEY")
+        if not api_key:
+            return None
+        return self._fingerprint(api_key)
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Fetch models from Mistral SDK.
 

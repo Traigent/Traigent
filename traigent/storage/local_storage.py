@@ -969,7 +969,18 @@ class LocalStorageManager:
         Returns:
             True if configuration has been seen and successfully evaluated before
         """
-        target_hash = self.compute_config_hash(config, keys)
+        # Base identity keyset: the current config_space keys (when provided)
+        # plus whatever dimensions the candidate config actually realizes. Each
+        # historical trial extends this with its own realized keys below so the
+        # comparison is over the FULL realized config on both sides, not just
+        # the surviving current keys. This makes dedup spec-aware: a trial that
+        # ran under a broader spec (an extra tuned dimension, e.g. temperature)
+        # no longer collapses to a false match when the spec later narrows.
+        base_keys: set[str] | None
+        if keys is not None:
+            base_keys = set(keys) | set(config.keys())
+        else:
+            base_keys = None
 
         try:
             # List all sessions for this function
@@ -1003,7 +1014,21 @@ class LocalStorageManager:
                     for trial in session.trials:
                         # Check if trial was successful (no error)
                         if trial.error is None:
-                            trial_hash = self.compute_config_hash(trial.config, keys)
+                            # Extend the identity keyset with this trial's own
+                            # realized keys so a historical trial with extra
+                            # tuned dimensions does not match a narrower
+                            # candidate (and vice versa). None => hash the full
+                            # unfiltered config on both sides.
+                            if base_keys is not None:
+                                compare_keys: list[str] | None = sorted(
+                                    base_keys | set(trial.config.keys())
+                                )
+                            else:
+                                compare_keys = None
+                            trial_hash = self.compute_config_hash(
+                                trial.config, compare_keys
+                            )
+                            target_hash = self.compute_config_hash(config, compare_keys)
                             if trial_hash == target_hash:
                                 return True
 
