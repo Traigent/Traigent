@@ -70,7 +70,7 @@ def test_1958_estimation_and_constraint_paths_agree_for_gpt4() -> None:
 
     # Canonical estimation for 1000 in + 0 out, expressed per-1k input-equivalent.
     in_cost, out_cost = _estimation_cost_from_tokens("gpt-4", 500, 500)
-    canonical_avg_per_1k = (in_cost + out_cost)  # 500+500 tokens -> per-1k avg basis
+    canonical_avg_per_1k = in_cost + out_cost  # 500+500 tokens -> per-1k avg basis
     constraint_val = _try_fallback_pricing("gpt-4", 1000)
     assert constraint_val is not None
     assert canonical_avg_per_1k == pytest.approx(constraint_val, rel=1e-9)
@@ -208,13 +208,13 @@ def test_1967_should_retry_honors_exception_type() -> None:
     client = ResilientClient(max_retries=3)
 
     # RetryableError whose message carries no "magic" retry token -> still retried.
-    assert client.should_retry(RetryableError("something odd happened"), attempt=0) is True
+    assert (
+        client.should_retry(RetryableError("something odd happened"), attempt=0) is True
+    )
 
     # NonRetryableError whose message contains a network word -> NOT retried.
     assert (
-        client.should_retry(
-            NonRetryableError("Invalid connection string"), attempt=0
-        )
+        client.should_retry(NonRetryableError("Invalid connection string"), attempt=0)
         is False
     )
 
@@ -227,7 +227,7 @@ class _FakeResp:
         self.status = status
         self.headers: dict[str, str] = {}
 
-    async def __aenter__(self) -> "_FakeResp":
+    async def __aenter__(self) -> _FakeResp:
         return self
 
     async def __aexit__(self, *_a) -> bool:
@@ -241,7 +241,7 @@ class _FakeSession:
     def __init__(self, status: int) -> None:
         self._status = status
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *_a) -> bool:
@@ -256,11 +256,12 @@ def _run_backend_request(status: int):
 
     client = rc.ResilientClient(max_retries=0)  # no retry sleeps
 
-    with mock.patch(
-        "traigent.cloud.client.raise_if_cloud_egress_disabled",
-        lambda *a, **k: None,
-    ), mock.patch(
-        "aiohttp.ClientSession", lambda *a, **k: _FakeSession(status)
+    with (
+        mock.patch(
+            "traigent.cloud.client.raise_if_cloud_egress_disabled",
+            lambda *a, **k: None,
+        ),
+        mock.patch("aiohttp.ClientSession", lambda *a, **k: _FakeSession(status)),
     ):
         return asyncio.run(
             rc.resilient_backend_request(client, "GET", "https://example.test/x")
