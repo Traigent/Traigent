@@ -3,6 +3,8 @@
 import asyncio
 from datetime import UTC, datetime
 
+import pytest
+
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import Dataset, EvaluationExample, EvaluationResult
@@ -101,6 +103,22 @@ class TestBatchOptimizationConfig:
         assert config.distributed_workers == 1
         assert config.enable_checkpointing is True
         assert config.memory_limit_mb == 1000.0
+
+    def test_min_delta_rejects_nan_negative_and_bool(self):
+        """early_stopping_min_delta is validated at the config boundary.
+
+        Now that the batch loop consumes min_delta, NaN would make every
+        improvement comparison False (premature stop on improving runs) and a
+        negative delta would make flat scores count as improvements (never
+        stops). Mirrors OptimizationStrategy's validation.
+        """
+        for bad in (float("nan"), float("inf"), -0.01, True, "0.1", None):
+            with pytest.raises((ValueError, TypeError)):
+                BatchOptimizationConfig(early_stopping_min_delta=bad)  # type: ignore[arg-type]
+
+        # Boundary values that must remain accepted.
+        assert BatchOptimizationConfig(early_stopping_min_delta=0.0)
+        assert BatchOptimizationConfig(early_stopping_min_delta=0.5)
 
     def test_init_custom_values(self):
         """Test BatchOptimizationConfig initialization with custom values."""

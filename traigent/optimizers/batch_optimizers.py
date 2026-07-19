@@ -9,6 +9,8 @@ including parallel optimization, multi-objective batch optimization, and distrib
 from __future__ import annotations
 
 import asyncio
+import math
+import numbers
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,6 +53,24 @@ class BatchOptimizationConfig:
     distributed_workers: int = 1
     enable_checkpointing: bool = True
     memory_limit_mb: float = 1000.0
+
+    def __post_init__(self) -> None:
+        # Mirrors OptimizationStrategy's boundary (remote_services.py): now that
+        # the batch loop actually consumes early_stopping_min_delta, an
+        # unvalidated NaN makes every improvement comparison False (premature
+        # stop on improving runs) and a negative delta makes flat scores count
+        # as improvements (never stops). bool is a Real, so reject it explicitly.
+        delta = self.early_stopping_min_delta
+        if (
+            isinstance(delta, bool)
+            or not isinstance(delta, numbers.Real)
+            or not math.isfinite(float(delta))
+            or delta < 0
+        ):
+            raise ValueError(
+                f"early_stopping_min_delta must be a finite non-negative number, "
+                f"got {delta!r}"
+            )
 
 
 class ParallelBatchOptimizer(BaseOptimizer):
