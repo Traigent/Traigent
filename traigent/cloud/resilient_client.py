@@ -8,6 +8,7 @@ while maintaining security and SOC2 compliance.
 
 import asyncio
 import logging
+import math
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -195,7 +196,14 @@ class ResilientClient:
             retry_after = getattr(error, "retry_after", None)
             if retry_after is not None:
                 try:
-                    delay = min(float(retry_after), self.max_delay)
+                    parsed_retry_after = float(retry_after)
+                    if math.isnan(parsed_retry_after) or math.isinf(
+                        parsed_retry_after
+                    ):
+                        raise ValueError(
+                            f"non-finite retry_after: {parsed_retry_after}"
+                        )
+                    delay = min(max(parsed_retry_after, 0.0), self.max_delay)
                     logger.debug(f"Using server-provided Retry-After: {delay}s")
                 except (TypeError, ValueError) as e:
                     logger.debug(
