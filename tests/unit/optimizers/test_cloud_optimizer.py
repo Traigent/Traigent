@@ -18,6 +18,7 @@ import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import EvaluationExample
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.cloud_optimizer import CloudOptimizer
@@ -30,6 +31,7 @@ from traigent.optimizers.remote_services import (
     SmartTrialSuggestion,
 )
 from traigent.utils.exceptions import OptimizationError, ServiceError
+from traigent.utils.objectives import is_minimization_objective
 
 # Test fixtures
 
@@ -1843,3 +1845,575 @@ class TestSessionConstant:
         from traigent.optimizers.cloud_optimizer import _SESSION_NOT_INITIALIZED
 
         assert _SESSION_NOT_INITIALIZED == "Session not initialized"
+
+
+class TestStrategyEarlyStoppingOrientation:
+    """#1915: the patience-based early-stop must respect the primary objective's
+    orientation instead of the old hard-coded maximize (``max()`` + upward test).
+    """
+
+    @staticmethod
+    def _trial(trial_id: str, obj: str, value: float) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config={},
+            metrics={obj: value},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+
+    def _optimizer(self, objectives, strategy, mock_remote_service):
+        return CloudOptimizer(
+            config_space={"temperature": {"min": 0.0, "max": 1.0, "type": "float"}},
+            objectives=objectives,
+            remote_service=mock_remote_service,
+            optimization_strategy=strategy,
+        )
+
+    def test_minimize_still_improving_does_not_stop(self, mock_remote_service):
+        """Minimize primary objective (cost) whose recent trials keep dropping
+        below the earlier best must NOT trigger the no-improvement stop.
+
+        Under the old maximize-only code, ``max()`` treated the largest cost as
+        "best" and the inverted ``<`` test fired a premature stop here.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "cost", 0.5),
+            self._trial("t2", "cost", 0.4),
+            self._trial("t3", "cost", 0.3),
+            self._trial("t4", "cost", 0.2),
+            self._trial("t5", "cost", 0.1),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_minimize_no_improvement_stops(self, mock_remote_service):
+        """Minimize primary objective whose recent trials are all worse than the
+        overall best must trigger the no-improvement stop.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "cost", 0.1),
+            self._trial("t2", "cost", 0.1),
+            self._trial("t3", "cost", 0.5),
+            self._trial("t4", "cost", 0.6),
+            self._trial("t5", "cost", 0.7),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_maximize_behaviour_preserved(self, mock_remote_service):
+        """Maximize primary objective (accuracy) keeps the original semantics:
+        recent best well below the overall best stops.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", 0.9),
+            self._trial("t2", "accuracy", 0.9),
+            self._trial("t3", "accuracy", 0.5),
+            self._trial("t4", "accuracy", 0.4),
+            self._trial("t5", "accuracy", 0.3),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_configurable_min_delta(self, mock_remote_service):
+        """The improvement epsilon is driven by ``early_stopping_min_delta``
+        (default 0.01) rather than a hard-coded literal, and it is an
+        IMPROVEMENT threshold: the recent window must beat the pre-window
+        baseline by MORE than min_delta to keep going, so a larger delta makes
+        stopping MORE likely, never less.
+        """
+        # Baseline best (0.90) sits in t1, before the patience=2 recent window;
+        # the recent best (0.92) rises 0.02 above it.
+        history = [
+            self._trial("t1", "accuracy", 0.90),
+            self._trial("t2", "accuracy", 0.87),
+            self._trial("t3", "accuracy", 0.92),
+        ]
+        # Default delta (0.01): 0.92 > 0.90 + 0.01 -> real improvement -> keep going.
+        opt_default = self._optimizer(
+            ["accuracy"],
+            OptimizationStrategy(early_stopping_patience=2),
+            mock_remote_service,
+        )
+        assert opt_default._check_strategy_stopping_conditions(history) is False
+        # Larger delta (0.05): 0.92 <= 0.90 + 0.05 -> marginal gain ignored -> stop.
+        opt_demanding = self._optimizer(
+            ["accuracy"],
+            OptimizationStrategy(
+                early_stopping_patience=2, early_stopping_min_delta=0.05
+            ),
+            mock_remote_service,
+        )
+        assert opt_demanding._check_strategy_stopping_conditions(history) is True
+
+    def test_minimize_configurable_min_delta_respects_direction(
+        self, mock_remote_service
+    ):
+        """The same improvement threshold applies in the lower-is-better
+        direction: the window must get more than min_delta BELOW the pre-window
+        baseline to count as improving.
+        """
+        # Baseline best (0.100) sits in t1; the recent window's best (0.095)
+        # drops 0.005 below it.
+        history = [
+            self._trial("t1", "cost", 0.100),
+            self._trial("t2", "cost", 0.105),
+            self._trial("t3", "cost", 0.095),
+        ]
+
+        # Small delta (0.001): 0.095 < 0.100 - 0.001 -> real improvement -> keep going.
+        opt_lenient = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(
+                early_stopping_patience=2, early_stopping_min_delta=0.001
+            ),
+            mock_remote_service,
+        )
+        assert opt_lenient._check_strategy_stopping_conditions(history) is False
+
+        # Larger delta (0.01): 0.095 >= 0.100 - 0.01 -> marginal gain ignored -> stop.
+        opt_demanding = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(
+                early_stopping_patience=2, early_stopping_min_delta=0.01
+            ),
+            mock_remote_service,
+        )
+        assert opt_demanding._check_strategy_stopping_conditions(history) is True
+
+    def test_flat_plateau_stops_maximize(self, mock_remote_service):
+        """The canonical no-improvement case: a completely flat maximize history
+        of length > patience MUST stop. Under the pre-fix arithmetic
+        (window compared against the best of ALL history, window included) a
+        plateau had ``best_recent == best_overall`` and never stopped.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial(f"t{i}", "accuracy", 0.8) for i in range(1, 6)
+        ]  # 5 identical scores, patience window [t3..t5], baseline [t1, t2]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_flat_plateau_stops_minimize(self, mock_remote_service):
+        """Same canonical plateau in the lower-is-better direction stops."""
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        history = [self._trial(f"t{i}", "cost", 0.3) for i in range(1, 6)]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_sub_min_delta_improvement_still_stops(self, mock_remote_service):
+        """A gain smaller than min_delta inside the window does NOT count as
+        improvement (and must not defer stopping)."""
+        strategy = OptimizationStrategy(
+            early_stopping_patience=3, early_stopping_min_delta=0.01
+        )
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", 0.800),
+            self._trial("t2", "accuracy", 0.790),
+            self._trial("t3", "accuracy", 0.805),  # +0.005 <= min_delta
+            self._trial("t4", "accuracy", 0.795),
+            self._trial("t5", "accuracy", 0.800),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_material_improvement_does_not_stop(self, mock_remote_service):
+        """A gain larger than min_delta inside the window IS improvement."""
+        strategy = OptimizationStrategy(
+            early_stopping_patience=3, early_stopping_min_delta=0.01
+        )
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", 0.800),
+            self._trial("t2", "accuracy", 0.790),
+            self._trial("t3", "accuracy", 0.850),  # +0.05 > min_delta
+            self._trial("t4", "accuracy", 0.795),
+            self._trial("t5", "accuracy", 0.800),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_history_equal_to_patience_does_not_stop(self, mock_remote_service):
+        """With history no longer than the patience window there is no
+        pre-window baseline to compare against -> not enough evidence to stop,
+        even on a flat plateau."""
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [self._trial(f"t{i}", "accuracy", 0.8) for i in range(1, 4)]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_invalid_baseline_scores_do_not_stop(self, mock_remote_service):
+        """If every pre-window score coerces to invalid, there is no usable
+        baseline -> do not stop (and do not crash on min()/max() of nothing)."""
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "accuracy", float("nan")),
+            self._trial("t2", "accuracy", "bad"),
+            self._trial("t3", "accuracy", 0.8),
+            self._trial("t4", "accuracy", 0.8),
+            self._trial("t5", "accuracy", 0.8),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_empty_objectives_guarded(self, mock_remote_service):
+        """No objectives + a patience gate must not raise IndexError (sibling of
+        #1909's ``objectives[0]`` guard)."""
+        strategy = OptimizationStrategy(early_stopping_patience=2)
+        optimizer = self._optimizer([], strategy, mock_remote_service)
+        history = [
+            self._trial("t1", "cost", 0.5),
+            self._trial("t2", "cost", 0.4),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+
+class TestStrategyEarlyStoppingRobustness:
+    """Follow-up hardening of the patience-based early-stop gate:
+
+    * a ``band`` (target-range) primary objective is not directional, so the raw
+      maximize/minimize plateau arithmetic must be bypassed for it; and
+    * every metric value is filtered through ``coerce_finite_objective_score`` so
+      NaN / infinities / bool / str / None values cannot poison or crash the min/max
+      comparisons.
+    """
+
+    @staticmethod
+    def _trial(trial_id: str, obj: str, value) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config={},
+            metrics={obj: value},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+
+    def _optimizer(
+        self, objectives, strategy, mock_remote_service, objective_schema=None
+    ):
+        return CloudOptimizer(
+            config_space={"temperature": {"min": 0.0, "max": 1.0, "type": "float"}},
+            objectives=objectives,
+            remote_service=mock_remote_service,
+            optimization_strategy=strategy,
+            objective_schema=objective_schema,
+        )
+
+    @staticmethod
+    def _band_schema(name: str):
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+        from traigent.tvl.models import BandTarget
+
+        return ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name=name,
+                    orientation="band",
+                    weight=1.0,
+                    band=BandTarget(low=0.7, high=0.9),
+                )
+            ]
+        )
+
+    def test_band_primary_bypasses_patience_plateau_gate(self, mock_remote_service):
+        """A band primary objective must NOT run the raw maximize plateau test.
+
+        The identical plateau history stops a maximize objective, but for a band
+        objective, whose "best" is closeness to a target interval, not a
+        direction, the gate must be bypassed. Running the raw-max arithmetic
+        would stop a run that is correctly parked inside the band.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        # Overall best (0.90) sits in t1; the recent window plateaus below it.
+        history = [
+            self._trial("t1", "accuracy", 0.90),
+            self._trial("t2", "accuracy", 0.80),
+            self._trial("t3", "accuracy", 0.80),
+            self._trial("t4", "accuracy", 0.80),
+        ]
+
+        # Control: maximize orientation (no schema, name heuristic) DOES stop;
+        # this is exactly the raw-max verdict the band path must avoid.
+        maximize_opt = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        assert maximize_opt._check_strategy_stopping_conditions(history) is True
+
+        # Band orientation bypasses only the plateau gate -> does not stop here.
+        band_opt = self._optimizer(
+            ["accuracy"],
+            strategy,
+            mock_remote_service,
+            objective_schema=self._band_schema("accuracy"),
+        )
+        assert band_opt._check_strategy_stopping_conditions(history) is False
+
+    def test_maximize_ignores_invalid_metric_values(self, mock_remote_service):
+        """NaN / bool / str values among a maximize objective's recent trials are
+        dropped, not allowed to poison or crash ``max()``; the valid values still
+        drive a correct stop.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=4)
+        history = [
+            self._trial("t1", "accuracy", 0.90),  # valid best overall
+            self._trial("t2", "accuracy", float("nan")),  # recent, dropped
+            self._trial("t3", "accuracy", True),  # recent bool, dropped
+            self._trial("t4", "accuracy", "oops"),  # recent str, would crash max()
+            self._trial("t5", "accuracy", 0.80),  # recent, valid
+        ]
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        # Valid recent best 0.80 <= baseline best 0.90 + 0.01 -> stop.
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_minimize_ignores_invalid_metric_values(self, mock_remote_service):
+        """Infinities / None among a minimize objective's recent trials are dropped
+        rather than poison (``-inf`` would win ``min``) or crash (``None``) the
+        comparison; the valid values still drive a correct stop.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=4)
+        history = [
+            self._trial("t1", "cost", 0.10),  # valid best overall (lowest)
+            self._trial("t2", "cost", float("-inf")),  # recent, dropped
+            self._trial("t3", "cost", float("inf")),  # recent, dropped
+            self._trial("t4", "cost", None),  # recent, would crash min()
+            self._trial("t5", "cost", 0.20),  # recent, valid
+        ]
+        optimizer = self._optimizer(["cost"], strategy, mock_remote_service)
+        # Valid recent best 0.20 >= baseline best 0.10 - 0.01 -> stop.
+        assert optimizer._check_strategy_stopping_conditions(history) is True
+
+    def test_insufficient_valid_data_does_not_stop_or_crash(self, mock_remote_service):
+        """When every recent trial's metric is invalid, the coerced recent set is
+        empty and the gate falls through to "do not stop" instead of crashing on
+        ``max()`` / ``min()`` of unrankable values.
+        """
+        strategy = OptimizationStrategy(early_stopping_patience=3)
+        history = [
+            self._trial("t1", "accuracy", float("nan")),
+            self._trial("t2", "accuracy", "bad"),
+            self._trial("t3", "accuracy", None),
+        ]
+        optimizer = self._optimizer(["accuracy"], strategy, mock_remote_service)
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+
+class TestOptimizationStrategyPositionalABI:
+    """``early_stopping_min_delta`` must be appended AFTER every pre-existing
+    field so the historical positional-constructor ABI is preserved.
+
+    The field was originally inserted between ``early_stopping_patience`` and
+    ``confidence_threshold``, which silently shifted ``confidence_threshold``
+    and all later positional values by one slot. This constructs the full
+    legacy positional form (the field order as it shipped on ``develop``) and
+    proves every legacy field keeps its old binding while the new field takes
+    its default. The distinct sentinel per slot makes any off-by-one shift a
+    hard failure rather than a coincidental pass.
+    """
+
+    def test_legacy_full_positional_construction_preserves_bindings(self):
+        strategy = OptimizationStrategy(
+            123,  # max_total_evaluations
+            45.6,  # max_cost_budget
+            78.9,  # max_time_budget
+            0.42,  # exploration_ratio
+            7,  # early_stopping_patience
+            0.88,  # confidence_threshold
+            3,  # min_examples_per_trial
+            99,  # max_examples_per_trial
+            False,  # adaptive_sample_size
+            "speed",  # pareto_preference
+            {"accuracy": 2.0},  # objective_weights
+            "legacy_name",  # strategy_name
+            {"k": "v"},  # metadata
+        )
+
+        assert strategy.max_total_evaluations == 123
+        assert strategy.max_cost_budget == 45.6
+        assert strategy.max_time_budget == 78.9
+        assert strategy.exploration_ratio == 0.42
+        assert strategy.early_stopping_patience == 7
+        # The bug bound this positional slot to early_stopping_min_delta.
+        assert strategy.confidence_threshold == 0.88
+        assert strategy.min_examples_per_trial == 3
+        assert strategy.max_examples_per_trial == 99
+        assert strategy.adaptive_sample_size is False
+        assert strategy.pareto_preference == "speed"
+        assert strategy.objective_weights == {"accuracy": 2.0}
+        assert strategy.strategy_name == "legacy_name"
+        assert strategy.metadata == {"k": "v"}
+        # New field is not part of the legacy positional ABI: it defaults.
+        assert strategy.early_stopping_min_delta == 0.01
+
+    def test_new_field_is_last_positional_slot(self):
+        """A 14th positional argument binds to the new field, confirming it was
+        appended rather than inserted mid-sequence."""
+        strategy = OptimizationStrategy(
+            123,
+            45.6,
+            78.9,
+            0.42,
+            7,
+            0.88,
+            3,
+            99,
+            False,
+            "speed",
+            {"accuracy": 2.0},
+            "legacy_name",
+            {"k": "v"},
+            0.05,  # early_stopping_min_delta (new trailing slot)
+        )
+        assert strategy.early_stopping_min_delta == 0.05
+        assert strategy.confidence_threshold == 0.88
+
+
+class TestDeclaredOrientationOverridesHeuristic:
+    """The patience-based early-stop must honour the orientation declared in the
+    user's ``ObjectiveSchema``, not the name-pattern heuristic.
+
+    ``is_minimization_objective`` guesses direction from substrings ("cost",
+    "latency", "error", ...). Any lower-is-better metric whose name lacks those
+    substrings is silently treated as maximize, which inverts the no-improvement
+    test. The declared schema is authoritative; the heuristic is only a fallback
+    for objectives no schema declares.
+    """
+
+    # Lower-is-better, but matches no _MINIMIZE_OBJECTIVE_PATTERNS substring, so
+    # the heuristic misclassifies it as maximize.
+    MISCLASSIFIED_OBJECTIVE = "regret"
+
+    @staticmethod
+    def _trial(trial_id: str, obj: str, value: float) -> TrialResult:
+        return TrialResult(
+            trial_id=trial_id,
+            config={},
+            metrics={obj: value},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+
+    def _optimizer(self, objectives, strategy, mock_remote_service, schema=None):
+        return CloudOptimizer(
+            config_space={"temperature": {"min": 0.0, "max": 1.0, "type": "float"}},
+            objectives=objectives,
+            remote_service=mock_remote_service,
+            optimization_strategy=strategy,
+            objective_schema=schema,
+        )
+
+    def _plateaued_history(self, obj: str) -> list[TrialResult]:
+        """Overall best (0.1) is early; the recent window is uniformly worse.
+
+        Under minimize this is a genuine no-improvement plateau (best_recent 0.5
+        is far above best_overall 0.1 -> stop). Under the heuristic's maximize
+        reading, best_recent == best_overall == 0.7 -> no stop. The two
+        orientations therefore disagree, which is what makes this discriminating.
+        """
+        return [
+            self._trial("t1", obj, 0.1),
+            self._trial("t2", obj, 0.1),
+            self._trial("t3", obj, 0.5),
+            self._trial("t4", obj, 0.6),
+            self._trial("t5", obj, 0.7),
+        ]
+
+    def test_heuristic_misclassifies_the_objective_name(self):
+        """Pin the premise: without an orientation the heuristic calls this
+        lower-is-better metric a maximize objective."""
+        assert is_minimization_objective(self.MISCLASSIFIED_OBJECTIVE) is False
+        assert (
+            is_minimization_objective(
+                self.MISCLASSIFIED_OBJECTIVE, orientation="minimize"
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_declared_minimize_reaches_production_stopping_path(
+        self, mock_remote_service
+    ):
+        """A schema-declared minimize objective must stop through the public
+        ``should_stop_async`` path, not merely in the private helper.
+
+        The remote service is asserted untouched to prove the stop decision came
+        from the strategy gate rather than from the mock's own verdict.
+        """
+        schema = create_default_objectives(
+            [self.MISCLASSIFIED_OBJECTIVE],
+            orientations={self.MISCLASSIFIED_OBJECTIVE: "minimize"},
+        )
+        optimizer = self._optimizer(
+            [self.MISCLASSIFIED_OBJECTIVE],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+            schema=schema,
+        )
+        history = self._plateaued_history(self.MISCLASSIFIED_OBJECTIVE)
+
+        assert await optimizer.should_stop_async(history) is True
+        mock_remote_service.should_stop_optimization.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_without_schema_heuristic_misses_the_plateau(
+        self, mock_remote_service
+    ):
+        """Same history, no declared schema: the heuristic's maximize reading
+        fails to see the plateau and the strategy gate does not fire.
+
+        This is the pre-fix behaviour, retained as the backward-compatibility
+        baseline for string-only objective flows and as the contrast that makes
+        the test above meaningful.
+        """
+        optimizer = self._optimizer(
+            [self.MISCLASSIFIED_OBJECTIVE],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+        )
+        history = self._plateaued_history(self.MISCLASSIFIED_OBJECTIVE)
+
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_declared_maximize_overrides_minimize_heuristic(self, mock_remote_service):
+        """Inverse direction: "cost" reads as minimize to the heuristic, but a
+        schema declaring maximize must win."""
+        schema = create_default_objectives(["cost"], orientations={"cost": "maximize"})
+        optimizer = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+            schema=schema,
+        )
+        # Rising values: improving under maximize (no stop); under the minimize
+        # heuristic these would look like a plateau and stop.
+        history = self._plateaued_history("cost")
+
+        assert optimizer._check_strategy_stopping_conditions(history) is False
+
+    def test_objective_absent_from_schema_falls_back_to_heuristic(
+        self, mock_remote_service
+    ):
+        """A schema that does not declare the primary objective genuinely lacks
+        an explicit value, so the heuristic still applies."""
+        schema = create_default_objectives(["accuracy"])
+        optimizer = self._optimizer(
+            ["cost"],
+            OptimizationStrategy(early_stopping_patience=3),
+            mock_remote_service,
+            schema=schema,
+        )
+        assert optimizer._primary_objective_orientation("cost") is None
+        # Heuristic minimize semantics: recent trials keep dropping -> no stop.
+        history = [
+            self._trial("t1", "cost", 0.5),
+            self._trial("t2", "cost", 0.4),
+            self._trial("t3", "cost", 0.3),
+            self._trial("t4", "cost", 0.2),
+            self._trial("t5", "cost", 0.1),
+        ]
+        assert optimizer._check_strategy_stopping_conditions(history) is False

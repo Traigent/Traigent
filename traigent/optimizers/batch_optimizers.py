@@ -9,6 +9,8 @@ including parallel optimization, multi-objective batch optimization, and distrib
 from __future__ import annotations
 
 import asyncio
+import math
+import numbers
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,6 +53,24 @@ class BatchOptimizationConfig:
     distributed_workers: int = 1
     enable_checkpointing: bool = True
     memory_limit_mb: float = 1000.0
+
+    def __post_init__(self) -> None:
+        # Mirrors OptimizationStrategy's boundary (remote_services.py): now that
+        # the batch loop actually consumes early_stopping_min_delta, an
+        # unvalidated NaN makes every improvement comparison False (premature
+        # stop on improving runs) and a negative delta makes flat scores count
+        # as improvements (never stops). bool is a Real, so reject it explicitly.
+        delta = self.early_stopping_min_delta
+        if (
+            isinstance(delta, bool)
+            or not isinstance(delta, numbers.Real)
+            or not math.isfinite(float(delta))
+            or delta < 0
+        ):
+            raise ValueError(
+                f"early_stopping_min_delta must be a finite non-negative number, "
+                f"got {delta!r}"
+            )
 
 
 class ParallelBatchOptimizer(BaseOptimizer):
@@ -173,16 +193,27 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         trial = future.result()
                         completed_trials.append(trial)
 
-                        # Update best result
+                        # Patience counter resets only on a MATERIAL improvement
+                        # (> min_delta over the previous best); sub-delta creep
+                        # must not defer early stopping. Previously min_delta was
+                        # declared in BatchConfig but never read, so any epsilon
+                        # gain reset the counter.
+                        if (
+                            trial.score
+                            > best_score + self.batch_config.early_stopping_min_delta
+                        ):
+                            trials_without_improvement = 0
+                        else:
+                            trials_without_improvement += 1
+
+                        # Best-result tracking stays exact: even a sub-delta gain
+                        # is still the best config seen so far.
                         if trial.score > best_score:
                             best_score = trial.score
                             best_config = config
-                            trials_without_improvement = 0
                             logger.info(
                                 f"New best score: {best_score:.4f} with config: {config}"
                             )
-                        else:
-                            trials_without_improvement += 1
 
                         # Early stopping check
                         if (
@@ -395,9 +426,24 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             obj: not is_minimization_objective(obj) for obj in resolved_objectives
         }
 
-        # Use random search for multi-objective exploration
+        # Use random search for multi-objective exploration. Thread the caller's
+        # ``max_trials`` (default 100, matching the historical hard-coded cap) so
+        # the delegated ``should_stop`` honours the configured budget and
+        # config-space exhaustion instead of a magic constant (#1916).
+        #
+        # Normalise a direct-constructor ``max_trials=None`` to the historical
+        # 100-trial cap. ``RandomSearchOptimizer.should_stop`` evaluates
+        # ``self._trial_count >= self.max_trials``, which raises
+        # ``TypeError: '>=' not supported between 'int' and 'NoneType'`` on a
+        # ``None`` budget; 100 matches the legacy ``len(history) >= 100`` cap.
+        requested_max_trials = kwargs.get("max_trials", 100)
+        if requested_max_trials is None:
+            requested_max_trials = 100
+        self._max_trials = requested_max_trials
         self._base_optimizer = RandomSearchOptimizer(
-            configuration_space, resolved_objectives
+            configuration_space,
+            resolved_objectives,
+            max_trials=requested_max_trials,
         )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
@@ -405,9 +451,24 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         return cast(dict[str, Any], self._base_optimizer.suggest_next_trial(history))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
-        """Determine if optimization should stop."""
-        # Stop when we've reached a reasonable number of trials for multi-objective
-        return len(history) >= 100
+        """Determine if optimization should stop.
+
+        Combines two budgets so neither the resumed-history nor the fresh-run
+        path regresses (#1916 follow-up):
+
+        * Legacy resumed-history cap - stop once ``len(history)`` reaches the
+          configured budget. ``optimize`` drives trials through a *local*
+          RandomSearchOptimizer, so the injected ``_base_optimizer`` trial
+          counter stays at zero on a resumed run; without this check a
+          pre-populated history would never trigger a stop (the historical
+          behaviour was ``len(history) >= 100``).
+        * Delegate budget / exhaustion - otherwise defer to the injected base
+          optimizer so its configured ``max_trials`` and discrete config-space
+          exhaustion are honoured instead of a hard-coded 100-trial cap.
+        """
+        if len(history) >= self._max_trials:
+            return True
+        return bool(self._base_optimizer.should_stop(history))
 
     async def optimize(
         self,
