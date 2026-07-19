@@ -554,9 +554,7 @@ def _secondary_metric_key(
     )
     if not declared_secondaries:
         return (
-            _secondary_metric_total(
-                metrics, exclude_objective, objective_orientations
-            ),
+            _secondary_metric_total(metrics, exclude_objective, objective_orientations),
         )
 
     ordered_scores: list[float] = []
