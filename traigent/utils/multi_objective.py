@@ -205,14 +205,15 @@ class ParetoFrontCalculator:
             reference_point: Reference point for hypervolume calculation
             objectives: The CONFIGURED objective set. Dimensionality and
                 completeness are decided over exactly these objectives. When
-                omitted, falls back to the union of the points' *observed* keys
-                (backward compatible) — but that fallback is order-independent
-                only when every point reports the same keys: if a configured
-                objective (e.g. ``cost``) is missing from *every* point, the
-                observed union collapses the nominal 2-D front to 1-D and
-                reports a positive volume instead of the correct
-                zero/non-comparable. Callers with the configured list must pass
-                it (#1941).
+                omitted, the declared set falls back to the calculator's own
+                configured directions (``self.maximize`` — from the ``maximize``
+                dict or ``objective_schema`` it was built with), so a public
+                no-arg call still detects an objective that is missing from
+                *every* point (it stays a declared dimension → the front is
+                incomplete → zero/non-comparable, never a spurious lower-
+                dimensional positive volume). Only a calculator built with no
+                configured directions at all falls back to the union of the
+                points' observed keys (#1941).
 
         Returns:
             Hypervolume value
@@ -221,15 +222,22 @@ class ParetoFrontCalculator:
             return 0.0
 
         # Dimensionality and completeness are defined over the CONFIGURED
-        # objective space when supplied, NOT whichever keys happen to be
-        # observed. With ragged metric sets, complete and partial points
-        # legitimately coexist on the front (they are non-comparable), but the
-        # hypervolume is over the full declared space: a point missing any
-        # declared objective is not complete and contributes zero volume, and
-        # if NO point is complete the volume is zero (never re-inferred at a
-        # lower dimensionality from the surviving keys).
+        # objective space, NOT whichever keys happen to be observed. With ragged
+        # metric sets, complete and partial points legitimately coexist on the
+        # front (they are non-comparable), but the hypervolume is over the full
+        # declared space: a point missing any declared objective is not complete
+        # and contributes zero volume, and if NO point is complete the volume is
+        # zero (never re-inferred at a lower dimensionality from the surviving
+        # keys). The declared set is resolved from, in order: the explicit
+        # ``objectives`` arg (internal callers thread the run's objective list);
+        # else the calculator's own ``self.maximize`` directions (so the public
+        # no-arg export still knows a systematically-missing objective is a
+        # declared dimension); else — only when the calculator carries no
+        # configured directions at all — the union of the points' observed keys.
         if objectives is not None:
             declared: set[str] = set(objectives)
+        elif self.maximize:
+            declared = set(self.maximize)
         else:
             declared = set()
             for point in pareto_front:

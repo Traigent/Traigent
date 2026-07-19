@@ -957,14 +957,26 @@ class TestConfiguredObjectiveScope:
 
     def test_hypervolume_configured_objective_missing_from_all_points_is_zero(self):
         # Configured 2-objective space {a, b}; every point omits `b`. Over the
-        # configured space no point is complete → volume is 0. Inferring the
-        # dimensionality from observed keys would collapse it to a 1-D front
-        # and return a positive volume.
+        # configured space no point is complete → volume is 0.
         calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
         front = [_pt(a=3.0), _pt(a=7.0)]
+        # Explicit objective list: 0.
         assert calc.calculate_hypervolume(front, objectives=["a", "b"]) == 0.0
-        # Revert-proof: the observed-key fallback wrongly treats this as 1-D
-        # and returns a positive volume.
+        # PUBLIC no-arg call must ALSO be safe: with no explicit list the
+        # declared set falls back to the calculator's configured directions
+        # (self.maximize = {a, b}), so `b` stays a declared dimension and the
+        # front is still incomplete → 0. (Inferring dimensionality from the
+        # observed keys alone would collapse this to a 1-D front and return a
+        # spurious positive volume.)
+        assert calc.calculate_hypervolume(front) == 0.0
+
+    def test_hypervolume_no_arg_falls_back_to_observed_only_when_unconfigured(self):
+        # Degenerate case: a calculator built with NO configured directions
+        # (empty maximize, no schema) and a no-arg call has zero configuration
+        # signal, so it can only compute over the observed keys — here a
+        # legitimate 1-D front over `a`. Documents the sole remaining fallback.
+        calc = ParetoFrontCalculator()
+        front = [_pt(a=3.0), _pt(a=7.0)]
         assert calc.calculate_hypervolume(front) > 0.0
 
     def test_hypervolume_single_configured_objective_still_computes(self):
