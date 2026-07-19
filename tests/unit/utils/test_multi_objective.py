@@ -945,6 +945,70 @@ class TestExactHypervolume2DCorrectness:
 
 
 @pytest.mark.unit
+class TestConfiguredObjectiveScope:
+    """Regression (#1941): dimensionality/comparability follow the CONFIGURED
+    objective set, not whichever keys happen to be observed on the points.
+
+    A configured objective that is systematically missing from every point
+    must not silently drop out — it collapses the nominal dimensionality and
+    makes hypervolume report a positive value / dominance decide on the
+    surviving objectives alone.
+    """
+
+    def test_hypervolume_configured_objective_missing_from_all_points_is_zero(self):
+        # Configured 2-objective space {a, b}; every point omits `b`. Over the
+        # configured space no point is complete → volume is 0. Inferring the
+        # dimensionality from observed keys would collapse it to a 1-D front
+        # and return a positive volume.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        assert calc.calculate_hypervolume(front, objectives=["a", "b"]) == 0.0
+        # Revert-proof: the observed-key fallback wrongly treats this as 1-D
+        # and returns a positive volume.
+        assert calc.calculate_hypervolume(front) > 0.0
+
+    def test_hypervolume_single_configured_objective_still_computes(self):
+        # A genuinely 1-configured-objective front is unaffected.
+        calc = ParetoFrontCalculator(maximize={"a": True})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        # Auto ref = min-1 = 2 → best 7 - 2 = 5.
+        assert calc.calculate_hypervolume(front, objectives=["a"]) == pytest.approx(5.0)
+
+    def test_hypervolume_mixed_completeness_uses_only_complete_over_configured(self):
+        # Configured {a, b}: one complete point, one missing configured `b`.
+        # Only the complete point contributes, over the 2-D configured space;
+        # the partial point does not shift the reference or the volume.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        complete = _pt(a=2.0, b=2.0)
+        partial = _pt(a=9.0)  # missing configured `b`
+        # Auto ref uses only complete points = (1, 1); box = 1 * 1 = 1.0.
+        hv = calc.calculate_hypervolume([complete, partial], objectives=["a", "b"])
+        assert hv == pytest.approx(1.0)
+
+    def test_dominance_configured_objective_missing_from_both_is_non_comparable(self):
+        # Both points report `a` but omit configured `b`. Over the observed
+        # keys alone p1 would dominate p2 on `a`; over the configured {a, b}
+        # space the pair is non-comparable, so neither dominates.
+        p1 = _pt(a=9.0)
+        p2 = _pt(a=1.0)
+        maximize = {"a": True, "b": True}
+        assert p1.dominates(p2, maximize, objectives=["a", "b"]) is False
+        assert p2.dominates(p1, maximize, objectives=["a", "b"]) is False
+        # Revert-proof: without the configured list, the observed-key union {a}
+        # lets the metric-incomplete p1 dominate p2.
+        assert p1.dominates(p2, maximize) is True
+
+    def test_dominance_configured_complete_points_still_compare(self):
+        # Control: with both points complete over the configured space,
+        # domination still resolves normally.
+        p1 = _pt(a=9.0, b=9.0)
+        p2 = _pt(a=1.0, b=1.0)
+        maximize = {"a": True, "b": True}
+        assert p1.dominates(p2, maximize, objectives=["a", "b"]) is True
+        assert p2.dominates(p1, maximize, objectives=["a", "b"]) is False
+
+
+@pytest.mark.unit
 class TestApproximateHypervolumeOrientation:
     """Regression for #1945: >2D Monte-Carlo box must be orientation-aware."""
 

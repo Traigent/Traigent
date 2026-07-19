@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,7 +41,11 @@ class ParetoPoint:
     trial: TrialResult
 
     def dominates(
-        self, other: ParetoPoint, maximize: dict[str, bool], epsilon: float = 1e-10
+        self,
+        other: ParetoPoint,
+        maximize: dict[str, bool],
+        epsilon: float = 1e-10,
+        objectives: Iterable[str] | None = None,
     ) -> bool:
         """Check if this point dominates another point with epsilon tolerance.
 
@@ -48,6 +53,15 @@ class ParetoPoint:
             other: Other Pareto point
             maximize: Dictionary indicating whether to maximize each objective
             epsilon: Tolerance for numerical comparison
+            objectives: The CONFIGURED objective set the optimization declared.
+                Domination is decided over exactly these objectives. When
+                omitted, falls back to the union of the two points' *observed*
+                keys (backward compatible), but callers with the configured
+                list should pass it: otherwise an objective that is
+                systematically missing from every point (e.g. an unreported
+                ``cost``) drops out of the comparison entirely, letting a
+                metric-incomplete trial dominate on the surviving objectives
+                (#1941).
 
         Returns:
             True if this point dominates the other
@@ -56,7 +70,13 @@ class ParetoPoint:
         # point lacks any objective in the requested set, the pair is
         # incomparable — deciding domination on the shared subset alone lets a
         # metric-incomplete trial evict a fully-measured one from the front.
-        requested = set(self.objectives) | set(other.objectives)
+        # The requested set is the CONFIGURED objectives when supplied (so a
+        # universally-missing objective still makes the pair incomparable)
+        # rather than only what happens to be observed on these two points.
+        if objectives is not None:
+            requested = set(objectives)
+        else:
+            requested = set(self.objectives) | set(other.objectives)
         if any(
             obj_name not in self.objectives or obj_name not in other.objectives
             for obj_name in requested
@@ -65,7 +85,8 @@ class ParetoPoint:
 
         better_in_at_least_one = False
 
-        for obj_name, obj_value in self.objectives.items():
+        for obj_name in requested:
+            obj_value = self.objectives[obj_name]
             other_value = other.objectives[obj_name]
             should_maximize = maximize.get(obj_name, True)
 
@@ -160,7 +181,9 @@ class ParetoFrontCalculator:
             is_dominated = False
 
             for j, other_point in enumerate(points):
-                if i != j and other_point.dominates(point, self.maximize):
+                if i != j and other_point.dominates(
+                    point, self.maximize, objectives=objectives
+                ):
                     is_dominated = True
                     break
 
@@ -173,12 +196,23 @@ class ParetoFrontCalculator:
         self,
         pareto_front: list[ParetoPoint],
         reference_point: dict[str, float] | None = None,
+        objectives: Iterable[str] | None = None,
     ) -> float:
         """Calculate hypervolume indicator for Pareto front.
 
         Args:
             pareto_front: List of Pareto-optimal points
             reference_point: Reference point for hypervolume calculation
+            objectives: The CONFIGURED objective set. Dimensionality and
+                completeness are decided over exactly these objectives. When
+                omitted, falls back to the union of the points' *observed* keys
+                (backward compatible) — but that fallback is order-independent
+                only when every point reports the same keys: if a configured
+                objective (e.g. ``cost``) is missing from *every* point, the
+                observed union collapses the nominal 2-D front to 1-D and
+                reports a positive volume instead of the correct
+                zero/non-comparable. Callers with the configured list must pass
+                it (#1941).
 
         Returns:
             Hypervolume value
@@ -186,35 +220,47 @@ class ParetoFrontCalculator:
         if not pareto_front:
             return 0.0
 
-        # Explicit mixed-completeness semantic (#1941 follow-up): with ragged
-        # metric sets, complete and partial points legitimately coexist on the
-        # front (they are non-comparable), but hypervolume is defined over the
-        # front's FULL objective space — so it is computed over the union of
-        # declared objectives using only the points complete in that space.
-        # A partial point contributes zero volume. Deriving the objective list
-        # from whichever point happened to be first made the result
-        # order-dependent: complete-first raised KeyError on the partial
-        # point; partial-first silently misclassified the front as
-        # lower-dimensional and returned a wrong (often 0.0) volume.
-        declared: set[str] = set()
-        for point in pareto_front:
-            declared.update(point.objectives)
+        # Dimensionality and completeness are defined over the CONFIGURED
+        # objective space when supplied, NOT whichever keys happen to be
+        # observed. With ragged metric sets, complete and partial points
+        # legitimately coexist on the front (they are non-comparable), but the
+        # hypervolume is over the full declared space: a point missing any
+        # declared objective is not complete and contributes zero volume, and
+        # if NO point is complete the volume is zero (never re-inferred at a
+        # lower dimensionality from the surviving keys).
+        if objectives is not None:
+            declared: set[str] = set(objectives)
+        else:
+            declared = set()
+            for point in pareto_front:
+                declared.update(point.objectives)
+        if not declared:
+            return 0.0
         complete_points = [p for p in pareto_front if declared <= set(p.objectives)]
         if not complete_points:
             return 0.0
+
+        # Freeze a deterministic objective ordering for the helpers so they
+        # operate on exactly the declared space rather than re-deriving it from
+        # a point's observed keys (which may carry extra, non-declared metrics).
+        declared_objectives = sorted(declared)
 
         if len(declared) == 1:
             # A genuinely 1-D front previously fell into the 2-D helper's
             # ``len(objectives) != 2`` guard and returned 0.0 silently.
             return self._hypervolume_1d(
-                complete_points, next(iter(declared)), reference_point
+                complete_points, declared_objectives[0], reference_point
             )
 
         if len(declared) > 2:
             # For > 2D, use approximation
-            return self._approximate_hypervolume(complete_points, reference_point)
+            return self._approximate_hypervolume(
+                complete_points, reference_point, declared_objectives
+            )
 
-        return self._exact_hypervolume_2d(complete_points, reference_point)
+        return self._exact_hypervolume_2d(
+            complete_points, reference_point, declared_objectives
+        )
 
     def _hypervolume_1d(
         self,
@@ -244,13 +290,23 @@ class ParetoFrontCalculator:
         return max(0.0, length)
 
     def _exact_hypervolume_2d(
-        self, pareto_front: list[ParetoPoint], reference_point: dict[str, float] | None
+        self,
+        pareto_front: list[ParetoPoint],
+        reference_point: dict[str, float] | None,
+        objectives: list[str] | None = None,
     ) -> float:
-        """Calculate exact hypervolume for 2D case."""
+        """Calculate exact hypervolume for 2D case.
+
+        ``objectives`` is the declared 2-objective space. When omitted it falls
+        back to the first point's observed keys (backward compatible), but the
+        caller passes the declared list so an extra, non-declared metric on a
+        point cannot silently swap which two objectives are measured.
+        """
         if len(pareto_front) == 0:
             return 0.0
 
-        objectives = list(pareto_front[0].objectives.keys())
+        if objectives is None:
+            objectives = list(pareto_front[0].objectives.keys())
         if len(objectives) != 2:
             return 0.0
 
@@ -309,13 +365,21 @@ class ParetoFrontCalculator:
         return hypervolume
 
     def _approximate_hypervolume(
-        self, pareto_front: list[ParetoPoint], reference_point: dict[str, float] | None
+        self,
+        pareto_front: list[ParetoPoint],
+        reference_point: dict[str, float] | None,
+        objectives: list[str] | None = None,
     ) -> float:
-        """Calculate approximate hypervolume for high-dimensional case using Monte Carlo."""
+        """Calculate approximate hypervolume for high-dimensional case using Monte Carlo.
+
+        ``objectives`` is the declared objective space; when omitted it falls
+        back to the first point's observed keys (backward compatible).
+        """
         if not pareto_front:
             return 0.0
 
-        objectives = list(pareto_front[0].objectives.keys())
+        if objectives is None:
+            objectives = list(pareto_front[0].objectives.keys())
 
         # Build the sampling box per-objective from orientation (#1945). The box
         # spans from the *nadir* (reference / worst) to the *ideal* (best +
