@@ -148,7 +148,10 @@ class TestValidateModelNames:
 
     def test_all_valid_openai_models(self):
         """Test validation with all known OpenAI models."""
-        models = ["gpt-4o", "gpt-4o-mini", "o1-mini"]
+        # Current (non-retired) known models only. o1-mini used to sit here but
+        # was swept as retired (#1936/#1937), so it now falls to the unknown
+        # bucket rather than validating.
+        models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
         valid, unknown = validate_model_names(models, "openai")
         assert valid == models
         assert unknown == []
@@ -1258,10 +1261,12 @@ class TestModuleLevelConstants:
         assert "google" in _KNOWN_MODELS
         assert "mistral" in _KNOWN_MODELS
         assert "cohere" in _KNOWN_MODELS
-        # Verify some known models
+        # Verify some current (non-retired) known models. gemini-1.5-flash used
+        # to be asserted here but was swept as retired (#1936/#1937); the
+        # current Google entry is gemini-2.0-flash.
         assert "gpt-4o" in _KNOWN_MODELS["openai"]
         assert "claude-3-haiku-20240307" in _KNOWN_MODELS["anthropic"]
-        assert "gemini-1.5-flash" in _KNOWN_MODELS["google"]
+        assert "gemini-2.0-flash" in _KNOWN_MODELS["google"]
 
     def test_auth_error_types_exist(self):
         """Test _AUTH_ERROR_TYPES contains expected error types."""

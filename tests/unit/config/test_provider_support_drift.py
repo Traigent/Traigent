@@ -403,6 +403,31 @@ class TestModelCatalogCurrency:
             offenders = {mid for mid in snapshot if is_retired_model(mid)}
             assert not offenders, f"{name} serves retired model IDs: {offenders}"
 
+    def test_every_finite_model_table_is_swept(self) -> None:
+        # #1937's literal ask: value-level drift — EVERY finite model table the
+        # SDK ships must contain no member of the retired denylist. This is the
+        # single guard that fails if any table drifts back to serving a retired
+        # id (sol's correction: the round-3 check only partially scanned
+        # _KNOWN_MODELS — this scans it and the provider tables in full).
+        import traigent.integrations.providers as prov
+        from traigent.providers.validation import _KNOWN_MODELS
+
+        tables: dict[str, list[str]] = {}
+        for provider, ids in _KNOWN_MODELS.items():
+            tables[f"_KNOWN_MODELS[{provider}]"] = list(ids)
+        for key, ids in prov._FALLBACK_MODELS.items():
+            tables[f"_FALLBACK_MODELS[{key}]"] = list(ids)
+        for provider, tiers in prov._MODEL_TIERS.items():
+            for tier, ids in tiers.items():
+                tables[f"_MODEL_TIERS[{provider}][{tier}]"] = list(ids)
+
+        offenders = {
+            name: sorted(m for m in ids if is_retired_model(m))
+            for name, ids in tables.items()
+            if any(is_retired_model(m) for m in ids)
+        }
+        assert not offenders, f"finite model tables serve retired IDs: {offenders}"
+
     def test_pattern_fallback_rejects_retired_ids(self) -> None:
         # The regex fallback accepts unknown-but-plausible NEW ids; it must
         # not RE-ADMIT retired ids whose shape still matches. These four are

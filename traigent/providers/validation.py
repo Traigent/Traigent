@@ -104,8 +104,7 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "gpt-5-nano",
             "gpt-5.1",
             "gpt-5.2",
-            "o1-mini",
-            "o1-preview",
+            # Retired o1-preview / o1-mini pruned (#1936/#1937).
             "o3-mini",
         }
     ),
@@ -125,8 +124,8 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             # Claude 3.5 series (2024)
             "claude-3-5-sonnet-20241022",
             "claude-3-5-haiku-20241022",
-            # Claude 3 series (2024)
-            "claude-3-opus-20240229",
+            # Claude 3 series (2024). Retired claude-3-opus-20240229 pruned
+            # (#1936/#1937).
             "claude-3-sonnet-20240229",
             "claude-3-haiku-20240307",
         }
@@ -134,12 +133,8 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
     "google": frozenset(
         {
             "gemini-2.0-flash",
-            "gemini-2.0-flash-exp",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-pro-latest",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            # Retired gemini-1.0-pro / gemini-pro pruned (#1936).
+            # Retired gemini-1.5 family, gemini-2.0-flash-exp preview, and
+            # gemini-1.0-pro / gemini-pro pruned (#1936/#1937).
         }
     ),
     "mistral": frozenset(
