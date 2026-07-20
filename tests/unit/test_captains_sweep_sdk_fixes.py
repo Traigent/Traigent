@@ -6,8 +6,12 @@ old/partial code and pass only with the complete fix:
 
 * #1957 — model pricing uses forward longest-prefix only (no reverse-prefix
   mis-pricing of partial model names).
-* #1958 — the constraint fallback-pricing path agrees BY CONSTRUCTION with the
-  canonical ``_estimation_cost_from_tokens`` path (no input/output averaging).
+* #1958 — the model-cost constraint prices canonical-FIRST
+  (``_estimation_cost_from_tokens``) with litellm as a FALLBACK: a model in the
+  curated table returns the same canonical number whether or not litellm is
+  installed (no litellm-first flip), while a model outside the table stays
+  priceable via the litellm fallback (coverage), and a model unknown to both
+  fails the constraint.
 * #1959 — ``best_result`` honors the declared objective orientation.
 * #1960 — ``_simple_is_better`` (live incumbent primary) honors declared
   orientation.
@@ -118,6 +122,215 @@ def test_1958_unknown_model_fails_the_constraint() -> None:
     from traigent.utils.constraints import _try_fallback_pricing
 
     assert _try_fallback_pricing("totally-unknown-model-xyz", 1000) is None
+
+
+# --------------------------------------------------------------------------- #
+# #1958 — the LIVE constraint calculator: canonical FIRST, litellm FALLBACK
+#
+# The tests above call the ``_try_fallback_pricing`` helper directly, which
+# skips the live ``model_cost_constraint().resource_calculator`` path. That live
+# path was the actual blocker: it called ``litellm.cost_per_token`` FIRST and
+# returned litellm's RAW-model price before the canonical path ran, so the same
+# (model, max_tokens) resolved to a DIFFERENT cost depending on whether litellm
+# was installed (raw ``gpt-4`` $0.03 with litellm vs canonical gpt-4->gpt-4-turbo
+# $0.010 without).
+#
+# The fix inverts the order to canonical-FIRST, litellm-FALLBACK:
+#   * a model IN the canonical table (or its aliases) is ALWAYS priced by
+#     canonical -> deterministic and equal to canonical whether or not litellm is
+#     installed (this is sol's #1958 fix). litellm can no longer flip its value.
+#   * a model OUTSIDE the canonical table falls back to litellm so exotic / newer
+#     models stay priceable (coverage) -- env-dependent on litellm.
+#   * a model unknown to BOTH sources fails the constraint (inf).
+# --------------------------------------------------------------------------- #
+# gpt-4 + claude-3-opus are canonically aliased (gpt-4 -> gpt-4-turbo); gpt-4o is
+# not aliased. gpt-4 is the reproducer whose litellm raw price != canonical.
+_CANONICAL_CONSTRAINT_MODELS = ["gpt-4", "claude-3-opus", "gpt-4o"]
+
+
+def _canonical_budget_cost(model: str, max_tokens: int) -> float:
+    """The canonical estimate: whole budget priced as input tokens, summed."""
+    from traigent.utils.cost_calculator import _estimation_cost_from_tokens
+
+    return sum(_estimation_cost_from_tokens(model, max_tokens, 0, _quiet=True))
+
+
+@pytest.mark.parametrize("model", _CANONICAL_CONSTRAINT_MODELS)
+def test_1958_live_constraint_equals_canonical_when_litellm_absent(
+    model: str,
+) -> None:
+    """The LIVE constraint calculator equals canonical with litellm UNIMPORTABLE.
+
+    Exercises ``model_cost_constraint().resource_calculator`` (the live path),
+    not the ``_try_fallback_pricing`` helper. ``litellm`` is forced unimportable
+    via a ``None`` entry in ``sys.modules``.
+    """
+    import sys
+
+    from traigent.utils.constraints import model_cost_constraint
+
+    max_tokens = 1000
+    canonical = _canonical_budget_cost(model, max_tokens)
+    assert canonical > 0  # sanity: canonical DOES price these models
+
+    calc = model_cost_constraint(0.1).resource_calculator
+    with mock.patch.dict(sys.modules, {"litellm": None}):
+        cost = calc({"model": model, "max_tokens": max_tokens})
+
+    assert cost == pytest.approx(canonical, rel=1e-12)
+
+
+@pytest.mark.parametrize("model", _CANONICAL_CONSTRAINT_MODELS)
+def test_1958_live_constraint_ignores_litellm_when_present(model: str) -> None:
+    """The LIVE constraint returns canonical even when litellm is PRESENT and
+    would quote a different raw price.
+
+    This is exactly what the direct-helper tests missed. We stub
+    ``litellm.cost_per_token`` to an absurd sentinel that a (retired /
+    reintroduced) litellm-first branch would surface; the constraint must ignore
+    it and return the canonical value. Without this, a future litellm-first
+    regression would silently pass the suite again.
+    """
+    litellm = pytest.importorskip("litellm")
+
+    from traigent.utils.constraints import model_cost_constraint
+
+    max_tokens = 1000
+    canonical = _canonical_budget_cost(model, max_tokens)
+    # Sentinel per-(1000-token) rate that is clearly != canonical if consulted.
+    sentinel_rate = canonical * 1000.0
+    calc = model_cost_constraint(0.1).resource_calculator
+
+    with mock.patch.object(
+        litellm, "cost_per_token", return_value=(sentinel_rate, sentinel_rate)
+    ):
+        cost = calc({"model": model, "max_tokens": max_tokens})
+
+    assert cost == pytest.approx(canonical, rel=1e-12)
+    # A litellm-first branch would have surfaced the sentinel instead:
+    assert cost != pytest.approx(sentinel_rate, rel=1e-9)
+
+
+def test_1958_live_constraint_gpt4_flips_would_be_the_bug() -> None:
+    """Pin the concrete numbers behind the blocker for gpt-4 / 1000 tokens.
+
+    Canonical (gpt-4 -> gpt-4-turbo, whole budget as input) == $0.010. litellm's
+    raw ``gpt-4`` input price for a 1000-token budget is $0.03. The live
+    constraint must equal the canonical $0.010 whether or not litellm is present
+    -- never the raw $0.03 (that flip WAS the defect).
+    """
+    import sys
+
+    from traigent.utils.constraints import model_cost_constraint
+
+    calc = model_cost_constraint(0.1).resource_calculator
+    cfg = {"model": "gpt-4", "max_tokens": 1000}
+
+    canonical = _canonical_budget_cost("gpt-4", 1000)
+    assert canonical == pytest.approx(0.010, rel=1e-9)
+
+    with mock.patch.dict(sys.modules, {"litellm": None}):
+        cost_absent = calc(cfg)
+    cost_present = calc(cfg)  # litellm importable in this venv
+
+    assert cost_absent == pytest.approx(0.010, rel=1e-9)
+    assert cost_present == pytest.approx(0.010, rel=1e-9)
+    assert cost_absent == pytest.approx(cost_present, rel=1e-12)
+    # The raw-gpt-4 value the old litellm-first branch returned with litellm on:
+    assert cost_present != pytest.approx(0.030, rel=1e-6)
+
+
+def test_1958_live_constraint_unknown_to_both_sources_fails() -> None:
+    """A model unknown to BOTH canonical AND litellm fails the constraint (inf).
+
+    ``totally-unknown-model-xyz`` is in neither the curated table nor litellm's
+    catalog, so canonical returns None, the litellm fallback returns None, and
+    the constraint returns inf -- with litellm both absent and present. This
+    preserves the "unknown model fails the constraint" contract under the new
+    canonical-first / litellm-fallback ordering.
+    """
+    import math
+    import sys
+
+    from traigent.utils.constraints import model_cost_constraint
+
+    calc = model_cost_constraint(0.1).resource_calculator
+    cfg = {"model": "totally-unknown-model-xyz", "max_tokens": 1000}
+
+    with mock.patch.dict(sys.modules, {"litellm": None}):
+        assert math.isinf(calc(cfg))
+    # litellm importable in this venv but it doesn't know this model either:
+    assert math.isinf(calc(cfg))
+
+
+# --------------------------------------------------------------------------- #
+# #1958 — litellm FALLBACK preserves coverage for models OUTSIDE the canonical
+# table (the trade-off the owner chose over canonical-only, which narrowed the
+# constraint to the ~12 curated models).
+# --------------------------------------------------------------------------- #
+def test_1958_exotic_model_uses_litellm_fallback_when_canonical_misses() -> None:
+    """A model the canonical table cannot price is priced by the litellm fallback.
+
+    Deterministic + catalog-independent: canonical genuinely returns None for a
+    synthetic exotic name, and the module-level ``_try_litellm_pricing`` is
+    stubbed to a sentinel. The constraint must surface the sentinel (fallback
+    reached). A canonical-KNOWN model must still ignore the stub (canonical
+    first), proving the precedence, not just that a fallback exists.
+    """
+    from traigent.utils import constraints as C
+
+    exotic = "zzz-exotic-model-not-in-curated-table"
+    # Precondition: canonical really cannot price this -> fallback is required.
+    assert C._try_fallback_pricing(exotic, 1000) is None
+
+    sentinel = 0.4242
+    calc = C.model_cost_constraint(0.1).resource_calculator
+    with mock.patch.object(C, "_try_litellm_pricing", return_value=sentinel):
+        exotic_cost = calc({"model": exotic, "max_tokens": 1000})
+        # Canonical-known model: canonical wins, litellm fallback NOT consulted.
+        gpt4_cost = calc({"model": "gpt-4", "max_tokens": 1000})
+
+    assert exotic_cost == pytest.approx(sentinel, rel=1e-12)  # coverage via fallback
+    assert gpt4_cost == pytest.approx(0.010, rel=1e-9)  # canonical-first precedence
+    assert gpt4_cost != pytest.approx(sentinel, rel=1e-9)
+
+
+def test_1958_exotic_real_litellm_model_priced_when_present_inf_when_absent() -> None:
+    """Real coverage: a litellm-known model outside the curated table is priced
+    by the fallback when litellm is PRESENT, and fails (inf) when it is ABSENT.
+
+    ``command-r-plus`` is a stable litellm-priced model that is NOT in the
+    curated table (canonical returns None), so it exercises the real fallback.
+    """
+    import math
+    import sys
+
+    litellm = pytest.importorskip("litellm")
+
+    from traigent.utils.constraints import (
+        _try_fallback_pricing,
+        _try_litellm_pricing,
+        model_cost_constraint,
+    )
+
+    exotic = "command-r-plus"
+    # Precondition: outside the curated table AND known to litellm.
+    assert _try_fallback_pricing(exotic, 1000) is None
+    litellm_price = _try_litellm_pricing(exotic, 1000)
+    if litellm_price is None or litellm_price <= 0:
+        pytest.skip(f"litellm build does not price {exotic!r}")
+
+    calc = model_cost_constraint(0.1).resource_calculator
+    cfg = {"model": exotic, "max_tokens": 1000}
+
+    # litellm PRESENT: constraint returns the litellm fallback price (coverage).
+    assert calc(cfg) == pytest.approx(litellm_price, rel=1e-12)
+    assert calc(cfg) > 0
+    _ = litellm  # keep the importorskip handle referenced
+
+    # litellm ABSENT: no fallback -> exotic model fails the constraint.
+    with mock.patch.dict(sys.modules, {"litellm": None}):
+        assert math.isinf(calc(cfg))
 
 
 # --------------------------------------------------------------------------- #
