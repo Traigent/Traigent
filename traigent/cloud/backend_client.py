@@ -25,7 +25,12 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
-from traigent.cloud.auth import AuthenticationError, _build_api_key_auth_headers
+from traigent.cloud.auth import (
+    AuthenticationError,
+    _build_api_key_auth_headers,
+    _inject_trace_context,
+    _strip_trace_context_headers,
+)
 from traigent.cloud.backend_bridges import SDKBackendBridge, SessionExperimentMapping
 from traigent.cloud.backend_bridges import bridge as _bridge
 from traigent.cloud.backend_components import (
@@ -1161,6 +1166,9 @@ class BackendIntegratedClient:
 
         headers = _build_api_key_auth_headers(api_key)
         headers.setdefault("User-Agent", _SDK_USER_AGENT)
+        # This path bypasses AuthManager._add_common_headers, so inject the
+        # active trace context directly (no-op when tracing is unavailable).
+        _inject_trace_context(headers)
         cached_etag = cached.get("etag") if isinstance(cached, dict) else None
         if isinstance(cached_etag, str) and cached_etag:
             headers["If-None-Match"] = cached_etag
@@ -1372,7 +1380,10 @@ class BackendIntegratedClient:
             )
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-                headers=headers,
+                # Session-default headers are long-lived: never freeze a
+                # traceparent/tracestate into them (stale span context).
+                # Trace context travels only on per-request headers.
+                headers=_strip_trace_context_headers(headers),
                 trust_env=True,
             )
             self._register_session_finalizer(self._session)
@@ -1430,7 +1441,9 @@ class BackendIntegratedClient:
 
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-                headers=headers,
+                # Same rule as __aenter__: no stale trace context in
+                # long-lived session-default headers.
+                headers=_strip_trace_context_headers(headers),
                 trust_env=True,
             )
             self._register_session_finalizer(self._session)
@@ -1786,6 +1799,9 @@ class BackendIntegratedClient:
         # a license to ship an unauthenticated request. Surface it as a
         # ``CloudServiceError`` so the caller fails closed instead.
         if getattr(self, "auth_manager", None) is None:
+            # Anonymous Edge mode bypasses AuthManager._add_common_headers, so
+            # inject the active trace context here (no-op when unavailable).
+            _inject_trace_context(default_headers)
             return default_headers
         auth = getattr(self.auth_manager, "auth", None)
         if auth is None or not hasattr(auth, "get_headers"):
