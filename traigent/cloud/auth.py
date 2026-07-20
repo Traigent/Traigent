@@ -132,12 +132,15 @@ _TRACE_CONTEXT_HEADER_NAMES = frozenset({"traceparent", "tracestate"})
 def _inject_trace_context(headers: dict[str, str]) -> None:
     """Inject the active W3C trace context into outbound request headers.
 
-    When an OpenTelemetry span context is active, add the standard
-    ``traceparent`` (and, when present, ``tracestate``) headers so the
-    receiving service continues the *same* distributed trace. This is what
-    lets a single customer optimization run appear as one Tempo trace spanning
-    both the SDK (``traigent-optimizer``) and the backend
-    (``traigent-backend``) instead of two disjoint trees.
+    When an OpenTelemetry span context is active, add the standard W3C
+    ``traceparent`` header so the receiving service continues the *same*
+    distributed trace. This is what lets a single customer optimization run
+    appear as one Tempo trace spanning both the SDK (``traigent-optimizer``)
+    and the backend (``traigent-backend``) instead of two disjoint trees.
+
+    Only ``traceparent`` (trace-id / span-id / flags) is forwarded.
+    ``tracestate`` is deliberately **not** emitted to the backend -- see the
+    privacy note at the strip step below.
 
     Deliberately uses an *explicit* W3C ``TraceContextTextMapPropagator``
     instance rather than the process-global propagator
@@ -184,6 +187,18 @@ def _inject_trace_context(headers: dict[str, str]) -> None:
     # No-op when no span is recording (the W3C propagator writes nothing for
     # an invalid span context).
     TraceContextTextMapPropagator().inject(headers)
+    # Privacy: forward ONLY the W3C ``traceparent`` (trace-id / span-id /
+    # flags). ``tracestate`` is deliberately NOT forwarded to the backend: the
+    # active span can inherit ``tracestate`` from an upstream/user-controlled
+    # trace context, where it carries vendor/user key-value metadata. Emitting
+    # that to ``traigent-backend`` would be metadata egress, and telemetry /
+    # metadata defaults to redaction. The W3C propagator writes a lowercase
+    # ``tracestate``; strip case-insensitively to be safe against any
+    # propagator that varies the casing. This is the single choke point for
+    # all four SDK->backend paths (backend / hybrid / analytics / evaluation),
+    # so stripping here covers every outbound call.
+    for _name in [name for name in headers if name.lower() == "tracestate"]:
+        del headers[_name]
 
 
 def _strip_trace_context_headers(headers: dict[str, str]) -> dict[str, str]:

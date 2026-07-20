@@ -1035,6 +1035,42 @@ def _recording_span():
         yield span
 
 
+@contextmanager
+def _recording_span_with_tracestate(vendor_state="vendor=1"):
+    """Attach a recording span whose context INHERITS a ``tracestate``.
+
+    Builds a remote parent ``SpanContext`` carrying a vendor ``TraceState``
+    (as if extracted from an upstream/user-controlled trace context), then
+    starts a child recording span under it. The child inherits the parent's
+    ``tracestate``, so the W3C propagator -- left to itself -- would inject
+    BOTH ``traceparent`` and ``tracestate``. This is exactly the metadata-egress
+    surface SDK #1893 must not forward to the backend.
+    """
+    from opentelemetry.trace import (
+        NonRecordingSpan,
+        SpanContext,
+        TraceFlags,
+        TraceState,
+        set_span_in_context,
+    )
+
+    trace_state = TraceState(
+        [tuple(pair.split("=", 1)) for pair in vendor_state.split(",")]
+    )
+    parent_ctx = SpanContext(
+        trace_id=0x0AF7651916CD43DD8448EB211C80319C,
+        span_id=0x00F067AA0BA902B7,
+        is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        trace_state=trace_state,
+    )
+    parent_context = set_span_in_context(NonRecordingSpan(parent_ctx))
+    provider = _SdkTracerProvider()
+    tracer = provider.get_tracer("test-sdk-1893")
+    with tracer.start_as_current_span("child-span", context=parent_context) as span:
+        yield span
+
+
 class TestTraceparentInjection:
     """SDK #1882: outbound backend/hybrid headers must carry W3C traceparent."""
 
@@ -1329,3 +1365,22 @@ class TestTraceparentInjection:
         with _recording_span():
             _inject_trace_context(headers)
         assert headers == {"Tracestate": "vendor=1"}
+
+    def test_active_span_tracestate_never_forwarded_to_backend(self):
+        """SDK #1893 (privacy): when the ACTIVE span's context inherited a
+        vendor ``tracestate`` from an upstream/user-controlled trace context,
+        the helper must still emit a well-formed ``traceparent`` but must NOT
+        forward ``tracestate`` (any casing) to the backend -- that is inherited
+        vendor/user metadata and defaults to redaction. Guards the metadata
+        egress gap: the caller-supplied-tracestate skip does not cover a
+        tracestate that rides in on the active span itself."""
+        headers: dict[str, str] = {}
+        with _recording_span_with_tracestate("vendor=1,acme=xyz") as span:
+            _inject_trace_context(headers)
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        # traceparent is present, well-formed, and on the active trace.
+        assert _TRACEPARENT_RE.match(headers.get("traceparent", "")), headers
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+        # tracestate must NOT be forwarded, in ANY header-name casing.
+        assert not any(name.lower() == "tracestate" for name in headers), headers
