@@ -444,6 +444,27 @@ class PersistenceManager:
         else:
             raise ValueError(f"Trials file missing for result '{name}'")
 
+        # Validate required metadata fields before reconstruction so a
+        # truncated / hand-edited / legacy metadata.json surfaces as the
+        # documented ValueError ("If result data is corrupted") rather than a
+        # bare KeyError that callers catching ValueError would miss (#1962).
+        required_keys = (
+            "best_config",
+            "best_score",
+            "duration",
+            "convergence_info",
+            "objectives",
+            "algorithm",
+            "created_at",
+            "function_name",
+            "configuration_space",
+        )
+        for key in required_keys:
+            if key not in metadata:
+                raise ValueError(
+                    f"Corrupted metadata for result '{name}': missing '{key}'"
+                )
+
         # Reconstruct optimization result
         result = OptimizationResult(
             trials=trials,

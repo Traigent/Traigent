@@ -480,7 +480,15 @@ def max_tokens_constraint(
 
 
 def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
-    """Try litellm for cost-per-token pricing. Returns None if unavailable."""
+    """Try litellm for cost-per-token pricing. Returns None if unavailable.
+
+    The constraint models ``max_tokens`` as an input-token budget so it agrees
+    with the canonical ``_estimation_cost_from_tokens`` estimation path used by
+    the fallback branch (issue #1958): both price the whole token budget as
+    input tokens. Averaging input/output rates (the previous behavior) diverged
+    from that path and made the same model+budget resolve to a different cost
+    depending on whether litellm was installed.
+    """
     try:
         import litellm
 
@@ -489,8 +497,8 @@ def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
             model=model, prompt_tokens=1000, completion_tokens=1000
         )
         if input_cost > 0 or output_cost > 0:
-            avg_cost_per_1k = (input_cost + output_cost) / 2
-            return float(avg_cost_per_1k * (max_tokens / 1000))
+            input_cost_per_1k = input_cost  # cost of 1000 prompt tokens
+            return float(input_cost_per_1k * (max_tokens / 1000))
 
         from traigent.utils.cost_calculator import _is_model_known_to_litellm
 
@@ -505,49 +513,33 @@ def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
     return None
 
 
-def _find_fallback_pricing(
-    base_model: str, pricing_table: dict[str, dict[str, float]]
-) -> dict[str, float] | None:
-    """Find best-match pricing from the fallback table."""
-    # Exact match
-    for key, value in pricing_table.items():
-        if key.lower() == base_model:
-            return value
-
-    # Prefix matching — prefer longest match
-    best_match_len = 0
-    pricing: dict[str, float] | None = None
-    for model_key, model_pricing in pricing_table.items():
-        key_lower = model_key.lower()
-        match_len = 0
-        if base_model.startswith(key_lower):
-            match_len = len(key_lower)
-        elif key_lower.startswith(base_model):
-            match_len = len(base_model)
-        if match_len > best_match_len:
-            best_match_len = match_len
-            pricing = model_pricing
-    return pricing
-
-
 def _try_fallback_pricing(model: str, max_tokens: int) -> float | None:
-    """Try ESTIMATION_MODEL_PRICING fallback. Returns None if unavailable."""
-    try:
-        from traigent.utils.cost_calculator import (
-            ESTIMATION_MODEL_PRICING,
-            _normalize_model_for_fallback,
-        )
+    """Estimate constraint cost via the canonical estimation path.
 
-        base_model = _normalize_model_for_fallback(model)
-        pricing = _find_fallback_pricing(base_model, ESTIMATION_MODEL_PRICING)
-        if pricing:
-            input_cost_per_1k = pricing["input_cost_per_token"] * 1000
-            output_cost_per_1k = pricing["output_cost_per_token"] * 1000
-            avg_cost_per_1k = (input_cost_per_1k + output_cost_per_1k) / 2
-            return float(avg_cost_per_1k * (max_tokens / 1000))
+    Delegates to :func:`traigent.utils.cost_calculator._estimation_cost_from_tokens`
+    so the constraint fallback price AGREES BY CONSTRUCTION with the canonical
+    estimation path (issue #1958): the whole ``max_tokens`` budget is priced as
+    input tokens (``output_tokens=0``) and summed. The previous branch built a
+    parallel pricing table lookup and averaged input/output rates, which
+    diverged from the canonical path (e.g. gpt-4 / 1000 tokens returned $0.020
+    instead of $0.010) and duplicated alias / prefix-match logic that has now
+    drifted between the two modules.
+
+    Returns ``None`` for models the canonical path cannot price (it returns
+    ``(0.0, 0.0)``), preserving the "unknown model fails the constraint"
+    contract.
+    """
+    try:
+        from traigent.utils.cost_calculator import _estimation_cost_from_tokens
     except ImportError:
-        pass
-    return None
+        return None
+
+    input_cost, output_cost = _estimation_cost_from_tokens(
+        model, max_tokens, 0, _quiet=True
+    )
+    if input_cost <= 0 and output_cost <= 0:
+        return None
+    return float(input_cost + output_cost)
 
 
 def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstraint:
