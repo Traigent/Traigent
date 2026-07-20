@@ -980,9 +980,13 @@ class OptimizationResult:
         best_config_margin: Winner-vs-runner-up paired margin significance
             qualifying ``best_config`` (issue #1866). Additive — never changes
             the winner. ``None`` when there is no runner-up to compare against;
-            otherwise ``{runner_up, delta, ci95, p_value, verdict, ...}`` with
-            ``verdict`` in ``"clear" | "statistical_tie" | "na"``. A margin whose
-            CI includes 0 at typical n is a tie, not a decision.
+            otherwise ``{runner_up, delta, ci95, p_value, verdict,
+            effective_alpha, n_configs, ...}`` with ``verdict`` in
+            ``"clear" | "statistical_tie" | "na"``. The significance threshold is
+            Bonferroni-corrected for the best-of-``n_configs`` selection
+            (``effective_alpha = alpha / max(1, n_configs - 1)``), applied to both
+            the p-value and the CI level. A margin whose CI includes 0 at typical
+            n is a tie, not a decision.
     """
 
     trials: list[TrialResult]
@@ -1038,11 +1042,12 @@ class OptimizationResult:
     # when there is no runner-up to compare against (< 2 distinct eligible
     # configs, or no primary objective / per-example data unavailable). When set,
     # a dict ``{runner_up, runner_up_trial_id, delta, ci95, p_value, verdict,
-    # test, n_shared_examples, ...}`` where ``verdict`` is ``"clear"`` (the
-    # winner significantly beats the runner-up on the primary objective),
-    # ``"statistical_tie"`` (the margin's CI includes 0 / p above alpha — the
-    # winner is interchangeable with the runner-up), or ``"na"`` (two configs
-    # but no shared per-example data for a paired test).
+    # test, n_shared_examples, effective_alpha, n_configs, ...}`` where
+    # ``verdict`` is ``"clear"`` (the winner significantly beats the runner-up on
+    # the primary objective at the multiplicity-corrected ``effective_alpha``),
+    # ``"statistical_tie"`` (the margin's CI includes 0 / p above effective_alpha
+    # — the winner is interchangeable with the runner-up), or ``"na"`` (two
+    # configs but no shared per-example data for a paired test).
     best_config_margin: dict[str, Any] | None = None
 
     _experiment_stats: ExperimentStats | None = field(

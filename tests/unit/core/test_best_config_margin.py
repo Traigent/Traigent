@@ -182,9 +182,19 @@ class TestBinaryMcNemar:
 
 
 class TestContinuousPairedT:
-    def test_tie_when_difference_is_noise(self):
+    def test_constant_offset_is_degenerate_clear(self):
+        """A perfectly consistent +0.001 offset on every one of 30 shared examples
+        is a degenerate (zero-variance) win, not a tie.
+
+        This pins the ONE correct verdict for these inputs. With exactly two
+        distinct configs the multiplicity correction is a no-op
+        (effective_alpha == alpha), and a constant non-zero paired difference has
+        zero variance -> p_value 0.0 with a point CI at +0.001 that excludes 0 and
+        favors the winner -> "clear". (Previously this test accepted either
+        "clear" or "statistical_tie", which asserted nothing.)
+        """
         winner = [0.50 + 0.001 * i for i in range(30)]
-        # Runner-up is essentially the same series with tiny jitter.
+        # Runner-up is the same series shifted down by a constant 0.001.
         runner = [v - 0.001 for v in winner]
         margin = compute_best_config_margin(
             [
@@ -198,11 +208,12 @@ class TestContinuousPairedT:
         )
         assert margin is not None
         assert margin["test"] == "paired_t"
-        # Constant +0.001 offset every example is perfectly consistent, so this
-        # is actually a clear (degenerate) win — assert the machinery ran and
-        # produced a real verdict + finite CI.
-        assert margin["verdict"] in {"clear", "statistical_tie"}
-        assert margin["ci95"] is not None
+        assert margin["n_configs"] == 2
+        assert margin["effective_alpha"] == margin["alpha"]
+        assert margin["verdict"] == "clear"
+        assert margin["delta"] > 0.0
+        lo, hi = margin["ci95"]
+        assert lo > 0.0  # point CI at +0.001 excludes 0
 
     def test_noisy_tie_is_statistical_tie(self):
         import random
@@ -612,3 +623,112 @@ class TestVerdictRequiresFavorableDirection:
         # delta<0 favors the winner for minimize -> a real, clear win.
         assert margin["verdict"] == "clear"
         assert "reason" not in margin
+
+
+# ---------------------------------------------------------------------------
+# Multiplicity correction (#1873 winner's-curse blocker)
+#
+# The winner is chosen POST-HOC as the best of MANY distinct candidate configs,
+# and the runner-up is the empirically-closest of the rest. Testing that lucky
+# best-vs-second pair at the nominal alpha, as if pre-specified, is a
+# post-selection multiplicity error: with enough noise configs a photo-finish
+# pair is declared "clear" when it is noise. compute_best_config_margin
+# Bonferroni-corrects: effective_alpha = alpha / max(1, n_configs - 1), applied
+# to BOTH the p-value threshold and the CI level.
+# ---------------------------------------------------------------------------
+
+
+def _many_config_pool(n_noise: int) -> list[TrialResult]:
+    """Winner 20/20, runner-up 14/20, plus ``n_noise`` distinct noise configs at
+    13/20 on the same 20 shared examples (e0..e19).
+
+    The per-example evidence for the winner-vs-runner-up pair is fixed
+    (b=6, c=0, McNemar p=0.03125); only the SIZE of the selection pool changes,
+    isolating the multiplicity effect.
+    """
+    winner = [1] * 20  # 20/20 -> aggregate 1.00
+    runner = [1] * 14 + [0] * 6  # 14/20 -> aggregate 0.70 (clear 2nd)
+    noise = [1] * 13 + [0] * 7  # 13/20 -> aggregate 0.65 (all below runner-up)
+    trials = [
+        _trial("w", {"model": "W"}, "accuracy", winner),
+        _trial("r", {"model": "R"}, "accuracy", runner),
+    ]
+    trials += [
+        _trial(f"n{i}", {"model": f"N{i}"}, "accuracy", list(noise))
+        for i in range(n_noise)
+    ]
+    return trials
+
+
+class TestMultiplicityCorrection:
+    def test_many_configs_demote_lucky_winner_to_tie(self):
+        """sol's reproducer: with 30 candidate configs the best-vs-second pair
+        (b=6, c=0, p=0.03125) is NO LONGER "clear" after the Bonferroni
+        correction — it collapses to "statistical_tie". The p-value would have
+        cleared the nominal alpha, so the correction is what flips it.
+        """
+        trials = _many_config_pool(n_noise=28)  # 2 real + 28 noise = 30 distinct
+        margin = compute_best_config_margin(
+            trials,
+            winner_trial_id="w",
+            winner_config={"model": "W"},
+            primary_objective="accuracy",
+            orientation="maximize",
+        )
+        assert margin is not None
+        assert margin["n_configs"] == 30
+        assert margin["test"] == "mcnemar_exact"
+        assert margin["discordant"] == {"b": 6, "c": 0}
+        # Correction pulled the threshold well below the observed p-value ...
+        assert margin["effective_alpha"] < margin["alpha"]
+        assert margin["p_value"] <= margin["alpha"]  # would clear at nominal alpha
+        assert margin["p_value"] > margin["effective_alpha"]  # but not corrected
+        # ... so the lucky winner is a statistical tie, not a clear win.
+        assert margin["verdict"] == "statistical_tie"
+
+    def test_same_evidence_is_clear_head_to_head(self):
+        """IDENTICAL winner-vs-runner-up per-example evidence, but only the two
+        real configs in the pool (n_configs=2): effective_alpha == alpha (no
+        correction) and the pair is "clear". Proves the demotion above is driven
+        by the SELECTION SIZE, not the evidence.
+        """
+        # Drop the noise configs; keep the exact same winner/runner trials.
+        trials = _many_config_pool(n_noise=0)
+        margin = compute_best_config_margin(
+            trials,
+            winner_trial_id="w",
+            winner_config={"model": "W"},
+            primary_objective="accuracy",
+            orientation="maximize",
+        )
+        assert margin is not None
+        assert margin["n_configs"] == 2
+        assert margin["effective_alpha"] == margin["alpha"]
+        assert margin["discordant"] == {"b": 6, "c": 0}
+        assert margin["p_value"] <= margin["effective_alpha"]
+        assert margin["verdict"] == "clear"
+
+    def test_no_over_correction_strong_winner_two_configs(self):
+        """A genuine strong winner in a head-to-head (n_configs=2) with
+        overwhelming per-example evidence stays "clear" — the correction never
+        penalizes a real two-config comparison.
+        """
+        winner = [1] * 38 + [0] * 2
+        runner = [1] * 20 + [0] * 20
+        margin = compute_best_config_margin(
+            [
+                _trial("w", {"model": "A"}, "accuracy", winner),
+                _trial("r", {"model": "B"}, "accuracy", runner),
+            ],
+            winner_trial_id="w",
+            winner_config={"model": "A"},
+            primary_objective="accuracy",
+            orientation="maximize",
+        )
+        assert margin is not None
+        assert margin["n_configs"] == 2
+        assert margin["effective_alpha"] == margin["alpha"] == BEST_CONFIG_MARGIN_ALPHA
+        assert margin["p_value"] < 0.05
+        assert margin["verdict"] == "clear"
+        lo, hi = margin["ci95"]
+        assert lo > 0.0 or hi < 0.0

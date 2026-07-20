@@ -52,8 +52,10 @@ class SelectionResult:
     # Winner-vs-runner-up paired margin significance (issue #1866). Additive
     # qualification of best_config — it never changes which config wins. None
     # when there is no runner-up (< 2 distinct configs / no primary objective);
-    # otherwise a dict {runner_up, delta, ci95, p_value, verdict, ...} where
-    # verdict is "clear", "statistical_tie", or "na" (no per-example data).
+    # otherwise a dict {runner_up, delta, ci95, p_value, verdict,
+    # effective_alpha, n_configs, ...} where verdict is "clear",
+    # "statistical_tie", or "na" (no per-example data). The verdict uses a
+    # Bonferroni-corrected effective_alpha for the best-of-n_configs selection.
     best_config_margin: dict[str, Any] | None = None
 
 

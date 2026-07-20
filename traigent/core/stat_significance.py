@@ -541,11 +541,18 @@ def _mcnemar_margin(
     winner_values: list[float],
     runner_values: list[float],
     n_shared: int,
-    alpha: float,
+    effective_alpha: float,
     *,
     minimize: bool,
 ) -> dict[str, Any]:
-    """McNemar exact margin payload for 0/1 binary per-example scores."""
+    """McNemar exact margin payload for 0/1 binary per-example scores.
+
+    ``effective_alpha`` is the multiplicity-corrected significance level (see
+    :func:`compute_best_config_margin`). It drives BOTH the CI level — the
+    interval reported in ``ci95`` is the ``(1 - effective_alpha)`` interval — and
+    the ``p <= effective_alpha`` threshold in :func:`_verdict`, so the CI and the
+    p-value test the same corrected bar.
+    """
     b = sum(
         1 for w, r in zip(winner_values, runner_values, strict=True) if w >= 0.5 > r
     )
@@ -553,9 +560,11 @@ def _mcnemar_margin(
         1 for w, r in zip(winner_values, runner_values, strict=True) if w < 0.5 <= r
     )
     p_value = _mcnemar_exact_p(b, c)
-    ci = _paired_proportion_ci(b, c, n_shared, alpha)
+    ci = _paired_proportion_ci(b, c, n_shared, effective_alpha)
     delta = (b - c) / n_shared
-    verdict, reason = _verdict(p_value, ci, alpha, delta=delta, minimize=minimize)
+    verdict, reason = _verdict(
+        p_value, ci, effective_alpha, delta=delta, minimize=minimize
+    )
     payload: dict[str, Any] = {
         "delta": delta,
         "ci95": [ci[0], ci[1]],
@@ -574,7 +583,7 @@ def _paired_t_margin(
     winner_values: list[float],
     runner_values: list[float],
     n_shared: int,
-    alpha: float,
+    effective_alpha: float,
     *,
     minimize: bool,
 ) -> dict[str, Any]:
@@ -584,6 +593,12 @@ def _paired_t_margin(
     ``epsilon=0``) and converts to a two-sided p-value. The zero-variance case
     is handled directly: a constant non-zero difference is a perfectly
     consistent (significant) win; an all-zero difference is a perfect tie.
+
+    ``effective_alpha`` is the multiplicity-corrected significance level (see
+    :func:`compute_best_config_margin`). It drives BOTH the ``ci95`` interval —
+    reported at the ``(1 - effective_alpha)`` level — and the
+    ``p <= effective_alpha`` threshold in :func:`_verdict`, keeping the CI and
+    the p-value on the same corrected bar.
     """
     diffs = [w - r for w, r in zip(winner_values, runner_values, strict=True)]
     mean_diff = sum(diffs) / n_shared
@@ -605,8 +620,10 @@ def _paired_t_margin(
         p_upper = result.p_value
         p_value = min(1.0, 2.0 * min(p_upper, 1.0 - p_upper))
         mean_diff = result.effect_size
-        ci = _mean_diff_ci(diffs, alpha)
-    verdict, reason = _verdict(p_value, ci, alpha, delta=mean_diff, minimize=minimize)
+        ci = _mean_diff_ci(diffs, effective_alpha)
+    verdict, reason = _verdict(
+        p_value, ci, effective_alpha, delta=mean_diff, minimize=minimize
+    )
     payload: dict[str, Any] = {
         "delta": mean_diff,
         "ci95": [ci[0], ci[1]],
@@ -636,7 +653,7 @@ def compute_best_config_margin(
     2nd-best *distinct* config by the primary objective) on their shared
     per-example scores: McNemar exact for 0/1 binary scorers, a paired t-test
     (via :func:`~traigent.tvl.statistics.paired_comparison_test`) for continuous
-    scorers. It reports the margin, a 95% CI on the margin, the p-value, and a
+    scorers. It reports the margin, a CI on the margin, the p-value, and a
     verdict.
 
     The margin is always computed on the ``primary_objective``'s per-example
@@ -645,6 +662,27 @@ def compute_best_config_margin(
     metrics, not for the weighted aggregate. The runner-up is the best distinct
     config on that same primary objective.
 
+    Multiplicity correction (winner's curse). The winner was NOT pre-specified:
+    it was selected as the best of ``n_configs`` *distinct* candidate configs,
+    and the runner-up is the empirically-closest of the remaining ones. Testing
+    that lucky best-vs-second pair at the nominal ``alpha`` — as if it had been
+    fixed in advance — is a post-selection multiplicity error: with enough noise
+    configs some pair looks "significant" by chance. We correct with a Bonferroni
+    adjustment over the ``n_configs - 1`` comparisons of the winner against the
+    other configs::
+
+        effective_alpha = alpha / max(1, n_configs - 1)
+
+    ``n_configs`` is the number of DISTINCT configs in the selection pool (the
+    scored eligible trials the winner was chosen from), not the trial count. For
+    a genuine head-to-head (``n_configs`` of 1 or 2) ``effective_alpha == alpha``
+    — no over-correction. ``effective_alpha`` is applied CONSISTENTLY to both the
+    p-value threshold AND the CI level: ``"clear"`` requires
+    ``p <= effective_alpha`` AND the ``(1 - effective_alpha)`` CI to exclude 0
+    AND the effect to favor the winner. Both ``effective_alpha`` and
+    ``n_configs`` are recorded in the payload so the verdict is auditable; the
+    uncorrected nominal ``alpha`` is also kept under ``alpha``.
+
     Returns:
         ``None`` when there is no runner-up to compare against — fewer than two
         distinct eligible configs, no primary objective, or no eligible trial
@@ -652,7 +690,8 @@ def compute_best_config_margin(
         comparable per-example data, returns a dict with ``verdict="na"`` and
         ``p_value=None`` (the aggregate delta is still reported). Otherwise the
         dict carries ``verdict`` of ``"clear"`` or ``"statistical_tie"`` plus
-        ``runner_up``, ``delta``, ``ci95``, and ``p_value``.
+        ``runner_up``, ``delta``, ``ci95``, ``p_value``, ``effective_alpha``,
+        and ``n_configs``.
 
     Note:
         A ``"statistical_tie"`` winner is statistically interchangeable with its
@@ -689,6 +728,14 @@ def compute_best_config_margin(
 
     runner_up = (min if minimize else max)(others, key=lambda pair: pair[1])[0]
 
+    # Multiplicity correction: the winner was selected as best-of-N DISTINCT
+    # configs, so the winner-vs-runner-up test carries a winner's-curse /
+    # post-selection bias. Bonferroni-correct the nominal alpha over the
+    # n_configs - 1 comparisons of the winner against the other configs. Count
+    # DISTINCT configs in the scored selection pool, not trials.
+    n_configs = len({_config_identity(t.config) for t, _ in scored})
+    effective_alpha = alpha / max(1, n_configs - 1)
+
     winner_primary = primary_value(winner)
     runner_primary = primary_value(runner_up)
     aggregate_delta = (
@@ -703,6 +750,8 @@ def compute_best_config_margin(
         "winner_trial_id": winner.trial_id,
         "primary_objective": primary_objective,
         "alpha": alpha,
+        "effective_alpha": effective_alpha,
+        "n_configs": n_configs,
     }
 
     paired = extract_trial_data_for_metric([winner, runner_up], primary_objective)
@@ -725,10 +774,10 @@ def compute_best_config_margin(
 
     if _is_binary(winner_values) and _is_binary(runner_values):
         margin = _mcnemar_margin(
-            winner_values, runner_values, n_shared, alpha, minimize=minimize
+            winner_values, runner_values, n_shared, effective_alpha, minimize=minimize
         )
     else:
         margin = _paired_t_margin(
-            winner_values, runner_values, n_shared, alpha, minimize=minimize
+            winner_values, runner_values, n_shared, effective_alpha, minimize=minimize
         )
     return {**base, **margin}
