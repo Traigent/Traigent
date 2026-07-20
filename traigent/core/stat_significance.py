@@ -462,23 +462,55 @@ def _mean_diff_ci(diffs: list[float], alpha: float) -> tuple[float, float]:
     return (mean - z * se, mean + z * se)
 
 
+# Effects with |delta| at or below this are treated as directionless (no
+# favoring) when deciding whether a significant result is a clear win.
+_DIRECTION_TOL = 1e-12
+
+# Reason attached to a significant margin that favors the RUNNER-UP rather than
+# the selected winner (the winner won on non-shared examples but loses on the
+# comparable ones), collapsed to the conservative ``"statistical_tie"``.
+_ADVERSE_DIRECTION_REASON = (
+    "winner significantly underperforms the runner-up on the shared examples; "
+    "the selection was driven by non-shared examples"
+)
+
+
 def _verdict(
     p_value: float | None,
     ci: tuple[float, float] | None,
     alpha: float,
-) -> str:
+    *,
+    delta: float | None = None,
+    minimize: bool = False,
+) -> tuple[str, str | None]:
     """Classify a margin as ``"clear"``, ``"statistical_tie"``, or ``"na"``.
 
-    A tie is declared when the paired test is not significant at ``alpha`` OR the
-    margin's confidence interval includes 0 — either condition means the winner
-    is statistically interchangeable with the runner-up on the primary objective.
+    Returns ``(verdict, reason)``; ``reason`` is ``None`` except for the
+    direction-guarded tie described below.
+
+    A ``"statistical_tie"`` is declared when the paired test is not significant
+    at ``alpha`` OR the margin's confidence interval includes 0 — either
+    condition means the winner is statistically interchangeable with the
+    runner-up on the primary objective.
+
+    ``"clear"`` additionally requires the significant effect to FAVOR the
+    selected winner. ``delta`` is framed as ``mean(winner - runner)`` in raw
+    metric units, so the winner is favored when ``delta > 0`` for maximize
+    objectives and ``delta < 0`` for minimize objectives. A significant effect
+    that favors the RUNNER-UP — the winner was selected on non-shared examples
+    yet loses on every comparable one — is NOT a clear win; it collapses to the
+    conservative ``"statistical_tie"`` with an explanatory reason.
     """
     if p_value is None:
-        return "na"
+        return "na", None
     ci_includes_zero = ci is not None and ci[0] <= 0.0 <= ci[1]
     if p_value > alpha or ci_includes_zero:
-        return "statistical_tie"
-    return "clear"
+        return "statistical_tie", None
+    if delta is not None:
+        favors_winner = delta < -_DIRECTION_TOL if minimize else delta > _DIRECTION_TOL
+        if not favors_winner:
+            return "statistical_tie", _ADVERSE_DIRECTION_REASON
+    return "clear", None
 
 
 def _resolve_winner(
@@ -510,6 +542,8 @@ def _mcnemar_margin(
     runner_values: list[float],
     n_shared: int,
     alpha: float,
+    *,
+    minimize: bool,
 ) -> dict[str, Any]:
     """McNemar exact margin payload for 0/1 binary per-example scores."""
     b = sum(
@@ -520,15 +554,20 @@ def _mcnemar_margin(
     )
     p_value = _mcnemar_exact_p(b, c)
     ci = _paired_proportion_ci(b, c, n_shared, alpha)
-    return {
-        "delta": (b - c) / n_shared,
+    delta = (b - c) / n_shared
+    verdict, reason = _verdict(p_value, ci, alpha, delta=delta, minimize=minimize)
+    payload: dict[str, Any] = {
+        "delta": delta,
         "ci95": [ci[0], ci[1]],
         "p_value": p_value,
-        "verdict": _verdict(p_value, ci, alpha),
+        "verdict": verdict,
         "test": "mcnemar_exact",
         "n_shared_examples": n_shared,
         "discordant": {"b": b, "c": c},
     }
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
 
 
 def _paired_t_margin(
@@ -536,6 +575,8 @@ def _paired_t_margin(
     runner_values: list[float],
     n_shared: int,
     alpha: float,
+    *,
+    minimize: bool,
 ) -> dict[str, Any]:
     """Paired t-test margin payload for continuous per-example scores.
 
@@ -565,14 +606,18 @@ def _paired_t_margin(
         p_value = min(1.0, 2.0 * min(p_upper, 1.0 - p_upper))
         mean_diff = result.effect_size
         ci = _mean_diff_ci(diffs, alpha)
-    return {
+    verdict, reason = _verdict(p_value, ci, alpha, delta=mean_diff, minimize=minimize)
+    payload: dict[str, Any] = {
         "delta": mean_diff,
         "ci95": [ci[0], ci[1]],
         "p_value": p_value,
-        "verdict": _verdict(p_value, ci, alpha),
+        "verdict": verdict,
         "test": "paired_t",
         "n_shared_examples": n_shared,
     }
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
 
 
 def compute_best_config_margin(
@@ -613,7 +658,12 @@ def compute_best_config_margin(
         A ``"statistical_tie"`` winner is statistically interchangeable with its
         runner-up on the primary objective: at typical eval sizes (n=20-80) a
         margin whose CI includes 0 is not a decision. Secondary objectives
-        (cost, latency) should break such ties rather than noise.
+        (cost, latency) should break such ties rather than noise. A
+        ``"statistical_tie"`` is also returned — carrying a ``reason`` — when the
+        paired test IS significant but the effect favors the runner-up (the
+        winner was selected on non-shared examples yet loses on the comparable
+        ones); ``"clear"`` requires the significant effect to favor the selected
+        winner.
     """
     if primary_objective is None:
         return None
@@ -674,7 +724,11 @@ def compute_best_config_margin(
     n_shared = len(winner_values)
 
     if _is_binary(winner_values) and _is_binary(runner_values):
-        margin = _mcnemar_margin(winner_values, runner_values, n_shared, alpha)
+        margin = _mcnemar_margin(
+            winner_values, runner_values, n_shared, alpha, minimize=minimize
+        )
     else:
-        margin = _paired_t_margin(winner_values, runner_values, n_shared, alpha)
+        margin = _paired_t_margin(
+            winner_values, runner_values, n_shared, alpha, minimize=minimize
+        )
     return {**base, **margin}
