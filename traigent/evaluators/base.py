@@ -885,6 +885,54 @@ class EvaluationResult:
         )
 
 
+def prepare_call_arguments(
+    func: Callable[..., Any],
+    config: dict[str, Any],
+    input_data: Any,
+    *,
+    injection_mode: Any = "context",
+    should_expand: Callable[[Callable[..., Any], CollectionsMapping[str, Any]], bool]
+    | None = None,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Determine positional/keyword call arguments for ``func`` WITHOUT calling it.
+
+    Extracted from :meth:`BaseEvaluator._prepare_call_arguments` so the exact
+    argument-shaping rules (parameter-mode merge vs. context-mode dict
+    expansion) can be reused by the no-execution evaluation-compatibility
+    contract without instantiating an evaluator. The instance method delegates
+    here with ``injection_mode = getattr(func, "_traigent_injection_mode",
+    "context")`` so runtime behaviour is bit-identical.
+
+    Args:
+        func: Function whose signature drives the dict-expansion decision.
+        config: Configuration parameters (only merged in parameter mode).
+        input_data: Input payload for the function.
+        injection_mode: Effective injection mode ("context" or "parameter").
+            Note: real optimization injects config via a provider wrapper, so
+            the production evaluator always resolves this to "context"; the
+            compatibility contract passes the mode it independently resolved.
+        should_expand: Predicate deciding whether a mapping input expands into
+            keyword arguments. Defaults to
+            :meth:`BaseEvaluator._should_expand_input_mapping`; the instance
+            method passes the BOUND ``self._should_expand_input_mapping`` so a
+            subclass override is honoured (true instance dispatch) whether the
+            override is a ``@staticmethod`` or a regular method, while contract
+            callers keep the default.
+
+    Returns:
+        Tuple of (positional_args, keyword_args).
+    """
+    if should_expand is None:
+        should_expand = BaseEvaluator._should_expand_input_mapping
+    if injection_mode == "parameter" and isinstance(input_data, CollectionsMapping):
+        return (), {**input_data, **config}
+    if injection_mode == "parameter":
+        return (input_data,), dict(config)
+    if isinstance(input_data, CollectionsMapping) and should_expand(func, input_data):
+        return (), dict(input_data)
+    return (input_data,), {}
+
+
 class BaseEvaluator(ABC):
     """Base class for all evaluation strategies.
 
@@ -1652,16 +1700,21 @@ class BaseEvaluator(ABC):
             Tuple of (positional_args, keyword_args)
         """
         injection_mode = getattr(func, "_traigent_injection_mode", "context")
-
-        if injection_mode == "parameter" and isinstance(input_data, CollectionsMapping):
-            return (), {**input_data, **config}
-        if injection_mode == "parameter":
-            return (input_data,), dict(config)
-        if isinstance(
-            input_data, CollectionsMapping
-        ) and self._should_expand_input_mapping(func, input_data):
-            return (), dict(input_data)
-        return (input_data,), {}
+        return prepare_call_arguments(
+            func,
+            config,
+            input_data,
+            injection_mode=injection_mode,
+            # Pass the BOUND method so subclass dispatch is honoured for BOTH a
+            # @staticmethod override (descriptor returns the plain (func, payload)
+            # function) AND a regular-method override (descriptor binds ``self``,
+            # leaving (func, payload) to fill). ``type(self)._should_expand_...``
+            # would hand ``prepare_call_arguments`` an UNBOUND function, so a
+            # regular-method override would receive ``func`` as ``self`` -> wrong
+            # args / TypeError. The bound form is bit-identical for the current
+            # staticmethod and correct for either override style.
+            should_expand=self._should_expand_input_mapping,
+        )
 
     async def _execute_async_with_timeout(
         self,
