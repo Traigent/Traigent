@@ -39,6 +39,7 @@ from traigent.core.backend_session_manager import (
     BackendTrialSubmissionOutcome,
 )
 from traigent.core.cost_enforcement import Permit
+from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.orchestrator_helpers import allocate_parallel_ceilings
@@ -2737,6 +2738,41 @@ class TestOptimizationOrchestrator:
 
         assert trial_result.trial_id == "backend-trial-1"
         assert span.configuration_run_id == "backend-trial-1"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_no_cost_trial_still_debits_budget(self, orchestrator):
+        """Finding #5 (#1980): a CANCELLED trial with NO observable cost must still
+        debit the shared ExecutionBudget — its examples and the trial itself count
+        (cost=None -> untracked=True), matching the success/failed path. Before the
+        fix the debit sat inside ``if trial_cost is not None:`` so such a trial
+        debited neither examples nor a trial (and ``untracked`` was dead)."""
+        budget = ExecutionBudget(max_examples=100)
+        orchestrator.execution_budget = budget
+
+        cancelled_trial = TrialResult(
+            trial_id="cancelled_no_cost",
+            config={"temperature": 0.5},
+            metrics={"examples_attempted": 3},  # examples but NO cost metric
+            status=TrialStatus.CANCELLED,
+            duration=0.1,
+            timestamp=None,
+        )
+
+        await orchestrator._handle_trial_result(
+            trial_result=cancelled_trial,
+            optimizer_config=cancelled_trial.config,
+            current_trial_index=0,
+            session_id=None,
+            optuna_trial_id=None,
+            log_on_success=False,
+            submit_to_backend=False,
+        )
+
+        snap = budget.snapshot()
+        assert snap.trials == 1  # the trial itself debited
+        assert snap.consumed_examples == 3  # its examples debited
+        assert snap.untracked_trials == 1  # cost was None -> counted untracked
+        assert snap.cost_tracking != "complete"
 
 
 class TestStopReasonInResult:

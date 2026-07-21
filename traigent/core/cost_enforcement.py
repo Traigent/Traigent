@@ -432,6 +432,18 @@ class CostEnforcer:
         with self._lock:
             self.config.limit = validated
 
+    # NOTE: ``clamp_limit`` (a run-start helper that lowered the per-run cost limit
+    # to a cumulative ExecutionBudget's remaining) was REMOVED with issue #1980's F1
+    # fix. Clamping the enforcer's limit also drove the PRE-RUN cost-approval gate,
+    # which — under production defaults (no cost approval, non-interactive) — turned
+    # the promised graceful ``stop_reason == "execution_budget"`` into a hard
+    # ``CostLimitExceeded`` raised before any trial ran. The shared cumulative cost
+    # is now enforced mid-run at batch/trial granularity by the orchestrator's
+    # ``_execution_budget_prebatch_reason`` admission gate and the FRONT-registered
+    # ``ExecutionBudgetStopCondition`` (both read the budget's own remaining_cost),
+    # so the enforcer's limit is intentionally left untouched. Do not reintroduce a
+    # budget-driven clamp of ``self.config.limit`` here.
+
     def _load_config(self) -> CostEnforcerConfig:
         """Load configuration from environment variables with safe parsing."""
 

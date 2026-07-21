@@ -38,6 +38,7 @@ from traigent.api.types import (
 # Type-only imports for optional dependencies
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
+    from traigent.core.execution_budget import ExecutionBudget
     from traigent.integrations.observability.workflow_traces import (
         SpanPayload,
         WorkflowTracesTracker,
@@ -149,12 +150,16 @@ PROGRESS_LOG_INTERVAL = 10  # Log progress every N trials
 # Stop reasons that already own an empty (0-trial) cloud-required run and must
 # not be relabeled by the smart-managed-path fail-closed guard (issue #1681):
 # an interrupted/timed-out/cancelled run, a cost-limit stop (#1684 owns that),
-# or an explicit provider/connectivity error already surfaced elsewhere.
+# a cumulative ExecutionBudget stop (#1980 owns that — a CLOUD_REQUIRED phase
+# started with an already-exhausted shared budget pre-batch-blocks with 0 trials
+# and must return gracefully, not raise), or an explicit provider/connectivity
+# error already surfaced elsewhere.
 _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
     {
         "timeout",
         "user_cancelled",
         "cost_limit",
+        "execution_budget",
         "vendor_error",
         "network_error",
         "error",
@@ -933,6 +938,11 @@ class OptimizationOrchestrator:
         # values post-suggest, pre-validation. None => byte-identical legacy
         # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
         self.knob_resolver: Any | None = None
+        # Issue #1980: optional shared cumulative ExecutionBudget. None =>
+        # byte-identical legacy behavior. NOT an __init__ param (same seam as
+        # knob_resolver): set via `orchestrator.execution_budget = budget` AFTER
+        # construction, then applied at run start by `_apply_execution_budget`.
+        self.execution_budget: ExecutionBudget | None = None
         self._strict_withheld_promotions: list[str] = []
         self._certified_promotions = 0
         self._start_time: float | None = None
@@ -1899,6 +1909,22 @@ class OptimizationOrchestrator:
                         trial_failed=True,
                         trial_id=trial_result.trial_id,
                     )
+                # Debit the shared cumulative ExecutionBudget (issue #1980) even
+                # when the cancelled trial had NO observable cost: the examples it
+                # attempted and the trial itself must still count against the shared
+                # budget (cost=None -> untracked=True), matching the success/failed
+                # path. Debiting here rather than inside the ``trial_cost is not
+                # None`` guard fixes the #1980 accounting gap where a
+                # cancelled-with-no-cost trial debited neither examples nor a trial
+                # (and ``untracked`` was dead, always False). Absent budget -> no-op
+                # -> byte-identical.
+                if (budget := getattr(self, "execution_budget", None)) is not None:
+                    budget.debit_trial(
+                        cost=trial_cost,
+                        examples=self._examples_of(trial_result),
+                        untracked=trial_cost is None,
+                        trial_id=trial_result.trial_id,
+                    )
                 # Note: For cost-limit cancellations, no permit was acquired so
                 # nothing to release. For other cancellations (exceptions),
                 # the parallel execution manager handles permit release.
@@ -1911,6 +1937,16 @@ class OptimizationOrchestrator:
                     trial_failed=trial_result.status == TrialStatus.FAILED,
                     trial_id=trial_result.trial_id,
                 )
+                # Debit the shared cumulative ExecutionBudget (issue #1980).
+                # ``trial_cost is None`` marks the trial untracked (cost was not
+                # observable). Absent budget -> no-op -> byte-identical.
+                if (budget := getattr(self, "execution_budget", None)) is not None:
+                    budget.debit_trial(
+                        cost=trial_cost,
+                        examples=self._examples_of(trial_result),
+                        untracked=trial_cost is None,
+                        trial_id=trial_result.trial_id,
+                    )
 
             if trial_result.is_successful:
                 self._successful_trials += 1
@@ -2659,6 +2695,11 @@ class OptimizationOrchestrator:
         self._status = OptimizationStatus.RUNNING
         self._session_finalized = False
         self._start_time = time.time()
+        # ExecutionBudget per-run flags (issue #1980); reset before
+        # _apply_execution_budget so a reused orchestrator never carries stale
+        # deadline attribution into a subsequent (possibly budget-less) run.
+        self._timeout_source: str | None = None
+        self._deadline_hard_stop = False
         self._successful_trials = 0
         self._failed_trials = 0
         self._best_trial_cached = None
@@ -2672,6 +2713,15 @@ class OptimizationOrchestrator:
         # on the same orchestrator instance (defensive programming)
         if self.cost_enforcer is not None:
             self.cost_enforcer.reset()
+
+        # Seed this run's per-operation allowances from a shared cumulative
+        # ExecutionBudget, if one is attached (issue #1980). Absent budget ->
+        # returns immediately -> byte-identical legacy behavior. Runs AFTER the
+        # cost-enforcer and stop-condition resets so the timeout / sample-pool
+        # clamps and the FRONT-registered ExecutionBudget stop condition are
+        # applied on top of freshly-reset per-run state. (The per-run cost limit is
+        # intentionally NOT clamped — that clamp was removed with the F1 fix.)
+        self._apply_execution_budget()
 
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
@@ -2986,6 +3036,184 @@ class OptimizationOrchestrator:
         blocked = "all remaining" if planned is None else str(planned)
         return f"budget gate blocked {blocked} planned trials (cost limit reached)"
 
+    def _apply_execution_budget(self) -> None:
+        """Seed this run's allowances from a shared cumulative ExecutionBudget.
+
+        Additive (issue #1980). When no budget is attached
+        (``getattr(self, "execution_budget", None) is None``) this returns
+        immediately and every downstream seam is untouched -> byte-identical
+        legacy behavior. When a budget is attached it, at run start:
+
+        - starts the budget's wall-clock deadline and counts this run;
+        - leaves the per-run cost enforcer's configured limit UNTOUCHED (issue
+          #1980, finding #1). Clamping it down to ``remaining_cost`` also fed the
+          PRE-RUN cost-approval gate, which — under production defaults (no cost
+          approval, non-interactive) — turned the promised graceful
+          ``stop_reason == "execution_budget"`` into a hard ``CostLimitExceeded``
+          raised before any trial ran. The pre-run gate now keeps estimating
+          against the user's own ``cost_limit`` (their gate), while the shared
+          cumulative cost is enforced mid-run, at trial granularity, by
+          ``_execution_budget_prebatch_reason`` (admission gate) and the
+          FRONT-registered ExecutionBudget stop condition — both of which read the
+          budget's own ``remaining_cost`` / ``exhausted_dimension``, independent of
+          the enforcer's limit;
+        - clamps ``self.timeout`` DOWN to ``remaining_seconds`` (feeds both the
+          between-trial check and the hung-trial watchdog), recording via
+          ``self._timeout_source`` whether the budget deadline was the binding clamp
+          so the watchdog can attribute a hung-trial stop to the budget;
+        - clamps the physical sample pool DOWN to ``remaining_examples`` as
+          defense-in-depth; and
+        - FRONT-registers the ExecutionBudget stop condition (see
+          ``register_execution_budget_condition``).
+        """
+        budget: ExecutionBudget | None = getattr(self, "execution_budget", None)
+        if budget is None:
+            return
+
+        budget.begin_run()
+
+        # Cost: intentionally NOT clamped (issue #1980, finding #1). Clamping the
+        # enforcer's per-run limit down to the budget remaining also drove the
+        # PRE-RUN approval gate (_check_cost_approval -> CostEstimator ->
+        # cost_enforcer.check_and_approve), so under production defaults (no
+        # TRAIGENT_COST_APPROVED / cost_approved, non-interactive) a token estimate
+        # above the clamped remaining raised CostLimitExceeded before a single trial
+        # ran — manufacturing a hard decline from what the feature promises as a
+        # GRACEFUL execution_budget stop. The cumulative cost is enforced mid-run
+        # instead, at trial granularity, by _execution_budget_prebatch_reason and
+        # the FRONT-registered ExecutionBudgetStopCondition (both read the budget's
+        # own remaining_cost / exhausted_dimension). The pre-run gate keeps
+        # estimating against the user's configured cost_limit (their own gate).
+
+        # Time: lower self.timeout to the shared remaining and record whether the
+        # budget deadline is the binding clamp (for watchdog reason attribution).
+        remaining_seconds = budget.remaining_seconds
+        if not math.isinf(remaining_seconds):
+            prior_timeout = self.timeout
+            if prior_timeout is None or remaining_seconds <= prior_timeout:
+                self.timeout = remaining_seconds
+                self._timeout_source = "execution_budget"
+            # else: the per-run timeout is tighter and stays binding.
+
+        # Examples: clamp the physical sample pool as defense-in-depth. The
+        # primary example enforcement is debit + stop condition + pre-batch gate.
+        remaining_examples = budget.remaining_examples
+        if not math.isinf(remaining_examples):
+            current_cap = (
+                float("inf")
+                if self._max_total_examples is None
+                else float(self._max_total_examples)
+            )
+            clamped = int(min(current_cap, remaining_examples))
+            # SampleBudgetManager requires a positive budget; a clamp of 0 means the
+            # shared examples are already spent, in which case the pre-batch gate
+            # (_execution_budget_prebatch_reason) stops the run before any trial is
+            # dispatched, so the pool is never consulted — skip the (invalid) 0-pool.
+            if clamped >= 1:
+                self._sample_budget_manager = SampleBudgetManager(
+                    clamped,
+                    include_pruned=self._samples_include_pruned,
+                )
+
+        # Stop condition: FRONT-register so the cumulative "execution_budget"
+        # reason wins first-match over the user's own cost_limit condition when
+        # both fire on the same iteration (the enforcer's limit is NOT clamped).
+        self._stop_condition_manager.register_execution_budget_condition(budget)
+
+    def _examples_of(self, trial_result: TrialResult) -> int:
+        """Best-effort count of examples a single trial attempted (issue #1980)."""
+        attempted = extract_examples_attempted(
+            trial_result, default=None, check_example_results=True
+        )
+        return int(attempted) if attempted is not None else 0
+
+    def _effective_batch_size(self, remaining_trials: float) -> int:
+        """Size of the next dispatched batch, for pre-batch cost admission (#1980).
+
+        In PARALLEL mode up to ``parallel_trials`` trials are dispatched together
+        before the optimization loop re-checks the shared budget, so the cost
+        admission gate must reserve budget for the *whole batch*, not one trial.
+        The batch can never exceed the remaining trial budget, so it is bounded by
+        ``remaining_trials`` when that is finite. Sequential mode
+        (``parallel_trials == 1``) always yields ``1`` -> the gate reserves exactly
+        one trial's estimate, byte-identical to the pre-#1980-fix behaviour.
+        """
+        batch = max(int(self.parallel_trials), 1)
+        if not math.isinf(remaining_trials):
+            batch = min(batch, max(int(remaining_trials), 0))
+        return batch
+
+    def _execution_budget_prebatch_reason(
+        self, remaining_trials: float
+    ) -> StopReason | None:
+        """Pre-batch admission gate for a shared ExecutionBudget (issue #1980).
+
+        Blocks the next batch loudly (issue #1684 item 3 style) when it cannot fit
+        the shared remaining. Returns ``"execution_budget"`` when blocked, else
+        ``None``. Absent budget -> ``None`` -> no behavior change.
+        """
+        budget: ExecutionBudget | None = getattr(self, "execution_budget", None)
+        if budget is None:
+            return None
+
+        snapshot = budget.snapshot()
+        blocked_dimension: str | None = None
+
+        if snapshot.exhausted_dimension is not None:
+            blocked_dimension = snapshot.exhausted_dimension
+        else:
+            # "Can't fund the next BATCH" on cost. In PARALLEL mode a batch of up
+            # to ``parallel_trials`` trials is dispatched together before the loop
+            # re-checks the budget, so the admission gate reserves budget for the
+            # whole batch (est_cost_per_trial x effective batch size), not just one
+            # trial. Otherwise up to (batch - 1) in-flight trials debit past the
+            # cumulative cap before the next stop check (issue #1980 finding #1:
+            # F1 removed the per-run enforcer clamp, and — unlike examples — the
+            # cost dimension has no per-trial sample-ceiling bound, so nothing else
+            # caps a parallel batch's spend). This bounds cost overshoot to under
+            # one batch's newly-admitted work. Sequential mode -> batch of 1 ->
+            # est_cost_per_trial -> behaviour unchanged.
+            #
+            # The examples dimension deliberately does NOT get the same look-ahead:
+            # a parallel batch's total sampled examples are already bounded to the
+            # shared remaining by the sample-pool clamp (``_apply_execution_budget``
+            # lowers the physical pool to ``remaining_examples``) plus
+            # ``allocate_parallel_ceilings`` (which fans the pool's remaining out as
+            # per-trial sample ceilings), so a batch cannot overshoot
+            # ``max_examples`` the way an unbounded-per-trial cost can.
+            est_per_trial = 0.0
+            if self.cost_enforcer is not None:
+                est_per_trial = float(
+                    self.cost_enforcer.get_status().estimated_cost_per_trial
+                )
+            est_next_batch = est_per_trial * self._effective_batch_size(
+                remaining_trials
+            )
+            if not math.isinf(snapshot.remaining_cost) and (
+                snapshot.remaining_cost < est_next_batch
+            ):
+                blocked_dimension = "cost"
+
+        if blocked_dimension is None:
+            return None
+
+        planned = (
+            "all remaining"
+            if math.isinf(remaining_trials)
+            else str(max(int(remaining_trials), 0))
+        )
+        logger.warning(
+            "execution budget gate blocked %s planned trials "
+            "(dimension=%s, consumed_cost=$%.2f, consumed_examples=%d, "
+            "elapsed=%.1fs)",
+            planned,
+            blocked_dimension,
+            snapshot.consumed_cost,
+            snapshot.consumed_examples,
+            snapshot.elapsed_seconds,
+        )
+        return "execution_budget"
+
     def _check_budget_limits(
         self, trial_count: int
     ) -> tuple[float, float, StopReason | None]:
@@ -2997,6 +3225,14 @@ class OptimizationOrchestrator:
         remaining = (
             float("inf") if self.max_trials is None else self.max_trials - trial_count
         )
+
+        # Cumulative ExecutionBudget admission runs BEFORE the per-run cost gate so
+        # the cumulative "execution_budget" reason is reported instead of the
+        # user's own per-run cost_limit when the shared cap is the binding one
+        # (issue #1980). Absent budget -> None -> falls through unchanged.
+        execution_budget_stop = self._execution_budget_prebatch_reason(remaining)
+        if execution_budget_stop is not None:
+            return remaining, 0, execution_budget_stop
 
         if self._is_cost_limit_reached():
             # Loud, explicit block: log the exact scope of what the budget
@@ -3026,7 +3262,9 @@ class OptimizationOrchestrator:
         """Record a budget stop reason and return True if the loop should break."""
         if not budget_stop:
             return False
-        if budget_stop == "cost_limit" or not self._stop_reason:
+        # "execution_budget" (cumulative) and "cost_limit" both override an
+        # existing reason so the cap that actually bound the run is reported.
+        if budget_stop in ("cost_limit", "execution_budget") or not self._stop_reason:
             self._stop_reason = budget_stop
         return True
 
@@ -3673,7 +3911,14 @@ class OptimizationOrchestrator:
         try:
             # Check for immediate timeout
             if self.timeout is not None and self.timeout == 0:
-                self._stop_reason = "timeout"
+                # Attribute to the cumulative budget when its deadline was the
+                # binding clamp (issue #1980); else the per-run timeout.
+                self._stop_reason = (
+                    "execution_budget"
+                    if getattr(self, "_timeout_source", None) == "execution_budget"
+                    else "timeout"
+                )
+                self._deadline_hard_stop = True
                 self._status = OptimizationStatus.CANCELLED
                 return self._create_optimization_result()
 
@@ -3700,7 +3945,15 @@ class OptimizationOrchestrator:
                         timeout=watchdog_deadline,
                     )
                 except TimeoutError:
-                    self._stop_reason = "timeout"
+                    # Attribute the hung-trial deadline to the cumulative budget
+                    # when its deadline was the binding clamp (issue #1980); else
+                    # the per-run timeout, unchanged.
+                    self._stop_reason = (
+                        "execution_budget"
+                        if getattr(self, "_timeout_source", None) == "execution_budget"
+                        else "timeout"
+                    )
+                    self._deadline_hard_stop = True
                     logger.warning(
                         "Optimization %s exceeded its wall-clock deadline "
                         "(%.1fs incl. grace); a trial appears to have hung. "
@@ -3719,10 +3972,14 @@ class OptimizationOrchestrator:
             # with an actionable error instead (issue #1681).
             self._fail_closed_on_empty_smart_managed_run()
 
-            # Set final status
+            # Set final status. A hard wall-clock cutoff (per-run timeout OR a
+            # binding ExecutionBudget deadline via the watchdog, issue #1980) is
+            # CANCELLED; a graceful mid-loop budget stop is COMPLETED like
+            # cost_limit / max_samples.
             self._status = (
                 OptimizationStatus.CANCELLED
                 if self._stop_reason == "timeout"
+                or getattr(self, "_deadline_hard_stop", False)
                 else OptimizationStatus.COMPLETED
             )
 
@@ -3947,13 +4204,17 @@ class OptimizationOrchestrator:
                 "max_trials": "max_trials_reached",
                 "plateau": "plateau",
                 "cost_limit": "cost_limit",
+                "execution_budget": "execution_budget",
                 "timeout": "timeout",
                 "metric_limit": "metric_limit",
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
-            if mapped_reason == "cost_limit" or not self._stop_reason:
+            if (
+                mapped_reason in ("cost_limit", "execution_budget")
+                or not self._stop_reason
+            ):
                 self._stop_reason = mapped_reason
             logger.info("Stopping: %s condition triggered", self._stop_reason)
             return True

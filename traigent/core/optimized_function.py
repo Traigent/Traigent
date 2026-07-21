@@ -59,6 +59,7 @@ from traigent.config.types import (
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
+from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
     SOURCE_EXPLICIT_LOCAL,
@@ -1558,6 +1559,7 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy: str | None = None,
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
+        budget: ExecutionBudget | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -1590,6 +1592,14 @@ class OptimizedFunction(Generic[_P, _R]):
                 ``True`` forces a progress bar even in non-interactive mode,
                 ``False`` suppresses it, ``None`` (default) auto-enables in
                 interactive terminals (``sys.stdin.isatty()``).
+            budget: Optional **experimental** shared cumulative ``ExecutionBudget``
+                (issue #1980). Pass the *same* instance to several ``optimize()``
+                calls (e.g. baseline -> search -> holdout) to cap the *total*
+                cost / examples / wall-clock across all of them; per-operation
+                limits still apply and can never exceed the shared cap. Examples
+                and the deadline are hard limits; the monetary cap is a lower bound
+                when cost is unobservable (see ``ExecutionBudget`` docs). ``None``
+                (default) leaves behavior unchanged.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -1688,6 +1698,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 callbacks=callbacks,
                 configuration_space=configuration_space,
                 algorithm_kwargs=algorithm_kwargs,
+                execution_budget=budget,
             )
         finally:
             if runtime_schema is not None:
@@ -1717,6 +1728,7 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy: str | None = None,
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
+        budget: ExecutionBudget | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -1778,6 +1790,7 @@ class OptimizedFunction(Generic[_P, _R]):
             strategy=strategy,
             strategy_params=strategy_params,
             progress_bar=progress_bar,
+            budget=budget,
             **algorithm_kwargs,
         )
 
@@ -1982,6 +1995,7 @@ class OptimizedFunction(Generic[_P, _R]):
         algorithm_kwargs: dict[str, Any],
         artifact_fingerprint_payload: dict[str, dict[str, Any]],
         requested_algorithm: str | None = None,
+        execution_budget: ExecutionBudget | None = None,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -2035,6 +2049,13 @@ class OptimizedFunction(Generic[_P, _R]):
         knob_resolver = getattr(self, "knob_resolver", None)
         if knob_resolver is not None:
             orchestrator.knob_resolver = knob_resolver
+        # Cumulative ExecutionBudget attribute seam (issue #1980), same pattern as
+        # knob_resolver: set AFTER construction (never an __init__ param, which
+        # would run _configure_stop_conditions/_setup_cost_enforcer before the
+        # budget could act). Absent ⇒ byte-identical legacy behavior — every
+        # orchestrator seam reads it via getattr(self, "execution_budget", None).
+        if execution_budget is not None:
+            orchestrator.execution_budget = execution_budget
         return orchestrator
 
     async def _run_and_finalize_optimization(
@@ -2098,6 +2119,11 @@ class OptimizedFunction(Generic[_P, _R]):
         # here is the non-strict warn-and-continue case — make it visible on the
         # result instead of leaving only a buried log.
         self._attach_unpriced_model_warning(result)
+
+        # Surface the shared cumulative ExecutionBudget's consumed/remaining state
+        # onto the result via metadata (issue #1980). No-op when no budget was
+        # attached -> result shape unchanged.
+        self._attach_execution_budget_snapshot(result, orchestrator)
 
         # Save results if requested
         if save_to:
@@ -2170,6 +2196,57 @@ class OptimizedFunction(Generic[_P, _R]):
             message,
         )
 
+    def _attach_execution_budget_snapshot(
+        self,
+        result: OptimizationResult,
+        orchestrator: OptimizationOrchestrator,
+    ) -> None:
+        """Surface a shared cumulative ExecutionBudget's state onto the result.
+
+        Additive (issue #1980), beside :meth:`_attach_unpriced_model_warning`:
+        writes ``result.metadata["execution_budget"]`` (consumed / remaining per
+        dimension, ``untracked_trials``, ``cost_tracking``) and appends the
+        ``"EXECUTION_BUDGET_UNTRACKED_COST"`` warning code when cost tracking is
+        incomplete — so a caller reading the monetary cap knows it was a lower
+        bound, not a hard guarantee. No-op when no budget was attached, keeping the
+        result shape byte-identical for the absent path.
+        """
+        budget: ExecutionBudget | None = getattr(orchestrator, "execution_budget", None)
+        if budget is None:
+            return
+
+        # Fold the enforcer's unknown-cost mode and any unpriced-runtime models
+        # into the budget's honesty flag, so cost_tracking reflects every silent
+        # $0 path, not only per-trial ``cost is None`` debits.
+        try:
+            cost_enforcer = getattr(orchestrator, "cost_enforcer", None)
+            if (
+                cost_enforcer is not None
+                and cost_enforcer.get_status().unknown_cost_mode
+            ):
+                budget.mark_cost_untracked()
+        except Exception:  # pragma: no cover - defensive; never break finalize
+            logger.debug("ExecutionBudget unknown-cost fold-in failed", exc_info=True)
+        if "UNPRICED_MODEL_RUNTIME" in result.warning_codes:
+            budget.mark_cost_untracked()
+
+        snapshot = budget.snapshot()
+        if isinstance(result.metadata, dict):
+            result.metadata["execution_budget"] = snapshot.as_dict()
+
+        if snapshot.cost_tracking != "complete":
+            if "EXECUTION_BUDGET_UNTRACKED_COST" not in result.warning_codes:
+                result.warning_codes.append("EXECUTION_BUDGET_UNTRACKED_COST")
+            message = (
+                "ExecutionBudget: cost tracking was "
+                f"{snapshot.cost_tracking!r} ({snapshot.untracked_trials} of "
+                f"{snapshot.trials} trial(s) had unobservable cost). The consumed "
+                "cost is a LOWER BOUND and the monetary cap is not a hard "
+                "guarantee on this run; the examples and deadline caps stayed hard."
+            )
+            if message not in result.warnings:
+                result.warnings.append(message)
+
     async def _try_cloud_execution(
         self,
         dataset: Dataset,
@@ -2185,6 +2262,7 @@ class OptimizedFunction(Generic[_P, _R]):
         callbacks: list[Callable[..., Any]] | None,
         save_to: str | None,
         requested_algorithm: str | None = None,
+        execution_budget: ExecutionBudget | None = None,
     ) -> OptimizationResult | None:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
@@ -2286,6 +2364,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 algorithm_kwargs=algorithm_kwargs,
                 artifact_fingerprint_payload=artifact_fingerprint_payload,
                 requested_algorithm=requested_algorithm,
+                execution_budget=execution_budget,
             )
             orchestrator._cloud_guidance_client = cloud_client
             return await self._run_and_finalize_optimization(
@@ -2543,6 +2622,7 @@ Remediation:
         callbacks: list[Callable[..., Any]] | None,
         configuration_space: dict[str, Any] | None,
         algorithm_kwargs: dict[str, Any],
+        execution_budget: ExecutionBudget | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
@@ -2709,6 +2789,7 @@ Remediation:
             callbacks,
             save_to,
             requested_algorithm=algorithm,
+            execution_budget=execution_budget,
         )
         if cloud_result is not None:
             return cloud_result
@@ -2769,6 +2850,7 @@ Remediation:
             algorithm_kwargs=algorithm_kwargs,
             artifact_fingerprint_payload=artifact_fingerprint_payload,
             requested_algorithm=algorithm,
+            execution_budget=execution_budget,
         )
 
         # Phase 9: Run optimization and finalize
