@@ -4151,6 +4151,29 @@ class OptimizationOrchestrator:
         )
         best_config = selection.best_config
         best_score = selection.best_score
+        best_config_margin = selection.best_config_margin
+        # Issue #1866: surface a statistical-tie winner once per run. When the
+        # winner-vs-runner-up margin is not significant, the "adopt best_config"
+        # action is being taken on noise — name both configs, the objective, and
+        # the p-value so the user can prefer the cheaper/faster config or add
+        # examples. Additive: best_config itself is unchanged.
+        if (
+            isinstance(best_config_margin, dict)
+            and best_config_margin.get("verdict") == "statistical_tie"
+        ):
+            logger.warning(
+                "best_config is a STATISTICAL TIE on '%s': winner (trial %s) vs "
+                "runner-up (trial %s) delta=%.4g, p=%.4g (alpha=%s). The winner "
+                "is statistically interchangeable with the runner-up on the "
+                "primary objective; prefer the cheaper/faster config or add "
+                "examples rather than treating the margin as a decision.",
+                best_config_margin.get("primary_objective"),
+                selection.best_trial_id,
+                best_config_margin.get("runner_up_trial_id"),
+                best_config_margin.get("delta"),
+                best_config_margin.get("p_value"),
+                best_config_margin.get("alpha"),
+            )
         session_summary = selection.session_summary
         result_status = self._status
         result_warnings: list[str] = []
@@ -4342,6 +4365,7 @@ class OptimizationOrchestrator:
             warnings=result_warnings,
             warning_codes=result_warning_codes,
             source=source,
+            best_config_margin=best_config_margin,
         )
 
         # Log optimization completion

@@ -49,6 +49,14 @@ class SelectionResult:
     # (issue #1832). Lets the orchestrator run the inert-constant-objective
     # check over precisely the trials selection ranked, not a re-derived set.
     ranking_eligible_trial_ids: list[str] | None = None
+    # Winner-vs-runner-up paired margin significance (issue #1866). Additive
+    # qualification of best_config — it never changes which config wins. None
+    # when there is no runner-up (< 2 distinct configs / no primary objective);
+    # otherwise a dict {runner_up, delta, ci95, p_value, verdict,
+    # effective_alpha, n_configs, ...} where verdict is "clear",
+    # "statistical_tie", or "na" (no per-example data). The verdict uses a
+    # Bonferroni-corrected effective_alpha for the best-of-n_configs selection.
+    best_config_margin: dict[str, Any] | None = None
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -1140,6 +1148,33 @@ def _trial_produced_outputs(trial: TrialResult) -> bool:
     return True
 
 
+def _attach_best_config_margin(
+    result: SelectionResult,
+    eligible_trials: list[TrialResult],
+    primary_objective: str,
+    objective_orientations: dict[str, str] | None,
+) -> None:
+    """Qualify a winning ``best_config`` with margin significance (issue #1866).
+
+    Additive only: this sets ``result.best_config_margin`` and never touches
+    ``best_config`` / ``best_score``. The import is local because
+    ``stat_significance`` references ``TrialResult`` from ``api.types`` (which
+    lazy-imports this module) — a module-level import would risk a load cycle.
+    """
+    if result.best_config is None and result.best_trial_id is None:
+        return
+    from traigent.core.stat_significance import compute_best_config_margin
+
+    orientation = (objective_orientations or {}).get(primary_objective)
+    result.best_config_margin = compute_best_config_margin(
+        eligible_trials,
+        winner_trial_id=result.best_trial_id,
+        winner_config=result.best_config,
+        primary_objective=primary_objective,
+        orientation=orientation,
+    )
+
+
 def select_best_configuration(
     trials: Iterable[TrialResult],
     primary_objective: str | None,
@@ -1333,6 +1368,12 @@ def select_best_configuration(
         )
         if weighted_result is not None:
             weighted_result.ranking_eligible_trial_ids = eligible_trial_ids
+            _attach_best_config_margin(
+                weighted_result,
+                eligible_trials,
+                primary_objective,
+                objective_orientations,
+            )
             return weighted_result
         # Defensive (issue #1846 fix-direction #4): a multi-objective schema was
         # declared but NO eligible trial had a computable weighted score
@@ -1358,6 +1399,12 @@ def select_best_configuration(
         _mark_weighted_selection_unavailable(
             single_result, weighted_selection_unavailable
         )
+        _attach_best_config_margin(
+            single_result,
+            eligible_trials,
+            primary_objective,
+            objective_orientations,
+        )
         return single_result
 
     aggregated = _aggregate_trials(eligible_trials, set(config_space_keys))
@@ -1373,5 +1420,11 @@ def select_best_configuration(
     aggregated_result.ranking_eligible_trial_ids = eligible_trial_ids
     _mark_weighted_selection_unavailable(
         aggregated_result, weighted_selection_unavailable
+    )
+    _attach_best_config_margin(
+        aggregated_result,
+        eligible_trials,
+        primary_objective,
+        objective_orientations,
     )
     return aggregated_result
