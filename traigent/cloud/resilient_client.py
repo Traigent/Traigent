@@ -146,6 +146,19 @@ class ResilientClient:
         if attempt >= self.max_retries:
             return False
 
+        # Honor the explicit exception type first (#1967): the canonical SDK
+        # exceptions encode retryability in the TYPE, which must not be
+        # overridden by substring heuristics on the message (e.g. a
+        # NonRetryableError whose text mentions "connection", or a RetryableError
+        # whose text matches no indicator). RateLimitError is a RetryableError
+        # subclass and is therefore covered by the second check.
+        if isinstance(error, NonRetryableError):
+            logger.debug("NonRetryableError - not retrying")
+            return False
+        if isinstance(error, RetryableError):
+            logger.debug("RetryableError - will retry")
+            return True
+
         error_type = self.classify_error(error)
 
         # Never retry auth errors
@@ -418,6 +431,12 @@ async def resilient_backend_request(
 
                 if status >= 500:
                     raise RetryableError(f"Server error: HTTP {status}")
+                if status == 408:
+                    # 408 Request Timeout is transient (#1968) and retryable,
+                    # matching backend_client's _SYNC_BACKEND_TRANSIENT_STATUSES
+                    # ({408, 429, 5xx}); do not surface it as a permanent 4xx
+                    # client error via the status >= 400 catch-all below.
+                    raise RetryableError(f"Transient error: HTTP {status}")
                 if status == 429:
                     retry_after_header = response.headers.get("Retry-After")
                     retry_after_value = None

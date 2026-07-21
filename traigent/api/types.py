@@ -1862,7 +1862,9 @@ class OptimizationResult:
         return weighted_scores
 
     def _select_best_weighted_result(
-        self, weighted_scores: list[tuple[TrialResult, float]]
+        self,
+        weighted_scores: list[tuple[TrialResult, float]],
+        objective_orientations: dict[str, str] | None = None,
     ) -> tuple[dict[str, Any] | None, float]:
         """Select the best configuration from computed weighted scores.
 
@@ -1911,6 +1913,7 @@ class OptimizationResult:
                 self.objectives[0] if self.objectives else "",
                 band_target=None,
                 objective_order=self.objectives,
+                objective_orientations=objective_orientations,
             )
         else:
             best_trial = tied_trials[0]
@@ -2035,8 +2038,20 @@ class OptimizationResult:
             ranges, normalized_weights, resolved_minimize, resolved_schema
         )
 
+        # Break weighted ties in the DECLARED direction (issue #1955): reuse the
+        # already-resolved minimize list so the tie-break honors exactly the same
+        # orientation as the weighted-score normalization above — a
+        # minimize-oriented secondary can no longer crown the WORSE config on a
+        # weighted tie (terminal/post-hoc parity).
+        _resolved_minimize_set = set(resolved_minimize)
+        tie_break_orientations = {
+            objective: (
+                "minimize" if objective in _resolved_minimize_set else "maximize"
+            )
+            for objective in self.objectives
+        }
         best_weighted_config, best_weighted_score = self._select_best_weighted_result(
-            weighted_scores
+            weighted_scores, tie_break_orientations
         )
 
         return {
