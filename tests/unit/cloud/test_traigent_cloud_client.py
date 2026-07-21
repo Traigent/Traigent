@@ -381,6 +381,97 @@ class TestTraigentCloudClient:
 
         asyncio.run(run_test())
 
+    def test_submit_optimization_idempotency_key_stable_across_retries(
+        self, mock_cloud_client
+    ):
+        """A retried /optimize POST reuses one Idempotency-Key.
+
+        The backend dedupes non-idempotent POSTs only when every retry attempt
+        carries the SAME Idempotency-Key. Regenerating the key per attempt would
+        defeat the dedup and produce a duplicate optimization run, so this test
+        pins the invariant: one transient 429 then success, and both POST
+        attempts must send an identical Idempotency-Key header.
+        """
+
+        async def run_test():
+            # First request: rate limited (429, retryable) -> retry.
+            mock_response_429 = MagicMock()
+            mock_response_429.status = 429
+
+            # Second request: success.
+            mock_response_200 = MagicMock()
+            mock_response_200.status = 200
+            mock_response_200.json = AsyncMock(
+                return_value={"trials_count": 10}
+            )
+
+            mock_session = MagicMock()
+            mock_session.post.return_value.__aenter__.side_effect = [
+                mock_response_429,
+                mock_response_200,
+            ]
+            mock_cloud_client._session = mock_session
+
+            with (
+                _patch_backend_validate(),
+                patch("asyncio.sleep", new_callable=AsyncMock),
+            ):
+                await mock_cloud_client._submit_optimization({})
+
+            # Two POST attempts were made (initial + one retry).
+            assert mock_session.post.call_count == 2
+            keys = [
+                call.kwargs["headers"]["Idempotency-Key"]
+                for call in mock_session.post.call_args_list
+            ]
+            # (a) the header is present on every POST, and
+            # (b) it is IDENTICAL across the retry.
+            assert all(keys), "Idempotency-Key header missing on a POST attempt"
+            assert keys[0] == keys[1], (
+                "Idempotency-Key changed between retries; backend dedup would fail"
+            )
+
+        asyncio.run(run_test())
+
+    def test_submit_optimization_idempotency_key_differs_per_call(
+        self, mock_cloud_client
+    ):
+        """A new logical /optimize call gets a fresh Idempotency-Key.
+
+        The key must be stable within one logical call (across its retries) but
+        distinct between separate calls, so two intentional submissions are not
+        collapsed into one by the backend's dedup window.
+        """
+
+        async def run_test():
+            def _fresh_success_session():
+                mock_response = MagicMock()
+                mock_response.status = 200
+                mock_response.json = AsyncMock(return_value={"trials_count": 1})
+                mock_session = MagicMock()
+                mock_session.post.return_value.__aenter__.return_value = (
+                    mock_response
+                )
+                return mock_session
+
+            with _patch_backend_validate():
+                session_a = _fresh_success_session()
+                mock_cloud_client._session = session_a
+                await mock_cloud_client._submit_optimization({})
+
+                session_b = _fresh_success_session()
+                mock_cloud_client._session = session_b
+                await mock_cloud_client._submit_optimization({})
+
+            key_a = session_a.post.call_args.kwargs["headers"]["Idempotency-Key"]
+            key_b = session_b.post.call_args.kwargs["headers"]["Idempotency-Key"]
+            assert key_a and key_b
+            assert key_a != key_b, (
+                "Distinct logical calls must not share an Idempotency-Key"
+            )
+
+        asyncio.run(run_test())
+
     def test_serialize_dataset(self, mock_cloud_client, sample_dataset):
         """Test dataset serialization for cloud transmission."""
         serialized = mock_cloud_client._serialize_dataset(sample_dataset)
