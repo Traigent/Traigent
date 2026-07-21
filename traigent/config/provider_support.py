@@ -237,6 +237,23 @@ PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
         tiered=False,
         discovery=False,
     ),
+    ProviderSpec(
+        name="nous",
+        support_level=SUPPORT_MAPPING_ONLY,
+        # Nous Portal authenticates via a short-lived JWT minted from a refresh
+        # token (OAuth), not a single static env-var API key -> not key-managed
+        # and mapping-only (recognized for routing/discovery, not preflight
+        # validated; the JWT-refresh helper lives in
+        # traigent.integrations.llms.nous_auth). Discovery + tiers are declared
+        # independently (Azure proves discovery + mapping_only coexist).
+        env_keys=(),
+        aliases=("nous_portal", "nousresearch"),
+        validated=False,
+        detection=DETECT_NONE,
+        has_known_models=False,
+        tiered=True,
+        discovery=True,
+    ),
 )
 
 

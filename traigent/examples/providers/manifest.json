@@ -64,6 +64,21 @@
       "run_command": "python -m traigent.examples.providers.openrouter"
     },
     {
+      "id": "nous",
+      "label": "Nous Portal (Hermes)",
+      "impl": "langchain",
+      "runnable_module": "nous",
+      "import_check": "langchain_openai",
+      "pip_package": "langchain-openai",
+      "import_line": "from langchain_openai import ChatOpenAI",
+      "extra_imports": ["from traigent.integrations.llms.nous_auth import NOUS_BASE_URL, get_nous_api_key"],
+      "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"], base_url=NOUS_BASE_URL, api_key=get_nous_api_key())",
+      "models": ["NousResearch/Hermes-3-Llama-3.1-70B", "NousResearch/Hermes-4-405B"],
+      "env_vars": [{ "name": "NOUS_API_KEY", "placeholder": "eyJ... (a pre-minted Nous Portal JWT)" }],
+      "creds_note": "Nous Portal is OpenAI-compatible but uses OAuth: it authenticates with a short-lived JWT minted from a refresh token, not a static API key. Set NOUS_API_KEY to a pre-minted token (returned as-is, no auto-refresh), or set NOUS_REFRESH_TOKEN / log in with the Hermes CLI (~/.hermes/auth.json) for auto-refresh via traigent.integrations.llms.nous_auth.get_nous_api_key(). It reuses langchain-openai's ChatOpenAI with base_url=https://inference-api.nousresearch.com/v1. Cost objectives need TRAIGENT_CUSTOM_MODEL_PRICING_JSON — the SDK ships no fabricated Nous prices.",
+      "run_command": "python -m traigent.examples.providers.nous"
+    },
+    {
       "id": "azure",
       "label": "Azure OpenAI",
       "impl": "litellm",
