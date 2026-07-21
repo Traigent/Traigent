@@ -401,9 +401,7 @@ class TestTraigentCloudClient:
             # Second request: success.
             mock_response_200 = MagicMock()
             mock_response_200.status = 200
-            mock_response_200.json = AsyncMock(
-                return_value={"trials_count": 10}
-            )
+            mock_response_200.json = AsyncMock(return_value={"trials_count": 10})
 
             mock_session = MagicMock()
             mock_session.post.return_value.__aenter__.side_effect = [
@@ -449,9 +447,7 @@ class TestTraigentCloudClient:
                 mock_response.status = 200
                 mock_response.json = AsyncMock(return_value={"trials_count": 1})
                 mock_session = MagicMock()
-                mock_session.post.return_value.__aenter__.return_value = (
-                    mock_response
-                )
+                mock_session.post.return_value.__aenter__.return_value = mock_response
                 return mock_session
 
             with _patch_backend_validate():
