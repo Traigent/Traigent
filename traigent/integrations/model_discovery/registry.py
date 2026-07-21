@@ -115,6 +115,7 @@ def _register_default_discoveries() -> None:
     )
     from traigent.integrations.model_discovery.gemini_discovery import GeminiDiscovery
     from traigent.integrations.model_discovery.mistral_discovery import MistralDiscovery
+    from traigent.integrations.model_discovery.nous_discovery import NousDiscovery
     from traigent.integrations.model_discovery.openai_discovery import OpenAIDiscovery
 
     register_discovery("openai", OpenAIDiscovery)
@@ -122,6 +123,7 @@ def _register_default_discoveries() -> None:
     register_discovery("gemini", GeminiDiscovery)
     register_discovery("azure_openai", AzureOpenAIDiscovery)
     register_discovery("mistral", MistralDiscovery)
+    register_discovery("nous", NousDiscovery)
 
 
 # Auto-register default discoveries on module load

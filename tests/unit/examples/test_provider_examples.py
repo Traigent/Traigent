@@ -79,6 +79,7 @@ def test_manifest_provider_ids_are_the_expected_set():
         "openai",
         "anthropic",
         "openrouter",
+        "nous",
         "azure",
         "gemini",
         "groq",
@@ -254,11 +255,20 @@ def test_ensure_packages_declined_prompt_does_not_install(monkeypatch, capsys):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("module_name", ["openai", "groq"])
+@pytest.mark.parametrize("module_name", ["openai", "groq", "nous"])
 def test_example_runs_end_to_end_in_mock(module_name):
-    """One LangChain (openai) and one LiteLLM (groq) example run keyless in
-    mock mode and print a ranked results table with a non-zero best score."""
-    provider = get_provider("openai" if module_name == "openai" else "groq")
+    """One LangChain (openai), one LiteLLM (groq) and the OAuth Nous Portal
+    (nous) example run keyless in mock mode and print a ranked results table
+    with a non-zero best score.
+
+    ``nous`` (#1978) additionally exercises the JWT-refresh helper's offline
+    path: ``configure_demo_env`` seeds ``NOUS_API_KEY`` (via ``setdefault``),
+    so ``get_nous_api_key()`` returns it verbatim with ZERO network. The
+    module id == runnable_module for all three, so ``get_provider(module_name)``
+    resolves the manifest entry whose ``import_check`` gates the skip (nous ->
+    ``langchain_openai``, like openai; groq -> ``litellm``).
+    """
+    provider = get_provider(module_name)
     if importlib.util.find_spec(provider["import_check"]) is None:
         pytest.skip(f"{provider['import_check']} not installed")
 
