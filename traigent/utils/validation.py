@@ -934,10 +934,14 @@ class Validators:
             # Try to validate content if path is valid
             if path_result.is_valid:
                 try:
-                    path = Path(dataset_path)
+                    # Use the RESOLVED absolute path (and its parent as base_dir)
+                    # so safe_open's containment guard does not re-join a relative
+                    # path onto its own parent (which doubled nested segments and
+                    # produced a spurious READ_ERROR for relative dataset paths).
+                    validated_dataset_path = resolved_dataset_path.resolve()
                     with safe_open(
-                        path,
-                        resolved_dataset_path.resolve().parent,
+                        validated_dataset_path,
+                        validated_dataset_path.parent,
                         mode="r",
                         encoding="utf-8",
                     ) as f:
