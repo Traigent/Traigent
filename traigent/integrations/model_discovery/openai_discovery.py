@@ -27,6 +27,20 @@ class OpenAIDiscovery(ModelDiscovery):
     PROVIDER = "openai"
     FRAMEWORK = Framework.OPENAI
 
+    def _get_credential_fingerprint(self) -> str | None:
+        """Scope model discovery by every OpenAI client context variable.
+
+        ``OpenAI()`` reads organization and project from the environment in
+        addition to the API key; either can change the visible model list.
+        """
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+        organization = os.getenv("OPENAI_ORG_ID")
+        project = os.getenv("OPENAI_PROJECT_ID")
+        if not any((api_key, base_url, organization, project)):
+            return None
+        return self._fingerprint(api_key, base_url, organization, project)
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Fetch models from OpenAI SDK.
 

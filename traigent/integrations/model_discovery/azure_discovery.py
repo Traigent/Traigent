@@ -55,6 +55,14 @@ class AzureOpenAIDiscovery(ModelDiscovery):
     PROVIDER = "azure_openai"
     FRAMEWORK = Framework.AZURE_OPENAI
 
+    def _get_credential_fingerprint(self) -> str | None:
+        """Scope deployments by the Azure endpoint and credential."""
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        if not endpoint and not api_key:
+            return None
+        return self._fingerprint(endpoint, api_key)
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Attempt to fetch deployments from Azure.
 
@@ -116,9 +124,11 @@ class AzureOpenAIDiscovery(ModelDiscovery):
         Returns:
             List of model/deployment names.
         """
+        cache_key = self._get_cache_key()
+
         # Try cache first
         if not force_refresh:
-            cached = self._cache.get(self.PROVIDER)
+            cached = self._cache.get(cache_key)
             if cached is not None:
                 return cached
 
@@ -139,7 +149,7 @@ class AzureOpenAIDiscovery(ModelDiscovery):
         all_models.update(KNOWN_AZURE_BASE_MODELS)
 
         models = sorted(all_models)
-        self._cache.set(self.PROVIDER, models, 604800)  # 7 days
+        self._cache.set(cache_key, models, 604800)  # 7 days
         return models
 
     def is_valid_model(self, model_id: str) -> bool:
