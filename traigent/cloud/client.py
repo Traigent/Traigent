@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import os
 import time
+import uuid
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -1190,11 +1191,23 @@ class TraigentCloudClient(BaseTraigentClient):
         url = f"{self.api_base_url}/optimize"
         session = self._aio_session  # Capture for use in nested function
 
+        # Generate a stable idempotency key ONCE, before the retry loop begins.
+        # /optimize is a non-idempotent POST that the backend does NOT cover with
+        # keyless-fallback dedup, so a transient 429/5xx/network retry after the
+        # backend already started a run would create a duplicate optimization run.
+        # The same key MUST ride every retry attempt for the backend's
+        # Idempotency-Key middleware to dedupe them (generating it per-attempt
+        # would defeat the fix); it is captured by the submit_request closure and
+        # never regenerated inside the retry loop.
+        idempotency_key = uuid.uuid4().hex
+
         async def submit_request():
             """Internal function to submit request with proper error handling."""
+            headers = await self._get_headers()
+            headers["Idempotency-Key"] = idempotency_key
             try:
                 async with session.post(
-                    url, json=request_data, headers=await self._get_headers()
+                    url, json=request_data, headers=headers
                 ) as response:
                     if response.status == 200:
                         return await response.json()
