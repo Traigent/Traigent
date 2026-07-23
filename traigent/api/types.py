@@ -188,6 +188,7 @@ StopReason = Literal[
     "max_samples_reached",
     "timeout",
     "cost_limit",
+    "execution_budget",  # Shared cumulative ExecutionBudget exhausted (issue #1980)
     "metric_limit",
     "optimizer",
     "plateau",
@@ -962,6 +963,17 @@ class OptimizationResult:
             - "timeout": Exceeded the timeout duration
             - "cost_limit": Hit the cost budget limit mid-run; pre-run cost
               approval declines raise CostLimitExceeded instead.
+            - "execution_budget": Exhausted a shared cumulative ExecutionBudget
+              (cost, examples, or wall-clock deadline) spanning direct evaluate()
+              and optimize() calls (issue #1980, experimental). Reported in preference to
+              "cost_limit". The shared cumulative cost is enforced mid-run by the
+              budget's stop condition and its pre-batch admission gate; the per-run
+              cost enforcer's own cost_limit is left intact, so the pre-run approval
+              gate estimates against the user's configured limit rather than the
+              budget's remaining cost. Examples are a hard limit; the deadline is
+              hard at trial boundaries (a single hung trial may overrun by the
+              watchdog grace); the monetary cap is a lower bound when cost is
+              unobservable — see metadata["execution_budget"]["cost_tracking"].
             - "metric_limit": Hit a soft cumulative metric limit
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)

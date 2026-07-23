@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
 from tests.shared.mocks.optimizers import MockOptimizer
-from traigent.api.types import TrialResult, TrialStatus
+from traigent.api.types import StopReason, TrialResult, TrialStatus
 from traigent.core.exception_handler import VendorErrorCategory
+from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.parallel_execution_manager import PermittedTrialResult
-from traigent.core.stop_conditions import StopCondition
+from traigent.core.stop_conditions import (
+    ExecutionBudgetStopCondition,
+    StopCondition,
+)
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.utils.exceptions import VendorPauseError
 
@@ -232,6 +236,64 @@ def test_custom_stop_condition_maps_to_generic_condition_stop_reason():
 
     assert orchestrator._should_stop(trial_count=0)
     assert orchestrator._stop_reason == "condition"
+
+
+# ---------------------------------------------------------------------------
+# ExecutionBudget stop-reason contract (issue #1980)
+# ---------------------------------------------------------------------------
+
+
+def test_execution_budget_is_in_stop_reason_literal():
+    """The public StopReason contract includes the cumulative budget reason."""
+    assert "execution_budget" in get_args(StopReason)
+
+
+def test_execution_budget_stop_condition_reason_is_execution_budget():
+    """The condition advertises the exact literal used in reason_mapping."""
+    assert ExecutionBudgetStopCondition.reason == "execution_budget"
+
+
+def test_execution_budget_condition_maps_to_public_stop_reason():
+    """An exhausted ExecutionBudget stop condition maps to 'execution_budget'."""
+    orchestrator = _orchestrator(max_trials=10)
+
+    budget = ExecutionBudget(max_cost_usd=0.10)
+    budget.debit_trial(cost=0.10)  # fully spend -> exhausted_dimension == "cost"
+    assert budget.exhausted_dimension == "cost"
+
+    orchestrator.execution_budget = budget
+    orchestrator._stop_condition_manager.register_execution_budget_condition(budget)
+
+    assert orchestrator._should_stop(trial_count=1)
+    assert orchestrator._stop_reason == "execution_budget"
+
+
+def test_execution_budget_masks_cost_limit_when_both_fire(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Front-insertion: when the clamped cost enforcer AND the cumulative budget
+    both fire, the reported reason is the cumulative 'execution_budget', never the
+    per-run 'cost_limit' it masks.
+    """
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+    orchestrator = _orchestrator(cost_limit=0.5, cost_approved=True)
+
+    # Drive the (front-registered) CostLimitStopCondition to fire.
+    permit = orchestrator.cost_enforcer.acquire_permit()
+    assert permit.is_granted
+    orchestrator.cost_enforcer.track_cost(0.5, permit=permit)
+    assert orchestrator.cost_enforcer.is_limit_reached
+
+    # Attach a cumulative budget that is ALSO exhausted and front-register it.
+    budget = ExecutionBudget(max_cost_usd=0.5)
+    budget.debit_trial(cost=0.5)
+    assert budget.exhausted_dimension == "cost"
+    orchestrator.execution_budget = budget
+    orchestrator._stop_condition_manager.register_execution_budget_condition(budget)
+
+    assert orchestrator._should_stop(trial_count=1)
+    # The cumulative reason wins over the masked per-run cost_limit.
+    assert orchestrator._stop_reason == "execution_budget"
 
 
 @pytest.mark.asyncio

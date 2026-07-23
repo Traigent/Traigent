@@ -188,6 +188,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "override_config": ("traigent.api.functions", "override_config"),
     "set_strategy": ("traigent.api.functions", "set_strategy"),
     "with_usage": ("traigent.api.functions", "with_usage"),
+    # Experimental: shared cumulative execution budget (issue #1980)
+    "ExecutionBudget": ("traigent.core.execution_budget", "ExecutionBudget"),
     # SE-friendly parameter range classes
     "Choices": ("traigent.api.parameter_ranges", "Choices"),
     "IntRange": ("traigent.api.parameter_ranges", "IntRange"),
@@ -565,6 +567,7 @@ __all__ = [
     "get_version_info",
     "set_strategy",
     "with_usage",  # New: wrap multi-agent workflow responses with usage metadata
+    "ExecutionBudget",  # Experimental: shared cumulative execution budget (#1980)
     # Configuration types
     "TraigentConfig",
     "ExternalServiceEvaluator",
