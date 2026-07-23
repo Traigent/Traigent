@@ -2333,6 +2333,9 @@ class OptimizationOrchestrator:
         """
         terminal_completion: CloudBrainOptimizationComplete | None = None
         submit_to_backend = True
+        # _handle_trial_result increments trial_count on every item, so anchor
+        # synthetic cancelled/failed IDs once for contiguous batch numbering.
+        batch_start = trial_count
 
         for batch_offset, (config, permitted_result, optuna_id) in enumerate(
             zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
@@ -2351,7 +2354,7 @@ class OptimizationOrchestrator:
                         config,
                     )
                     trial_result = TrialResult(
-                        trial_id=f"trial_{trial_count + batch_offset}",
+                        trial_id=f"trial_{batch_start + batch_offset}",
                         config=config,
                         metrics={},
                         status=TrialStatus.CANCELLED,
@@ -2368,10 +2371,10 @@ class OptimizationOrchestrator:
                         exc_info=result,
                     )
                     # Convert exception to failed TrialResult
-                    # Use batch_offset (from enumerate) to ensure unique trial_id even before
-                    # _handle_trial_result increments trial_count
+                    # Keep synthetic IDs contiguous despite the per-item
+                    # reassignment of trial_count below.
                     trial_result = TrialResult(
-                        trial_id=f"trial_{trial_count + batch_offset}",
+                        trial_id=f"trial_{batch_start + batch_offset}",
                         config=config,
                         metrics={},
                         status=TrialStatus.FAILED,

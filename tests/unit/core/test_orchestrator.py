@@ -1086,6 +1086,37 @@ class TestOptimizationOrchestrator:
         assert handled_trial_ids == ["trial-0", "trial-1"]
 
     @pytest.mark.asyncio
+    async def test_parallel_mixed_cancelled_and_exception_ids_are_contiguous(
+        self, orchestrator
+    ):
+        """Synthetic IDs must use the batch start, not a changing trial count."""
+        permitted_results = [
+            PermittedTrialResult(None, Permit(id=1, amount=0.0, active=False)),
+            PermittedTrialResult(
+                RuntimeError("trial failed"), Permit(id=2, amount=0.0, active=False)
+            ),
+            PermittedTrialResult(None, Permit(id=3, amount=0.0, active=False)),
+        ]
+        handled_trial_ids: list[str] = []
+
+        async def handle_result(**kwargs):
+            handled_trial_ids.append(kwargs["trial_result"].trial_id)
+            return kwargs["current_trial_index"] + 1
+
+        orchestrator._handle_trial_result = AsyncMock(side_effect=handle_result)
+
+        final_trial_count = await orchestrator._process_parallel_results(
+            scheduled_configs=[{"value": 1}, {"value": 2}, {"value": 3}],
+            results=permitted_results,
+            scheduled_optuna_ids=[None, None, None],
+            session_id="session-123",
+            trial_count=7,
+        )
+
+        assert handled_trial_ids == ["trial_7", "trial_8", "trial_9"]
+        assert final_trial_count == 10
+
+    @pytest.mark.asyncio
     async def test_default_config_is_evaluated_first(
         self, mock_optimizer, mock_evaluator, mock_function, sample_dataset
     ):
