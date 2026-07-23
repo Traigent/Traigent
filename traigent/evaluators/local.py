@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.meta_types import TraigentMetadata
 
 from traigent.config.types import resolve_execution_mode
@@ -1635,6 +1636,7 @@ class LocalEvaluator(BaseEvaluator):
         *,
         sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
     ) -> EvaluationResult:
         """Evaluate function with given configuration on dataset.
 
@@ -1651,6 +1653,14 @@ class LocalEvaluator(BaseEvaluator):
         """
         self.validate_function(func)
         self.validate_config(config)
+
+        execution_budget_lease, blocked_result = (
+            self._prepare_execution_budget_evaluation(budget, config)
+        )
+        if blocked_result is not None:
+            return blocked_result
+        if sample_lease is None:
+            sample_lease = execution_budget_lease
 
         if not dataset.examples:
             raise EvaluationError("Dataset cannot be empty")
@@ -1900,7 +1910,9 @@ class LocalEvaluator(BaseEvaluator):
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
 
-        return result
+        return self._finalize_execution_budget_evaluation(
+            budget, result, execution_budget_lease
+        )
 
     def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
         """Compute real accuracy by comparing actual vs expected output.

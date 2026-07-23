@@ -3,9 +3,10 @@
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
 ``ExecutionBudget`` is an **experimental** primitive (issue #1980): a single cap on
-cost / examples / wall-clock time that can be shared across several ``optimize()``
-calls (e.g. baseline -> search -> holdout phases), so the *total* spend across the
-whole workflow is bounded rather than each call being independently capped.
+cost / examples / wall-clock time that can be shared across direct ``evaluate()``
+and ``optimize()`` calls (e.g. baseline -> search -> holdout phases), so the
+*total* spend across the whole workflow is bounded rather than each call being
+independently capped.
 
 Honesty contract (mirrors the SDK's cost-accounting discipline):
 
@@ -139,11 +140,12 @@ class ExecutionBudget:
     ``deadline_seconds`` must be set; any value ``<= 0`` raises
     :class:`ConfigurationError` at construction.
 
-    Attach it explicitly per call — ``my_fn.optimize(budget=b)`` /
-    ``my_fn.optimize_sync(budget=b)`` — passing the *same* instance to each phase so
-    the shared remaining is spent down across baseline, search, and holdout. Using it
-    as a context manager starts the wall-clock deadline on ``__enter__`` and freezes a
-    final snapshot on ``__exit__``; it never registers an ambient/implicit budget.
+    Attach it explicitly per call — ``evaluator.evaluate(..., budget=b)`` /
+    ``my_fn.optimize(budget=b)`` / ``my_fn.optimize_sync(budget=b)`` — passing the
+    *same* instance to each phase so the shared remaining is spent down across
+    baseline, search, and holdout. Using it as a context manager starts the
+    wall-clock deadline on ``__enter__`` and freezes a final snapshot on
+    ``__exit__``; it never registers an ambient/implicit budget.
     """
 
     def __init__(

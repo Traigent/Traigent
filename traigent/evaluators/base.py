@@ -42,6 +42,7 @@ from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
 
 # Tracing utilities are imported lazily to avoid circular imports
@@ -789,6 +790,12 @@ class EvaluationResult:
     sample_budget_exhausted: bool = False
     examples_consumed: int = 0
 
+    # ExecutionBudget fields are additive so direct baseline/holdout evaluation
+    # can report the same cumulative stop reason as optimize().
+    execution_budget_exhausted: bool = False
+    stop_reason: str | None = None
+    execution_budget: dict[str, object] | None = None
+
     # Legacy fields for backward compatibility
     metrics: dict[str, float] | None = None
     outputs: list[Any] | None = None
@@ -847,6 +854,9 @@ class EvaluationResult:
             "summary_stats": _safe_json_value(self.summary_stats),
             "sample_budget_exhausted": self.sample_budget_exhausted,
             "examples_consumed": self.examples_consumed,
+            "execution_budget_exhausted": self.execution_budget_exhausted,
+            "stop_reason": self.stop_reason,
+            "execution_budget": _safe_json_value(self.execution_budget),
             "metrics": _safe_json_value(self.metrics),
             "outputs": _safe_json_value(self.outputs),
             "errors": self.errors,
@@ -878,6 +888,9 @@ class EvaluationResult:
             summary_stats=data.get("summary_stats"),
             sample_budget_exhausted=data.get("sample_budget_exhausted", False),
             examples_consumed=data.get("examples_consumed", 0),
+            execution_budget_exhausted=data.get("execution_budget_exhausted", False),
+            stop_reason=data.get("stop_reason"),
+            execution_budget=data.get("execution_budget"),
             metrics=data.get("metrics"),
             outputs=data.get("outputs"),
             errors=data.get("errors"),
@@ -942,6 +955,7 @@ class BaseEvaluator(ABC):
         *,
         sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
     ) -> EvaluationResult:
         """Evaluate function with given configuration on dataset.
 
@@ -952,6 +966,8 @@ class BaseEvaluator(ABC):
             sample_lease: Optional sample budget lease controlling intra-trial consumption
             progress_callback: Optional callback invoked after each example with
                 progress information. Receives ``(example_index, payload)``.
+            budget: Optional shared cumulative budget. Pass the same instance to
+                baseline/holdout ``evaluate()`` calls and ``optimize()`` calls.
 
         Returns:
             EvaluationResult with metrics and outputs
@@ -960,6 +976,85 @@ class BaseEvaluator(ABC):
             EvaluationError: If evaluation fails
         """
         pass
+
+    def _prepare_execution_budget_evaluation(
+        self,
+        budget: ExecutionBudget | None,
+        config: dict[str, Any],
+    ) -> tuple[SampleBudgetLease | None, EvaluationResult | None]:
+        """Start a direct evaluation against ``budget`` and admit its examples.
+
+        The optimizer treats each trial as one budgeted unit. A direct evaluator
+        call is the corresponding unit for baseline and holdout workflows: it
+        starts a run, refuses work when a dimension is already exhausted, and
+        bounds its example pool to the shared remaining examples. Cost is debited
+        after the observable evaluation result is available, just as the
+        orchestrator debits a completed trial.
+        """
+        if budget is None:
+            return None, None
+
+        budget.begin_run()
+        snapshot = budget.snapshot()
+        if snapshot.exhausted_dimension is not None:
+            logger.info(
+                "Execution budget blocks direct evaluation (dimension=%s)",
+                snapshot.exhausted_dimension,
+            )
+            return None, EvaluationResult(
+                config=config,
+                execution_budget_exhausted=True,
+                stop_reason="execution_budget",
+                execution_budget=snapshot.as_dict(),
+            )
+
+        if snapshot.remaining_examples == float("inf"):
+            return None, None
+
+        # A fresh lease gives standalone Local/Hybrid evaluators the same hard
+        # example admission that optimize() gets from its sample budget manager.
+        # Do not layer a second lease over an orchestrator-owned one; the
+        # orchestrator already clamps that pool from this same budget.
+        from traigent.core.sample_budget import SampleBudgetManager
+
+        manager = SampleBudgetManager(int(snapshot.remaining_examples))
+        return manager.create_lease("execution-budget-evaluation"), None
+
+    @staticmethod
+    def _execution_budget_cost(result: EvaluationResult) -> float | None:
+        """Return an observed evaluation cost, or ``None`` when it is unknown."""
+        for key in ("cost", "total_cost"):
+            value = result.aggregated_metrics.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                numeric = float(value)
+                if math.isfinite(numeric) and numeric >= 0.0:
+                    return numeric
+        return None
+
+    @staticmethod
+    def _finalize_execution_budget_evaluation(
+        budget: ExecutionBudget | None,
+        result: EvaluationResult,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> EvaluationResult:
+        """Debit one completed direct evaluation and surface the shared state."""
+        if execution_budget_lease is not None:
+            execution_budget_lease.finalize()
+        if budget is None:
+            return result
+
+        cost = BaseEvaluator._execution_budget_cost(result)
+        budget.debit_trial(
+            cost=cost,
+            examples=result.examples_consumed,
+            untracked=cost is None,
+        )
+        snapshot = budget.snapshot()
+        result.execution_budget = snapshot.as_dict()
+        if snapshot.exhausted_dimension is not None:
+            result.execution_budget_exhausted = True
+            result.stop_reason = "execution_budget"
+        return result
 
     def register_metric(self, name: str, func: Callable[..., Any]) -> None:
         """Register a custom metric function.
@@ -3477,6 +3572,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         *,
         sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
     ) -> EvaluationResult:
         """Evaluate function using scoring functions.
 
@@ -3491,6 +3587,14 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Raises:
             EvaluationError: If evaluation fails
         """
+        execution_budget_lease, blocked_result = (
+            self._prepare_execution_budget_evaluation(budget, config)
+        )
+        if blocked_result is not None:
+            return blocked_result
+        if sample_lease is None:
+            sample_lease = execution_budget_lease
+
         logger.info(
             f"Starting simple scoring evaluation with {len(dataset.examples)} examples, config: {config}"
         )
@@ -3708,7 +3812,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         )
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = len(example_results)
-        return result
+        return self._finalize_execution_budget_evaluation(
+            budget, result, execution_budget_lease
+        )
 
     def _capture_llm_metrics_for_example(
         self, output: Any, config: dict[str, Any], example_index: int

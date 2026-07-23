@@ -964,8 +964,8 @@ class OptimizationResult:
             - "cost_limit": Hit the cost budget limit mid-run; pre-run cost
               approval declines raise CostLimitExceeded instead.
             - "execution_budget": Exhausted a shared cumulative ExecutionBudget
-              (cost, examples, or wall-clock deadline) spanning several optimize()
-              calls (issue #1980, experimental). Reported in preference to
+              (cost, examples, or wall-clock deadline) spanning direct evaluate()
+              and optimize() calls (issue #1980, experimental). Reported in preference to
               "cost_limit". The shared cumulative cost is enforced mid-run by the
               budget's stop condition and its pre-batch admission gate; the per-run
               cost enforcer's own cost_limit is left intact, so the pre-run approval

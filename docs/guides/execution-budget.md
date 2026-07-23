@@ -5,10 +5,10 @@
 > your version if you depend on it in production.
 
 `ExecutionBudget` puts **one total cap** on cost, examples, and wall-clock time
-that is shared across several `optimize()` calls. It is the tool for a multi-phase
-workflow — for example a **baseline → search → holdout** pipeline — where each
-phase is its own `optimize()` call but you want the *whole* pipeline to stay under
-a single budget, not each phase independently.
+that is shared across direct `evaluate()` and `optimize()` calls. It is the tool
+for a multi-phase workflow — for example a **baseline → search → holdout**
+pipeline — where baseline and holdout are evaluations and search is optimization,
+but you want the *whole* pipeline to stay under a single budget.
 
 Without it, three phases each with `cost_limit=$1` can spend `$3` total. With one
 shared `ExecutionBudget(max_cost_usd=1.0)`, the three phases together stop once
@@ -18,6 +18,7 @@ shared `ExecutionBudget(max_cost_usd=1.0)`, the three phases together stop once
 
 ```python
 import traigent
+from traigent.evaluators import LocalEvaluator
 
 budget = traigent.ExecutionBudget(
     max_cost_usd=5.0,        # total USD across every attached run
@@ -37,20 +38,24 @@ set it to `True` to fail closed the moment cost becomes unobservable (see
 ## Attaching a budget — explicit keyword
 
 The **only** way to attach a budget in this version is the explicit `budget=`
-keyword on `optimize()` / `optimize_sync()`. Pass the **same instance** to each
-phase:
+keyword. Pass the **same instance** to every direct evaluator call and
+`optimize()` / `optimize_sync()` call in the workflow:
 
 ```python
 budget = traigent.ExecutionBudget(max_cost_usd=5.0, max_examples=2_000)
 
-baseline = await answer.optimize(budget=budget)   # phase 1
-search   = await answer.optimize(budget=budget)   # phase 2 — same instance
-holdout  = await answer.optimize(budget=budget)   # phase 3 — same instance
+evaluator = LocalEvaluator(metrics=["accuracy"])
+
+baseline = await evaluator.evaluate(answer, {}, baseline_dataset, budget=budget)
+search = await answer.optimize(budget=budget)  # same instance
+holdout = await evaluator.evaluate(answer, {}, holdout_dataset, budget=budget)
 ```
 
 Each phase spends down the shared remaining. When the shared budget is exhausted,
 the current phase stops gracefully with `result.stop_reason == "execution_budget"`,
-and any later phase stops immediately (before starting a trial it cannot fund).
+and any later `evaluate()` or `optimize()` phase stops immediately before doing
+work it cannot admit. Direct evaluators expose the same additive
+`result.execution_budget` snapshot as their accounting result.
 
 There is **no ambient/implicit attach** (no context-var, no global). This is a
 deliberate choice: `optimize_sync()` runs the optimization in a worker thread when

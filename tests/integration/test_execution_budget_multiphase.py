@@ -45,6 +45,7 @@ from traigent.evaluators.base import (
     EvaluationExample,
     EvaluationResult,
 )
+from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.base import BaseOptimizer
 
 FLOAT_TOLERANCE = 1e-9
@@ -292,6 +293,79 @@ async def test_multiphase_shared_remaining_and_phase3_block() -> None:
     assert phase3._stop_reason == "execution_budget"
 
 
+@pytest.mark.asyncio
+async def test_direct_evaluate_optimize_holdout_share_one_budget() -> None:
+    """Baseline and holdout ``evaluate()`` calls debit the optimizer's budget.
+
+    This fails before the evaluator ``budget=`` seam exists: direct evaluation
+    cannot accept the shared budget, so the baseline cannot spend the pool and
+    the holdout cannot be refused after the optimization phase exhausts it.
+    """
+    budget = ExecutionBudget(max_examples=2)
+    calls = 0
+
+    async def identity(value: int) -> int:
+        nonlocal calls
+        calls += 1
+        return value
+
+    direct_dataset = Dataset(
+        [EvaluationExample({"value": 1}, 1)], name="direct-budget-test"
+    )
+    evaluator = LocalEvaluator(metrics=["accuracy"])
+
+    baseline = await evaluator.evaluate(identity, {}, direct_dataset, budget=budget)
+    assert baseline.total_examples == 1
+    assert baseline.stop_reason is None
+    assert calls == 1
+
+    optimizer = _build_orchestrator(
+        budget,
+        cost_per_eval=0.05,
+        max_suggestions=10,
+        max_trials=10,
+        timeout=60.0,
+        cost_limit=5.0,
+        cost_approved=True,
+    )
+    await optimizer.optimize(func=_func, dataset=_dataset(n=1))
+    assert optimizer.trial_count == 1
+    assert optimizer._stop_reason == "execution_budget"
+
+    holdout = await evaluator.evaluate(identity, {}, direct_dataset, budget=budget)
+    assert holdout.total_examples == 0
+    assert holdout.stop_reason == "execution_budget"
+    assert calls == 1  # exhausted budget refuses the next phase before execution
+
+    snapshot = budget.snapshot()
+    assert snapshot.consumed_examples == 2
+    assert snapshot.runs == 3
+    assert snapshot.trials == 2
+    assert snapshot.exhausted_dimension == "examples"
+
+
+@pytest.mark.asyncio
+async def test_direct_evaluate_without_budget_preserves_execution() -> None:
+    """The optional evaluator seam leaves ordinary direct evaluation unchanged."""
+    calls = 0
+
+    async def identity(value: int) -> int:
+        nonlocal calls
+        calls += 1
+        return value
+
+    result = await LocalEvaluator(metrics=["accuracy"]).evaluate(
+        identity,
+        {},
+        Dataset([EvaluationExample({"value": 1}, 1)], name="unbudgeted-evaluate"),
+    )
+
+    assert result.total_examples == 1
+    assert result.stop_reason is None
+    assert result.execution_budget is None
+    assert calls == 1
+
+
 # ---------------------------------------------------------------------------
 # 2. HEADLINE: stop_reason is "execution_budget", not the masked "cost_limit"
 # ---------------------------------------------------------------------------
@@ -487,13 +561,17 @@ def test_per_run_cost_limit_is_preserved() -> None:
     assert orchestrator.cost_enforcer.config.limit == pytest.approx(0.20)
 
 
-def test_timeout_clamped_down_to_budget_deadline() -> None:
+def test_timeout_clamped_down_to_budget_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A controlled monotonic clock makes the clamp assertion exact."""
+    monkeypatch.setattr("traigent.core.execution_budget.time.monotonic", lambda: 42.0)
     budget = ExecutionBudget(deadline_seconds=5.0)
     orchestrator = _build_orchestrator(
         budget, timeout=100.0, cost_limit=5.0, cost_approved=True
     )
     orchestrator._apply_execution_budget()
-    assert orchestrator.timeout == pytest.approx(5.0)
+    assert orchestrator.timeout == 5.0
     assert orchestrator._timeout_source == "execution_budget"
 
 
