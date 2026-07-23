@@ -890,11 +890,19 @@ class Validators:
             load_inline_dataset,
         )
 
-        def resolve_dataset_path(raw_path: Path, dataset_base: Path | None) -> Path:
+        def resolve_dataset_path(
+            raw_path: Path, dataset_base: Path | None
+        ) -> Path | None:
             if raw_path.is_absolute():
                 candidate = raw_path
             else:
-                assert dataset_base is not None
+                if dataset_base is None:
+                    result.add_error(
+                        "dataset",
+                        "Dataset base directory is required for a relative path",
+                        error_code="SECURITY_ERROR",
+                    )
+                    return None
                 candidate = dataset_base / raw_path
 
             try:
@@ -903,10 +911,18 @@ class Validators:
                 # Keep the public validator's established NOT_FOUND result for a
                 # missing in-base target while strictly resolving existing paths.
                 return candidate.resolve()
+            except (OSError, RuntimeError) as exc:
+                result.add_error(
+                    "dataset",
+                    f"Dataset path cannot be resolved: {exc}",
+                    error_code="SECURITY_ERROR",
+                )
+                return None
 
         if isinstance(dataset_path, Dataset):
             return result
 
+        dataset_base: Path | None = None
         if isinstance(dataset_path, list):
             if all(
                 isinstance(item, (dict, EvaluationExample)) for item in dataset_path
@@ -932,7 +948,6 @@ class Validators:
             relative_paths = [
                 path for path in dataset_path if not Path(path).is_absolute()
             ]
-            dataset_base: Path | None = None
             if relative_paths:
                 try:
                     dataset_base = (
@@ -959,25 +974,33 @@ class Validators:
             # Multiple datasets
             for i, path in enumerate(dataset_path):
                 raw_path = Path(path)
+                if not raw_path.is_absolute():
+                    if dataset_base is None:
+                        result.add_error(
+                            "dataset",
+                            "Dataset base directory is required for a relative path",
+                            error_code="SECURITY_ERROR",
+                        )
+                        return result
+                    allowed_base = dataset_base
                 resolved_dataset_path = resolve_dataset_path(raw_path, dataset_base)
+                if resolved_dataset_path is None:
+                    return result
+                if raw_path.is_absolute():
+                    allowed_base = resolved_dataset_path.parent
                 path_result = Validators.validate_path(
                     resolved_dataset_path,
                     f"dataset[{i}]",
                     must_exist=True,
                     must_be_file=True,
                     allowed_extensions=[".json", ".jsonl"],
-                    allowed_base_dirs=[
-                        resolved_dataset_path.parent
-                        if raw_path.is_absolute()
-                        else dataset_base
-                    ],
+                    allowed_base_dirs=[allowed_base],
                 )
                 result.errors.extend(path_result.errors)
                 result.warnings.extend(path_result.warnings)
         elif isinstance(dataset_path, (str, Path)):
             # Single dataset
             raw_dataset_path = Path(dataset_path)
-            dataset_base: Path | None = None
             if not raw_dataset_path.is_absolute():
                 try:
                     dataset_base = (
@@ -1001,18 +1024,27 @@ class Validators:
                     )
                     return result
 
+            if not raw_dataset_path.is_absolute():
+                if dataset_base is None:
+                    result.add_error(
+                        "dataset",
+                        "Dataset base directory is required for a relative path",
+                        error_code="SECURITY_ERROR",
+                    )
+                    return result
+                allowed_base = dataset_base
             resolved_dataset_path = resolve_dataset_path(raw_dataset_path, dataset_base)
+            if resolved_dataset_path is None:
+                return result
+            if raw_dataset_path.is_absolute():
+                allowed_base = resolved_dataset_path.parent
             path_result = Validators.validate_path(
                 resolved_dataset_path,
                 "dataset",
                 must_exist=True,
                 must_be_file=True,
                 allowed_extensions=[".json", ".jsonl"],
-                allowed_base_dirs=[
-                    resolved_dataset_path.parent
-                    if raw_dataset_path.is_absolute()
-                    else dataset_base
-                ],
+                allowed_base_dirs=[allowed_base],
             )
             result.errors.extend(path_result.errors)
             result.warnings.extend(path_result.warnings)

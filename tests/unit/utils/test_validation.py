@@ -215,6 +215,24 @@ class TestValidateDataset:
         assert not result.is_valid
         assert any(error.error_code == "SECURITY_ERROR" for error in result.errors)
 
+    def test_validate_dataset_rejects_symlink_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A symlink loop inside the base returns a security error."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        loop = workspace / "loop.jsonl"
+        try:
+            loop.symlink_to(loop.name)
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
+        monkeypatch.chdir(workspace)
+
+        result = Validators.validate_dataset("loop.jsonl")
+
+        assert not result.is_valid
+        assert any(error.error_code == "SECURITY_ERROR" for error in result.errors)
+
     def test_validate_dataset_reports_missing_in_base_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
