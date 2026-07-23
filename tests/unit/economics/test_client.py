@@ -553,6 +553,100 @@ def test_offline_mode_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
         client._get_client()
 
 
+def test_http_client_carries_api_key_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When an API key is configured, it rides on every request via the client's
+    default headers (never re-derived per call, never dropped)."""
+    captured: dict[str, Any] = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeAsyncClient)
+    client = _client()
+    client._get_client()
+    assert (
+        captured.get("headers", {}).get("X-API-Key") == "test-key"
+    )  # pragma: allowlist secret
+
+
+def test_http_client_carries_jwt_header_when_no_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeAsyncClient)
+    client = EconomicsTelemetryClient(
+        backend_url="https://api.traigent.ai", jwt_token="jwt-abc"
+    )
+    client._get_client()
+    assert captured.get("headers", {}).get("Authorization") == "Bearer jwt-abc"
+
+
+async def test_submit_without_credential_never_sends_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No API key/JWT resolved anywhere -> fail-safe no-op.
+
+    The prior behavior was to build an httpx client with EMPTY auth headers and
+    POST anyway (unauthenticated telemetry egress). The client must instead
+    refuse locally, before any bytes leave the machine -- exactly like
+    EgressPolicyError / EconomicsSchemaUnavailable already do for other
+    pre-transport failures.
+    """
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.CredentialManager.get_api_key",
+        lambda *a, **k: None,
+    )
+    client = EconomicsTelemetryClient(backend_url="https://api.traigent.ai")
+    assert client.api_key is None
+    assert client.jwt_token is None
+
+    mock_http = _mock_transport(client, _resp(201))
+    with pytest.raises(EconomicsTelemetryAuthError, match="no API key or JWT"):
+        await client.submit([_event()], project_id="proj-1")
+
+    mock_http.post.assert_not_called()
+
+
+async def test_submit_prepared_without_credential_never_sends_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same fail-safe gate on the submit_prepared() path (prepare() has no I/O,
+    so a caller could hold a validly-prepared batch and only lose credentials —
+    e.g. a revoked/rotated key — before submitting it)."""
+    client = _client()
+    prepared = client.prepare([_event()], project_id="proj-1")
+    # Simulate the credential disappearing between prepare() and submit.
+    client.api_key = None
+    client.jwt_token = None
+
+    mock_http = _mock_transport(client, _resp(201, _ingest_body(prepared)))
+    with pytest.raises(EconomicsTelemetryAuthError, match="no API key or JWT"):
+        await client.submit_prepared(prepared)
+    mock_http.post.assert_not_called()
+
+
+async def test_submit_without_credential_logs_debug_not_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.CredentialManager.get_api_key",
+        lambda *a, **k: None,
+    )
+    client = EconomicsTelemetryClient(backend_url="https://api.traigent.ai")
+    mock_http = _mock_transport(client, _resp(201))
+    with caplog.at_level(logging.DEBUG, logger="traigent.economics.client"):
+        with pytest.raises(EconomicsTelemetryAuthError):
+            await client.submit([_event()], project_id="proj-1")
+    assert "economics telemetry request not sent" in caplog.text
+    mock_http.post.assert_not_called()
+
+
 # --- privacy: no sensitive values in logs --------------------------------------
 
 
