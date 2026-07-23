@@ -65,7 +65,13 @@ class EconomicsBatchTooLarge(EconomicsTelemetryError):
 
 
 class EconomicsTelemetryAuthError(EconomicsTelemetryError):
-    """Authentication failed or permission was insufficient (401 / 403)."""
+    """Authentication failed or permission was insufficient (401 / 403).
+
+    Also raised LOCALLY, before any bytes leave the machine, when no API key or
+    JWT is configured on the client: the SDK never sends an economics telemetry
+    request without a credential attached (fail closed rather than emit an
+    unauthenticated request for the backend to police).
+    """
 
 
 class EconomicsTelemetryTransportError(EconomicsTelemetryError):

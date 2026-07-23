@@ -212,6 +212,17 @@ class EconomicsTelemetryClient:
             return {"Authorization": f"Bearer {self.jwt_token}"}
         return {}
 
+    def _has_credential(self) -> bool:
+        """True when an API key or JWT is configured for this client.
+
+        The single fact ``_post_with_retry`` gates transport on: a client
+        constructed (or resolved, via ``_resolve_api_key``) without either
+        credential must never reach the wire, matching the fail-safe convention
+        other SDK write paths use (e.g. ``BackendSyncManager`` refuses to sync
+        rather than attempt an uncredentialed backend call).
+        """
+        return bool(self.api_key) or bool(self.jwt_token)
+
     def _get_client(self) -> Any:
         from traigent.utils.env_config import raise_if_backend_offline
 
@@ -356,6 +367,11 @@ class EconomicsTelemetryClient:
         or tampered batch — forged bytes, withheld/non-schema JSON, a mismatched
         key, event ids, or project scope, or an absent Schema — fails closed here,
         so no forged byte reaches the wire.
+
+        Raises:
+            EconomicsTelemetryAuthError: No API key or JWT is configured (raised
+                locally, before transport — see :meth:`_post_with_retry`), or the
+                backend rejected the request as unauthorized (401 / 403).
         """
         self._require_issued(prepared)
         content, headers = self._reverify_prepared(prepared)
@@ -461,6 +477,24 @@ class EconomicsTelemetryClient:
     # -- request / response -----------------------------------------------------
 
     async def _post_with_retry(self, content: bytes, headers: dict[str, str]) -> Any:
+        # Fail-safe gate, checked immediately before the only transport call in
+        # this class: never send an economics telemetry request without a
+        # credential attached. A missing credential is not a reason to POST and
+        # let the backend police it (that would put a real, schema-validated
+        # payload on the wire unauthenticated even if the backend later
+        # rejects it) -- it is refused here, before any bytes leave the
+        # machine, the same way EgressPolicyError and
+        # EconomicsSchemaUnavailable already fail closed pre-transport.
+        if not self._has_credential():
+            logger.debug(
+                "economics telemetry request not sent: no API key or JWT is "
+                "configured for EconomicsTelemetryClient (fail-safe no-op, "
+                "not an unauthenticated request)"
+            )
+            raise EconomicsTelemetryAuthError(
+                "economics telemetry request was not sent: no API key or JWT "
+                "is configured for EconomicsTelemetryClient"
+            )
         client = self._get_client()
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
