@@ -70,10 +70,10 @@ _FINGERPRINT_FILES = (
 )
 
 #: Expected content fingerprint of the accepted economics contract
-#: (TraigentSchema c0a70a1d759774cb23f7f3d0943fbfc022d37f39). See module docstring
+#: (TraigentSchema 01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a). See module docstring
 #: for how to recompute when the exact Git pin changes.
 EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT = (
-    "0ad15f00ff6d5a467f144cd29c9f663f67adec51fc95421872b43e31de96d9a9"
+    "fc51000a51e2c29f2742fda1c8ee3e47a3a3467b8cf4498710f7dd4e2fe1cd5e"
 )
 
 _UNSET = object()

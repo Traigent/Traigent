@@ -6387,7 +6387,7 @@ requires-dist = [
     { name = "traigent", extras = ["bayesian", "analytics"], marker = "extra == 'ml'" },
     { name = "traigent", extras = ["integrations", "analytics", "bayesian", "visualization", "hybrid", "pydanticai"], marker = "extra == 'recommended'" },
     { name = "traigent", extras = ["security"], marker = "extra == 'cloud'" },
-    { name = "traigent-schema", marker = "extra == 'internal-schema'", git = "https://github.com/Traigent/TraigentSchema.git?rev=c0a70a1d759774cb23f7f3d0943fbfc022d37f39" },
+    { name = "traigent-schema", marker = "extra == 'internal-schema'", git = "https://github.com/Traigent/TraigentSchema.git?rev=01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a" },
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
@@ -6398,8 +6398,8 @@ provides-extras = ["analytics", "bayesian", "integrations", "chroma", "dspy", "p
 
 [[package]]
 name = "traigent-schema"
-version = "4.10.0"
-source = { git = "https://github.com/Traigent/TraigentSchema.git?rev=c0a70a1d759774cb23f7f3d0943fbfc022d37f39#c0a70a1d759774cb23f7f3d0943fbfc022d37f39" }
+version = "5.0.0"
+source = { git = "https://github.com/Traigent/TraigentSchema.git?rev=01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a#01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
