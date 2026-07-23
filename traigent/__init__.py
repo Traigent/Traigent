@@ -469,6 +469,21 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "temperature_constraint",
     ),
     "validate_and_suggest": ("traigent.utils.validation", "validate_and_suggest"),
+    # No-execution evaluation-compatibility contract
+    "validate_evaluation_contract": (
+        "traigent.contract",
+        "validate_evaluation_contract",
+    ),
+    "EvaluationContractReport": (
+        "traigent.contract",
+        "EvaluationContractReport",
+    ),
+    "ContractFinding": ("traigent.contract", "ContractFinding"),
+    "ContractCode": ("traigent.contract", "ContractCode"),
+    "EVALUATION_CONTRACT_VERSION": (
+        "traigent.contract",
+        "EVALUATION_CONTRACT_VERSION",
+    ),
 }
 
 _DEPRECATED_LAZY_EXPORTS = {
@@ -690,6 +705,12 @@ __all__ = [
     "VALID_PRESET_NAMES",
     "normalize_strategy_preset",
     "select_strategy_preset",
+    # No-execution evaluation-compatibility contract
+    "validate_evaluation_contract",
+    "EvaluationContractReport",
+    "ContractFinding",
+    "ContractCode",
+    "EVALUATION_CONTRACT_VERSION",
 ]
 
 if "AgentCostBreakdown" in globals():
