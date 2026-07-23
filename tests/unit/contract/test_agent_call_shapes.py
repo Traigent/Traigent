@@ -13,7 +13,7 @@ import pytest
 from traigent.contract import ContractCode, validate_evaluation_contract
 from traigent.evaluators.local import LocalEvaluator
 
-from ._support import find_finding, load_signature_fixtures
+from ._support import error_codes, find_finding, load_signature_fixtures
 
 FIXTURES = load_signature_fixtures()
 
@@ -67,16 +67,16 @@ def test_scalar_passed_positionally():
 def test_posonly_only_mapping_cannot_bind():
     # posonly_only(a, b, /): two positional-only params. A mapping expands to
     # keywords, which positional-only params reject -> bind failure.
-    _report, shape = _shape(FIXTURES["posonly_only"], {"a": 1, "b": 2})
+    report, shape = _shape(FIXTURES["posonly_only"], {"a": 1, "b": 2})
     assert shape.expanded is True
     assert shape.bind_ok is False
-    assert "positional only" in shape.bind_error
+    assert ContractCode.AGENT_BIND_FAILED in error_codes(report)
 
 
 def test_posonly_with_regular_mapping_cannot_bind():
-    _report, shape = _shape(FIXTURES["posonly_with_regular"], {"a": 1, "b": 2, "c": 3})
+    report, shape = _shape(FIXTURES["posonly_with_regular"], {"a": 1, "b": 2, "c": 3})
     assert shape.bind_ok is False
-    assert "positional only" in shape.bind_error
+    assert ContractCode.AGENT_BIND_FAILED in error_codes(report)
 
 
 def test_kwonly_only_binds():

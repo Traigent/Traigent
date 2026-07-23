@@ -62,6 +62,11 @@ These are surfaced through the report so you can *observe* current behavior, but
 the SDK may refine them without a major bump. Assert on the report fields, not
 on these internal heuristics.
 
+`ContractFinding.message`, `ContractFinding.action`, and `bind_error` are
+diagnostic free text, not stable API. Their wording may vary across Python
+versions or SDK releases; use `ContractCode`, severity, and the report's
+structured fields for programmatic assertions.
+
 ## Contract version
 
 `traigent.EVALUATION_CONTRACT_VERSION` (currently `"1.0.0"`) versions the report
