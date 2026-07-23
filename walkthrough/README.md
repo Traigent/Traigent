@@ -93,6 +93,10 @@ Each example has **mock** (no API keys) and **real** (actual LLM calls, requires
 Note: Example 05 runs parallel evaluation by default. Pause-on-error prompts only
 appear in sequential mode (set `TRAIGENT_PARALLEL=0`).
 
+Note: mock 04 (and mock 09) demonstrate a real weighted trade-off - cost is injected with
+`traigent.with_usage()` and latency through a `metric_functions={"latency": ...}` callback,
+both simulated from the static mock pricing/latency tables (no API spend).
+
 ## Optional Extras
 
 These are not part of the core 8-step walkthrough or `test_all_examples.sh`, but
@@ -110,7 +114,7 @@ they are useful companion material:
 - **01 Simple**: Context mode (default) with basic controls (model + temperature).
 - **02 Zero Code Change**: Shows seamless interception without changing your code.
 - **03 Parameter Mode**: Explicit config parameters passed into your function.
-- **04 Multi-Objective**: Trade off accuracy, cost, and latency.
+- **04 Multi-Objective**: Trade off accuracy, cost, and latency. In mock mode the weights really move the winner: per-configuration cost is reported through `traigent.with_usage()` and latency through a `metric_functions={"latency": ...}` callback (milliseconds), both simulated from the static mock tables.
 - **05 RAG**: Retrieval + generation tuning. `k` is the number of documents to retrieve; `retrieval_method` is `similarity` (vector embeddings) or `keyword` (text matching). You implement the retrieval logic in your function; Traigent finds the optimal parameter combination. This example enables parallel eval by default; disable with `TRAIGENT_PARALLEL=0`.
 - **06 Custom Evaluator**: LLM-as-judge scoring for code generation.
 - **07 Multi-Provider**: Use any LLM vendor (OpenAI, Anthropic Claude, Google Gemini) in the same optimization. Set the relevant API keys and Traigent finds the best model across providers. Uses a 10-example dataset (~100 API calls); switch to `simple_questions.jsonl` for more thorough evaluation (~200 calls).
