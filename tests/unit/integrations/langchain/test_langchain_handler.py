@@ -459,8 +459,8 @@ class TestTraigentHandlerChatModelCallbacks:
         call = handler._llm_calls[run_id]
         assert call.model == "gpt-4o-mini"
 
-    def test_on_chat_model_end(self, handler):
-        """Test on_chat_model_end callback."""
+    def test_chat_model_finalizes_via_on_llm_end(self, handler):
+        """LangChain routes chat completion through on_llm_end."""
         run_id = str(uuid4())
         handler.on_chat_model_start(
             serialized={},
@@ -478,14 +478,14 @@ class TestTraigentHandlerChatModelCallbacks:
             "model_name": "gpt-4o",
         }
 
-        handler.on_chat_model_end(response=mock_response, run_id=run_id)
+        handler.on_llm_end(response=mock_response, run_id=run_id)
 
         assert len(handler._completed_llm_calls) == 1
         call = handler._completed_llm_calls[0]
         assert call.total_tokens == 150
         assert call.model == "gpt-4o"
 
-    def test_on_chat_model_end_reads_generation_usage_metadata(self, handler):
+    def test_on_llm_end_reads_generation_usage_metadata(self, handler):
         """Anthropic/Gemini chat usage_metadata should populate tokens and cost."""
         run_id = str(uuid4())
         handler.on_chat_model_start(
@@ -508,7 +508,7 @@ class TestTraigentHandlerChatModelCallbacks:
         )
 
         with patch.object(handler, "_estimate_cost", return_value=0.000123):
-            handler.on_chat_model_end(response=response, run_id=run_id)
+            handler.on_llm_end(response=response, run_id=run_id)
 
         call = handler._completed_llm_calls[0]
         assert call.input_tokens == 12
@@ -516,7 +516,7 @@ class TestTraigentHandlerChatModelCallbacks:
         assert call.total_tokens == 19
         assert call.cost == pytest.approx(0.000123)
 
-    def test_on_chat_model_end_reads_gemini_usage_metadata(self, handler):
+    def test_on_llm_end_reads_gemini_usage_metadata(self, handler):
         """Gemini prompt/candidate token count fields should be counted."""
         run_id = str(uuid4())
         handler.on_chat_model_start(
@@ -538,7 +538,7 @@ class TestTraigentHandlerChatModelCallbacks:
         )
 
         with patch.object(handler, "_estimate_cost", return_value=0.000456):
-            handler.on_chat_model_end(response=response, run_id=run_id)
+            handler.on_llm_end(response=response, run_id=run_id)
 
         call = handler._completed_llm_calls[0]
         assert call.input_tokens == 20
@@ -546,8 +546,8 @@ class TestTraigentHandlerChatModelCallbacks:
         assert call.total_tokens == 28
         assert call.cost == pytest.approx(0.000456)
 
-    def test_on_chat_model_error(self, handler):
-        """Test on_chat_model_error callback."""
+    def test_chat_model_error_finalizes_via_on_llm_error(self, handler):
+        """LangChain routes chat errors through on_llm_error."""
         run_id = str(uuid4())
         handler.on_chat_model_start(
             serialized={},
@@ -555,11 +555,15 @@ class TestTraigentHandlerChatModelCallbacks:
             run_id=run_id,
         )
 
-        handler.on_chat_model_error(error=Exception("Chat model failed"), run_id=run_id)
+        handler.on_llm_error(error=Exception("Chat model failed"), run_id=run_id)
 
         assert len(handler._completed_llm_calls) == 1
         call = handler._completed_llm_calls[0]
         assert call.error == "Chat model failed"
+
+    def test_non_dispatched_chat_end_and_error_hooks_are_absent(self, handler):
+        assert not hasattr(handler, "on_chat_model_end")
+        assert not hasattr(handler, "on_chat_model_error")
 
 
 class TestTraigentHandlerToolCallbacks:
