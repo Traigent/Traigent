@@ -140,10 +140,10 @@ mcp = [
 # Internal schema validation support for DTO strict-validation paths.
 internal_schema = [
     # Exact-commit pin: the economics telemetry contract (WI-B) lands in
-    # TraigentSchema at c0a70a1 and predates the 4.7.1 PyPI release, so this
-    # emission surface requires the exact Git commit (matching the Backend pin),
-    # not the registry version. Bump both this ref and uv.lock together.
-    "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@c0a70a1d759774cb23f7f3d0943fbfc022d37f39",
+    # TraigentSchema at 01f3e2a2 (5.0.0) and predates the 5.0.0 PyPI release, so
+    # this emission surface requires the exact Git commit (matching the Backend
+    # pin), not the registry version. Bump both this ref and uv.lock together.
+    "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a",
 ]
 
 # Testing dependencies

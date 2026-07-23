@@ -168,7 +168,7 @@ def test_response_status_schema_map_matches_endpoint_bindings(local_contract) ->
         assert "rejected" in entry_422["description"].lower()
 
 
-def test_runtime_fingerprint_binds_to_local_c0a70a1_material(local_contract) -> None:
+def test_runtime_fingerprint_binds_to_local_01f3e2a2_material(local_contract) -> None:
     from traigent.economics import schema as schema_mod
 
     computed = schema_mod.compute_economics_schema_fingerprint(
