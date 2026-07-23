@@ -102,13 +102,11 @@ class TestValidateDataset:
         assert not result.is_valid
         assert any(error.error_code == "SECURITY_ERROR" for error in result.errors)
 
-    # ----- Regression: issue #1983 (nested relative dataset paths) -----
-    # Before the fix, ``validate_dataset`` re-joined the relative dataset path onto
-    # its own resolved parent inside the content-read ``safe_open`` call, doubling
-    # the parent segment (``traigent-runs/traigent-runs/dataset.jsonl``) and raising
-    # a spurious READ_ERROR. Absolute paths were unaffected because they were never
-    # re-joined. The fix passes the resolved absolute path (and its parent) to
-    # ``safe_open`` while keeping the containment guard intact.
+    # ----- Regression: issue #1983 (relative dataset paths) -----
+    # Relative dataset paths are anchored to the invoking process's current working
+    # directory. They must remain inside that base after resolving traversal and
+    # symlinks, while the resolved absolute path is passed to ``safe_open`` so nested
+    # relative paths are not joined a second time during the content read.
 
     def test_validate_dataset_accepts_nested_relative_str_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -160,22 +158,72 @@ class TestValidateDataset:
 
         assert result.is_valid, [(e.error_code, e.message) for e in result.errors]
 
-    def test_validate_dataset_missing_traversal_path_is_not_found(
+    def test_validate_dataset_uses_explicit_relative_base(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """(e) Empirical: at the dataset level the allowed base is self-derived from
-        the path (``resolved_dataset_path.resolve().parent``), so a ``../`` path is
-        NOT rejected by a security guard. A non-existent traversal path is rejected
-        only because it does not exist -> the REAL error_code is NOT_FOUND (not
-        SECURITY_ERROR). We assert the actual behavior rather than fabricate one.
-        The security guard the fix relies on is covered directly in
-        ``TestSafeOpenContainmentGuard`` below.
-        """
+        """A caller can explicitly choose the allowed base for relative paths."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        nested = workspace / "datasets"
+        nested.mkdir()
+        _write_jsonl(nested / "dataset.jsonl")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        result = Validators.validate_dataset(
+            "datasets/dataset.jsonl", base_dir=workspace
+        )
+
+        assert result.is_valid, [(e.error_code, e.message) for e in result.errors]
+
+    def test_validate_dataset_rejects_existing_traversal_escape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An existing ``..`` target outside the CWD boundary is rejected."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _write_jsonl(outside / "dataset.jsonl")
+        monkeypatch.chdir(workspace)
+
+        result = Validators.validate_dataset("../outside/dataset.jsonl")
+
+        assert not result.is_valid
+        assert any(error.error_code == "SECURITY_ERROR" for error in result.errors)
+
+    def test_validate_dataset_rejects_symlink_escape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A symlink inside the CWD boundary cannot resolve outside it."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target = outside / "dataset.jsonl"
+        _write_jsonl(target)
+        link = workspace / "dataset.jsonl"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
+        monkeypatch.chdir(workspace)
+
+        result = Validators.validate_dataset("dataset.jsonl")
+
+        assert not result.is_valid
+        assert any(error.error_code == "SECURITY_ERROR" for error in result.errors)
+
+    def test_validate_dataset_reports_missing_in_base_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing path inside the base retains the normal NOT_FOUND result."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         monkeypatch.chdir(workspace)
 
-        result = Validators.validate_dataset("../nope/missing.jsonl")
+        result = Validators.validate_dataset("missing.jsonl")
 
         assert not result.is_valid
         assert any(error.error_code == "NOT_FOUND" for error in result.errors)
