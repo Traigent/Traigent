@@ -17,8 +17,6 @@ from traigent.config.backend_config import BackendConfig
 if TYPE_CHECKING:
     from typing import Any
 
-    from traigent.core.result import OptimizationResult
-
 # Estimated times for real examples (in seconds) - from test_all_examples.sh
 EXAMPLE_ESTIMATED_TIMES: dict[str, int] = {
     "01_tuning_qa.py": 94,  # ~1m 34s
@@ -245,16 +243,20 @@ def _get_mock_cost_for_trial(trial: Any, task_type: str, dataset_size: int) -> f
 
     config = getattr(trial, "config", {})
     model = config.get("model", "gpt-3.5-turbo")
-    return get_mock_cost(model, task_type, dataset_size)
+    return float(get_mock_cost(model, task_type, dataset_size))
 
 
 def _get_mock_latency_for_trial(trial: Any, task_type: str) -> float:
-    """Calculate mock latency for a trial based on model."""
+    """Calculate mock latency for a trial based on model, in MILLISECONDS.
+
+    The results table renders ``latency`` as ``f"{val:.0f}ms"``, so the seconds
+    value from the mock table must be scaled or every cell renders ``0ms``.
+    """
     from utils.mock_answers import get_mock_latency
 
     config = getattr(trial, "config", {})
     model = config.get("model", "gpt-3.5-turbo")
-    return get_mock_latency(model, task_type)
+    return float(get_mock_latency(model, task_type)) * 1000.0
 
 
 def _build_metric_overrides(
@@ -263,8 +265,16 @@ def _build_metric_overrides(
     is_mock: bool,
     task_type: str,
     dataset_size: int,
+    reported_metrics: tuple[str, ...] = (),
 ) -> dict[str, list[float]] | None:
-    """Build walkthrough-only display metric overrides for mock runs."""
+    """Build walkthrough-only display metric overrides for mock runs.
+
+    Metrics the example reports itself (``reported_metrics``) are the numbers
+    that actually drove selection, so they are displayed as recorded. Every other
+    mock metric is an artifact of local execution - a ``cost`` of 0.0 the example
+    never reported, or the wall-clock of a scaled-down ``time.sleep`` - and is
+    replaced with the static-table estimate the footer note promises.
+    """
     if not is_mock:
         return None
 
@@ -274,11 +284,11 @@ def _build_metric_overrides(
 
     sample_metrics = getattr(trials[0], "metrics", {}) or {}
     overrides: dict[str, list[float]] = {}
-    if "cost" in sample_metrics:
+    if "cost" in sample_metrics and "cost" not in reported_metrics:
         overrides["cost"] = [
             _get_mock_cost_for_trial(trial, task_type, dataset_size) for trial in trials
         ]
-    if "latency" in sample_metrics:
+    if "latency" in sample_metrics and "latency" not in reported_metrics:
         overrides["latency"] = [
             _get_mock_latency_for_trial(trial, task_type) for trial in trials
         ]
@@ -291,17 +301,29 @@ def build_results_table_callback(
     task_type: str = "simple_qa",
     dataset_size: int = 20,
     show_progress: bool = False,
+    reported_metrics: tuple[str, ...] = (),
 ) -> Any:
     """Build the single SDK results-table callback used by walkthroughs.
 
     The SDK owns rendering. This helper only supplies walkthrough display context:
     MOCK/REAL title labels and estimated mock cost/latency overrides.
+
+    Args:
+        is_mock: Whether the example runs against simulated LLM responses.
+        task_type: Mock-table task key used for the cost/latency estimates.
+        dataset_size: Example count the estimated per-trial cost is scaled by.
+        show_progress: Render a live progress bar instead of the final table only.
+        reported_metrics: Metrics this example simulates itself from the shared
+            mock tables (``traigent.with_usage`` for ``cost``, a ``latency``
+            entry in ``metric_functions``). They drove config selection, so the
+            table shows them exactly as recorded instead of re-estimating them.
     """
     from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
 
     mode_label = "MOCK" if is_mock else "REAL"
     footer_note = (
-        "Note: Mock mode - costs and latencies are estimated based on model characteristics."
+        "Note: Mock mode - cost and latency are simulated from a static pricing/latency "
+        "table - no real API spend."
         if is_mock
         else None
     )
@@ -312,6 +334,7 @@ def build_results_table_callback(
             is_mock=is_mock,
             task_type=task_type,
             dataset_size=dataset_size,
+            reported_metrics=reported_metrics,
         )
 
     callback_cls = ProgressBarCallback if show_progress else ResultsTableCallback
