@@ -662,7 +662,7 @@ async def main() -> None:
         print("\nBest metrics:")
         print(f"  accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
         print(f"  cost: ${results.best_metrics.get('cost', 0):.6f}")
-        print(f"  latency: {results.best_metrics.get('latency', 0):.3f}s")
+        print(f"  latency: {results.best_metrics.get('latency', 0):.0f}ms (simulated)")
         print(f"\nOptimization runtime: {optimization_elapsed:.2f}s")
 
         optimize_flush = client.flush()
