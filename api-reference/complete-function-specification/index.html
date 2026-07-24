@@ -2765,6 +2765,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#optimizationresultbest_config_margin-is-the-winner-real" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OptimizationResult.best_config_margin — is the winner real?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#is_optimization_complete" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4666,6 +4677,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#optimizationresultbest_config_margin-is-the-winner-real" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OptimizationResult.best_config_margin — is the winner real?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#is_optimization_complete" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5749,6 +5771,35 @@ object with structured constraints.</p>
 <p><strong>Get history of all optimization runs</strong></p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_optimization_history</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">OptimizationResult</span><span class="p">]</span>
 </code></pre></div>
+<h4 id="optimizationresultbest_config_margin-is-the-winner-real"><code>OptimizationResult.best_config_margin</code> — is the winner real?<a class="headerlink" href="#optimizationresultbest_config_margin-is-the-winner-real" title="Permanent link">&para;</a></h4>
+<p><code>best_config</code> is the config that won, but a winner is not automatically a
+<em>decision</em>. <code>results.best_config_margin</code> qualifies it with a paired test of the
+<strong>winner vs. the runner-up</strong> (the 2nd-best distinct config on the primary
+objective), computed from per-example scores at ~zero cost:</p>
+<ul>
+<li><strong>McNemar exact</strong> for 0/1 binary scorers, a <strong>paired t-test</strong> for continuous
+  scorers.</li>
+<li>Fields: <code>{runner_up, runner_up_trial_id, delta, ci95, p_value, verdict, test,
+  n_shared_examples}</code>.</li>
+<li><code>verdict</code> is one of:</li>
+<li><code>"clear"</code> — the winner significantly beats the runner-up (<code>p &lt;= alpha</code>,
+    CI excludes 0).</li>
+<li><code>"statistical_tie"</code> — the margin's 95% CI includes 0 / <code>p</code> is above <code>alpha</code>.
+    The winner is <strong>statistically interchangeable</strong> with the runner-up on the
+    primary objective; a <code>logger.warning</code> naming both configs is emitted once
+    per run.</li>
+<li><code>"na"</code> — two configs exist but there is no shared per-example data for a
+    paired test.</li>
+<li><code>best_config_margin</code> is <code>None</code> when there is no runner-up (fewer than two
+  distinct configs, or no primary objective).</li>
+</ul>
+<blockquote>
+<p><strong>A margin within its CI at typical eval sizes (n = 20–80) is not a
+decision.</strong> A <code>"statistical_tie"</code> winner is noise-level ahead of its
+runner-up — prefer the cheaper/faster config, or add examples, rather than
+paying a cost multiple for a few points that will not survive re-testing.
+This is additive qualification only: it never changes which config wins.</p>
+</blockquote>
 <h4 id="is_optimization_complete"><code>.is_optimization_complete()</code><a class="headerlink" href="#is_optimization_complete" title="Permanent link">&para;</a></h4>
 <p><strong>Check if optimization has been completed</strong></p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">is_optimization_complete</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
