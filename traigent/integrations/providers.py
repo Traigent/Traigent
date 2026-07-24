@@ -72,14 +72,15 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
     ("openai", "quality"): ["gpt-4o"],
     # Anthropic tiers (current Claude 4 family; see model_discovery/anthropic_discovery.py
-    # and config/models.yaml for the shipped snapshot)
+    # and config/models.yaml for the shipped snapshot — kept in sync with the
+    # SDK's own defaults, parameter_ranges.Choices.model; #1936)
     ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
     ("anthropic", "balanced"): ["claude-sonnet-4-6"],
     ("anthropic", "quality"): ["claude-opus-4-8"],
-    # Gemini tiers
-    ("gemini", "fast"): ["gemini-1.5-flash"],
-    ("gemini", "balanced"): ["gemini-1.5-flash", "gemini-1.5-pro"],
-    ("gemini", "quality"): ["gemini-1.5-pro"],
+    # Gemini tiers — Gemini 1.5 is deprecated; use current 2.x (#1936).
+    ("gemini", "fast"): ["gemini-2.0-flash"],
+    ("gemini", "balanced"): ["gemini-2.0-flash"],
+    ("gemini", "quality"): ["gemini-2.0-flash"],
     # Mistral tiers
     ("mistral", "fast"): ["mistral-small-latest"],
     ("mistral", "balanced"): ["mistral-medium-latest"],
@@ -115,22 +116,24 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
     "openai": {
         "fast": ["gpt-4o-mini", "gpt-3.5-turbo"],
         "balanced": ["gpt-4o-mini", "gpt-4o"],
-        # o1-preview is retired (see the Choices.model() fallback fix, #1932);
+        # o1-preview/o1-mini are retired (#1932, #1936);
         # gpt-5.2 is the current OpenAI flagship in _KNOWN_MODELS.
-        "quality": ["gpt-4o", "gpt-5.2", "o1-mini"],
+        "quality": ["gpt-4o", "gpt-5.2"],
     },
     # Current Claude 4 family (see model_discovery/anthropic_discovery.py and
     # config/models.yaml for the shipped snapshot); previously pinned to
     # retired Claude 3 IDs.
     "anthropic": {
+        # Refresh to current Claude 4.x defaults (#1936); drop Claude 3 Opus.
         "fast": ["claude-haiku-4-5-20251001"],
         "balanced": ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
         "quality": ["claude-opus-4-8", "claude-sonnet-4-6"],
     },
     "gemini": {
-        "fast": ["gemini-1.5-flash", "gemini-1.5-flash-8b"],
-        "balanced": ["gemini-1.5-flash", "gemini-1.5-pro"],
-        "quality": ["gemini-1.5-pro", "gemini-2.0-flash-exp"],
+        # Gemini 1.5 deprecated / gemini-2.0-flash-exp preview retired (#1936).
+        "fast": ["gemini-2.0-flash"],
+        "balanced": ["gemini-2.0-flash"],
+        "quality": ["gemini-2.0-flash"],
     },
     "mistral": {
         "fast": ["mistral-small-latest", "open-mistral-7b"],

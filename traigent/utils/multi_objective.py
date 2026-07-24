@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,7 +41,11 @@ class ParetoPoint:
     trial: TrialResult
 
     def dominates(
-        self, other: ParetoPoint, maximize: dict[str, bool], epsilon: float = 1e-10
+        self,
+        other: ParetoPoint,
+        maximize: dict[str, bool],
+        epsilon: float = 1e-10,
+        objectives: Iterable[str] | None = None,
     ) -> bool:
         """Check if this point dominates another point with epsilon tolerance.
 
@@ -48,16 +53,40 @@ class ParetoPoint:
             other: Other Pareto point
             maximize: Dictionary indicating whether to maximize each objective
             epsilon: Tolerance for numerical comparison
+            objectives: The CONFIGURED objective set the optimization declared.
+                Domination is decided over exactly these objectives. When
+                omitted, falls back to the union of the two points' *observed*
+                keys (backward compatible), but callers with the configured
+                list should pass it: otherwise an objective that is
+                systematically missing from every point (e.g. an unreported
+                ``cost``) drops out of the comparison entirely, letting a
+                metric-incomplete trial dominate on the surviving objectives
+                (#1941).
 
         Returns:
             True if this point dominates the other
         """
+        # Treat a missing objective as *non-comparable* (#1941). If either
+        # point lacks any objective in the requested set, the pair is
+        # incomparable — deciding domination on the shared subset alone lets a
+        # metric-incomplete trial evict a fully-measured one from the front.
+        # The requested set is the CONFIGURED objectives when supplied (so a
+        # universally-missing objective still makes the pair incomparable)
+        # rather than only what happens to be observed on these two points.
+        if objectives is not None:
+            requested = set(objectives)
+        else:
+            requested = set(self.objectives) | set(other.objectives)
+        if any(
+            obj_name not in self.objectives or obj_name not in other.objectives
+            for obj_name in requested
+        ):
+            return False
+
         better_in_at_least_one = False
 
-        for obj_name, obj_value in self.objectives.items():
-            if obj_name not in other.objectives:
-                continue
-
+        for obj_name in requested:
+            obj_value = self.objectives[obj_name]
             other_value = other.objectives[obj_name]
             should_maximize = maximize.get(obj_name, True)
 
@@ -152,7 +181,9 @@ class ParetoFrontCalculator:
             is_dominated = False
 
             for j, other_point in enumerate(points):
-                if i != j and other_point.dominates(point, self.maximize):
+                if i != j and other_point.dominates(
+                    point, self.maximize, objectives=objectives
+                ):
                     is_dominated = True
                     break
 
@@ -165,12 +196,24 @@ class ParetoFrontCalculator:
         self,
         pareto_front: list[ParetoPoint],
         reference_point: dict[str, float] | None = None,
+        objectives: Iterable[str] | None = None,
     ) -> float:
         """Calculate hypervolume indicator for Pareto front.
 
         Args:
             pareto_front: List of Pareto-optimal points
             reference_point: Reference point for hypervolume calculation
+            objectives: The CONFIGURED objective set. Dimensionality and
+                completeness are decided over exactly these objectives. When
+                omitted, the declared set falls back to the calculator's own
+                configured directions (``self.maximize`` — from the ``maximize``
+                dict or ``objective_schema`` it was built with), so a public
+                no-arg call still detects an objective that is missing from
+                *every* point (it stays a declared dimension → the front is
+                incomplete → zero/non-comparable, never a spurious lower-
+                dimensional positive volume). Only a calculator built with no
+                configured directions at all falls back to the union of the
+                points' observed keys (#1941).
 
         Returns:
             Hypervolume value
@@ -178,84 +221,205 @@ class ParetoFrontCalculator:
         if not pareto_front:
             return 0.0
 
-        if len(pareto_front[0].objectives) > 2:
-            # For > 2D, use approximation
-            return self._approximate_hypervolume(pareto_front, reference_point)
+        # Dimensionality and completeness are defined over the CONFIGURED
+        # objective space, NOT whichever keys happen to be observed. With ragged
+        # metric sets, complete and partial points legitimately coexist on the
+        # front (they are non-comparable), but the hypervolume is over the full
+        # declared space: a point missing any declared objective is not complete
+        # and contributes zero volume, and if NO point is complete the volume is
+        # zero (never re-inferred at a lower dimensionality from the surviving
+        # keys). The declared set is resolved from, in order: the explicit
+        # ``objectives`` arg (internal callers thread the run's objective list);
+        # else the calculator's own ``self.maximize`` directions (so the public
+        # no-arg export still knows a systematically-missing objective is a
+        # declared dimension); else — only when the calculator carries no
+        # configured directions at all — the union of the points' observed keys.
+        if objectives is not None:
+            declared: set[str] = set(objectives)
+        elif self.maximize:
+            declared = set(self.maximize)
+        else:
+            declared = set()
+            for point in pareto_front:
+                declared.update(point.objectives)
+        if not declared:
+            return 0.0
+        complete_points = [p for p in pareto_front if declared <= set(p.objectives)]
+        if not complete_points:
+            return 0.0
 
-        return self._exact_hypervolume_2d(pareto_front, reference_point)
+        # Freeze a deterministic objective ordering for the helpers so they
+        # operate on exactly the declared space rather than re-deriving it from
+        # a point's observed keys (which may carry extra, non-declared metrics).
+        declared_objectives = sorted(declared)
+
+        if len(declared) == 1:
+            # A genuinely 1-D front previously fell into the 2-D helper's
+            # ``len(objectives) != 2`` guard and returned 0.0 silently.
+            return self._hypervolume_1d(
+                complete_points, declared_objectives[0], reference_point
+            )
+
+        if len(declared) > 2:
+            # For > 2D, use approximation
+            return self._approximate_hypervolume(
+                complete_points, reference_point, declared_objectives
+            )
+
+        return self._exact_hypervolume_2d(
+            complete_points, reference_point, declared_objectives
+        )
+
+    def _hypervolume_1d(
+        self,
+        pareto_front: list[ParetoPoint],
+        objective: str,
+        reference_point: dict[str, float] | None,
+    ) -> float:
+        """Exact 1-D hypervolume: oriented distance from reference to the best.
+
+        For a single objective the dominated "volume" is the interval between
+        the reference and the best point on the front — ``best - ref`` for a
+        maximize objective, ``ref - best`` for minimize — clamped at zero when
+        every point is on the wrong (worse) side of the reference. The auto
+        reference is the orientation-aware nadir (min-1 / max+1), matching the
+        2-D and Monte-Carlo paths (#1940/#1945).
+        """
+        maximize = self.maximize.get(objective, True)
+        values = [p.objectives[objective] for p in pareto_front]
+
+        if reference_point is not None and objective in reference_point:
+            ref = reference_point[objective]
+        else:
+            ref = (min(values) - 1) if maximize else (max(values) + 1)
+
+        best = max(values) if maximize else min(values)
+        length = (best - ref) if maximize else (ref - best)
+        return max(0.0, length)
 
     def _exact_hypervolume_2d(
-        self, pareto_front: list[ParetoPoint], reference_point: dict[str, float] | None
+        self,
+        pareto_front: list[ParetoPoint],
+        reference_point: dict[str, float] | None,
+        objectives: list[str] | None = None,
     ) -> float:
-        """Calculate exact hypervolume for 2D case."""
+        """Calculate exact hypervolume for 2D case.
+
+        ``objectives`` is the declared 2-objective space. When omitted it falls
+        back to the first point's observed keys (backward compatible), but the
+        caller passes the declared list so an extra, non-declared metric on a
+        point cannot silently swap which two objectives are measured.
+        """
         if len(pareto_front) == 0:
             return 0.0
 
-        objectives = list(pareto_front[0].objectives.keys())
+        if objectives is None:
+            objectives = list(pareto_front[0].objectives.keys())
         if len(objectives) != 2:
             return 0.0
 
         obj1, obj2 = objectives
+        max1 = self.maximize.get(obj1, True)
+        max2 = self.maximize.get(obj2, True)
 
-        # Set reference point
+        # Set reference point. The auto reference is the *nadir* (worse than
+        # every point) and must be orientation-aware (#1940): min-1 for a
+        # maximize objective, max+1 for a minimize objective. Using min-1 for a
+        # minimize objective would place the reference on the wrong (better)
+        # side and measure the complement region.
         if reference_point is None:
-            ref1 = min(point.objectives[obj1] for point in pareto_front) - 1
-            ref2 = min(point.objectives[obj2] for point in pareto_front) - 1
+            ref1 = (
+                (min(p.objectives[obj1] for p in pareto_front) - 1)
+                if max1
+                else (max(p.objectives[obj1] for p in pareto_front) + 1)
+            )
+            ref2 = (
+                (min(p.objectives[obj2] for p in pareto_front) - 1)
+                if max2
+                else (max(p.objectives[obj2] for p in pareto_front) + 1)
+            )
         else:
             ref1 = reference_point.get(obj1, 0)
             ref2 = reference_point.get(obj2, 0)
 
-        # Sort points by first objective
+        # Sort so we iterate obj1 from best to worst (descending for maximize,
+        # ascending for minimize). On a Pareto front obj2 then moves
+        # monotonically from worst (nadir side) to best, which makes the
+        # staircase decomposition below exact.
         sorted_points = sorted(
             pareto_front,
             key=lambda p: p.objectives[obj1],
-            reverse=self.maximize.get(obj1, True),
+            reverse=max1,
         )
 
+        # Decomposition consistent with the sort (#1940): full width to the
+        # reference on obj1 (``abs(curr_obj1 - ref1)``) times the *incremental*
+        # slab height on obj2 (``abs(curr_obj2 - prev_obj2)``, prev seeded at
+        # ``ref2``). The previous code mixed an incremental width with a full
+        # height under a descending sort, double-counting the first slab.
         hypervolume = 0.0
-        prev_obj1 = ref1
+        prev_obj2 = ref2
 
         for point in sorted_points:
             curr_obj1 = point.objectives[obj1]
             curr_obj2 = point.objectives[obj2]
 
-            width = abs(curr_obj1 - prev_obj1)
-            height = abs(curr_obj2 - ref2)
+            width = abs(curr_obj1 - ref1)
+            height = abs(curr_obj2 - prev_obj2)
 
             hypervolume += width * height
-            prev_obj1 = curr_obj1
+            prev_obj2 = curr_obj2
 
         return hypervolume
 
     def _approximate_hypervolume(
-        self, pareto_front: list[ParetoPoint], reference_point: dict[str, float] | None
+        self,
+        pareto_front: list[ParetoPoint],
+        reference_point: dict[str, float] | None,
+        objectives: list[str] | None = None,
     ) -> float:
-        """Calculate approximate hypervolume for high-dimensional case using Monte Carlo."""
+        """Calculate approximate hypervolume for high-dimensional case using Monte Carlo.
+
+        ``objectives`` is the declared objective space; when omitted it falls
+        back to the first point's observed keys (backward compatible).
+        """
         if not pareto_front:
             return 0.0
 
-        objectives = list(pareto_front[0].objectives.keys())
+        if objectives is None:
+            objectives = list(pareto_front[0].objectives.keys())
 
-        # Set reference point and bounds
-        if reference_point is None:
-            ref_point = {
-                obj: min(point.objectives[obj] for point in pareto_front) - 1
-                for obj in objectives
-            }
-        else:
-            ref_point = reference_point
+        # Build the sampling box per-objective from orientation (#1945). The box
+        # spans from the *nadir* (reference / worst) to the *ideal* (best +
+        # margin) on each objective. A blind ``max + 1`` upper bound inverts the
+        # range for a minimize objective whose nadir reference is *larger* than
+        # every point (e.g. a user cost/latency reference), so ``uniform(ref,
+        # max+1)`` samples a thin sliver and ``abs()`` silently hides it.
+        lower_bounds: dict[str, float] = {}
+        upper_bounds: dict[str, float] = {}
+        for obj in objectives:
+            values = [point.objectives[obj] for point in pareto_front]
+            maximize = self.maximize.get(obj, True)
 
-        max_point = {
-            obj: max(point.objectives[obj] for point in pareto_front) + 1
-            for obj in objectives
-        }
+            if reference_point is not None and obj in reference_point:
+                nadir = reference_point[obj]
+            else:
+                nadir = (min(values) - 1) if maximize else (max(values) + 1)
+
+            ideal = (max(values) + 1) if maximize else (min(values) - 1)
+
+            # For maximize the ideal is the high end; for minimize it is the low
+            # end. Order the bounds so the draw is always over a valid range.
+            lower_bounds[obj], upper_bounds[obj] = (
+                (nadir, ideal) if maximize else (ideal, nadir)
+            )
 
         # Monte Carlo sampling
         dominated_count = 0
         for _ in range(self.num_samples):
             # Generate random point in search space
             sample_point = {
-                obj: self._rng.uniform(ref_point[obj], max_point[obj])
+                obj: self._rng.uniform(lower_bounds[obj], upper_bounds[obj])
                 for obj in objectives
             }
 
@@ -268,7 +432,7 @@ class ParetoFrontCalculator:
         # Calculate volume of search space
         total_volume = 1.0
         for obj in objectives:
-            total_volume *= abs(max_point[obj] - ref_point[obj])
+            total_volume *= abs(upper_bounds[obj] - lower_bounds[obj])
 
         # Approximate hypervolume
         hypervolume = (dominated_count / self.num_samples) * total_volume

@@ -1,4 +1,13 @@
-"""Configuration constraints system for Traigent optimization."""
+"""Configuration constraints system for Traigent optimization.
+
+Model-cost pricing precedence (``model_cost_constraint``, issue #1958):
+canonical estimation FIRST (curated table + ``gpt-4`` -> ``gpt-4-turbo``
+aliasing), then litellm as a FALLBACK for models outside that table, then
+``inf`` for models unknown to both. A model IN the canonical table is ALWAYS
+priced by canonical, so its constraint cost is deterministic and equal to the
+canonical estimate regardless of whether litellm is installed -- litellm cannot
+reintroduce the #1958 divergence for those models.
+"""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE FUNC-INVOKERS REQ-ORCH-003 REQ-INJ-002 SYNC-OptimizationFlow
 
@@ -480,7 +489,23 @@ def max_tokens_constraint(
 
 
 def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
-    """Try litellm for cost-per-token pricing. Returns None if unavailable."""
+    """Price the ``max_tokens`` budget via litellm. Returns None if unavailable.
+
+    This is the FALLBACK pricing source for the cost constraint, consulted ONLY
+    when the canonical estimation path (:func:`_try_fallback_pricing`) cannot
+    price the model (i.e. it is outside Traigent's curated table and alias map).
+    It exists so exotic / newer models that litellm knows but the curated table
+    does not stay priceable instead of unconditionally failing the constraint.
+
+    The whole ``max_tokens`` budget is modeled as an INPUT-token budget so the
+    convention matches the canonical path (both price the budget as input
+    tokens). Because canonical runs FIRST, this branch never prices a
+    canonical-known model, so it cannot reintroduce the issue #1958 divergence
+    (where a litellm-first order priced raw ``gpt-4`` at $0.03 instead of the
+    canonical gpt-4->gpt-4-turbo $0.010). Its result is env-dependent (it needs
+    litellm installed), which is acceptable for models canonical could not price
+    at all.
+    """
     try:
         import litellm
 
@@ -489,8 +514,8 @@ def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
             model=model, prompt_tokens=1000, completion_tokens=1000
         )
         if input_cost > 0 or output_cost > 0:
-            avg_cost_per_1k = (input_cost + output_cost) / 2
-            return float(avg_cost_per_1k * (max_tokens / 1000))
+            input_cost_per_1k = input_cost  # cost of 1000 prompt tokens
+            return float(input_cost_per_1k * (max_tokens / 1000))
 
         from traigent.utils.cost_calculator import _is_model_known_to_litellm
 
@@ -505,78 +530,85 @@ def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
     return None
 
 
-def _find_fallback_pricing(
-    base_model: str, pricing_table: dict[str, dict[str, float]]
-) -> dict[str, float] | None:
-    """Find best-match pricing from the fallback table."""
-    # Exact match
-    for key, value in pricing_table.items():
-        if key.lower() == base_model:
-            return value
-
-    # Prefix matching — prefer longest match
-    best_match_len = 0
-    pricing: dict[str, float] | None = None
-    for model_key, model_pricing in pricing_table.items():
-        key_lower = model_key.lower()
-        match_len = 0
-        if base_model.startswith(key_lower):
-            match_len = len(key_lower)
-        elif key_lower.startswith(base_model):
-            match_len = len(base_model)
-        if match_len > best_match_len:
-            best_match_len = match_len
-            pricing = model_pricing
-    return pricing
-
-
 def _try_fallback_pricing(model: str, max_tokens: int) -> float | None:
-    """Try ESTIMATION_MODEL_PRICING fallback. Returns None if unavailable."""
-    try:
-        from traigent.utils.cost_calculator import (
-            ESTIMATION_MODEL_PRICING,
-            _normalize_model_for_fallback,
-        )
+    """Price the ``max_tokens`` budget via the canonical estimation path.
 
-        base_model = _normalize_model_for_fallback(model)
-        pricing = _find_fallback_pricing(base_model, ESTIMATION_MODEL_PRICING)
-        if pricing:
-            input_cost_per_1k = pricing["input_cost_per_token"] * 1000
-            output_cost_per_1k = pricing["output_cost_per_token"] * 1000
-            avg_cost_per_1k = (input_cost_per_1k + output_cost_per_1k) / 2
-            return float(avg_cost_per_1k * (max_tokens / 1000))
+    Delegates to :func:`traigent.utils.cost_calculator._estimation_cost_from_tokens`
+    so the constraint price AGREES BY CONSTRUCTION with the canonical estimation
+    path (issue #1958): the whole ``max_tokens`` budget is priced as input tokens
+    (``output_tokens=0``) and summed. This canonical path applies Traigent's model
+    aliasing (e.g. ``gpt-4`` -> ``gpt-4-turbo``) against a static curated table and
+    does NOT consult litellm, so it returns the SAME number whether or not litellm
+    is installed.
+
+    This is the constraint's PRIMARY pricing source: ``calculate_cost`` calls it
+    FIRST, so every model the curated table (plus alias map) can price is
+    deterministic and equal to canonical regardless of litellm. litellm is only a
+    fallback (:func:`_try_litellm_pricing`) for models this path cannot price.
+    That ordering is what keeps litellm from reintroducing the issue #1958
+    divergence for canonical-known models (a litellm-first order priced raw
+    ``gpt-4`` at $0.03 instead of the canonical $0.010).
+
+    Returns ``None`` for models the canonical path cannot price (it returns
+    ``(0.0, 0.0)``) so ``calculate_cost`` can then try the litellm fallback.
+    """
+    try:
+        from traigent.utils.cost_calculator import _estimation_cost_from_tokens
     except ImportError:
-        pass
-    return None
+        return None
+
+    input_cost, output_cost = _estimation_cost_from_tokens(
+        model, max_tokens, 0, _quiet=True
+    )
+    if input_cost <= 0 and output_cost <= 0:
+        return None
+    return float(input_cost + output_cost)
 
 
 def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstraint:
-    """Create constraint based on model cost using litellm library.
+    """Create constraint based on model cost.
 
-    Uses litellm for cost calculation with fallback to simplified pricing
-    for unknown models. The constraint validates that estimated cost per
-    1k tokens is within the specified limit.
+    Pricing precedence (issue #1958):
 
-    IMPORTANT: Unknown models that can't be priced will FAIL the constraint
-    (return infinity) to prevent them from silently passing.
+    1. **Canonical FIRST** — :func:`_try_fallback_pricing`, delegating to
+       :func:`traigent.utils.cost_calculator._estimation_cost_from_tokens`
+       (curated table + ``gpt-4`` -> ``gpt-4-turbo`` aliasing). A model in the
+       canonical table (or resolvable via its aliases) is ALWAYS priced here, so
+       its cost is deterministic and equal to canonical REGARDLESS of whether
+       litellm is installed. This is why litellm can no longer reintroduce the
+       #1958 divergence for canonical-known models.
+    2. **litellm FALLBACK** — :func:`_try_litellm_pricing`, consulted ONLY when
+       canonical returns ``None`` (model outside the curated table). This keeps
+       exotic / newer models litellm knows priceable instead of failing outright.
+       It is env-dependent (needs litellm), which is acceptable for models
+       canonical could not price at all.
+    3. **inf** — if BOTH return ``None`` the model is unknown to every source and
+       FAILS the constraint (returns infinity) to prevent silent passing.
+
+    The constraint validates that this estimated cost per 1k-token budget is
+    within the specified limit.
     """
 
     def calculate_cost(config: dict[str, Any]) -> float:
         """Calculate cost based on model and token usage.
 
-        Returns float('inf') for unknown models to ensure they fail the constraint.
+        Canonical-first, litellm-fallback, then float('inf') for models unknown
+        to both sources (so they fail the constraint).
         """
         model = config.get("model", DEFAULT_MODEL)
         max_tokens = config.get("max_tokens", 150)
 
-        result = _try_litellm_pricing(model, max_tokens)
-        if result is not None:
-            return result
-
+        # 1. Canonical first: deterministic for the curated table + aliases.
         result = _try_fallback_pricing(model, max_tokens)
         if result is not None:
             return result
 
+        # 2. litellm fallback: coverage for models outside the curated table.
+        result = _try_litellm_pricing(model, max_tokens)
+        if result is not None:
+            return result
+
+        # 3. Unknown to both -> fail the constraint.
         logger.warning(
             "Unknown model %r has no pricing info - failing cost constraint", model
         )

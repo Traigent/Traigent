@@ -19,21 +19,29 @@ Example:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from traigent.tvl.statistics import paired_comparison_test
-from traigent.utils.objectives import is_minimization_objective
+from traigent.tvl.statistics import _inverse_normal_cdf, paired_comparison_test
+from traigent.utils.objectives import (
+    coerce_finite_objective_score,
+    is_minimization_objective,
+)
 
 if TYPE_CHECKING:
     from traigent.api.types import TrialResult
 
 __all__ = [
+    "BEST_CONFIG_MARGIN_ALPHA",
     "EquivalenceGroupResult",
+    "compute_best_config_margin",
     "compute_significance",
     "extract_trial_data_for_metric",
     "find_equivalence_group",
 ]
+
+BEST_CONFIG_MARGIN_ALPHA = 0.05
 
 logger = logging.getLogger(__name__)
 
@@ -388,3 +396,388 @@ def compute_significance(
         }
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# best_config winner-vs-runner-up margin significance (issue #1866)
+# ---------------------------------------------------------------------------
+
+
+def _config_identity(config: dict[str, Any] | None) -> tuple[tuple[str, str], ...]:
+    """Order-independent identity key for a config dict."""
+    return tuple(sorted((str(k), repr(v)) for k, v in (config or {}).items()))
+
+
+def _is_binary(values: list[float]) -> bool:
+    """True when every value is exactly 0 or 1 (a 0/1 binary scorer)."""
+    return all(value in (0, 0.0, 1, 1.0) for value in values)
+
+
+def _mcnemar_exact_p(b: int, c: int) -> float:
+    """Two-sided exact McNemar p-value from discordant pair counts.
+
+    Under H0 (winner and runner-up equally likely to be correct on a discordant
+    example) the ``b + c`` discordant pairs follow ``Binomial(b + c, 0.5)``. The
+    two-sided exact p-value doubles the smaller tail (capped at 1.0). When there
+    are no discordant pairs the two configs agree on every example → ``p = 1.0``.
+    """
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = sum(math.comb(n, i) for i in range(k + 1)) * (0.5**n)
+    return min(1.0, 2.0 * tail)
+
+
+def _paired_proportion_ci(
+    b: int, c: int, n_shared: int, alpha: float
+) -> tuple[float, float]:
+    """Wald CI for the paired difference in proportions ``delta = (b - c)/n``.
+
+    Uses the standard large-sample variance for McNemar's marginal-homogeneity
+    difference with a normal quantile (:func:`_inverse_normal_cdf`). ``n_shared``
+    is always ``>= b + c`` (discordant pairs cannot exceed the shared examples),
+    so the variance is non-negative.
+    """
+    delta = (b - c) / n_shared
+    variance = (b + c - (b - c) ** 2 / n_shared) / (n_shared**2)
+    se = math.sqrt(max(0.0, variance))
+    z = _inverse_normal_cdf(1.0 - alpha / 2.0)
+    return (delta - z * se, delta + z * se)
+
+
+def _mean_diff_ci(diffs: list[float], alpha: float) -> tuple[float, float]:
+    """Normal-approximation CI for the mean of paired differences.
+
+    A large-sample approximation (uses a normal, not a t, quantile); at the
+    small n typical of eval folds it is slightly narrower than an exact
+    t-interval, so the p-value from the paired t-test remains the primary
+    tie criterion in :func:`_verdict`.
+    """
+    n = len(diffs)
+    mean = sum(diffs) / n
+    var = sum((d - mean) ** 2 for d in diffs) / (n - 1) if n > 1 else 0.0
+    se = math.sqrt(var / n) if n > 0 else 0.0
+    z = _inverse_normal_cdf(1.0 - alpha / 2.0)
+    return (mean - z * se, mean + z * se)
+
+
+# Effects with |delta| at or below this are treated as directionless (no
+# favoring) when deciding whether a significant result is a clear win.
+_DIRECTION_TOL = 1e-12
+
+# Reason attached to a significant margin that favors the RUNNER-UP rather than
+# the selected winner (the winner won on non-shared examples but loses on the
+# comparable ones), collapsed to the conservative ``"statistical_tie"``.
+_ADVERSE_DIRECTION_REASON = (
+    "winner significantly underperforms the runner-up on the shared examples; "
+    "the selection was driven by non-shared examples"
+)
+
+
+def _verdict(
+    p_value: float | None,
+    ci: tuple[float, float] | None,
+    alpha: float,
+    *,
+    delta: float | None = None,
+    minimize: bool = False,
+) -> tuple[str, str | None]:
+    """Classify a margin as ``"clear"``, ``"statistical_tie"``, or ``"na"``.
+
+    Returns ``(verdict, reason)``; ``reason`` is ``None`` except for the
+    direction-guarded tie described below.
+
+    A ``"statistical_tie"`` is declared when the paired test is not significant
+    at ``alpha`` OR the margin's confidence interval includes 0 — either
+    condition means the winner is statistically interchangeable with the
+    runner-up on the primary objective.
+
+    ``"clear"`` additionally requires the significant effect to FAVOR the
+    selected winner. ``delta`` is framed as ``mean(winner - runner)`` in raw
+    metric units, so the winner is favored when ``delta > 0`` for maximize
+    objectives and ``delta < 0`` for minimize objectives. A significant effect
+    that favors the RUNNER-UP — the winner was selected on non-shared examples
+    yet loses on every comparable one — is NOT a clear win; it collapses to the
+    conservative ``"statistical_tie"`` with an explanatory reason.
+    """
+    if p_value is None:
+        return "na", None
+    ci_includes_zero = ci is not None and ci[0] <= 0.0 <= ci[1]
+    if p_value > alpha or ci_includes_zero:
+        return "statistical_tie", None
+    if delta is not None:
+        favors_winner = delta < -_DIRECTION_TOL if minimize else delta > _DIRECTION_TOL
+        if not favors_winner:
+            return "statistical_tie", _ADVERSE_DIRECTION_REASON
+    return "clear", None
+
+
+def _resolve_winner(
+    scored: list[tuple[TrialResult, float]],
+    winner_trial_id: str | None,
+    winner_config: dict[str, Any] | None,
+    minimize: bool,
+) -> TrialResult:
+    """Resolve the winning trial from the selection basis.
+
+    Prefers the exact ``winner_trial_id``; falls back to the best-scoring trial
+    of the winning config, then to the overall best-scoring trial.
+    """
+    if winner_trial_id is not None:
+        for trial, _value in scored:
+            if trial.trial_id == winner_trial_id:
+                return trial
+    chooser = min if minimize else max
+    if winner_config is not None:
+        key = _config_identity(winner_config)
+        matches = [(t, v) for t, v in scored if _config_identity(t.config) == key]
+        if matches:
+            return chooser(matches, key=lambda pair: pair[1])[0]
+    return chooser(scored, key=lambda pair: pair[1])[0]
+
+
+def _mcnemar_margin(
+    winner_values: list[float],
+    runner_values: list[float],
+    n_shared: int,
+    effective_alpha: float,
+    *,
+    minimize: bool,
+) -> dict[str, Any]:
+    """McNemar exact margin payload for 0/1 binary per-example scores.
+
+    ``effective_alpha`` is the multiplicity-corrected significance level (see
+    :func:`compute_best_config_margin`). It drives BOTH the CI level — the
+    interval reported in ``ci95`` is the ``(1 - effective_alpha)`` interval — and
+    the ``p <= effective_alpha`` threshold in :func:`_verdict`, so the CI and the
+    p-value test the same corrected bar.
+    """
+    b = sum(
+        1 for w, r in zip(winner_values, runner_values, strict=True) if w >= 0.5 > r
+    )
+    c = sum(
+        1 for w, r in zip(winner_values, runner_values, strict=True) if w < 0.5 <= r
+    )
+    p_value = _mcnemar_exact_p(b, c)
+    ci = _paired_proportion_ci(b, c, n_shared, effective_alpha)
+    delta = (b - c) / n_shared
+    verdict, reason = _verdict(
+        p_value, ci, effective_alpha, delta=delta, minimize=minimize
+    )
+    payload: dict[str, Any] = {
+        "delta": delta,
+        "ci95": [ci[0], ci[1]],
+        "p_value": p_value,
+        "verdict": verdict,
+        "test": "mcnemar_exact",
+        "n_shared_examples": n_shared,
+        "discordant": {"b": b, "c": c},
+    }
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
+
+
+def _paired_t_margin(
+    winner_values: list[float],
+    runner_values: list[float],
+    n_shared: int,
+    effective_alpha: float,
+    *,
+    minimize: bool,
+) -> dict[str, Any]:
+    """Paired t-test margin payload for continuous per-example scores.
+
+    Reuses :func:`~traigent.tvl.statistics.paired_comparison_test` (one-sided,
+    ``epsilon=0``) and converts to a two-sided p-value. The zero-variance case
+    is handled directly: a constant non-zero difference is a perfectly
+    consistent (significant) win; an all-zero difference is a perfect tie.
+
+    ``effective_alpha`` is the multiplicity-corrected significance level (see
+    :func:`compute_best_config_margin`). It drives BOTH the ``ci95`` interval —
+    reported at the ``(1 - effective_alpha)`` level — and the
+    ``p <= effective_alpha`` threshold in :func:`_verdict`, keeping the CI and
+    the p-value on the same corrected bar.
+    """
+    diffs = [w - r for w, r in zip(winner_values, runner_values, strict=True)]
+    mean_diff = sum(diffs) / n_shared
+    var_diff = (
+        sum((d - mean_diff) ** 2 for d in diffs) / (n_shared - 1)
+        if n_shared > 1
+        else 0.0
+    )
+    if var_diff <= 0.0:
+        p_value = 1.0 if abs(mean_diff) <= 1e-12 else 0.0
+        ci: tuple[float, float] = (mean_diff, mean_diff)
+    else:
+        result = paired_comparison_test(
+            x_samples=winner_values,
+            y_samples=runner_values,
+            epsilon=0.0,
+            direction="greater",
+        )
+        p_upper = result.p_value
+        p_value = min(1.0, 2.0 * min(p_upper, 1.0 - p_upper))
+        mean_diff = result.effect_size
+        ci = _mean_diff_ci(diffs, effective_alpha)
+    verdict, reason = _verdict(
+        p_value, ci, effective_alpha, delta=mean_diff, minimize=minimize
+    )
+    payload: dict[str, Any] = {
+        "delta": mean_diff,
+        "ci95": [ci[0], ci[1]],
+        "p_value": p_value,
+        "verdict": verdict,
+        "test": "paired_t",
+        "n_shared_examples": n_shared,
+    }
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
+
+
+def compute_best_config_margin(
+    eligible_trials: list[TrialResult],
+    *,
+    winner_trial_id: str | None,
+    winner_config: dict[str, Any] | None,
+    primary_objective: str | None,
+    orientation: str | None = None,
+    alpha: float = BEST_CONFIG_MARGIN_ALPHA,
+) -> dict[str, Any] | None:
+    """Winner-vs-runner-up paired margin significance for ``best_config`` (#1866).
+
+    Additive qualification of ``results.best_config`` — it does NOT change which
+    config wins. It runs a paired test between the winner and the runner-up (the
+    2nd-best *distinct* config by the primary objective) on their shared
+    per-example scores: McNemar exact for 0/1 binary scorers, a paired t-test
+    (via :func:`~traigent.tvl.statistics.paired_comparison_test`) for continuous
+    scorers. It reports the margin, a CI on the margin, the p-value, and a
+    verdict.
+
+    The margin is always computed on the ``primary_objective``'s per-example
+    scores (the "is this winner real?" question customers act on), even for
+    weighted multi-objective runs — per-example data only exists for scorer
+    metrics, not for the weighted aggregate. The runner-up is the best distinct
+    config on that same primary objective.
+
+    Multiplicity correction (winner's curse). The winner was NOT pre-specified:
+    it was selected as the best of ``n_configs`` *distinct* candidate configs,
+    and the runner-up is the empirically-closest of the remaining ones. Testing
+    that lucky best-vs-second pair at the nominal ``alpha`` — as if it had been
+    fixed in advance — is a post-selection multiplicity error: with enough noise
+    configs some pair looks "significant" by chance. We correct with a Bonferroni
+    adjustment over the ``n_configs - 1`` comparisons of the winner against the
+    other configs::
+
+        effective_alpha = alpha / max(1, n_configs - 1)
+
+    ``n_configs`` is the number of DISTINCT configs in the selection pool (the
+    scored eligible trials the winner was chosen from), not the trial count. For
+    a genuine head-to-head (``n_configs`` of 1 or 2) ``effective_alpha == alpha``
+    — no over-correction. ``effective_alpha`` is applied CONSISTENTLY to both the
+    p-value threshold AND the CI level: ``"clear"`` requires
+    ``p <= effective_alpha`` AND the ``(1 - effective_alpha)`` CI to exclude 0
+    AND the effect to favor the winner. Both ``effective_alpha`` and
+    ``n_configs`` are recorded in the payload so the verdict is auditable; the
+    uncorrected nominal ``alpha`` is also kept under ``alpha``.
+
+    Returns:
+        ``None`` when there is no runner-up to compare against — fewer than two
+        distinct eligible configs, no primary objective, or no eligible trial
+        carrying a finite primary value. When two configs exist but share no
+        comparable per-example data, returns a dict with ``verdict="na"`` and
+        ``p_value=None`` (the aggregate delta is still reported). Otherwise the
+        dict carries ``verdict`` of ``"clear"`` or ``"statistical_tie"`` plus
+        ``runner_up``, ``delta``, ``ci95``, ``p_value``, ``effective_alpha``,
+        and ``n_configs``.
+
+    Note:
+        A ``"statistical_tie"`` winner is statistically interchangeable with its
+        runner-up on the primary objective: at typical eval sizes (n=20-80) a
+        margin whose CI includes 0 is not a decision. Secondary objectives
+        (cost, latency) should break such ties rather than noise. A
+        ``"statistical_tie"`` is also returned — carrying a ``reason`` — when the
+        paired test IS significant but the effect favors the runner-up (the
+        winner was selected on non-shared examples yet loses on the comparable
+        ones); ``"clear"`` requires the significant effect to favor the selected
+        winner.
+    """
+    if primary_objective is None:
+        return None
+    trials = [trial for trial in eligible_trials if trial.is_successful]
+    if len(trials) < 2:
+        return None
+
+    minimize = is_minimization_objective(primary_objective, orientation=orientation)
+
+    def primary_value(trial: TrialResult) -> float | None:
+        score = coerce_finite_objective_score(trial.get_metric(primary_objective))
+        return None if score is None else float(score)
+
+    scored = [(t, v) for t in trials if (v := primary_value(t)) is not None]
+    if len(scored) < 2:
+        return None
+
+    winner = _resolve_winner(scored, winner_trial_id, winner_config, minimize)
+    winner_key = _config_identity(winner.config)
+    others = [(t, v) for t, v in scored if _config_identity(t.config) != winner_key]
+    if not others:
+        return None  # only one distinct config — no runner-up to qualify against
+
+    runner_up = (min if minimize else max)(others, key=lambda pair: pair[1])[0]
+
+    # Multiplicity correction: the winner was selected as best-of-N DISTINCT
+    # configs, so the winner-vs-runner-up test carries a winner's-curse /
+    # post-selection bias. Bonferroni-correct the nominal alpha over the
+    # n_configs - 1 comparisons of the winner against the other configs. Count
+    # DISTINCT configs in the scored selection pool, not trials.
+    n_configs = len({_config_identity(t.config) for t, _ in scored})
+    effective_alpha = alpha / max(1, n_configs - 1)
+
+    winner_primary = primary_value(winner)
+    runner_primary = primary_value(runner_up)
+    aggregate_delta = (
+        winner_primary - runner_primary
+        if winner_primary is not None and runner_primary is not None
+        else None
+    )
+
+    base: dict[str, Any] = {
+        "runner_up": dict(runner_up.config or {}),
+        "runner_up_trial_id": runner_up.trial_id,
+        "winner_trial_id": winner.trial_id,
+        "primary_objective": primary_objective,
+        "alpha": alpha,
+        "effective_alpha": effective_alpha,
+        "n_configs": n_configs,
+    }
+
+    paired = extract_trial_data_for_metric([winner, runner_up], primary_objective)
+    by_idx = {entry["trial_idx"]: entry for entry in paired}
+    if 0 not in by_idx or 1 not in by_idx:
+        return {
+            **base,
+            "delta": aggregate_delta,
+            "ci95": None,
+            "p_value": None,
+            "verdict": "na",
+            "test": "none",
+            "n_shared_examples": 0,
+            "reason": "insufficient shared per-example data for a paired test",
+        }
+
+    winner_values = by_idx[0]["values"]
+    runner_values = by_idx[1]["values"]
+    n_shared = len(winner_values)
+
+    if _is_binary(winner_values) and _is_binary(runner_values):
+        margin = _mcnemar_margin(
+            winner_values, runner_values, n_shared, effective_alpha, minimize=minimize
+        )
+    else:
+        margin = _paired_t_margin(
+            winner_values, runner_values, n_shared, effective_alpha, minimize=minimize
+        )
+    return {**base, **margin}

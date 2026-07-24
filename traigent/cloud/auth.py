@@ -124,6 +124,100 @@ def _build_api_key_auth_headers(api_key_value: str | None) -> dict[str, str]:
     return {}
 
 
+#: Trace-context header names (lowercase) that must never leak into
+#: long-lived session-default header dicts (they would go stale).
+_TRACE_CONTEXT_HEADER_NAMES = frozenset({"traceparent", "tracestate"})
+
+
+def _inject_trace_context(headers: dict[str, str]) -> None:
+    """Inject the active W3C trace context into outbound request headers.
+
+    When an OpenTelemetry span context is active, add the standard W3C
+    ``traceparent`` header so the receiving service continues the *same*
+    distributed trace. This is what lets a single customer optimization run
+    appear as one Tempo trace spanning both the SDK (``traigent-optimizer``)
+    and the backend (``traigent-backend``) instead of two disjoint trees.
+
+    Only ``traceparent`` (trace-id / span-id / flags) is forwarded.
+    ``tracestate`` is deliberately **not** emitted to the backend -- see the
+    privacy note at the strip step below.
+
+    Deliberately uses an *explicit* W3C ``TraceContextTextMapPropagator``
+    instance rather than the process-global propagator
+    (``opentelemetry.propagate.inject``): the goal of this injection is
+    specifically W3C ``traceparent`` correlation with ``traigent-backend``,
+    so a host application that configured its global propagator to B3-only
+    must still get a ``traceparent`` here (and a composite global propagator
+    must not make *our* backend calls carry extra b3/baggage headers). The
+    host's propagator configuration remains authoritative for the host's own
+    outbound calls -- we only pin the format of the SDK's backend calls.
+
+    Callers must pass a **fresh, per-request** header dict (the function
+    mutates it in place). Never call this on a cached or session-default
+    header dict: the injected context would outlive the span and go stale --
+    use :func:`_strip_trace_context_headers` on session-default dicts instead.
+
+    Degrades cleanly and invisibly -- with zero behaviour change -- on exactly
+    two paths:
+
+    * ``opentelemetry`` is not installed (the ``tracing`` extra is optional).
+      ``ImportError`` is the *only* swallowed failure.
+    * No span context is active. The propagator then injects nothing, so
+      today's headers are sent unchanged.
+
+    Caller-supplied trace context is never overwritten: if the dict already
+    carries a ``traceparent`` *or* ``tracestate`` header (any header-name
+    casing -- HTTP header names are case-insensitive), injection is skipped
+    entirely. The caller owns the trace context in that case; injecting on
+    top would duplicate or mix contexts (e.g. a lowercase ``tracestate``
+    added next to a caller's ``Tracestate``). Any *other* error raised by an
+    installed OpenTelemetry propagator is allowed to propagate -- we stay
+    silent only on the "tracing unavailable / no active span" no-op path,
+    never on an unexpected failure.
+    """
+    # Respect caller-supplied trace context regardless of header casing.
+    if any(name.lower() in _TRACE_CONTEXT_HEADER_NAMES for name in headers):
+        return
+    try:
+        from opentelemetry.trace.propagation.tracecontext import (
+            TraceContextTextMapPropagator,
+        )
+    except ImportError:  # silent-ok: optional OTel dep; absent = no-op by design
+        return
+    # No-op when no span is recording (the W3C propagator writes nothing for
+    # an invalid span context).
+    TraceContextTextMapPropagator().inject(headers)
+    # Privacy: forward ONLY the W3C ``traceparent`` (trace-id / span-id /
+    # flags). ``tracestate`` is deliberately NOT forwarded to the backend: the
+    # active span can inherit ``tracestate`` from an upstream/user-controlled
+    # trace context, where it carries vendor/user key-value metadata. Emitting
+    # that to ``traigent-backend`` would be metadata egress, and telemetry /
+    # metadata defaults to redaction. The W3C propagator writes a lowercase
+    # ``tracestate``; strip case-insensitively to be safe against any
+    # propagator that varies the casing. This is the single choke point for
+    # all four SDK->backend paths (backend / hybrid / analytics / evaluation),
+    # so stripping here covers every outbound call.
+    for _name in [name for name in headers if name.lower() == "tracestate"]:
+        del headers[_name]
+
+
+def _strip_trace_context_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Return a copy of ``headers`` without trace-context headers.
+
+    Session-default header dicts (e.g. ``aiohttp.ClientSession(headers=...)``)
+    outlive any single span: freezing a ``traceparent`` into them would stamp
+    every later request on that session with the stale context of whatever
+    span happened to be active at session creation. Trace context must only
+    travel on per-request header dicts (see :func:`_inject_trace_context`).
+    Case-insensitive; never mutates the input.
+    """
+    return {
+        name: value
+        for name, value in headers.items()
+        if name.lower() not in _TRACE_CONTEXT_HEADER_NAMES
+    }
+
+
 def _sanitize_credentials_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     """Return diagnostic-safe credential metadata without raw tokens or user PII."""
     if not isinstance(metadata, dict) or not metadata:
@@ -979,6 +1073,10 @@ class AuthManager:
         if target in ("backend", "both"):
             headers["X-Traigent-Service"] = "sdk"
             headers["X-Backend-Integration"] = "true"
+
+        # Propagate the active trace context so SDK->backend calls join one
+        # distributed trace. No-op when tracing is unavailable / no span active.
+        _inject_trace_context(headers)
 
     async def get_auth_headers(
         self,

@@ -332,9 +332,11 @@ class OptimizationValidator:
         # This should be configurable based on objective types (accuracy=maximize, cost=minimize)
         maximize_config = self._get_maximize_config(objectives)
 
-        # Check if optimized dominates baseline
+        # Check if optimized dominates baseline over the CONFIGURED objective
+        # set (not just whichever metrics both points happen to report), so a
+        # universally-missing objective makes the pair non-comparable (#1941).
         optimized_dominates_baseline = optimized_point.dominates(
-            baseline_point, maximize_config
+            baseline_point, maximize_config, objectives=objectives
         )
 
         # Calculate improvement percentages

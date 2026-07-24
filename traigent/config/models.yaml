@@ -34,12 +34,11 @@ openai:
     - gpt-4o-2024-08-06
     - gpt-4o-2024-05-13
     - gpt-4o-mini-2024-07-18
-    # O1 reasoning models
+    # O1 reasoning models. Retired preview line swept (#1936/#1937):
+    # o1-preview / o1-mini (+ dated aliases) are no longer served by the
+    # discovery fallback; explicit user references still validate via the
+    # provider pattern below.
     - o1
-    - o1-preview
-    - o1-mini
-    - o1-preview-2024-09-12
-    - o1-mini-2024-09-12
     # GPT-4 Turbo
     - gpt-4-turbo
     - gpt-4-turbo-preview
@@ -87,9 +86,9 @@ anthropic:
     - claude-3-5-sonnet-latest
     - claude-3-5-haiku-20241022
     - claude-3-5-haiku-latest
-    # Claude 3 family
-    - claude-3-opus-20240229
-    - claude-3-opus-latest
+    # Claude 3 family. claude-3-opus (retirement track, #1936/#1937) swept
+    # from the discovery fallback; explicit references still validate via the
+    # provider pattern below.
     - claude-3-sonnet-20240229
     - claude-3-haiku-20240307
     # Claude 2 family (legacy)
@@ -104,23 +103,12 @@ gemini:
   # Canonical provider name is "google"; this registry keys it under "gemini".
   support_level: validated
   known_models:
-    # Gemini 2.0
-    - gemini-2.0-flash-exp
-    - models/gemini-2.0-flash-exp
-    # Gemini 1.5
-    - gemini-1.5-pro
-    - gemini-1.5-pro-latest
-    - gemini-1.5-flash
-    - gemini-1.5-flash-latest
-    - models/gemini-1.5-pro
-    - models/gemini-1.5-pro-latest
-    - models/gemini-1.5-flash
-    - models/gemini-1.5-flash-latest
-    # Gemini 1.0 (legacy)
-    - gemini-pro
-    - gemini-pro-vision
-    - models/gemini-pro
-    - models/gemini-pro-vision
+    # Gemini 2.0. Retired/deprecated lines swept (#1936/#1937): the 2.0-exp
+    # preview, the deprecated Gemini 1.5 family, and the dead Gemini 1.0
+    # family are no longer served by the discovery fallback. Explicit user
+    # references to versioned IDs still validate via the pattern below
+    # (bare/dead "gemini-pro" intentionally does not).
+    - gemini-2.0-flash
   pattern: "^(gemini-[0-9]|models/gemini-)"
 
 azure_openai:
@@ -137,9 +125,9 @@ azure_openai:
     # GPT-3.5 (Azure uses "35" not "3.5")
     - gpt-35-turbo
     - gpt-35-turbo-16k
-    # O1 family
-    - o1-preview
-    - o1-mini
+    # O1 family: retired o1-preview/o1-mini swept (#1936/#1937); Azure
+    # deployment names are user-defined and the permissive pattern below
+    # recognizes any explicit reference.
     # Legacy
     - text-davinci-003
   # Permissive pattern - deployment names are user-defined
@@ -201,10 +189,12 @@ bedrock:
   # Authenticates via AWS credentials; recognized for routing, not validated.
   support_level: mapping_only
   known_models:
-    # Anthropic on Bedrock
+    # Anthropic on Bedrock. The claude-3-opus Bedrock alias
+    # (anthropic.claude-3-opus-20240229-v1:0) is swept — provider-prefixed
+    # forms normalize to the retired base ID (#1936/#1937); see
+    # traigent.config.retired_models.normalize_model_id.
     - anthropic.claude-3-5-sonnet-20241022-v2:0
     - anthropic.claude-3-5-haiku-20241022-v1:0
-    - anthropic.claude-3-opus-20240229-v1:0
     - anthropic.claude-3-sonnet-20240229-v1:0
     - anthropic.claude-3-haiku-20240307-v1:0
     - anthropic.claude-v2:1

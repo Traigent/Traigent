@@ -113,7 +113,9 @@ def test_observability_config_uses_disable_telemetry_as_offline_mode(monkeypatch
     ("origin", "message"),
     [
         ("http://api.traigent.example", "https"),
-        ("metadata-ip", "private or loopback"),
+        # The IMDS literal is rejected by IP value as a metadata service, ahead
+        # of (and independently of) the production private/loopback branch.
+        ("metadata-ip", "metadata service"),
     ],
 )
 def test_observability_config_rejects_unsafe_production_origins(

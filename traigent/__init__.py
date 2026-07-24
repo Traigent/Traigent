@@ -188,6 +188,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "override_config": ("traigent.api.functions", "override_config"),
     "set_strategy": ("traigent.api.functions", "set_strategy"),
     "with_usage": ("traigent.api.functions", "with_usage"),
+    # Experimental: shared cumulative execution budget (issue #1980)
+    "ExecutionBudget": ("traigent.core.execution_budget", "ExecutionBudget"),
     # SE-friendly parameter range classes
     "Choices": ("traigent.api.parameter_ranges", "Choices"),
     "IntRange": ("traigent.api.parameter_ranges", "IntRange"),
@@ -293,6 +295,15 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     ),
     "CoreMetricsClient": ("traigent.core_metrics", "CoreMetricsClient"),
     "CoreMetricsConfig": ("traigent.core_metrics", "CoreMetricsConfig"),
+    # Economics telemetry emitter (WI-B). Root-exported to match the schema-owned
+    # Python/JS parity manifest, which classifies EconomicsTelemetryClient as a
+    # `matched` root export, and the JS SDK, which root-exports it from
+    # `@traigent/sdk`. Lazy (like the other client surfaces): plain `import
+    # traigent` does not import `traigent.economics` until this symbol is accessed.
+    "EconomicsTelemetryClient": (
+        "traigent.economics",
+        "EconomicsTelemetryClient",
+    ),
     "EnterpriseAdminClient": ("traigent.admin", "EnterpriseAdminClient"),
     "EnterpriseAdminConfig": ("traigent.admin", "EnterpriseAdminConfig"),
     "EvaluationClient": ("traigent.evaluation", "EvaluationClient"),
@@ -460,6 +471,21 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "temperature_constraint",
     ),
     "validate_and_suggest": ("traigent.utils.validation", "validate_and_suggest"),
+    # No-execution evaluation-compatibility contract
+    "validate_evaluation_contract": (
+        "traigent.contract",
+        "validate_evaluation_contract",
+    ),
+    "EvaluationContractReport": (
+        "traigent.contract",
+        "EvaluationContractReport",
+    ),
+    "ContractFinding": ("traigent.contract", "ContractFinding"),
+    "ContractCode": ("traigent.contract", "ContractCode"),
+    "EVALUATION_CONTRACT_VERSION": (
+        "traigent.contract",
+        "EVALUATION_CONTRACT_VERSION",
+    ),
 }
 
 _DEPRECATED_LAZY_EXPORTS = {
@@ -541,6 +567,7 @@ __all__ = [
     "get_version_info",
     "set_strategy",
     "with_usage",  # New: wrap multi-agent workflow responses with usage metadata
+    "ExecutionBudget",  # Experimental: shared cumulative execution budget (#1980)
     # Configuration types
     "TraigentConfig",
     "ExternalServiceEvaluator",
@@ -550,6 +577,7 @@ __all__ = [
     "copy_context_to_thread",
     "CoreMetricsClient",
     "CoreMetricsConfig",
+    "EconomicsTelemetryClient",
     "EnterpriseAdminClient",
     "EnterpriseAdminConfig",
     "ObservabilityClient",
@@ -680,6 +708,12 @@ __all__ = [
     "VALID_PRESET_NAMES",
     "normalize_strategy_preset",
     "select_strategy_preset",
+    # No-execution evaluation-compatibility contract
+    "validate_evaluation_contract",
+    "EvaluationContractReport",
+    "ContractFinding",
+    "ContractCode",
+    "EVALUATION_CONTRACT_VERSION",
 ]
 
 if "AgentCostBreakdown" in globals():

@@ -9,6 +9,8 @@ including parallel optimization, multi-objective batch optimization, and distrib
 from __future__ import annotations
 
 import asyncio
+import math
+import numbers
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,6 +53,24 @@ class BatchOptimizationConfig:
     distributed_workers: int = 1
     enable_checkpointing: bool = True
     memory_limit_mb: float = 1000.0
+
+    def __post_init__(self) -> None:
+        # Mirrors OptimizationStrategy's boundary (remote_services.py): now that
+        # the batch loop actually consumes early_stopping_min_delta, an
+        # unvalidated NaN makes every improvement comparison False (premature
+        # stop on improving runs) and a negative delta makes flat scores count
+        # as improvements (never stops). bool is a Real, so reject it explicitly.
+        delta = self.early_stopping_min_delta
+        if (
+            isinstance(delta, bool)
+            or not isinstance(delta, numbers.Real)
+            or not math.isfinite(float(delta))
+            or delta < 0
+        ):
+            raise ValueError(
+                f"early_stopping_min_delta must be a finite non-negative number, "
+                f"got {delta!r}"
+            )
 
 
 class ParallelBatchOptimizer(BaseOptimizer):
@@ -173,16 +193,27 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         trial = future.result()
                         completed_trials.append(trial)
 
-                        # Update best result
+                        # Patience counter resets only on a MATERIAL improvement
+                        # (> min_delta over the previous best); sub-delta creep
+                        # must not defer early stopping. Previously min_delta was
+                        # declared in BatchConfig but never read, so any epsilon
+                        # gain reset the counter.
+                        if (
+                            trial.score
+                            > best_score + self.batch_config.early_stopping_min_delta
+                        ):
+                            trials_without_improvement = 0
+                        else:
+                            trials_without_improvement += 1
+
+                        # Best-result tracking stays exact: even a sub-delta gain
+                        # is still the best config seen so far.
                         if trial.score > best_score:
                             best_score = trial.score
                             best_config = config
-                            trials_without_improvement = 0
                             logger.info(
                                 f"New best score: {best_score:.4f} with config: {config}"
                             )
-                        else:
-                            trials_without_improvement += 1
 
                         # Early stopping check
                         if (
@@ -395,9 +426,24 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             obj: not is_minimization_objective(obj) for obj in resolved_objectives
         }
 
-        # Use random search for multi-objective exploration
+        # Use random search for multi-objective exploration. Thread the caller's
+        # ``max_trials`` (default 100, matching the historical hard-coded cap) so
+        # the delegated ``should_stop`` honours the configured budget and
+        # config-space exhaustion instead of a magic constant (#1916).
+        #
+        # Normalise a direct-constructor ``max_trials=None`` to the historical
+        # 100-trial cap. ``RandomSearchOptimizer.should_stop`` evaluates
+        # ``self._trial_count >= self.max_trials``, which raises
+        # ``TypeError: '>=' not supported between 'int' and 'NoneType'`` on a
+        # ``None`` budget; 100 matches the legacy ``len(history) >= 100`` cap.
+        requested_max_trials = kwargs.get("max_trials", 100)
+        if requested_max_trials is None:
+            requested_max_trials = 100
+        self._max_trials = requested_max_trials
         self._base_optimizer = RandomSearchOptimizer(
-            configuration_space, resolved_objectives
+            configuration_space,
+            resolved_objectives,
+            max_trials=requested_max_trials,
         )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
@@ -405,9 +451,24 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         return cast(dict[str, Any], self._base_optimizer.suggest_next_trial(history))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
-        """Determine if optimization should stop."""
-        # Stop when we've reached a reasonable number of trials for multi-objective
-        return len(history) >= 100
+        """Determine if optimization should stop.
+
+        Combines two budgets so neither the resumed-history nor the fresh-run
+        path regresses (#1916 follow-up):
+
+        * Legacy resumed-history cap - stop once ``len(history)`` reaches the
+          configured budget. ``optimize`` drives trials through a *local*
+          RandomSearchOptimizer, so the injected ``_base_optimizer`` trial
+          counter stays at zero on a resumed run; without this check a
+          pre-populated history would never trigger a stop (the historical
+          behaviour was ``len(history) >= 100``).
+        * Delegate budget / exhaustion - otherwise defer to the injected base
+          optimizer so its configured ``max_trials`` and discrete config-space
+          exhaustion are honoured instead of a hard-coded 100-trial cap.
+        """
+        if len(history) >= self._max_trials:
+            return True
+        return bool(self._base_optimizer.should_stop(history))
 
     async def optimize(
         self,
@@ -519,36 +580,35 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 dataset,  # type: ignore[arg-type]
             )
 
-            # Extract objective scores
-            objective_scores = {}
-            metrics = evaluation_result.metrics or {}
-            for objective in self.objectives:
-                objective_scores[objective] = metrics.get(objective, 0.0)
-
-            # Calculate composite score using weighted averaging
-            # Import the scalarize_objectives function for proper weighted scoring
-            from traigent.utils.multi_objective import scalarize_objectives
-
-            # Get weights from config or use equal weights by default
-            objective_weights = getattr(self, "objective_weights", {})
-            if not objective_weights:
-                # Equal weights for all objectives if not specified
-                objective_weights = dict.fromkeys(self.objectives, 1.0)
-
-            # Use the scalarize_objectives function for proper weighted
-            # averaging, honoring objective orientation so minimize objectives
-            # (cost/latency/error) lower the composite instead of raising it
-            # (#1466). This keeps the composite consistent with the
-            # orientation-aware Pareto dominance in ``_dominates`` and the
-            # ``max(score)`` pick in ``_select_best_from_pareto``.
-            composite_score = scalarize_objectives(
-                objective_scores,
-                objective_weights,
-                minimize_objectives=self._minimize_objectives,
-            )
-
+            # Extract objective scores and scalarize, rejecting the trial
+            # outright when a metric is missing or non-finite (#1944 hardening).
+            composed = self._compose_trial_scores(evaluation_result.metrics or {})
             trial_duration = time.time() - trial_start
 
+            if composed is None:
+                metrics = evaluation_result.metrics or {}
+                missing = [o for o in self.objectives if o not in metrics]
+                logger.warning(
+                    "Multi-objective trial %s rejected: metric-incomplete or "
+                    "non-finite objectives (missing=%s) — a partial trial must "
+                    "never enter the Pareto frontier.",
+                    trial_idx,
+                    missing,
+                )
+                return Trial(
+                    configuration=config,
+                    score=float("-inf"),
+                    duration=trial_duration,
+                    metadata={
+                        "evaluation_result": evaluation_result,
+                        "failed": True,
+                        "metric_incomplete": missing,
+                        "trial_index": trial_idx,
+                        "batch_processing": True,
+                    },
+                )
+
+            objective_scores, composite_score = composed
             return Trial(
                 configuration=config,
                 score=composite_score,
@@ -570,15 +630,71 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 metadata={"error": str(e), "failed": True, "trial_index": trial_idx},
             )
 
+    def _compose_trial_scores(
+        self, metrics: dict[str, Any]
+    ) -> tuple[dict[str, float], float] | None:
+        """Extract objective scores and the scalarized composite for one trial.
+
+        Returns ``None`` — reject the trial — when any declared objective is
+        missing from ``metrics``, has a non-finite value, or the composite
+        itself is non-finite. Rejection must happen HERE, before the trial is
+        built: the previous orientation-worst sentinel (±inf) approach (#1944)
+        leaked through scalarization when an objective carried an *allowed*
+        zero weight — ``0.0 * ±inf = nan`` — and the downstream
+        ``score == -inf`` gate cannot see NaN (every NaN comparison is False),
+        so the metric-incomplete trial entered the frontier and, inserted
+        first, could even be SELECTED by ``max()`` (NaN keeps first place).
+        """
+        for objective in self.objectives:
+            value = metrics.get(objective)
+            if value is None or not math.isfinite(value):
+                return None
+
+        objective_scores = {
+            objective: float(metrics[objective]) for objective in self.objectives
+        }
+
+        from traigent.utils.multi_objective import scalarize_objectives
+
+        objective_weights = getattr(self, "objective_weights", None) or {}
+        if not objective_weights:
+            objective_weights = dict.fromkeys(self.objectives, 1.0)
+
+        # Weighted, orientation-aware scalarization (#1466): minimize
+        # objectives lower the composite, consistent with ``_dominates`` and
+        # the ``max(score)`` pick in ``_select_best_from_pareto``.
+        composite_score = scalarize_objectives(
+            objective_scores,
+            objective_weights,
+            minimize_objectives=self._minimize_objectives,
+        )
+        if not math.isfinite(composite_score):
+            return None
+        return objective_scores, composite_score
+
     def _update_pareto_frontier(self, new_trial: Trial) -> None:
         """Update Pareto frontier with new trial."""
+        # Fail-closed admission (#1944 hardening): gate on ``isfinite``, not a
+        # ``== -inf`` sentinel comparison — NaN compares False to everything,
+        # so a NaN-scored trial sailed through the old gate. Also reject any
+        # non-finite *objective* value so ±inf/NaN can never sit on the
+        # frontier regardless of how the trial was constructed.
         if (
-            new_trial.score == float("-inf")
+            not math.isfinite(new_trial.score)
             or "objective_scores" not in new_trial.metadata
         ):
             return
 
         new_scores = new_trial.metadata["objective_scores"]
+        if any(v is None or not math.isfinite(v) for v in new_scores.values()):
+            return
+        # Completeness is enforced HERE at the choke point, not only in
+        # _compose_trial_scores: direct callers could otherwise insert a
+        # finite-but-INCOMPLETE mapping (e.g. {"accuracy": 0.91} with cost
+        # declared), which is non-comparable under _dominates and would sit on
+        # the frontier as an unmeasured, falsely-attractive point.
+        if any(objective not in new_scores for objective in self.objectives):
+            return
 
         # Check if new trial is dominated by existing solutions
         is_dominated = False
@@ -606,11 +722,60 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             # Add new trial
             self.pareto_frontier.append(new_trial)
 
-            # Maintain frontier size limit
-            if len(self.pareto_frontier) > self.pareto_frontier_size:
-                # Remove trial with lowest composite score
-                self.pareto_frontier.sort(key=lambda t: t.score, reverse=True)
-                self.pareto_frontier = self.pareto_frontier[: self.pareto_frontier_size]
+            # Maintain frontier size limit by pruning the *least diverse*
+            # points, not the lowest composite score (#1942). Every member is
+            # mutually non-dominated, so trimming by descending ``t.score`` would
+            # silently evict Pareto-optimal trade-off extremes (e.g. the
+            # cost-minimal corner) and collapse the frontier toward the
+            # highest-scalar corner. Crowding distance (NSGA-II) assigns the
+            # boundary points infinite distance, so the extremes are retained.
+            while len(self.pareto_frontier) > self.pareto_frontier_size:
+                distances = self._crowding_distances(self.pareto_frontier)
+                most_crowded = min(
+                    range(len(self.pareto_frontier)),
+                    key=lambda i: distances[i],
+                )
+                self.pareto_frontier.pop(most_crowded)
+
+    def _crowding_distances(self, trials: list[Trial]) -> list[float]:
+        """Compute NSGA-II crowding distance for each trial on the frontier.
+
+        Boundary points (min/max on any objective) receive ``inf`` so the
+        trade-off extremes are never pruned; interior points accumulate the
+        normalized gap to their neighbours per objective. Higher = more
+        isolated = more valuable to keep for diversity.
+        """
+        n = len(trials)
+        if n <= 2:
+            # With two or fewer points every point is a boundary extreme.
+            return [float("inf")] * n
+
+        distances = [0.0] * n
+        for objective in self.objectives:
+            values = [
+                t.metadata.get("objective_scores", {}).get(objective, 0.0)
+                for t in trials
+            ]
+            order = sorted(range(n), key=lambda i: values[i])
+
+            # Boundary points are the diversity extremes — always keep them.
+            distances[order[0]] = float("inf")
+            distances[order[-1]] = float("inf")
+
+            span = values[order[-1]] - values[order[0]]
+            if span <= 0 or not math.isfinite(span):
+                # Degenerate/undefined spread on this objective — skip it rather
+                # than inject NaN/inf into interior distances.
+                continue
+
+            for k in range(1, n - 1):
+                idx = order[k]
+                if math.isinf(distances[idx]):
+                    continue
+                gap = values[order[k + 1]] - values[order[k - 1]]
+                distances[idx] += gap / span
+
+        return distances
 
     def _dominates(self, scores1: dict[str, float], scores2: dict[str, float]) -> bool:
         """Check if scores1 dominates scores2 (all objectives better or equal, at least one strictly better)."""
@@ -621,11 +786,15 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         at_least_one_better = False
 
         for objective in self.objectives:
-            score1 = scores1.get(objective, 0.0)
-            score2 = scores2.get(objective, 0.0)
-
             # Check if we should maximize (True) or minimize (False) this objective
             should_maximize = self.objective_directions.get(objective, True)
+
+            # Default a missing objective to the orientation-*worst* sentinel,
+            # never 0.0 (#1944) — for a minimize objective 0.0 is the best value,
+            # which would let a metric-incomplete trial falsely dominate.
+            worst = float("-inf") if should_maximize else float("inf")
+            score1 = scores1.get(objective, worst)
+            score2 = scores2.get(objective, worst)
 
             if should_maximize:
                 # Higher is better

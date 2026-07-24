@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         ProductionMCPClient,
     )
     from traigent.core.sample_budget import SampleBudgetLease
+    from traigent.core.execution_budget import ExecutionBudget
 
 logger = get_logger(__name__)
 
@@ -674,6 +675,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         *,
         sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
     ) -> EvaluationResult:
         """Execute trial via external API with batching support.
 
@@ -690,6 +692,14 @@ class HybridAPIEvaluator(BaseEvaluator):
         Raises:
             EvaluationError: If evaluation fails.
         """
+        execution_budget_lease, blocked_result = (
+            self._prepare_execution_budget_evaluation(budget, config)
+        )
+        if blocked_result is not None:
+            return blocked_result
+        if sample_lease is None:
+            sample_lease = execution_budget_lease
+
         start_time = time.time()
         transport = await self._get_transport()
         caps = await self._get_capabilities()
@@ -711,7 +721,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                 )
 
         if not examples:
-            return EvaluationResult(
+            result = EvaluationResult(
                 config=config,
                 example_results=[],
                 aggregated_metrics={},
@@ -720,6 +730,9 @@ class HybridAPIEvaluator(BaseEvaluator):
                 duration=0.0,
                 sample_budget_exhausted=sample_lease is not None
                 and sample_lease.exhausted,
+            )
+            return self._finalize_execution_budget_evaluation(
+                budget, result, execution_budget_lease
             )
 
         # Process in batches
@@ -784,7 +797,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         )
         # Compatibility-safe dynamic field for downstream trial metadata mapping.
         evaluation_result.comparability = comparability  # type: ignore[attr-defined]
-        return evaluation_result
+        return self._finalize_execution_budget_evaluation(
+            budget, evaluation_result, execution_budget_lease
+        )
 
     async def _execute_batch(
         self,

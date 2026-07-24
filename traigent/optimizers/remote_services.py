@@ -9,6 +9,8 @@ services, enabling local execution with optional remote guidance architectures.
 from __future__ import annotations
 
 import asyncio
+import math
+import numbers
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -187,6 +189,46 @@ class OptimizationStrategy:
     # Metadata
     strategy_name: str = "smart_optimization"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Appended after every pre-existing field so the historical positional
+    # constructor ABI (positions 0..12 above) is preserved; new callers pass
+    # this by keyword. Min primary-objective change counted as an improvement.
+    early_stopping_min_delta: float = 0.01
+
+    def __post_init__(self) -> None:
+        """Validate fields that feed early-stopping arithmetic."""
+        # ``early_stopping_patience`` is used directly as a negative-index slice
+        # bound (``history[-patience:]``) and as a length threshold in
+        # CloudOptimizer._check_strategy_stopping_conditions. A float or string
+        # would raise deep inside the stop check, and a negative value would
+        # silently corrupt the "recent trials" slice. bool subclasses int, so an
+        # unguarded ``isinstance(int)`` would let True/False through and act as
+        # 1/0. Require a real non-negative int; 0 keeps its existing meaning of
+        # "early stopping disabled".
+        patience = self.early_stopping_patience
+        if isinstance(patience, bool) or not isinstance(patience, int) or patience < 0:
+            raise ValueError(
+                f"early_stopping_patience must be a non-negative int, got {patience!r}"
+            )
+
+        # A negative or NaN min_delta silently inverts or disables the
+        # no-improvement test in CloudOptimizer._check_strategy_stopping_conditions
+        # (NaN comparisons are always False, so optimization never early-stops).
+        # Zero is valid and means "any change counts as an improvement".
+        # bool is a Real in Python, so True/False would otherwise be accepted
+        # and silently act as 1/0 in that arithmetic; the type check also keeps
+        # math.isfinite from raising TypeError on str/None/complex.
+        delta = self.early_stopping_min_delta
+        if (
+            isinstance(delta, bool)
+            or not isinstance(delta, numbers.Real)
+            or not math.isfinite(float(delta))
+            or delta < 0
+        ):
+            raise ValueError(
+                f"early_stopping_min_delta must be a finite non-negative number, "
+                f"got {delta!r}"
+            )
 
 
 class RemoteOptimizationService(ABC):

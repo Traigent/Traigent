@@ -761,10 +761,18 @@ class EvaluationClient:
         if payload is not None:
             encoded_payload = json.dumps(payload).encode("utf-8")
 
+        # build_headers() returns a fresh dict per call -- a safe per-request
+        # site to inject the active W3C trace context so the evaluation API
+        # continues the same Tempo trace as the backend. No-op (byte-identical
+        # headers) when no span is active or the tracing extra is absent.
+        from traigent.cloud.auth import _inject_trace_context
+
+        headers = self.config.build_headers()
+        _inject_trace_context(headers)
         http_request = request.Request(
             f"{self.config.backend_origin}{path}",
             data=encoded_payload,
-            headers=self.config.build_headers(),
+            headers=headers,
             method=method,
         )
         try:

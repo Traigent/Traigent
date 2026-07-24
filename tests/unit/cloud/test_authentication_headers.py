@@ -5,11 +5,19 @@ and BackendIntegratedClient, verifying authentication headers are always include
 Combines tests from multiple authentication test files into a single comprehensive suite.
 """
 
+import re
+import sys
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider as _SdkTracerProvider
 
-from traigent.cloud.auth import AuthManager
+from traigent.cloud.auth import (
+    AuthManager,
+    _inject_trace_context,
+    _strip_trace_context_headers,
+)
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 
@@ -1005,3 +1013,374 @@ def test_api_key_headers_use_x_api_key_only_no_bearer(valid_api_key):
 
     assert headers.get("X-API-Key") == valid_api_key
     assert "Authorization" not in headers
+
+
+# --- SDK #1882: W3C traceparent injection on SDK->backend HTTP calls ---------
+
+_TRACEPARENT_RE = re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-0[0-9a-f]$")
+
+
+@contextmanager
+def _recording_span():
+    """Attach a real, recording OTel span to the current context.
+
+    Uses a *local* SDK ``TracerProvider`` (never the global one) so the test
+    does not pollute global tracing state. ``start_as_current_span`` binds the
+    span to the current context regardless of provider, which is exactly what
+    the W3C propagator reads when injecting.
+    """
+    provider = _SdkTracerProvider()
+    tracer = provider.get_tracer("test-sdk-1882")
+    with tracer.start_as_current_span("test-span") as span:
+        yield span
+
+
+@contextmanager
+def _recording_span_with_tracestate(vendor_state="vendor=1"):
+    """Attach a recording span whose context INHERITS a ``tracestate``.
+
+    Builds a remote parent ``SpanContext`` carrying a vendor ``TraceState``
+    (as if extracted from an upstream/user-controlled trace context), then
+    starts a child recording span under it. The child inherits the parent's
+    ``tracestate``, so the W3C propagator -- left to itself -- would inject
+    BOTH ``traceparent`` and ``tracestate``. This is exactly the metadata-egress
+    surface SDK #1893 must not forward to the backend.
+    """
+    from opentelemetry.trace import (
+        NonRecordingSpan,
+        SpanContext,
+        TraceFlags,
+        TraceState,
+        set_span_in_context,
+    )
+
+    trace_state = TraceState(
+        [tuple(pair.split("=", 1)) for pair in vendor_state.split(",")]
+    )
+    parent_ctx = SpanContext(
+        trace_id=0x0AF7651916CD43DD8448EB211C80319C,
+        span_id=0x00F067AA0BA902B7,
+        is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        trace_state=trace_state,
+    )
+    parent_context = set_span_in_context(NonRecordingSpan(parent_ctx))
+    provider = _SdkTracerProvider()
+    tracer = provider.get_tracer("test-sdk-1893")
+    with tracer.start_as_current_span("child-span", context=parent_context) as span:
+        yield span
+
+
+class TestTraceparentInjection:
+    """SDK #1882: outbound backend/hybrid headers must carry W3C traceparent."""
+
+    def test_add_common_headers_injects_traceparent_with_active_span(self):
+        """(a) With a recording span, _add_common_headers adds a valid
+        traceparent whose trace-id matches the active trace."""
+        manager = AuthManager(api_key="tg_" + "a" * 61)
+        headers: dict[str, str] = {}
+        with _recording_span() as span:
+            manager._add_common_headers(headers, target="backend")
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        assert "traceparent" in headers
+        assert _TRACEPARENT_RE.match(headers["traceparent"]), headers["traceparent"]
+        # trace-id segment of "00-<trace-id>-<span-id>-<flags>" matches the span
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+
+    def test_helper_injects_traceparent_with_active_span(self):
+        """The shared helper injects a valid traceparent when a span is active."""
+        headers: dict[str, str] = {}
+        with _recording_span() as span:
+            _inject_trace_context(headers)
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+
+    def test_no_traceparent_without_active_span(self):
+        """(b) With no active span, headers are byte-identical to today's."""
+        manager = AuthManager(api_key="tg_" + "a" * 61)
+        headers: dict[str, str] = {}
+        manager._add_common_headers(headers, target="backend")
+
+        assert "traceparent" not in headers
+        assert "tracestate" not in headers
+        # Exactly the headers set before this change.
+        assert headers == {
+            "X-Client-Version": "0.1.0",
+            "X-Integration-Mode": "unified",
+            "Content-Type": "application/json",
+            "X-Traigent-Service": "sdk",
+            "X-Backend-Integration": "true",
+        }
+
+    def test_helper_is_noop_without_active_span(self):
+        """The shared helper adds nothing when no span is active."""
+        headers: dict[str, str] = {"X-Existing": "1"}
+        _inject_trace_context(headers)
+        assert headers == {"X-Existing": "1"}
+
+    def test_caller_supplied_traceparent_never_overridden(self):
+        """(c) A pre-existing caller traceparent is never overwritten, even
+        when an unrelated span is active."""
+        caller_tp = "00-" + "b" * 32 + "-" + "c" * 16 + "-01"
+        headers = {"traceparent": caller_tp}
+        with _recording_span():
+            _inject_trace_context(headers)
+        assert headers["traceparent"] == caller_tp
+
+    def test_no_traceparent_when_opentelemetry_unavailable(self):
+        """(b, degrade path) With opentelemetry not importable, the helper is a
+        silent no-op even while (hypothetically) a span would be active."""
+        headers: dict[str, str] = {"X-Existing": "1"}
+        # Force the lazy ``from opentelemetry.trace.propagation.tracecontext
+        # import ...`` to raise ImportError, as it would when the ``tracing``
+        # extra is not installed (patch the full module path: the import
+        # system resolves the deepest name in sys.modules first).
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry": None,
+                "opentelemetry.trace.propagation.tracecontext": None,
+            },
+        ):
+            _inject_trace_context(headers)
+        assert headers == {"X-Existing": "1"}
+
+    def test_caller_supplied_traceparent_case_insensitive_not_duplicated(self):
+        """(c, case-insensitivity) HTTP header names are case-insensitive: a
+        caller-supplied ``Traceparent`` must be preserved with no duplicate
+        lowercase ``traceparent`` injected next to it."""
+        caller_tp = "00-" + "b" * 32 + "-" + "c" * 16 + "-01"
+        headers = {"Traceparent": caller_tp}
+        with _recording_span():
+            _inject_trace_context(headers)
+        assert headers == {"Traceparent": caller_tp}
+
+    def test_w3c_traceparent_even_when_global_propagator_is_not_w3c(self):
+        """A host that configured its GLOBAL propagator to B3-only must still
+        get a W3C traceparent from our helper (explicit W3C propagator, not
+        ``propagate.inject``) -- and none of the host propagator's headers."""
+        from opentelemetry import propagate
+        from opentelemetry.context import Context
+        from opentelemetry.propagators import textmap
+
+        class _B3OnlyStub(textmap.TextMapPropagator):
+            """Stand-in for a host-configured non-W3C (e.g. B3) propagator."""
+
+            def inject(
+                self,
+                carrier,
+                context=None,
+                setter=textmap.default_setter,
+            ) -> None:
+                setter.set(carrier, "x-b3-stub", "1")
+
+            def extract(
+                self,
+                carrier,
+                context=None,
+                getter=textmap.default_getter,
+            ) -> Context:
+                return context or Context()
+
+            @property
+            def fields(self):
+                return {"x-b3-stub"}
+
+        original = propagate.get_global_textmap()
+        propagate.set_global_textmap(_B3OnlyStub())
+        try:
+            headers: dict[str, str] = {}
+            with _recording_span() as span:
+                _inject_trace_context(headers)
+                expected_trace_id = format(span.get_span_context().trace_id, "032x")
+        finally:
+            propagate.set_global_textmap(original)
+
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+        assert "x-b3-stub" not in headers
+
+    def test_strip_trace_context_headers_case_insensitive_copy(self):
+        """The session-default strip removes traceparent/tracestate in any
+        casing, keeps everything else, and never mutates its input."""
+        original = {
+            "Traceparent": "00-" + "b" * 32 + "-" + "c" * 16 + "-01",
+            "tracestate": "vendor=1",
+            "X-API-Key": "k",
+        }
+        snapshot = dict(original)
+
+        stripped = _strip_trace_context_headers(original)
+
+        assert stripped == {"X-API-Key": "k"}
+        assert original == snapshot
+
+    @pytest.mark.asyncio
+    async def test_per_request_headers_carry_fresh_traceparent_per_span(self):
+        """(freshness) Two spans on one auth manager produce their OWN
+        traceparents -- header construction is per-request, never cached."""
+        with _patch_backend_validate():
+            manager = AuthManager(api_key="tg_" + "a" * 61)
+
+            with _recording_span() as span_a:
+                headers_a = await manager.get_auth_headers("backend")
+                trace_a = format(span_a.get_span_context().trace_id, "032x")
+            with _recording_span() as span_b:
+                headers_b = await manager.get_auth_headers("backend")
+                trace_b = format(span_b.get_span_context().trace_id, "032x")
+
+        assert headers_a["traceparent"].split("-")[1] == trace_a
+        assert headers_b["traceparent"].split("-")[1] == trace_b
+        assert trace_a != trace_b
+        assert headers_a["traceparent"] != headers_b["traceparent"]
+
+    @pytest.mark.asyncio
+    async def test_session_default_headers_never_carry_traceparent(self):
+        """(staleness guard) Long-lived aiohttp session DEFAULT headers must
+        never freeze a traceparent, even when a span is active at session
+        creation -- trace context travels only on per-request headers."""
+        valid_api_key = "tg_" + "a" * 61
+        with (
+            _patch_backend_validate(),
+            patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.client.aiohttp.ClientSession") as mock_cs,
+            patch("traigent.cloud.client.aiohttp.ClientTimeout"),
+        ):
+            mock_session = Mock()
+            mock_cs.return_value = mock_session
+
+            client = TraigentCloudClient(api_key=valid_api_key)
+            with _recording_span():
+                await client._ensure_session()
+
+            mock_cs.assert_called_once()
+            session_headers = mock_cs.call_args[1]["headers"]
+            # Auth headers survive; trace context does not.
+            assert "X-API-Key" in session_headers or "Authorization" in session_headers
+            assert not any(
+                name.lower() in ("traceparent", "tracestate")
+                for name in session_headers
+            )
+
+    def test_backend_client_per_request_sync_headers_carry_traceparent(self):
+        """Per-request injection: ``_get_sync_auth_headers`` builds a FRESH
+        dict per call (its result goes straight into a per-call
+        ``requests.post(headers=...)``, never into session defaults), so it
+        must carry the traceparent of the currently-active span. Covers the
+        anonymous-Edge path (auth_manager is None)."""
+        config = BackendClientConfig(backend_base_url="http://test.backend.com")
+        client = BackendIntegratedClient(config)
+        client.auth_manager = None  # anonymous Edge mode short-circuit
+
+        with _recording_span() as span:
+            headers = client._get_sync_auth_headers(target="backend")
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        assert _TRACEPARENT_RE.match(headers.get("traceparent", "")), headers
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+
+    @pytest.mark.asyncio
+    async def test_backend_client_session_default_headers_never_carry_traceparent(
+        self,
+    ):
+        """(staleness guard, backend client) ``_ensure_session`` must strip
+        trace-context headers (any casing) out of the long-lived
+        ``aiohttp.ClientSession`` DEFAULT headers -- even when the auth layer
+        handed back a traceparent because a span was active at session
+        creation."""
+        config = BackendClientConfig(backend_base_url="http://test.backend.com")
+        with (
+            patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_cs,
+            patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"),
+        ):
+            mock_session = Mock()
+            mock_cs.return_value = mock_session
+
+            client = BackendIntegratedClient(config)
+            mock_auth = Mock()
+            mock_auth.get_headers = AsyncMock(
+                return_value={
+                    "X-API-Key": "backend-key",
+                    "traceparent": "00-" + "b" * 32 + "-" + "c" * 16 + "-01",
+                    "Tracestate": "vendor=1",
+                }
+            )
+            client.auth_manager = Mock()
+            client.auth_manager.auth = mock_auth
+
+            await client._ensure_session()
+
+            mock_cs.assert_called_once()
+            session_headers = mock_cs.call_args[1]["headers"]
+            assert "X-API-Key" in session_headers
+            assert not any(
+                name.lower() in ("traceparent", "tracestate")
+                for name in session_headers
+            )
+
+    @pytest.mark.asyncio
+    async def test_backend_client_aenter_session_defaults_never_carry_traceparent(
+        self,
+    ):
+        """Same staleness guard for the ``__aenter__`` session-creation site."""
+        config = BackendClientConfig(backend_base_url="http://test.backend.com")
+        with (
+            patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.backend_client.aiohttp.ClientSession") as mock_cs,
+            patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"),
+        ):
+            mock_session = Mock()
+            mock_cs.return_value = mock_session
+
+            client = BackendIntegratedClient(config)
+            mock_auth = Mock()
+            mock_auth.get_headers = AsyncMock(
+                return_value={
+                    "X-API-Key": "backend-key",
+                    "traceparent": "00-" + "b" * 32 + "-" + "c" * 16 + "-01",
+                    "tracestate": "vendor=1",
+                }
+            )
+            client.auth_manager = Mock()
+            client.auth_manager.auth = mock_auth
+
+            await client.__aenter__()
+
+            mock_cs.assert_called_once()
+            session_headers = mock_cs.call_args[1]["headers"]
+            assert "X-API-Key" in session_headers
+            assert not any(
+                name.lower() in ("traceparent", "tracestate")
+                for name in session_headers
+            )
+
+    def test_caller_supplied_tracestate_skips_injection_entirely(self):
+        """A caller-supplied ``Tracestate`` (any casing, even without a
+        traceparent) means the caller owns the trace context: injection is
+        skipped entirely -- no traceparent added, no duplicate lowercase
+        ``tracestate`` next to the caller's."""
+        headers = {"Tracestate": "vendor=1"}
+        with _recording_span():
+            _inject_trace_context(headers)
+        assert headers == {"Tracestate": "vendor=1"}
+
+    def test_active_span_tracestate_never_forwarded_to_backend(self):
+        """SDK #1893 (privacy): when the ACTIVE span's context inherited a
+        vendor ``tracestate`` from an upstream/user-controlled trace context,
+        the helper must still emit a well-formed ``traceparent`` but must NOT
+        forward ``tracestate`` (any casing) to the backend -- that is inherited
+        vendor/user metadata and defaults to redaction. Guards the metadata
+        egress gap: the caller-supplied-tracestate skip does not cover a
+        tracestate that rides in on the active span itself."""
+        headers: dict[str, str] = {}
+        with _recording_span_with_tracestate("vendor=1,acme=xyz") as span:
+            _inject_trace_context(headers)
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        # traceparent is present, well-formed, and on the active trace.
+        assert _TRACEPARENT_RE.match(headers.get("traceparent", "")), headers
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+        # tracestate must NOT be forwarded, in ANY header-name casing.
+        assert not any(name.lower() == "tracestate" for name in headers), headers

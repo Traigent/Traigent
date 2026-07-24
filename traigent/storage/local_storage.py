@@ -858,7 +858,9 @@ class LocalStorageManager:
             # Look for existing trial with same config
             if session.trials:
                 for trial in session.trials:
-                    if trial.config == config and trial.error is None:
+                    if trial.error is None and self.compute_config_hash(
+                        trial.config
+                    ) == self.compute_config_hash(config):
                         logger.info(
                             f"🎯 Cache hit! Found cached result for config: {config}"
                         )
@@ -929,16 +931,31 @@ class LocalStorageManager:
 
         Args:
             config: Configuration dictionary to hash
-            keys: Optional list of keys to include in hash (for config_space alignment)
+            keys: Optional list of user config keys to include in the hash
 
         Returns:
             12-character hash string
         """
-        # Filter to specified keys if provided
+        # Dedup identity intentionally excludes underscore-namespaced values.
+        # Those are realization/runtime metadata (for example ``_optuna*``,
+        # ``_traigent*``, and ``__subset_indices__``), not user choices.
+        user_config = {
+            key: value
+            for key, value in config.items()
+            if isinstance(key, str) and not key.startswith("_")
+        }
+
+        # Filter to specified keys if provided.
         if keys:
-            filtered_config = {k: config.get(k) for k in sorted(keys) if k in config}
+            filtered_config = {
+                key: user_config[key]
+                for key in sorted(keys)
+                if isinstance(key, str)
+                and not key.startswith("_")
+                and key in user_config
+            }
         else:
-            filtered_config = config
+            filtered_config = user_config
 
         # Normalize the config for consistent hashing
         normalized_config = self._normalize_config(filtered_config)
@@ -969,7 +986,15 @@ class LocalStorageManager:
         Returns:
             True if configuration has been seen and successfully evaluated before
         """
-        target_hash = self.compute_config_hash(config, keys)
+        user_config_keys = {
+            key for key in config if isinstance(key, str) and not key.startswith("_")
+        }
+        base_keys = (
+            {key for key in keys if isinstance(key, str) and not key.startswith("_")}
+            | user_config_keys
+            if keys
+            else None
+        )
 
         try:
             # List all sessions for this function
@@ -1003,7 +1028,23 @@ class LocalStorageManager:
                     for trial in session.trials:
                         # Check if trial was successful (no error)
                         if trial.error is None:
-                            trial_hash = self.compute_config_hash(trial.config, keys)
+                            # Compare the complete user-facing identity on both
+                            # sides. Unioning realized user keys preserves spec
+                            # awareness when a config space later expands or
+                            # narrows, while ignoring runtime-only metadata.
+                            if base_keys is None:
+                                compare_keys = None
+                            else:
+                                trial_user_keys = {
+                                    key
+                                    for key in trial.config
+                                    if isinstance(key, str) and not key.startswith("_")
+                                }
+                                compare_keys = sorted(base_keys | trial_user_keys)
+                            target_hash = self.compute_config_hash(config, compare_keys)
+                            trial_hash = self.compute_config_hash(
+                                trial.config, compare_keys
+                            )
                             if trial_hash == target_hash:
                                 return True
 

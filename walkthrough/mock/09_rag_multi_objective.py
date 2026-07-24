@@ -15,16 +15,19 @@ Usage (run in a terminal from repo root):
 import asyncio
 import os
 import sys
-import time
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.helpers import build_results_table_callback, print_optimization_config
 from utils.mock_answers import (
     DEFAULT_MOCK_MODEL,
+    MOCK_TASK_TOKENS,
     RAG_ANSWERS,
     configure_mock_notice,
+    get_mock_cost,
+    get_mock_latency,
     normalize_text,
     set_mock_model,
 )
@@ -103,9 +106,9 @@ _COT_SENSITIVITY = {
 
 
 def rag_accuracy_scorer(
-    output: str, expected: str, config: dict | None = None, **_
+    output: Any, expected: str, config: dict | None = None, **_
 ) -> float:
-    """Mock scorer calibrated from a real experiment run."""
+    """Mock scorer calibrated from a real experiment run (config-only, ignores output)."""
     if config is None:
         return 0.5
 
@@ -128,38 +131,48 @@ def rag_accuracy_scorer(
         cot_penalty = sensitivity * token_factor
     prompt_penalty = 0.02 if prompt == "role_based" else 0.0
     score = base - temp_penalty - cot_penalty - prompt_penalty
-    return max(0.0, min(round(score * 20) / 20, 1.0))
+    return float(max(0.0, min(round(score * 20) / 20, 1.0)))
+
+
+def mock_rag_latency_ms(
+    output: Any, expected: Any, config: dict | None = None, **_
+) -> float:
+    """Per-example simulated latency in MILLISECONDS (the SDK's `latency` unit)."""
+    cfg = config or {}
+    model = cfg.get("model", DEFAULT_MOCK_MODEL)
+    max_tokens = float(cfg.get("max_tokens", 100))
+    # Two signals: per-model inference time plus a retrieval penalty for the
+    # larger context that a bigger max_tokens budget pulls in.
+    return (float(get_mock_latency(model, "rag_qa")) + 0.001 * max_tokens) * 1000.0
 
 
 @traigent.optimize(
     eval_dataset=str(DATASETS / "rag_questions.jsonl"),
     objectives=OBJECTIVES,
     scoring_function=rag_accuracy_scorer,
+    metric_functions={"latency": mock_rag_latency_ms},
     configuration_space=CONFIG_SPACE,
     injection_mode="context",
     offline=True,
 )
-def rag_agent(question: str) -> str:
+def rag_agent(question: str) -> str | dict[str, Any]:
     """RAG agent: retrieves context up to max_tokens budget, then answers."""
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
 
     set_mock_model(model)
 
-    max_tokens = config.get("max_tokens", 100)
-    time.sleep(0.001 * max_tokens)
-
-    inference_latency = {
-        "gpt-5-nano": 0.005,
-        "gpt-4o-mini": 0.008,
-        "gpt-3.5-turbo": 0.010,
-        "gpt-4o": 0.015,
-        "gpt-5.2": 0.020,
-        "gpt-5.1": 0.018,
-    }.get(model, 0.012)
-    time.sleep(inference_latency)
-
-    return RAG_ANSWERS.get(normalize_text(question), "I don't know.")
+    answer: str = RAG_ANSWERS.get(normalize_text(question), "I don't know.")
+    # Report simulated per-example usage so the `cost` objective actually varies.
+    # NOTE: the SDK treats this like real spend - an execution cost budget would
+    # debit these simulated dollars. This example declares no budget.
+    response: str | dict[str, Any] = traigent.with_usage(
+        answer,
+        total_cost=get_mock_cost(model, "rag_qa", dataset_size=1),
+        input_tokens=MOCK_TASK_TOKENS["rag_qa"]["input"],
+        output_tokens=MOCK_TASK_TOKENS["rag_qa"]["output"],
+    )
+    return response
 
 
 async def main() -> None:
@@ -167,6 +180,10 @@ async def main() -> None:
     print("=" * 55)
     configure_mock_notice("09_rag_multi_objective.py")
     print("Balancing accuracy (50%), cost (20%), latency (30%).")
+    print(
+        "Cost and latency are simulated from the static mock pricing/latency tables "
+        "(no real API spend)."
+    )
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
     results = await rag_agent.optimize(
@@ -174,7 +191,16 @@ async def main() -> None:
         max_trials=18,
         random_seed=42,
         show_progress=False,
-        callbacks=[build_results_table_callback(is_mock=True, task_type="rag_qa")],
+        callbacks=[
+            build_results_table_callback(
+                is_mock=True,
+                task_type="rag_qa",
+                # This example reports both from the mock tables itself, so the
+                # table must show the recorded numbers that drove selection -
+                # including the max_tokens retrieval penalty in the latency.
+                reported_metrics=("cost", "latency"),
+            )
+        ],
     )
 
     print("\nBest Configuration Found:")
@@ -186,8 +212,8 @@ async def main() -> None:
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
-    print(f"  Cost:     ${results.best_metrics.get('cost', 0):.6f}")
-    print(f"  Latency:  {results.best_metrics.get('latency', 0):.3f}s")
+    print(f"  Cost:     ${results.best_metrics.get('cost', 0):.6f} (simulated)")
+    print(f"  Latency:  {results.best_metrics.get('latency', 0):.0f}ms (simulated)")
 
 
 if __name__ == "__main__":

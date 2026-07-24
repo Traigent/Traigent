@@ -188,6 +188,7 @@ StopReason = Literal[
     "max_samples_reached",
     "timeout",
     "cost_limit",
+    "execution_budget",  # Shared cumulative ExecutionBudget exhausted (issue #1980)
     "metric_limit",
     "optimizer",
     "plateau",
@@ -962,6 +963,17 @@ class OptimizationResult:
             - "timeout": Exceeded the timeout duration
             - "cost_limit": Hit the cost budget limit mid-run; pre-run cost
               approval declines raise CostLimitExceeded instead.
+            - "execution_budget": Exhausted a shared cumulative ExecutionBudget
+              (cost, examples, or wall-clock deadline) spanning direct evaluate()
+              and optimize() calls (issue #1980, experimental). Reported in preference to
+              "cost_limit". The shared cumulative cost is enforced mid-run by the
+              budget's stop condition and its pre-batch admission gate; the per-run
+              cost enforcer's own cost_limit is left intact, so the pre-run approval
+              gate estimates against the user's configured limit rather than the
+              budget's remaining cost. Examples are a hard limit; the deadline is
+              hard at trial boundaries (a single hung trial may overrun by the
+              watchdog grace); the monetary cap is a lower bound when cost is
+              unobservable — see metadata["execution_budget"]["cost_tracking"].
             - "metric_limit": Hit a soft cumulative metric limit
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)
@@ -977,6 +989,16 @@ class OptimizationResult:
             (None if offline/not synced).
         cloud_url: Direct link to the experiment on the cloud portal (None if offline).
         run_label: Human-readable run identifier (e.g. answer_question_20260315_143022_a3f1b2).
+        best_config_margin: Winner-vs-runner-up paired margin significance
+            qualifying ``best_config`` (issue #1866). Additive — never changes
+            the winner. ``None`` when there is no runner-up to compare against;
+            otherwise ``{runner_up, delta, ci95, p_value, verdict,
+            effective_alpha, n_configs, ...}`` with ``verdict`` in
+            ``"clear" | "statistical_tie" | "na"``. The significance threshold is
+            Bonferroni-corrected for the best-of-``n_configs`` selection
+            (``effective_alpha = alpha / max(1, n_configs - 1)``), applied to both
+            the p-value and the CI level. A margin whose CI includes 0 at typical
+            n is a tie, not a decision.
     """
 
     trials: list[TrialResult]
@@ -1026,6 +1048,20 @@ class OptimizationResult:
     # degraded to local-only because the backend was unreachable mid-run. Also
     # mirrored in ``metadata["source"]`` for callers that inspect metadata.
     source: str = "backend"
+
+    # Winner-vs-runner-up paired margin significance (issue #1866). Additive
+    # qualification of ``best_config`` — it never changes which config won. None
+    # when there is no runner-up to compare against (< 2 distinct eligible
+    # configs, or no primary objective / per-example data unavailable). When set,
+    # a dict ``{runner_up, runner_up_trial_id, delta, ci95, p_value, verdict,
+    # test, n_shared_examples, effective_alpha, n_configs, ...}`` where
+    # ``verdict`` is ``"clear"`` (the winner significantly beats the runner-up on
+    # the primary objective at the multiplicity-corrected ``effective_alpha``),
+    # ``"statistical_tie"`` (the margin's CI includes 0 / p above effective_alpha
+    # — the winner is interchangeable with the runner-up), or ``"na"`` (two
+    # configs but no shared per-example data for a paired test).
+    best_config_margin: dict[str, Any] | None = None
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
@@ -1862,7 +1898,9 @@ class OptimizationResult:
         return weighted_scores
 
     def _select_best_weighted_result(
-        self, weighted_scores: list[tuple[TrialResult, float]]
+        self,
+        weighted_scores: list[tuple[TrialResult, float]],
+        objective_orientations: dict[str, str] | None = None,
     ) -> tuple[dict[str, Any] | None, float]:
         """Select the best configuration from computed weighted scores.
 
@@ -1911,6 +1949,7 @@ class OptimizationResult:
                 self.objectives[0] if self.objectives else "",
                 band_target=None,
                 objective_order=self.objectives,
+                objective_orientations=objective_orientations,
             )
         else:
             best_trial = tied_trials[0]
@@ -2035,8 +2074,20 @@ class OptimizationResult:
             ranges, normalized_weights, resolved_minimize, resolved_schema
         )
 
+        # Break weighted ties in the DECLARED direction (issue #1955): reuse the
+        # already-resolved minimize list so the tie-break honors exactly the same
+        # orientation as the weighted-score normalization above — a
+        # minimize-oriented secondary can no longer crown the WORSE config on a
+        # weighted tie (terminal/post-hoc parity).
+        _resolved_minimize_set = set(resolved_minimize)
+        tie_break_orientations = {
+            objective: (
+                "minimize" if objective in _resolved_minimize_set else "maximize"
+            )
+            for objective in self.objectives
+        }
         best_weighted_config, best_weighted_score = self._select_best_weighted_result(
-            weighted_scores
+            weighted_scores, tie_break_orientations
         )
 
         return {
