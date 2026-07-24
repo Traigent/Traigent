@@ -41,9 +41,9 @@ KNOWN_ANTHROPIC_MODELS = [
     "claude-3-5-sonnet-latest",
     "claude-3-5-haiku-20241022",
     "claude-3-5-haiku-latest",
-    # Claude 3 family
-    "claude-3-opus-20240229",
-    "claude-3-opus-latest",
+    # Claude 3 family. claude-3-opus (+ -latest alias) is on the retirement
+    # track (#1936/#1937) and swept from this served snapshot; see
+    # traigent.config.retired_models.
     "claude-3-sonnet-20240229",
     "claude-3-haiku-20240307",
     # Claude 2 family (legacy)

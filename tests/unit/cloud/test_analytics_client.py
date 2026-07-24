@@ -994,3 +994,180 @@ class TestWave2SingleRunAnalytics:
 
         with pytest.raises(RuntimeError, match="http error"):
             await client.get_single_run_pareto("proj_abc", "run_123")
+
+
+# --- SDK #1893: W3C traceparent injection on analytics backend calls ---------
+# Follow-up to #1882/#1892. BackendAnalyticsClient uses a *cached, long-lived*
+# httpx.AsyncClient, so trace context must be injected per-request (never frozen
+# into the cached client's default headers, which would go stale).
+
+import re  # noqa: E402
+import sys  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+
+from opentelemetry.sdk.trace import TracerProvider as _SdkTracerProvider  # noqa: E402
+
+_TRACEPARENT_RE = re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-0[0-9a-f]$")
+
+
+@contextmanager
+def _recording_span():
+    """Attach a real, recording OTel span to the current context.
+
+    Uses a *local* SDK ``TracerProvider`` (never the global one) so the test
+    does not pollute global tracing state.
+    """
+    provider = _SdkTracerProvider()
+    tracer = provider.get_tracer("test-sdk-1893-analytics")
+    with tracer.start_as_current_span("test-span") as span:
+        yield span
+
+
+class TestAnalyticsTraceparentInjection:
+    """SDK #1893: analytics backend calls carry a per-request W3C traceparent."""
+
+    @pytest.mark.asyncio
+    async def test_get_request_carries_traceparent_matching_active_span(self) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope({"ok": True})
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        with _recording_span() as span:
+            await client.get_run_report("proj_abc", "run_123")
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        headers = mock_http.get.call_args.kwargs["headers"]
+        assert _TRACEPARENT_RE.match(headers["traceparent"]), headers["traceparent"]
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+        # Caller-supplied project header still rides alongside.
+        assert headers["X-Project-Id"] == "proj_abc"
+
+    @pytest.mark.asyncio
+    async def test_post_request_carries_traceparent_matching_active_span(self) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope({"comparison": []})
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        with _recording_span() as span:
+            await client.compare_runs("proj_abc", ["run_1", "run_2"])
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        headers = mock_http.post.call_args.kwargs["headers"]
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+        assert headers["X-Project-Id"] == "proj_abc"
+
+    @pytest.mark.asyncio
+    async def test_post_json_site_carries_traceparent_matching_active_span(
+        self,
+    ) -> None:
+        """Direct coverage of the _post_json injection site (used by e.g.
+        observability cohort compare). It builds NO per-request headers of its
+        own, so this proves the empty-headers -> per-request-injection path."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope({"ok": True})
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        with _recording_span() as span:
+            await client._post_json(
+                "/api/v1/observability/x/analysis/cohorts/compare",
+                what="observability cohort comparison",
+                json_body={"a": 1},
+            )
+            expected_trace_id = format(span.get_span_context().trace_id, "032x")
+
+        headers = mock_http.post.call_args.kwargs["headers"]
+        assert _TRACEPARENT_RE.match(headers["traceparent"]), headers["traceparent"]
+        assert headers["traceparent"].split("-")[1] == expected_trace_id
+
+    @pytest.mark.asyncio
+    async def test_cached_client_default_headers_never_carry_traceparent(
+        self, monkeypatch
+    ) -> None:
+        """Staleness guard: even when a span is active at client-construction
+        time, the cached client's DEFAULT headers must carry no trace context.
+        Trace context rides per-request only (see #1892 rev-3)."""
+        from traigent.cloud import analytics_client as analytics_client_mod
+
+        captured: dict[str, object] = {}
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs) -> None:
+                captured["headers"] = kwargs["headers"]
+
+        monkeypatch.setattr(analytics_client_mod.httpx, "AsyncClient", _FakeAsyncClient)
+
+        client = _make_client(api_key="uk_abcdef")
+        with _recording_span():
+            client._get_client()
+
+        default_headers = captured["headers"]
+        assert not any(
+            name.lower() in ("traceparent", "tracestate") for name in default_headers
+        ), default_headers
+
+    @pytest.mark.asyncio
+    async def test_no_span_headers_are_byte_identical(self) -> None:
+        """No active span -> per-request headers are byte-identical to the
+        pre-#1893 headers (the injection is a pure no-op)."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope({"ok": True})
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        await client.get_run_report("proj_abc", "run_123")
+
+        headers = mock_http.get.call_args.kwargs["headers"]
+        assert headers == {"X-Project-Id": "proj_abc"}
+
+    @pytest.mark.asyncio
+    async def test_no_span_post_headers_byte_identical(self) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope({"ok": True})
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        # _post_json path (no per-request headers pre-#1893) -> empty dict now.
+        await client.compare_runs("proj_abc", ["run_1", "run_2"])
+        assert mock_http.post.call_args.kwargs["headers"] == {
+            "X-Project-Id": "proj_abc"
+        }
+
+    def test_helper_is_noop_without_opentelemetry(self) -> None:
+        """Degrade path: with opentelemetry unimportable, _request_headers is a
+        silent no-op returning the caller's headers unchanged."""
+        client = _make_client()
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry": None,
+                "opentelemetry.trace.propagation.tracecontext": None,
+            },
+        ):
+            result = client._request_headers({"X-Project-Id": "p"})
+        assert result == {"X-Project-Id": "p"}
+
+    @pytest.mark.asyncio
+    async def test_caller_supplied_traceparent_not_overridden(self) -> None:
+        caller_tp = "00-" + "b" * 32 + "-" + "c" * 16 + "-01"
+        client = _make_client()
+        with _recording_span():
+            result = client._request_headers({"traceparent": caller_tp})
+        assert result == {"traceparent": caller_tp}

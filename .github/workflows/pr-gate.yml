@@ -135,6 +135,15 @@ jobs:
       - name: Install test deps
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
+      - name: Install pinned economics Schema contract
+        # The economics contract-drift tests (tests/unit/economics) hard-require
+        # the exact TraigentSchema economics contract and must not silently
+        # skip. traigent-schema 5.0.0 is not on PyPI yet, so install it from
+        # the pinned Schema commit. Restamp the SHA when the Schema PR merges.
+        env:
+          SCHEMA_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+        run: |
+          pip install "traigent-schema @ git+https://x-access-token:${SCHEMA_TOKEN}@github.com/Traigent/TraigentSchema.git@01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a"
       - name: Run unit tests
         env:
           PYTHONPATH: .

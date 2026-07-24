@@ -8,6 +8,7 @@ while maintaining security and SOC2 compliance.
 
 import asyncio
 import logging
+import math
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -146,6 +147,19 @@ class ResilientClient:
         if attempt >= self.max_retries:
             return False
 
+        # Honor the explicit exception type first (#1967): the canonical SDK
+        # exceptions encode retryability in the TYPE, which must not be
+        # overridden by substring heuristics on the message (e.g. a
+        # NonRetryableError whose text mentions "connection", or a RetryableError
+        # whose text matches no indicator). RateLimitError is a RetryableError
+        # subclass and is therefore covered by the second check.
+        if isinstance(error, NonRetryableError):
+            logger.debug("NonRetryableError - not retrying")
+            return False
+        if isinstance(error, RetryableError):
+            logger.debug("RetryableError - will retry")
+            return True
+
         error_type = self.classify_error(error)
 
         # Never retry auth errors
@@ -186,22 +200,42 @@ class ResilientClient:
             # For rate limiting, use longer delays
             delay = min(delay * 2, self.max_delay)
 
-            # Check if server provided Retry-After header
-            error_str = str(error)
-            if "retry-after" in error_str.lower():
-                # Try to parse retry-after value (simplified)
+            # Prefer the structured Retry-After parsed by the caller. A valid
+            # value is clamped to [0, max_delay]; NaN, infinity, and nonnumeric
+            # values are ignored and fall back to the normal backoff.
+            retry_after = getattr(error, "retry_after", None)
+            if retry_after is not None:
                 try:
-                    import re
-
-                    match = re.search(
-                        r"retry-after[:\s]+(\d+)", error_str, re.IGNORECASE
+                    server_delay = float(retry_after)
+                    if not math.isfinite(server_delay):
+                        raise ValueError("Retry-After must be finite")
+                    delay = min(max(server_delay, 0.0), self.max_delay)
+                    logger.debug("Using server-provided Retry-After: %ss", delay)
+                except (TypeError, ValueError) as exc:
+                    logger.debug(
+                        "Ignoring invalid Retry-After %r: %s", retry_after, exc
                     )
-                    if match:
-                        server_delay = int(match.group(1))
-                        delay = min(server_delay, self.max_delay)
-                        logger.debug(f"Using server-provided retry-after: {delay}s")
-                except Exception as e:
-                    logger.debug(f"Could not parse retry-after header: {e}")
+                    retry_after = None
+
+            if retry_after is None:
+                # Backward compatibility for callers that embed the header in
+                # an error message instead of attaching a structured value.
+                error_str = str(error)
+                if "retry-after" in error_str.lower():
+                    try:
+                        import re
+
+                        match = re.search(
+                            r"retry-after[:\s]+(\d+)", error_str, re.IGNORECASE
+                        )
+                        if match:
+                            server_delay = int(match.group(1))
+                            delay = min(server_delay, self.max_delay)
+                            logger.debug(
+                                "Using server-provided retry-after: %ss", delay
+                            )
+                    except Exception as exc:
+                        logger.debug("Could not parse retry-after header: %s", exc)
 
         # Add jitter to prevent thundering herd
         if self.jitter_factor > 0:
@@ -418,6 +452,12 @@ async def resilient_backend_request(
 
                 if status >= 500:
                     raise RetryableError(f"Server error: HTTP {status}")
+                if status == 408:
+                    # 408 Request Timeout is transient (#1968) and retryable,
+                    # matching backend_client's _SYNC_BACKEND_TRANSIENT_STATUSES
+                    # ({408, 429, 5xx}); do not surface it as a permanent 4xx
+                    # client error via the status >= 400 catch-all below.
+                    raise RetryableError(f"Transient error: HTTP {status}")
                 if status == 429:
                     retry_after_header = response.headers.get("Retry-After")
                     retry_after_value = None

@@ -710,11 +710,13 @@ class TestWeightedObjectivesErrorHandling:
         assert not optimizer._dominates(empty_scores1, empty_scores2)
         assert not optimizer._dominates(empty_scores2, empty_scores1)
 
-        # Test with missing objectives
-        partial_scores1 = {"accuracy": 0.9}  # Missing cost
+        # Test with missing objectives (#1944): a missing MINIMIZE metric must
+        # default to the orientation-WORST sentinel (+inf for cost), never 0.0
+        # (which is the *best* cost and would let the incomplete trial falsely
+        # dominate). So a higher-accuracy trial that omits cost neither
+        # dominates nor is dominated by a complete trial — it is non-comparable.
+        partial_scores1 = {"accuracy": 0.9}  # Missing cost => worst (+inf)
         partial_scores2 = {"accuracy": 0.8, "cost": 0.05}
 
-        # Should work with available objectives
-        assert optimizer._dominates(
-            partial_scores1, partial_scores2
-        )  # Better accuracy, missing cost treated as 0
+        assert not optimizer._dominates(partial_scores1, partial_scores2)
+        assert not optimizer._dominates(partial_scores2, partial_scores1)

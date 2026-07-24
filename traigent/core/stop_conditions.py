@@ -21,6 +21,7 @@ from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from traigent.core.cost_enforcement import CostEnforcer
+    from traigent.core.execution_budget import ExecutionBudget
 
 logger = get_logger(__name__)
 
@@ -1028,6 +1029,75 @@ class CostLimitStopCondition(StopCondition):
             f"Cost limit reached: ${status.accumulated_cost_usd:.2f} "
             f">= ${status.limit_usd:.2f} USD"
         )
+
+
+class ExecutionBudgetStopCondition(StopCondition):
+    """Stop when a shared cumulative ExecutionBudget is exhausted (issue #1980).
+
+    Modeled on :class:`CostLimitStopCondition`: it holds a reference to the shared
+    :class:`~traigent.core.execution_budget.ExecutionBudget` (attached per run) and
+    checks its live state rather than re-deriving anything from ``trials``.
+
+    Registration is FRONT of the condition list (``insert(0, ...)``) via
+    ``StopConditionManager.register_execution_budget_condition``. This ordering is
+    mandatory: the user's own per-run ``CostLimitStopCondition`` can fire on the
+    same iteration as the cumulative budget (e.g. a run whose ``cost_limit`` and
+    shared ``max_cost_usd`` are both spent). ``should_stop`` is first-match-wins, so
+    the ExecutionBudget condition must be evaluated first — otherwise a stop that
+    was really the shared cumulative cap would be mislabeled ``"cost_limit"``,
+    masking the true ``"execution_budget"`` reason. (The per-run cost enforcer's
+    limit is NOT clamped to the budget's remaining — that clamp was removed with
+    issue #1980's F1 fix; the cumulative cost is enforced by this condition plus the
+    orchestrator's pre-batch admission gate, both reading the budget directly.)
+    """
+
+    reason = "execution_budget"
+
+    def __init__(self, budget: ExecutionBudget) -> None:
+        """Initialize with the shared execution budget.
+
+        Args:
+            budget: Shared ExecutionBudget instance debited by the orchestrator.
+        """
+        self._budget = budget
+
+    def reset(self) -> None:
+        """Reset is a no-op — the budget is shared/external, not owned here."""
+        # Mirror CostLimitStopCondition: never reset a shared, cross-run object.
+
+    def should_stop(self, trials: Iterable[TrialResult]) -> bool:
+        """Return True when any attached-budget dimension is exhausted.
+
+        Args:
+            trials: Trial results (unused — the budget is authoritative).
+        """
+        return self._budget.exhausted_dimension is not None
+
+    def get_reason(self) -> str:
+        """Get a descriptive reason naming the exhausted dimension."""
+        snapshot = self._budget.snapshot()
+        dimension = snapshot.exhausted_dimension or "unknown"
+        if dimension == "cost":
+            return (
+                f"Execution budget cost exhausted: "
+                f"${snapshot.consumed_cost:.2f} of ${snapshot.max_cost_usd:.2f} USD"
+            )
+        if dimension == "examples":
+            return (
+                "Execution budget examples exhausted: "
+                f"{snapshot.consumed_examples} of {snapshot.max_examples}"
+            )
+        if dimension == "deadline":
+            return (
+                "Execution budget deadline reached: "
+                f"{snapshot.elapsed_seconds:.1f}s of {snapshot.deadline_seconds:.1f}s"
+            )
+        if dimension == "untracked_cost":
+            return (
+                "Execution budget stopped: cost became unobservable and "
+                "enforce_untracked_cost is set (fail-closed)"
+            )
+        return "Execution budget exhausted"
 
 
 class HypervolumeConvergenceStopCondition(StopCondition):

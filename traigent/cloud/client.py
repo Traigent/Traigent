@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import os
 import time
+import uuid
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -45,7 +46,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
 from traigent.utils.validation import CoreValidators, validate_or_raise
 
-from .auth import AuthenticationError, AuthManager
+from .auth import AuthenticationError, AuthManager, _strip_trace_context_headers
 from .billing import UsageTracker
 from .models import (
     AgentExecutionRequest,
@@ -841,7 +842,11 @@ class TraigentCloudClient(BaseTraigentClient):
 
         self._aio_session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.timeout),
-            headers=await self.auth.get_headers(),
+            # Session-default headers are long-lived: never freeze a
+            # traceparent/tracestate into them (it would stamp every later
+            # request with a stale span context). Trace context travels only
+            # on per-request headers (see _get_headers / _inject_trace_context).
+            headers=_strip_trace_context_headers(await self.auth.get_headers()),
             trust_env=True,
         )
         self._register_session_finalizer(self._aio_session)
@@ -891,7 +896,9 @@ class TraigentCloudClient(BaseTraigentClient):
 
             self._aio_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-                headers=headers,
+                # Same rule as __aenter__: no stale trace context in
+                # long-lived session-default headers.
+                headers=_strip_trace_context_headers(headers),
                 trust_env=True,
             )
             self._register_session_finalizer(self._aio_session)
@@ -1184,11 +1191,23 @@ class TraigentCloudClient(BaseTraigentClient):
         url = f"{self.api_base_url}/optimize"
         session = self._aio_session  # Capture for use in nested function
 
+        # Generate a stable idempotency key ONCE, before the retry loop begins.
+        # /optimize is a non-idempotent POST that the backend does NOT cover with
+        # keyless-fallback dedup, so a transient 429/5xx/network retry after the
+        # backend already started a run would create a duplicate optimization run.
+        # The same key MUST ride every retry attempt for the backend's
+        # Idempotency-Key middleware to dedupe them (generating it per-attempt
+        # would defeat the fix); it is captured by the submit_request closure and
+        # never regenerated inside the retry loop.
+        idempotency_key = uuid.uuid4().hex
+
         async def submit_request():
             """Internal function to submit request with proper error handling."""
+            headers = await self._get_headers()
+            headers["Idempotency-Key"] = idempotency_key
             try:
                 async with session.post(
-                    url, json=request_data, headers=await self._get_headers()
+                    url, json=request_data, headers=headers
                 ) as response:
                     if response.status == 200:
                         return await response.json()

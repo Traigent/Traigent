@@ -1,7 +1,12 @@
 """Tests for batch optimization strategies."""
 
 import asyncio
+import math
+from datetime import UTC, datetime
 
+import pytest
+
+from traigent.api.types import TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import Dataset, EvaluationExample, EvaluationResult
 from traigent.invokers.base import InvocationResult
@@ -16,6 +21,25 @@ from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import get_optimizer
 from traigent.optimizers.results import Trial
 from traigent.utils.multi_objective import scalarize_objectives
+
+
+def _dummy_history(count: int) -> list[TrialResult]:
+    """Build a ``count``-long trial history for resumed-run stop checks.
+
+    ``should_stop`` only inspects ``len(history)`` for the resumed-history cap,
+    so the trial contents are placeholders.
+    """
+    return [
+        TrialResult(
+            trial_id=f"resumed_{i}",
+            config={"param1": i},
+            metrics={"accuracy": 0.5},
+            status=TrialStatus.COMPLETED,
+            duration=0.0,
+            timestamp=datetime.now(UTC),
+        )
+        for i in range(count)
+    ]
 
 
 class MockInvoker:
@@ -80,6 +104,22 @@ class TestBatchOptimizationConfig:
         assert config.distributed_workers == 1
         assert config.enable_checkpointing is True
         assert config.memory_limit_mb == 1000.0
+
+    def test_min_delta_rejects_nan_negative_and_bool(self):
+        """early_stopping_min_delta is validated at the config boundary.
+
+        Now that the batch loop consumes min_delta, NaN would make every
+        improvement comparison False (premature stop on improving runs) and a
+        negative delta would make flat scores count as improvements (never
+        stops). Mirrors OptimizationStrategy's validation.
+        """
+        for bad in (float("nan"), float("inf"), -0.01, True, "0.1", None):
+            with pytest.raises((ValueError, TypeError)):
+                BatchOptimizationConfig(early_stopping_min_delta=bad)  # type: ignore[arg-type]
+
+        # Boundary values that must remain accepted.
+        assert BatchOptimizationConfig(early_stopping_min_delta=0.0)
+        assert BatchOptimizationConfig(early_stopping_min_delta=0.5)
 
     def test_init_custom_values(self):
         """Test BatchOptimizationConfig initialization with custom values."""
@@ -195,6 +235,64 @@ class TestParallelBatchOptimizer:
             assert "early_stopped" in result.convergence_info
 
         asyncio.run(run_test())
+
+    def test_early_stopping_min_delta_ignores_sub_delta_creep(self):
+        """``early_stopping_min_delta`` must gate the patience counter: score
+        gains smaller than min_delta do NOT count as improvement (the field was
+        previously declared but never read, so any epsilon creep deferred
+        stopping forever), while material gains DO keep the run alive.
+        """
+
+        class _SequencedEvaluator:
+            """Evaluator emitting a controlled accuracy sequence per call."""
+
+            def __init__(self, start: float, step: float) -> None:
+                self._value = start
+                self._step = step
+
+            async def evaluate(self, invocation_results, expected_outputs, dataset):
+                self._value += self._step
+                total = len(invocation_results)
+                return EvaluationResult(
+                    config={},
+                    total_examples=total,
+                    successful_examples=total,
+                    duration=1.0,
+                    aggregated_metrics={"accuracy": self._value},
+                )
+
+        async def run_case(step: float):
+            optimizer = ParallelBatchOptimizer(
+                base_optimizer=self.base_optimizer,
+                batch_config=BatchOptimizationConfig(
+                    max_parallel_trials=1,  # deterministic completion order
+                    early_stopping_patience=3,
+                    early_stopping_min_delta=0.001,
+                ),
+            )
+
+            def mock_func(value, config: TraigentConfig):
+                return f"result_{value}"
+
+            return await optimizer.optimize(
+                func=mock_func,
+                dataset=self.dataset,
+                invoker=MockInvoker(),
+                evaluator=_SequencedEvaluator(start=0.5, step=step),
+                max_trials=10,
+            )
+
+        # Sub-delta creep (+0.0001 per trial, min_delta=0.001): after the first
+        # trial seeds the best, every later gain is ignored -> patience=3
+        # consecutive non-improvements -> early stop well before max_trials.
+        creep_result = asyncio.run(run_case(step=0.0001))
+        assert creep_result.convergence_info["early_stopped"] is True
+        assert len(creep_result.trials) < 10
+
+        # Material gains (+0.1 per trial) reset the counter every time -> the
+        # run is never early-stopped.
+        improving_result = asyncio.run(run_case(step=0.1))
+        assert improving_result.convergence_info["early_stopped"] is False
 
 
 class TestMultiObjectiveBatchOptimizer:
@@ -317,6 +415,81 @@ class TestMultiObjectiveBatchOptimizer:
         )
 
         assert optimizer._select_best_from_pareto() is None
+
+    def test_should_stop_honours_max_trials(self):
+        """#1916: should_stop delegates to the base optimizer's configured
+        max_trials budget instead of the old hard-coded ``len(history) >= 100``.
+        """
+        # Large discrete space so config-space exhaustion does not fire first.
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(50))},
+            objectives=["accuracy"],
+            max_trials=3,
+        )
+
+        # The caller's budget is threaded into the internal base optimizer.
+        assert optimizer._base_optimizer.max_trials == 3
+
+        # Below budget: do not stop (old code returned len([]) >= 100 == False,
+        # but ignored the configured budget entirely).
+        assert optimizer.should_stop([]) is False
+
+        # Drive suggestions up to the configured budget; then it must stop.
+        for _ in range(3):
+            optimizer.suggest_next_trial([])
+        assert optimizer.should_stop([]) is True
+
+    def test_should_stop_default_preserves_prior_cap(self):
+        """#1916: with no explicit max_trials the default budget stays 100,
+        preserving the historical stop point (just no longer hard-coded).
+        """
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(200))},
+            objectives=["accuracy"],
+        )
+        assert optimizer._base_optimizer.max_trials == 100
+
+    def test_should_stop_honours_resumed_history(self):
+        """#1916 follow-up: a resumed run passes a pre-populated history but
+        drives trials through a *local* optimizer inside ``optimize``, so the
+        injected base optimizer's trial counter stays at zero. The legacy
+        ``len(history) >= budget`` cap must still fire; delegating solely to the
+        base optimizer's trial count (the earlier fix) would never stop a
+        resumed run.
+        """
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(200))},
+            objectives=["accuracy"],
+            max_trials=5,
+        )
+
+        # The base optimizer never saw these trials; its counter is still 0.
+        assert optimizer._base_optimizer._trial_count == 0
+
+        resumed_history = _dummy_history(5)
+        assert optimizer.should_stop(resumed_history) is True
+        # One short of the budget must NOT stop.
+        assert optimizer.should_stop(_dummy_history(4)) is False
+
+    def test_should_stop_none_max_trials_normalized_to_100(self):
+        """#1916 follow-up: a direct-constructor ``max_trials=None`` must not
+        crash ``should_stop``. RandomSearchOptimizer.should_stop evaluates
+        ``count >= max_trials`` and would raise TypeError on ``None``; the
+        constructor normalises it to the historical 100-trial cap.
+        """
+        optimizer = MultiObjectiveBatchOptimizer(
+            configuration_space={"param1": list(range(500))},
+            objectives=["accuracy"],
+            max_trials=None,
+        )
+
+        # Normalised to 100 for both the resumed-history cap and the delegate.
+        assert optimizer._max_trials == 100
+        assert optimizer._base_optimizer.max_trials == 100
+
+        # Would raise ``TypeError: '>=' not supported ...`` under a None budget.
+        assert optimizer.should_stop([]) is False
+        assert optimizer.should_stop(_dummy_history(100)) is True
 
 
 class TestAdaptiveBatchOptimizer:
@@ -796,3 +969,137 @@ class TestObjectiveOrientationInCompositeScore:
         )
         assert set(optimizer._minimize_objectives) == {"cost", "latency", "error"}
         assert "accuracy" not in optimizer._minimize_objectives
+
+
+def _trial(scores: dict, score: float = 0.0) -> Trial:
+    """Build a Trial carrying objective_scores metadata for frontier tests."""
+    return Trial(
+        configuration={},
+        score=score,
+        duration=0.1,
+        metadata={"objective_scores": dict(scores)},
+    )
+
+
+class TestBatchDominanceMissingMetric:
+    """Regression for #1944: missing metric must NOT default to 0.0 (best-for-minimize)."""
+
+    def _optimizer(self):
+        return MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+        )
+
+    def test_missing_minimize_metric_does_not_falsely_dominate(self):
+        opt = self._optimizer()
+        assert opt.objective_directions["cost"] is False  # minimize
+        complete = {"accuracy": 0.90, "cost": 5.0}
+        partial = {"accuracy": 0.90}  # cost MISSING
+        # With the old 0.0 default, partial's cost=0.0 beat every real cost.
+        assert opt._dominates(partial, complete) is False
+        assert opt._dominates(complete, partial) is True
+
+    def test_complete_cheap_point_not_evicted_by_partial(self):
+        opt = self._optimizer()
+        opt._update_pareto_frontier(_trial({"accuracy": 0.90, "cost": 0.5}, score=0.9))
+        # A higher-accuracy trial that OMITS cost must not dominate/evict it.
+        opt._update_pareto_frontier(_trial({"accuracy": 0.91}, score=0.91))
+        frontier_scores = [t.metadata["objective_scores"] for t in opt.pareto_frontier]
+        assert {"accuracy": 0.90, "cost": 0.5} in frontier_scores
+
+
+class TestZeroWeightMissingMetricRejection:
+    """Regression for the NaN scalarization leak (terra review of the #1944 fix).
+
+    With an ALLOWED zero objective weight, a missing metric's orientation-worst
+    sentinel (±inf) reached scalarization and ``0.0 * -inf`` produced NaN; the
+    frontier gate only checked ``score == -inf`` (every NaN comparison is
+    False), so the metric-incomplete trial entered the frontier and — inserted
+    first — ``max()`` could even SELECT it (NaN comparisons keep first place).
+    Metric-incomplete / non-finite trials must be rejected BEFORE
+    scalarization, and the frontier must admit finite scores only.
+    """
+
+    def _optimizer(self):
+        return MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+            objective_weights={"accuracy": 1.0, "cost": 0.0},
+        )
+
+    def test_zero_weighted_missing_metric_trial_is_rejected(self):
+        opt = self._optimizer()
+        # cost is MISSING and carries weight 0.0 — the old sentinel path
+        # scalarized 0.0 * inf into NaN; now the trial is rejected outright.
+        assert opt._compose_trial_scores({"accuracy": 0.9}) is None
+
+    def test_non_finite_metric_values_are_rejected(self):
+        opt = self._optimizer()
+        assert (
+            opt._compose_trial_scores({"accuracy": 0.9, "cost": float("nan")}) is None
+        )
+        assert (
+            opt._compose_trial_scores({"accuracy": 0.9, "cost": float("inf")}) is None
+        )
+
+    def test_complete_trial_composes_finite_score(self):
+        opt = self._optimizer()
+        composed = opt._compose_trial_scores({"accuracy": 0.9, "cost": 5.0})
+        assert composed is not None
+        scores, composite = composed
+        assert scores == {"accuracy": 0.9, "cost": 5.0}
+        assert math.isfinite(composite)
+
+    def test_direct_frontier_insert_rejects_incomplete_mapping(self):
+        # Completeness must be enforced at _update_pareto_frontier itself
+        # (the choke point), not only in _compose_trial_scores: a direct
+        # caller could insert a finite-but-INCOMPLETE mapping which is
+        # non-comparable under _dominates and would sit on the frontier as
+        # an unmeasured, falsely-attractive point.
+        opt = self._optimizer()
+        opt._update_pareto_frontier(_trial({"accuracy": 0.91}, score=0.91))
+        assert opt.pareto_frontier == []
+
+        complete = _trial({"accuracy": 0.90, "cost": 0.5}, score=0.9)
+        opt._update_pareto_frontier(complete)
+        opt._update_pareto_frontier(_trial({"accuracy": 0.99}, score=0.99))
+        assert opt.pareto_frontier == [complete]
+
+    def test_nan_scored_trial_cannot_enter_frontier_or_win(self):
+        opt = self._optimizer()
+        # Inserted FIRST — under the old ``== -inf`` gate this NaN trial
+        # entered the frontier and max() kept it as the selected best.
+        nan_trial = _trial({"accuracy": 0.9, "cost": float("nan")}, score=float("nan"))
+        opt._update_pareto_frontier(nan_trial)
+        assert opt.pareto_frontier == []
+
+        good = _trial({"accuracy": 0.8, "cost": 5.0}, score=0.8)
+        opt._update_pareto_frontier(good)
+        assert opt.pareto_frontier == [good]
+        assert opt._select_best_from_pareto() is good
+
+
+class TestParetoFrontierTrimByCrowding:
+    """Regression for #1942: size cap must prune by crowding, keep the extremes."""
+
+    def test_cost_minimal_extreme_is_retained(self):
+        opt = MultiObjectiveBatchOptimizer(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy", "cost"],
+            pareto_frontier_size=2,
+        )
+        # Three mutually non-dominated trials (accuracy maximize / cost minimize).
+        # Score is highest for hi_acc so the old score-sort trim would drop cheap.
+        opt._update_pareto_frontier(
+            _trial({"accuracy": 0.95, "cost": 90.0}, score=0.95)
+        )
+        opt._update_pareto_frontier(
+            _trial({"accuracy": 0.80, "cost": 40.0}, score=0.80)
+        )
+        opt._update_pareto_frontier(_trial({"accuracy": 0.60, "cost": 5.0}, score=0.60))
+
+        assert len(opt.pareto_frontier) == 2
+        costs = {t.metadata["objective_scores"]["cost"] for t in opt.pareto_frontier}
+        # The cost-minimal extreme (5.0) must survive; the interior mid (40.0) is pruned.
+        assert 5.0 in costs
+        assert 40.0 not in costs

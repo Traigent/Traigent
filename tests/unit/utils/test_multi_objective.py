@@ -236,7 +236,13 @@ class TestParetoPoint:
         assert point2.dominates(point1, maximize) is False
 
     def test_dominance_missing_objectives(self):
-        """Test dominance with missing objectives."""
+        """Ragged objective sets are non-comparable, not shared-subset compared (#1941).
+
+        point1 has {accuracy, cost}; point2 has {accuracy, latency}. Neither is a
+        superset of the other, so deciding domination on the shared {accuracy}
+        subset alone would wrongly let point1 evict point2. The corrected
+        semantics treat the pair as incomparable (neither dominates).
+        """
         point1 = ParetoPoint(
             config={"temp": 0.5},
             objectives={"accuracy": 0.9, "cost": 0.05},
@@ -244,14 +250,17 @@ class TestParetoPoint:
         )
         point2 = ParetoPoint(
             config={"temp": 0.7},
-            objectives={"accuracy": 0.8, "latency": 1.0},  # Missing cost
+            objectives={
+                "accuracy": 0.8,
+                "latency": 1.0,
+            },  # cost missing / latency extra
             trial=MagicMock(),
         )
 
         maximize = {"accuracy": True, "cost": False, "latency": False}
 
-        # Should only compare common objectives (accuracy)
-        assert point1.dominates(point2, maximize) is True  # Higher accuracy
+        # Non-comparable: missing/extra objectives on either side => no dominance.
+        assert point1.dominates(point2, maximize) is False
         assert point2.dominates(point1, maximize) is False
 
     def test_dominance_single_objective(self):
@@ -857,3 +866,248 @@ class TestCTDScenarios:
             assert pareto_front[0].trial == trial
         else:
             assert len(pareto_front) == 0
+
+
+def _pt(**objectives):
+    """Build a ParetoPoint with the given objective values (config/trial stubbed)."""
+    return ParetoPoint(config={}, objectives=dict(objectives), trial=MagicMock())
+
+
+@pytest.mark.unit
+class TestExactHypervolume2DCorrectness:
+    """Regression for #1940: exact 2D hypervolume math + orientation-aware ref."""
+
+    def test_two_point_maximize_front_equals_true_union_area(self):
+        # Front [(1,3),(3,1)] maximize both. True union area of
+        # [0,1]x[0,3] ∪ [0,3]x[0,1] = 3 + 3 - 1 = 5.0 (auto ref = (0,0)).
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        front = [_pt(a=1.0, b=3.0), _pt(a=3.0, b=1.0)]
+        hv = calc.calculate_hypervolume(front)
+        assert hv == pytest.approx(5.0)
+
+    def test_three_point_maximize_front_equals_true_union_area(self):
+        # Front [(1,3),(2,2),(3,1)] maximize both → true union area = 6.0.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        front = [_pt(a=1.0, b=3.0), _pt(a=2.0, b=2.0), _pt(a=3.0, b=1.0)]
+        hv = calc.calculate_hypervolume(front)
+        assert hv == pytest.approx(6.0)
+
+    def test_minimize_front_auto_reference_is_orientation_aware(self):
+        # Minimize both. Front [(1,3),(3,1)]. Nadir auto-ref = (max+1)=(4,4).
+        # Dominated (better) region = union of [x,4]x[y,4] boxes =
+        # [1,4]x[3,4] ∪ [3,4]x[1,4] = 3 + 3 - 1 = 5.0.
+        calc = ParetoFrontCalculator(maximize={"a": False, "b": False})
+        front = [_pt(a=1.0, b=3.0), _pt(a=3.0, b=1.0)]
+        hv = calc.calculate_hypervolume(front)
+        assert hv == pytest.approx(5.0)
+
+    def test_single_point_still_correct(self):
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        # Auto ref = (a-1, b-1) = (1,1); box = 1*1 = 1.0.
+        hv = calc.calculate_hypervolume([_pt(a=2.0, b=2.0)])
+        assert hv == pytest.approx(1.0)
+
+    def test_one_dimensional_front_maximize(self):
+        # A genuinely 1-D front used to fall into the 2-D helper's
+        # ``len(objectives) != 2`` guard and silently return 0.0. Correct
+        # 1-D hypervolume = oriented distance from reference to the best.
+        calc = ParetoFrontCalculator(maximize={"a": True})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        assert calc.calculate_hypervolume(front, {"a": 2.0}) == pytest.approx(5.0)
+        # Auto reference = min-1 = 2 → same value.
+        assert calc.calculate_hypervolume(front) == pytest.approx(5.0)
+
+    def test_one_dimensional_front_minimize(self):
+        calc = ParetoFrontCalculator(maximize={"a": False})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        # Best (lowest) = 3, ref = 10 → 7.
+        assert calc.calculate_hypervolume(front, {"a": 10.0}) == pytest.approx(7.0)
+        # Auto reference = max+1 = 8 → 8-3 = 5.
+        assert calc.calculate_hypervolume(front) == pytest.approx(5.0)
+
+    def test_one_dimensional_front_clamps_at_zero(self):
+        # Every point on the wrong (worse) side of the reference → 0.0.
+        calc = ParetoFrontCalculator(maximize={"a": True})
+        assert calc.calculate_hypervolume([_pt(a=3.0)], {"a": 5.0}) == 0.0
+
+    def test_mixed_orientation_asymmetric_front_exact_value(self):
+        # Asymmetric mixed max/min case — revert-proof where a symmetric
+        # front coincidentally agrees under old and new math. a maximize,
+        # b minimize; points (10,10),(5,5); explicit ref (4,11).
+        # Correct staircase (sorted by a desc, prev_b seeded at ref):
+        #   |10-4| * |10-11| = 6*1 = 6, then |5-4| * |5-10| = 1*5 = 5 → 11.
+        # The pre-#1940 decomposition (incremental width x full height under
+        # the same sort) yields 6*1 + 5*6 = 36.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": False})
+        front = [_pt(a=10.0, b=10.0), _pt(a=5.0, b=5.0)]
+        hv = calc.calculate_hypervolume(front, {"a": 4.0, "b": 11.0})
+        assert hv == pytest.approx(11.0)
+
+
+@pytest.mark.unit
+class TestConfiguredObjectiveScope:
+    """Regression (#1941): dimensionality/comparability follow the CONFIGURED
+    objective set, not whichever keys happen to be observed on the points.
+
+    A configured objective that is systematically missing from every point
+    must not silently drop out — it collapses the nominal dimensionality and
+    makes hypervolume report a positive value / dominance decide on the
+    surviving objectives alone.
+    """
+
+    def test_hypervolume_configured_objective_missing_from_all_points_is_zero(self):
+        # Configured 2-objective space {a, b}; every point omits `b`. Over the
+        # configured space no point is complete → volume is 0.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        # Explicit objective list: 0.
+        assert calc.calculate_hypervolume(front, objectives=["a", "b"]) == 0.0
+        # PUBLIC no-arg call must ALSO be safe: with no explicit list the
+        # declared set falls back to the calculator's configured directions
+        # (self.maximize = {a, b}), so `b` stays a declared dimension and the
+        # front is still incomplete → 0. (Inferring dimensionality from the
+        # observed keys alone would collapse this to a 1-D front and return a
+        # spurious positive volume.)
+        assert calc.calculate_hypervolume(front) == 0.0
+
+    def test_hypervolume_no_arg_falls_back_to_observed_only_when_unconfigured(self):
+        # Degenerate case: a calculator built with NO configured directions
+        # (empty maximize, no schema) and a no-arg call has zero configuration
+        # signal, so it can only compute over the observed keys — here a
+        # legitimate 1-D front over `a`. Documents the sole remaining fallback.
+        calc = ParetoFrontCalculator()
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        assert calc.calculate_hypervolume(front) > 0.0
+
+    def test_hypervolume_single_configured_objective_still_computes(self):
+        # A genuinely 1-configured-objective front is unaffected.
+        calc = ParetoFrontCalculator(maximize={"a": True})
+        front = [_pt(a=3.0), _pt(a=7.0)]
+        # Auto ref = min-1 = 2 → best 7 - 2 = 5.
+        assert calc.calculate_hypervolume(front, objectives=["a"]) == pytest.approx(5.0)
+
+    def test_hypervolume_mixed_completeness_uses_only_complete_over_configured(self):
+        # Configured {a, b}: one complete point, one missing configured `b`.
+        # Only the complete point contributes, over the 2-D configured space;
+        # the partial point does not shift the reference or the volume.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        complete = _pt(a=2.0, b=2.0)
+        partial = _pt(a=9.0)  # missing configured `b`
+        # Auto ref uses only complete points = (1, 1); box = 1 * 1 = 1.0.
+        hv = calc.calculate_hypervolume([complete, partial], objectives=["a", "b"])
+        assert hv == pytest.approx(1.0)
+
+    def test_dominance_configured_objective_missing_from_both_is_non_comparable(self):
+        # Both points report `a` but omit configured `b`. Over the observed
+        # keys alone p1 would dominate p2 on `a`; over the configured {a, b}
+        # space the pair is non-comparable, so neither dominates.
+        p1 = _pt(a=9.0)
+        p2 = _pt(a=1.0)
+        maximize = {"a": True, "b": True}
+        assert p1.dominates(p2, maximize, objectives=["a", "b"]) is False
+        assert p2.dominates(p1, maximize, objectives=["a", "b"]) is False
+        # Revert-proof: without the configured list, the observed-key union {a}
+        # lets the metric-incomplete p1 dominate p2.
+        assert p1.dominates(p2, maximize) is True
+
+    def test_dominance_configured_complete_points_still_compare(self):
+        # Control: with both points complete over the configured space,
+        # domination still resolves normally.
+        p1 = _pt(a=9.0, b=9.0)
+        p2 = _pt(a=1.0, b=1.0)
+        maximize = {"a": True, "b": True}
+        assert p1.dominates(p2, maximize, objectives=["a", "b"]) is True
+        assert p2.dominates(p1, maximize, objectives=["a", "b"]) is False
+
+
+@pytest.mark.unit
+class TestApproximateHypervolumeOrientation:
+    """Regression for #1945: >2D Monte-Carlo box must be orientation-aware."""
+
+    def test_minimize_reference_is_not_inverted(self):
+        # 3 minimize objectives with a user nadir reference LARGER than every
+        # point. The old blind max+1 upper bound made uniform(ref, max+1)
+        # inverted; the fixed bounds sample the real front-to-nadir box.
+        maximize = {"x": False, "y": False, "z": False}
+        calc = ParetoFrontCalculator(maximize=maximize, monte_carlo_samples=40000)
+        front = [
+            _pt(x=1.0, y=4.0, z=4.0),
+            _pt(x=4.0, y=1.0, z=4.0),
+            _pt(x=4.0, y=4.0, z=1.0),
+        ]
+        ref = {"x": 6.0, "y": 6.0, "z": 6.0}
+        hv = calc.calculate_hypervolume(front, reference_point=ref)
+        # Ground-truth dominated volume in the [ideal, 6]^3 box is well above
+        # the ~2.0 the inverted-box bug produced. Assert it is in a sane range.
+        assert hv > 20.0
+
+    def test_maximize_path_unchanged_and_positive(self):
+        maximize = {"x": True, "y": True, "z": True}
+        calc = ParetoFrontCalculator(maximize=maximize, monte_carlo_samples=20000)
+        front = [
+            _pt(x=0.9, y=0.1, z=0.5),
+            _pt(x=0.1, y=0.9, z=0.5),
+            _pt(x=0.5, y=0.5, z=0.9),
+        ]
+        hv = calc.calculate_hypervolume(front)
+        assert hv > 0.0
+
+
+@pytest.mark.unit
+class TestDominanceMissingObjectiveNonComparable:
+    """Regression for #1941: a metric-incomplete point must not dominate."""
+
+    def test_missing_objective_makes_pair_non_comparable(self):
+        maximize = {"accuracy": True, "cost": False}
+        complete = _pt(accuracy=0.80, cost=100.0)
+        partial = _pt(accuracy=0.90)  # cost MISSING
+        assert partial.dominates(complete, maximize) is False
+        assert complete.dominates(partial, maximize) is False
+
+    def test_complete_point_survives_front_against_partial(self):
+        maximize = {"accuracy": True, "cost": False}
+        calc = ParetoFrontCalculator(maximize=maximize)
+        complete = TrialResult(
+            trial_id="complete",
+            config={},
+            metrics={"accuracy": 0.80, "cost": 100.0},
+            status="completed",
+            duration=1.0,
+            timestamp=datetime.now(),
+            metadata={},
+        )
+        partial = TrialResult(
+            trial_id="partial",
+            config={},
+            metrics={"accuracy": 0.90},
+            status="completed",
+            duration=1.0,
+            timestamp=datetime.now(),
+            metadata={},
+        )
+        front = calc.calculate_pareto_front([complete, partial], ["accuracy", "cost"])
+        ids = {p.trial.trial_id for p in front}
+        # The complete point must NOT be evicted by the partial one.
+        assert "complete" in ids
+
+    def test_hypervolume_with_partial_point_is_order_independent(self):
+        # #1941 keeps complete and partial points as non-comparable, so both
+        # can sit on the front. Hypervolume must then use the UNION of
+        # declared objectives and only the points complete in that space —
+        # never a KeyError (complete point first) and never a silently
+        # misclassified lower-dimensional front returning a wrong volume
+        # (partial point first).
+        maximize = {"accuracy": True, "cost": False}
+        calc = ParetoFrontCalculator(maximize=maximize)
+        complete = _pt(accuracy=0.8, cost=100.0)
+        partial = _pt(accuracy=0.9)  # cost MISSING
+        ref = {"accuracy": 0.0, "cost": 200.0}
+        # Complete point only: |0.8-0| * |100-200| = 80. The partial point
+        # contributes zero volume in the full (accuracy, cost) space.
+        expected = 80.0
+        assert calc.calculate_hypervolume([complete, partial], ref) == pytest.approx(
+            expected
+        )
+        assert calc.calculate_hypervolume([partial, complete], ref) == pytest.approx(
+            expected
+        )

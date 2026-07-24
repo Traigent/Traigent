@@ -49,6 +49,14 @@ class SelectionResult:
     # (issue #1832). Lets the orchestrator run the inert-constant-objective
     # check over precisely the trials selection ranked, not a re-derived set.
     ranking_eligible_trial_ids: list[str] | None = None
+    # Winner-vs-runner-up paired margin significance (issue #1866). Additive
+    # qualification of best_config — it never changes which config wins. None
+    # when there is no runner-up (< 2 distinct configs / no primary objective);
+    # otherwise a dict {runner_up, delta, ci95, p_value, verdict,
+    # effective_alpha, n_configs, ...} where verdict is "clear",
+    # "statistical_tie", or "na" (no per-example data). The verdict uses a
+    # Bonferroni-corrected effective_alpha for the best-of-n_configs selection.
+    best_config_margin: dict[str, Any] | None = None
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -255,6 +263,46 @@ def _declared_secondary_objectives(
     return [objective for objective in ordered if objective != primary_objective]
 
 
+def _schema_orientations(
+    objective_schema: ObjectiveSchema | None,
+) -> dict[str, str]:
+    """Extract the declared per-objective orientation from a schema.
+
+    Reads ``ObjectiveSchema.objectives[*].orientation`` defensively so a
+    schema-carrying caller (weighted terminal selection, post-hoc analysis)
+    can honor declared orientation without a pre-built map.
+    """
+    orientations: dict[str, str] = {}
+    for objective in getattr(objective_schema, "objectives", None) or []:
+        name = getattr(objective, "name", None)
+        orientation = getattr(objective, "orientation", None)
+        if isinstance(name, str) and isinstance(orientation, str):
+            orientations[name] = orientation
+    return orientations
+
+
+def _resolve_orientations(
+    objective_orientations: dict[str, str] | None,
+    objective_schema: ObjectiveSchema | None,
+) -> dict[str, str]:
+    """Return the single declared-orientation map every secondary-comparison
+    path must honor.
+
+    This is the one source of truth for orientation-aware tie-breaking (issue
+    #1955): both the explicit ``objective_orientations`` map (built by the
+    orchestrator) and the declared :class:`ObjectiveSchema` feed it, so the
+    unweighted AND weighted selection paths compare minimize-oriented
+    secondaries in the same direction. An explicit entry wins over the
+    schema-derived one; the schema fills any gaps.
+    """
+    merged = _schema_orientations(objective_schema)
+    if objective_orientations:
+        for name, orientation in objective_orientations.items():
+            if isinstance(name, str) and isinstance(orientation, str):
+                merged[name] = orientation
+    return merged
+
+
 def _extract_trial_comparability(trial: TrialResult) -> dict[str, Any] | None:
     """Extract comparability payload from trial metadata."""
     metadata = getattr(trial, "metadata", {}) or {}
@@ -449,6 +497,7 @@ def apply_tie_breaker(
     *,
     band_target: float | None = None,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> TrialResult:
     """Apply tie-breaker rules to select among equally-scored trials.
 
@@ -463,6 +512,11 @@ def apply_tie_breaker(
         tie_breakers: Dict mapping objective names to tie-breaker strategies.
         primary_objective: Name of the primary objective.
         band_target: Optional target value for banded objectives.
+        objective_order: Declared objectives in preference order.
+        objective_orientations: Declared per-objective orientation map. When
+            present, a minimize-oriented secondary is subtracted even when its
+            NAME misses the heuristic patterns (issue #1955), so every
+            selection path breaks ties in the declared direction.
 
     Returns:
         The selected trial after applying tie-breaker rules.
@@ -482,6 +536,7 @@ def apply_tie_breaker(
             primary_objective,
             band_target,
             objective_order,
+            objective_orientations,
         )
 
     # For "custom" or unknown, return the first trial
@@ -491,8 +546,17 @@ def apply_tie_breaker(
 def _secondary_metric_total(
     metrics: dict[str, Any],
     exclude_objective: str,
+    objective_orientations: dict[str, str] | None = None,
 ) -> float:
-    """Sum secondary metrics, subtracting minimization objectives."""
+    """Sum secondary metrics, subtracting minimization objectives.
+
+    Orientation is taken from the DECLARED schema (``objective_orientations``)
+    when available — the same source of truth the primary selector honors
+    (issue #1955). Name-pattern guessing is only the schema-less fallback, so a
+    custom-named declared-minimize secondary (e.g. ``token_budget``) is no
+    longer silently inverted in tie-breaks.
+    """
+    orientations = objective_orientations or {}
     total = 0.0
     for name, value in metrics.items():
         if (
@@ -501,7 +565,7 @@ def _secondary_metric_total(
             or name == exclude_objective
         ):
             continue
-        if is_minimization_objective(name):
+        if is_minimization_objective(name, orientation=orientations.get(name)):
             total -= float(value)
         else:
             total += float(value)
@@ -512,18 +576,22 @@ def _secondary_metric_key(
     metrics: dict[str, Any],
     exclude_objective: str,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> tuple[float, ...]:
     """Return a secondary-objective ordering key.
 
     Declared objectives break ties lexicographically in the run's objective order
     after the primary. If the caller has no declared secondary objectives, retain
-    the legacy aggregate secondary score.
+    the legacy aggregate secondary score. The declared orientation map is
+    threaded through so a minimize-oriented secondary sorts downward (#1955).
     """
     declared_secondaries = _declared_secondary_objectives(
         exclude_objective, objective_order
     )
     if not declared_secondaries:
-        return (_secondary_metric_total(metrics, exclude_objective),)
+        return (
+            _secondary_metric_total(metrics, exclude_objective, objective_orientations),
+        )
 
     ordered_scores: list[float] = []
     for objective in declared_secondaries:
@@ -532,7 +600,9 @@ def _secondary_metric_key(
             ordered_scores.append(float("-inf"))
             continue
         ordered_scores.append(
-            _secondary_metric_total({objective: value}, exclude_objective)
+            _secondary_metric_total(
+                {objective: value}, exclude_objective, objective_orientations
+            )
         )
     return tuple(ordered_scores)
 
@@ -542,6 +612,7 @@ def _apply_min_abs_deviation(
     objective: str,
     band_target: float | None,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> TrialResult:
     """Select trial with minimum absolute deviation from target or best stability."""
     if band_target is not None:
@@ -554,7 +625,12 @@ def _apply_min_abs_deviation(
 
     def secondary_score(t: TrialResult) -> tuple[Any, ...]:
         return (
-            *_secondary_metric_key(t.metrics or {}, objective, objective_order),
+            *_secondary_metric_key(
+                t.metrics or {},
+                objective,
+                objective_order,
+                objective_orientations,
+            ),
             t.trial_id or "",
         )
 
@@ -618,6 +694,7 @@ def _select_best_single_trial(
             primary_objective,
             band_target=band_target,
             objective_order=objective_order,
+            objective_orientations=objective_orientations,
         )
         if not tie_breakers and not _declared_secondary_objectives(
             primary_objective, objective_order
@@ -690,6 +767,7 @@ def _apply_aggregated_tie_breaker(
     primary_objective: str,
     band_target: float | None,
     objective_order: Iterable[str] | None = None,
+    objective_orientations: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Apply tie-breaker rules to aggregated entries with equal primary scores.
 
@@ -698,6 +776,10 @@ def _apply_aggregated_tie_breaker(
         tie_breakers: Dict mapping objective names to tie-breaker strategies.
         primary_objective: Name of the primary objective.
         band_target: Optional target value for banded objectives.
+        objective_order: Declared objectives in preference order.
+        objective_orientations: Declared per-objective orientation map, threaded
+            into the secondary comparison so minimize-oriented secondaries sort
+            downward on aggregated ties (issue #1955).
 
     Returns:
         The selected entry after applying tie-breaker rules.
@@ -723,7 +805,10 @@ def _apply_aggregated_tie_breaker(
 
     def agg_secondary_score(entry: dict[str, Any]) -> tuple[float, ...]:
         return _secondary_metric_key(
-            _compute_mean_metrics(entry), primary_objective, objective_order
+            _compute_mean_metrics(entry),
+            primary_objective,
+            objective_order,
+            objective_orientations,
         )
 
     return max(tied_entries, key=agg_secondary_score)
@@ -748,6 +833,7 @@ def _select_best_weighted(
     *,
     aggregate_configs: bool,
     config_space_keys: set[str],
+    objective_orientations: dict[str, str] | None = None,
 ) -> SelectionResult | None:
     """Rank eligible trials by the schema's weighted aggregate (issue #1682).
 
@@ -779,6 +865,7 @@ def _select_best_weighted(
             objective_order,
             config_space_keys,
             ranges,
+            objective_orientations,
         )
 
     scored = [
@@ -803,6 +890,7 @@ def _select_best_weighted(
             primary_objective,
             band_target=None,
             objective_order=objective_order,
+            objective_orientations=objective_orientations,
         )
     else:
         best_trial = tied_trials[0]
@@ -831,6 +919,7 @@ def _select_best_weighted_aggregated(
     objective_order: Iterable[str] | None,
     config_space_keys: set[str],
     ranges: dict[str, tuple[float, float]],
+    objective_orientations: dict[str, str] | None = None,
 ) -> SelectionResult | None:
     """Weighted ranking over config-aggregated mean metrics (issue #1682).
 
@@ -868,6 +957,7 @@ def _select_best_weighted_aggregated(
             primary_objective,
             None,
             objective_order,
+            objective_orientations,
         )
     else:
         best_entry = tied_entries[0]
@@ -979,6 +1069,7 @@ def _select_best_aggregated(
             primary_objective,
             band_target,
             objective_order,
+            objective_orientations,
         )
         if not tie_breakers and not _declared_secondary_objectives(
             primary_objective, objective_order
@@ -1055,6 +1146,33 @@ def _trial_produced_outputs(trial: TrialResult) -> bool:
     if isinstance(successful_examples, (int, float)) and successful_examples == 0:
         return False
     return True
+
+
+def _attach_best_config_margin(
+    result: SelectionResult,
+    eligible_trials: list[TrialResult],
+    primary_objective: str,
+    objective_orientations: dict[str, str] | None,
+) -> None:
+    """Qualify a winning ``best_config`` with margin significance (issue #1866).
+
+    Additive only: this sets ``result.best_config_margin`` and never touches
+    ``best_config`` / ``best_score``. The import is local because
+    ``stat_significance`` references ``TrialResult`` from ``api.types`` (which
+    lazy-imports this module) — a module-level import would risk a load cycle.
+    """
+    if result.best_config is None and result.best_trial_id is None:
+        return
+    from traigent.core.stat_significance import compute_best_config_margin
+
+    orientation = (objective_orientations or {}).get(primary_objective)
+    result.best_config_margin = compute_best_config_margin(
+        eligible_trials,
+        winner_trial_id=result.best_trial_id,
+        winner_config=result.best_config,
+        primary_objective=primary_objective,
+        orientation=orientation,
+    )
 
 
 def select_best_configuration(
@@ -1218,6 +1336,14 @@ def select_best_configuration(
 
     tie_breakers = tie_breakers or {}
 
+    # One declared-orientation map for EVERY selection sub-path (issue #1955):
+    # the explicit orchestrator-built map and the declared schema are merged
+    # once here so the weighted and unweighted tie-breaks compare
+    # minimize-oriented secondaries in the same declared direction.
+    resolved_orientations = _resolve_orientations(
+        objective_orientations, objective_schema
+    )
+
     # Trial ids of the exact ranking-eligible set (issue #1832). Attached to
     # whichever selection path wins so the orchestrator can run its
     # inert-constant-objective check over precisely these trials.
@@ -1238,9 +1364,16 @@ def select_best_configuration(
             objective_order,
             aggregate_configs=aggregate_configs,
             config_space_keys=set(config_space_keys),
+            objective_orientations=resolved_orientations,
         )
         if weighted_result is not None:
             weighted_result.ranking_eligible_trial_ids = eligible_trial_ids
+            _attach_best_config_margin(
+                weighted_result,
+                eligible_trials,
+                primary_objective,
+                objective_orientations,
+            )
             return weighted_result
         # Defensive (issue #1846 fix-direction #4): a multi-objective schema was
         # declared but NO eligible trial had a computable weighted score
@@ -1260,11 +1393,17 @@ def select_best_configuration(
             band_target,
             ranking_summary,
             objective_order,
-            objective_orientations=objective_orientations,
+            objective_orientations=resolved_orientations,
         )
         single_result.ranking_eligible_trial_ids = eligible_trial_ids
         _mark_weighted_selection_unavailable(
             single_result, weighted_selection_unavailable
+        )
+        _attach_best_config_margin(
+            single_result,
+            eligible_trials,
+            primary_objective,
+            objective_orientations,
         )
         return single_result
 
@@ -1276,10 +1415,16 @@ def select_best_configuration(
         band_target,
         ranking_summary,
         objective_order,
-        objective_orientations=objective_orientations,
+        objective_orientations=resolved_orientations,
     )
     aggregated_result.ranking_eligible_trial_ids = eligible_trial_ids
     _mark_weighted_selection_unavailable(
         aggregated_result, weighted_selection_unavailable
+    )
+    _attach_best_config_margin(
+        aggregated_result,
+        eligible_trials,
+        primary_objective,
+        objective_orientations,
     )
     return aggregated_result

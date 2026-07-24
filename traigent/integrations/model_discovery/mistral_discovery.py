@@ -27,6 +27,11 @@ class MistralDiscovery(ModelDiscovery):
     PROVIDER = "mistral"
     FRAMEWORK = Framework.MISTRAL
 
+    def _get_credential_fingerprint(self) -> str | None:
+        """Scope model discovery by the Mistral API key."""
+        api_key = os.getenv("MISTRAL_API_KEY")
+        return self._fingerprint(api_key) if api_key else None
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Fetch models from Mistral SDK.
 

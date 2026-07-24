@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.meta_types import TraigentMetadata
 
 from traigent.config.types import resolve_execution_mode
@@ -60,6 +61,189 @@ _EXPECTED_METRIC_PARAM_NAMES = {
     "target",
 }
 _LLM_METRIC_PARAM_NAMES = {"llm_metrics", "metrics"}
+
+
+@dataclass(frozen=True)
+class MetricBinding:
+    """Resolved shape of a metric-callback invocation, computed without calling it.
+
+    ``resolve_metric_call_binding`` returns one of these describing the first
+    argument candidate that :func:`inspect.Signature.bind` accepts (or a
+    terminal ``bind_ok=False`` binding). :meth:`LocalEvaluator._invoke_metric_function`
+    consumes it and only then performs the real call, so the metric function is
+    never executed while the shape is being determined.
+
+    Attributes:
+        args: Positional arguments the winning candidate would pass.
+        kwargs: Keyword arguments the winning candidate would pass.
+        binding_mode: How arguments were matched -- one of ``"var_positional"``,
+            ``"keyword"``, ``"positional_3"``, ``"positional_2"``,
+            ``"positional_1"``, ``"positional_0"``, or ``"unbound"``.
+        matched_parameters: Metric parameter names filled by a recognized
+            keyword (empty for positional / var-positional binding).
+        unmatched_parameters: Bindable metric parameter names NOT filled by a
+            recognized keyword.
+        bind_ok: Whether any candidate bound successfully.
+        bind_exception: The terminal ``TypeError`` from ``Signature.bind`` when
+            nothing bound; ``None`` on success. Held as the original exception
+            so callers can re-raise it unchanged.
+    """
+
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    binding_mode: str
+    matched_parameters: tuple[str, ...]
+    unmatched_parameters: tuple[str, ...]
+    bind_ok: bool
+    bind_exception: TypeError | None = None
+
+    @property
+    def bind_error(self) -> str | None:
+        """Human-readable bind-error message (``None`` when ``bind_ok``)."""
+        return None if self.bind_exception is None else str(self.bind_exception)
+
+
+def build_metric_keyword_arguments(
+    parameters: list[inspect.Parameter],
+    output: Any,
+    example_obj: Any,
+    config: dict[str, Any],
+    llm_payload: dict[str, Any],
+    example_index: int,
+) -> dict[str, Any]:
+    """Build keyword arguments for a metric callback from recognized param names.
+
+    Pure function (no evaluator state) shared by
+    :meth:`LocalEvaluator._build_metric_keyword_arguments` and
+    :func:`resolve_metric_call_binding`, so the keyword-matching rules cannot
+    drift between the runtime invocation path and the no-execution contract
+    inspector.
+    """
+    keyword_values: dict[str, Any] = {
+        "example": example_obj,
+        "input_data": example_obj.input_data,
+        "metadata": example_obj.metadata or {},
+        "config": config,
+        "example_index": example_index,
+    }
+    for name in _OUTPUT_METRIC_PARAM_NAMES:
+        keyword_values[name] = output
+    for name in _EXPECTED_METRIC_PARAM_NAMES:
+        keyword_values[name] = example_obj.expected_output
+    for name in _LLM_METRIC_PARAM_NAMES:
+        keyword_values[name] = llm_payload
+
+    kwargs: dict[str, Any] = {}
+    accepts_arbitrary_kwargs = False
+    for parameter in parameters:
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            accepts_arbitrary_kwargs = True
+            continue
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.VAR_POSITIONAL,
+        ):
+            continue
+        if parameter.name in keyword_values:
+            kwargs[parameter.name] = keyword_values[parameter.name]
+
+    if accepts_arbitrary_kwargs:
+        kwargs.setdefault("output", output)
+        kwargs.setdefault("expected", example_obj.expected_output)
+        kwargs.setdefault("llm_metrics", llm_payload)
+
+    return kwargs
+
+
+def resolve_metric_call_binding(
+    metric_func: Callable[..., Any],
+    output: Any,
+    example_obj: Any,
+    config: dict[str, Any],
+    llm_payload: dict[str, Any],
+    example_index: int,
+) -> MetricBinding:
+    """Resolve how ``metric_func`` would be called WITHOUT invoking it.
+
+    Mirrors the candidate ordering used by
+    :meth:`LocalEvaluator._invoke_metric_function` (var-positional fast path,
+    then a recognized-keyword candidate when any parameter is recognized, then
+    positional fallbacks of decreasing arity) and returns the first candidate
+    that ``inspect.Signature.bind`` accepts -- or a terminal ``bind_ok=False``
+    :class:`MetricBinding` carrying the last bind error. The metric function is
+    never executed.
+
+    Raises:
+        TypeError, ValueError: If ``inspect.signature(metric_func)`` cannot be
+            computed (e.g. some builtins). Callers that must not fail closed
+            should guard this call.
+    """
+    signature = inspect.signature(metric_func)
+    parameters = list(signature.parameters.values())
+    positional_args = (output, example_obj.expected_output, llm_payload)
+
+    call_candidates: list[tuple[tuple[Any, ...], dict[str, Any], str]] = []
+
+    if any(
+        parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters
+    ):
+        call_candidates.append((positional_args, {}, "var_positional"))
+
+    kwargs = build_metric_keyword_arguments(
+        parameters, output, example_obj, config, llm_payload, example_index
+    )
+    if kwargs:
+        call_candidates.append(((), kwargs, "keyword"))
+
+    call_candidates.extend(
+        [
+            (positional_args, {}, "positional_3"),
+            (positional_args[:2], {}, "positional_2"),
+            (positional_args[:1], {}, "positional_1"),
+            ((), {}, "positional_0"),
+        ]
+    )
+
+    bindable_names = [
+        parameter.name
+        for parameter in parameters
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    ]
+
+    bind_error: TypeError | None = None
+    for args, candidate_kwargs, mode in call_candidates:
+        try:
+            signature.bind(*args, **candidate_kwargs)
+        except TypeError as exc:
+            bind_error = exc
+            continue
+        matched = tuple(sorted(candidate_kwargs))
+        unmatched = tuple(
+            sorted(name for name in bindable_names if name not in candidate_kwargs)
+        )
+        return MetricBinding(
+            args=args,
+            kwargs=candidate_kwargs,
+            binding_mode=mode,
+            matched_parameters=matched,
+            unmatched_parameters=unmatched,
+            bind_ok=True,
+            bind_exception=None,
+        )
+
+    return MetricBinding(
+        args=(),
+        kwargs={},
+        binding_mode="unbound",
+        matched_parameters=(),
+        unmatched_parameters=tuple(sorted(bindable_names)),
+        bind_ok=False,
+        bind_exception=bind_error,
+    )
 
 
 @dataclass
@@ -839,40 +1023,9 @@ class LocalEvaluator(BaseEvaluator):
         llm_payload: dict[str, Any],
         example_index: int,
     ) -> dict[str, Any]:
-        keyword_values: dict[str, Any] = {
-            "example": example_obj,
-            "input_data": example_obj.input_data,
-            "metadata": example_obj.metadata or {},
-            "config": config,
-            "example_index": example_index,
-        }
-        for name in _OUTPUT_METRIC_PARAM_NAMES:
-            keyword_values[name] = output
-        for name in _EXPECTED_METRIC_PARAM_NAMES:
-            keyword_values[name] = example_obj.expected_output
-        for name in _LLM_METRIC_PARAM_NAMES:
-            keyword_values[name] = llm_payload
-
-        kwargs: dict[str, Any] = {}
-        accepts_arbitrary_kwargs = False
-        for parameter in parameters:
-            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
-                accepts_arbitrary_kwargs = True
-                continue
-            if parameter.kind in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.VAR_POSITIONAL,
-            ):
-                continue
-            if parameter.name in keyword_values:
-                kwargs[parameter.name] = keyword_values[parameter.name]
-
-        if accepts_arbitrary_kwargs:
-            kwargs.setdefault("output", output)
-            kwargs.setdefault("expected", example_obj.expected_output)
-            kwargs.setdefault("llm_metrics", llm_payload)
-
-        return kwargs
+        return build_metric_keyword_arguments(
+            parameters, output, example_obj, config, llm_payload, example_index
+        )
 
     def _invoke_metric_function(
         self,
@@ -919,43 +1072,13 @@ class LocalEvaluator(BaseEvaluator):
                 so the trial fails closed instead.
         """
         try:
-            signature = inspect.signature(metric_func)
-            parameters = list(signature.parameters.values())
-            positional_args = (output, example_obj.expected_output, llm_payload)
-            call_candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-
-            if any(
-                parameter.kind is inspect.Parameter.VAR_POSITIONAL
-                for parameter in parameters
-            ):
-                call_candidates.append((positional_args, {}))
-
-            kwargs = self._build_metric_keyword_arguments(
-                parameters, output, example_obj, config, llm_payload, example_index
+            binding = resolve_metric_call_binding(
+                metric_func, output, example_obj, config, llm_payload, example_index
             )
-            if kwargs:
-                call_candidates.append(((), kwargs))
-
-            call_candidates.extend(
-                [
-                    (positional_args, {}),
-                    (positional_args[:2], {}),
-                    (positional_args[:1], {}),
-                    ((), {}),
-                ]
-            )
-
-            bind_error: TypeError | None = None
-            for args, candidate_kwargs in call_candidates:
-                try:
-                    signature.bind(*args, **candidate_kwargs)
-                except TypeError as exc:
-                    bind_error = exc
-                    continue
-                return metric_func(*args, **candidate_kwargs)
-
-            if bind_error is not None:
-                raise bind_error
+            if binding.bind_ok:
+                return metric_func(*binding.args, **binding.kwargs)
+            if binding.bind_exception is not None:
+                raise binding.bind_exception
             return metric_func(output, example_obj.expected_output)
         except Exception as exc:
             return self._handle_metric_function_exception(
@@ -1635,6 +1758,7 @@ class LocalEvaluator(BaseEvaluator):
         *,
         sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
     ) -> EvaluationResult:
         """Evaluate function with given configuration on dataset.
 
@@ -1651,6 +1775,14 @@ class LocalEvaluator(BaseEvaluator):
         """
         self.validate_function(func)
         self.validate_config(config)
+
+        execution_budget_lease, blocked_result = (
+            self._prepare_execution_budget_evaluation(budget, config)
+        )
+        if blocked_result is not None:
+            return blocked_result
+        if sample_lease is None:
+            sample_lease = execution_budget_lease
 
         if not dataset.examples:
             raise EvaluationError("Dataset cannot be empty")
@@ -1900,7 +2032,9 @@ class LocalEvaluator(BaseEvaluator):
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
 
-        return result
+        return self._finalize_execution_budget_evaluation(
+            budget, result, execution_budget_lease
+        )
 
     def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
         """Compute real accuracy by comparing actual vs expected output.

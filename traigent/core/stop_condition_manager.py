@@ -11,9 +11,11 @@ from traigent.api.types import TrialResult
 
 if TYPE_CHECKING:
     from traigent.core.cost_enforcement import CostEnforcer
+    from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.stop_conditions import (
     CostLimitStopCondition,
+    ExecutionBudgetStopCondition,
     HypervolumeConvergenceStopCondition,
     MaxSamplesStopCondition,
     MaxTrialsStopCondition,
@@ -176,6 +178,38 @@ class StopConditionManager:
             The registered CostLimitStopCondition for reference.
         """
         condition = CostLimitStopCondition(cost_enforcer)
+        self._conditions.insert(0, condition)
+        return condition
+
+    def register_execution_budget_condition(
+        self, budget: ExecutionBudget
+    ) -> ExecutionBudgetStopCondition:
+        """Register a cumulative ExecutionBudget stop condition at the FRONT.
+
+        Front insertion (``insert(0, ...)``) is mandatory (issue #1980): the user's
+        own per-run ``CostLimitStopCondition`` can fire on the same iteration as the
+        cumulative budget (both the per-run ``cost_limit`` and the shared
+        ``max_cost_usd`` spent at once). Because ``should_stop`` is first-match-wins,
+        the ExecutionBudget condition must be evaluated first, otherwise a stop that
+        was really the shared cumulative cap would be mislabeled ``"cost_limit"``
+        instead of ``"execution_budget"``. (The enforcer's limit is NOT clamped to
+        the budget's remaining — that clamp was removed with issue #1980's F1 fix.)
+
+        Idempotent: a run that re-applies the budget replaces any prior
+        ExecutionBudget condition rather than stacking duplicates.
+
+        Args:
+            budget: Shared ExecutionBudget attached to this run.
+
+        Returns:
+            The registered ExecutionBudgetStopCondition for reference.
+        """
+        self._conditions = [
+            c
+            for c in self._conditions
+            if not isinstance(c, ExecutionBudgetStopCondition)
+        ]
+        condition = ExecutionBudgetStopCondition(budget)
         self._conditions.insert(0, condition)
         return condition
 

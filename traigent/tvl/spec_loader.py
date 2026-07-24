@@ -2523,7 +2523,10 @@ _ALLOWED_AST_NODES = (
     ast.Mult,
     ast.Div,
     ast.Mod,
-    ast.Pow,
+    # ast.Pow intentionally excluded (#1966): the ``**`` operator on ints is
+    # unbounded arbitrary-precision and enables integer-explosion DoS from
+    # spec content (e.g. ``9**9**9**9``). Use the bounded float ``math.pow``
+    # (whitelisted in _SAFE_MATH_CALLS) for legitimate exponentiation.
     ast.USub,
 )
 
@@ -2541,7 +2544,12 @@ _SAFE_MATH_CALLS = frozenset(
         "ceil",
         "trunc",
         "fabs",
-        "factorial",
+        # NOTE: factorial / comb / perm intentionally excluded (#1966). They
+        # return unbounded arbitrary-precision integers, so a literal argument
+        # (e.g. ``math.factorial(100000000)``) is an integer-explosion DoS from
+        # spec content — the same class the ``ast.Pow`` removal closes, reachable
+        # via a plain integer literal without the ``**`` operator. Bounded float
+        # exponentiation stays available via ``math.pow`` / ``math.exp``.
         "sin",
         "cos",
         "tan",
@@ -2565,8 +2573,7 @@ _SAFE_MATH_CALLS = frozenset(
         "fsum",
         "gcd",
         "lcm",
-        "comb",
-        "perm",
+        # comb / perm excluded with factorial above (#1966): unbounded ints.
         "copysign",
         "fmod",
         "remainder",

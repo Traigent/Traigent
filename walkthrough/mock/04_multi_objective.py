@@ -4,8 +4,8 @@
 import asyncio
 import os
 import sys
-import time
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -13,6 +13,7 @@ from utils.helpers import build_results_table_callback, print_optimization_confi
 from utils.mock_answers import (
     CLASSIFICATION_LABELS,
     DEFAULT_MOCK_MODEL,
+    MOCK_TASK_TOKENS,
     configure_mock_notice,
     get_mock_accuracy,
     get_mock_cost,
@@ -35,8 +36,8 @@ SIMULATED_BEST = {
     "temperature": 0.0,
     "instructions": "CoT",
     "accuracy": 0.95,
-    "cost": 0.000150,  # Simulated cost per evaluation (realistic for gpt-4o)
-    "latency": 0.065,  # Simulated latency in seconds
+    # Cost and latency are not listed here: they are simulated per trial from
+    # the shared mock tables (get_mock_cost / get_mock_latency below).
 }
 MOCK_MODE_CONFIG = {
     "base_accuracy": SIMULATED_BEST["accuracy"],
@@ -59,7 +60,7 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 
 
 def mock_accuracy_score(
-    output: str, expected: str, config: dict | None = None, **_
+    output: Any, expected: str, config: dict | None = None, **_
 ) -> float:
     """Scoring function with config-dependent mock accuracy."""
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
@@ -69,37 +70,50 @@ def mock_accuracy_score(
         temperature = config.get("temperature") if config else None
         instructions = config.get("instructions") if config else None
         use_cot = instructions == "CoT" if instructions else None
-        return get_mock_accuracy(model, "classification", temperature, use_cot)
-    if output is None or expected is None:
+        return float(get_mock_accuracy(model, "classification", temperature, use_cot))
+    # traigent.with_usage() hands scorers the wrapper dict, not the bare text.
+    text = output.get("text") if isinstance(output, dict) else output
+    if text is None or expected is None:
         return 0.0
-    return 1.0 if str(output).strip().lower() == str(expected).strip().lower() else 0.0
+    return 1.0 if str(text).strip().lower() == str(expected).strip().lower() else 0.0
+
+
+def mock_latency_ms(
+    output: Any, expected: Any, config: dict | None = None, **_
+) -> float:
+    """Per-example simulated latency in MILLISECONDS (the SDK's `latency` unit)."""
+    model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+    return float(get_mock_latency(model, "classification")) * 1000.0
 
 
 @traigent.optimize(
     eval_dataset=str(DATASETS / "classification.jsonl"),
     objectives=OBJECTIVES,
     scoring_function=mock_accuracy_score,
+    metric_functions={"latency": mock_latency_ms},
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
     offline=True,
     mock_mode_config=MOCK_MODE_CONFIG,
 )
-def ai_agent_classify_text_sentiment(text: str) -> str:
+def ai_agent_classify_text_sentiment(text: str) -> str | dict[str, Any]:
     """Text classification with multiple objectives."""
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
-    instructions = config.get("instructions", "direct")
 
     set_mock_model(model)
 
-    # Simulate latency differences
-    if "gpt-4o" in model:
-        time.sleep(0.05)
-    else:
-        time.sleep(0.02)
-    if instructions == "CoT":
-        time.sleep(0.01)
-    return CLASSIFICATION_LABELS.get(normalize_text(text), "neutral")
+    label: str = CLASSIFICATION_LABELS.get(normalize_text(text), "neutral")
+    # Report simulated per-example usage so the `cost` objective actually varies.
+    # NOTE: the SDK treats this like real spend - an execution cost budget would
+    # debit these simulated dollars. This example declares no budget.
+    response: str | dict[str, Any] = traigent.with_usage(
+        label,
+        total_cost=get_mock_cost(model, "classification", dataset_size=1),
+        input_tokens=MOCK_TASK_TOKENS["classification"]["input"],
+        output_tokens=MOCK_TASK_TOKENS["classification"]["output"],
+    )
+    return response
 
 
 async def main() -> None:
@@ -107,6 +121,11 @@ async def main() -> None:
     print("=" * 50)
     configure_mock_notice("04_multi_objective.py")
     print("Balancing accuracy (50%), cost (30%), latency (20%).")
+    print(
+        "Cost and latency are simulated from the static mock pricing/latency tables "
+        "(no real API spend); see walkthrough/real/04_multi_objective.py for measured "
+        "values."
+    )
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
     results = await ai_agent_classify_text_sentiment.optimize(
@@ -115,7 +134,13 @@ async def main() -> None:
         random_seed=42,
         show_progress=False,
         callbacks=[
-            build_results_table_callback(is_mock=True, task_type="classification")
+            build_results_table_callback(
+                is_mock=True,
+                task_type="classification",
+                # This example reports both from the mock tables itself, so the
+                # table must show the recorded numbers that drove selection.
+                reported_metrics=("cost", "latency"),
+            )
         ],
     )
 
@@ -126,11 +151,12 @@ async def main() -> None:
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
-    best_model = results.best_config.get("model", DEFAULT_MOCK_MODEL)
-    est_cost = get_mock_cost(best_model, "classification", dataset_size=20)
-    est_latency = get_mock_latency(best_model, "classification")
-    print(f"  Est. Cost: ${est_cost:.4f} (for 20 examples)")
-    print(f"  Est. Latency: {est_latency:.3f}s (per call)")
+    print(
+        f"  Cost:     ${results.best_metrics.get('cost', 0):.5f} (simulated, 20 examples)"
+    )
+    print(
+        f"  Latency:  {results.best_metrics.get('latency', 0):.0f}ms (simulated, per call)"
+    )
 
 
 if __name__ == "__main__":

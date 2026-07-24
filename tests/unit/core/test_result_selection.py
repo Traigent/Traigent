@@ -704,6 +704,98 @@ class TestSelectBestConfigurationWithTieBreakers:
         # B and C both have 0.9, tie-breaker picks C (lower latency)
         assert result.best_config["model"] == "C"
 
+    @pytest.mark.parametrize("aggregate_configs", [False, True])
+    def test_direct_declared_minimize_secondary_tie_breaks_downward(
+        self, aggregate_configs: bool
+    ) -> None:
+        """Issue #1955 — UNWEIGHTED (direct) single + aggregated tie-break paths.
+
+        A custom-named declared-minimize secondary (``token_budget``) whose name
+        matches none of the minimize heuristic patterns would, under the old
+        name-only guess, be treated as maximize and ADDED to the tie-break score,
+        crowning the trial with the LARGER (worse) budget. With the declared
+        orientation threaded in, the smaller budget must win. ``objective_schema``
+        is intentionally omitted so this drives the direct paths
+        (``_select_best_single_trial`` / ``_select_best_aggregated``), not the
+        weighted paths below.
+        """
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 0.9, "token_budget": 5000.0},
+                config={"model": "wasteful"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.9, "token_budget": 500.0},
+                config={"model": "frugal"},
+            ),
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=aggregate_configs,
+            tie_breakers=None,
+            objective_order=["accuracy", "token_budget"],
+            objective_orientations={
+                "accuracy": "maximize",
+                "token_budget": "minimize",
+            },
+        )
+
+        assert result.best_config["model"] == "frugal"
+
+    @pytest.mark.parametrize("aggregate_configs", [False, True])
+    def test_weighted_declared_minimize_secondary_tie_breaks_downward(
+        self, aggregate_configs: bool
+    ) -> None:
+        """Issue #1955 — WEIGHTED terminal tie-break (non-aggregated + aggregated).
+
+        Canonical reproducer: three equal-weight objectives — accuracy(max),
+        token_budget(min), quality(max). ``wasteful`` and ``frugal`` tie at
+        weighted 0.5, so the winner is decided by the declared-order secondary
+        tie-break. Only ``objective_schema`` is supplied (NO explicit
+        ``objective_orientations`` map), proving the consolidated resolver pulls
+        the minimize orientation from the schema into the weighted tie-break.
+        Without the fix the weighted paths treated ``token_budget`` as maximize
+        and crowned ``wasteful`` (the pricier config).
+        """
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name="accuracy", orientation="maximize", weight=1.0
+                ),
+                ObjectiveDefinition(
+                    name="token_budget", orientation="minimize", weight=1.0
+                ),
+                ObjectiveDefinition(name="quality", orientation="maximize", weight=1.0),
+            ]
+        )
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 0.9, "token_budget": 5000.0, "quality": 1.0},
+                config={"model": "wasteful"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.9, "token_budget": 500.0, "quality": 0.0},
+                config={"model": "frugal"},
+            ),
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=aggregate_configs,
+            tie_breakers=None,
+            objective_order=["accuracy", "token_budget", "quality"],
+            objective_schema=schema,
+        )
+
+        assert result.best_config["model"] == "frugal"
+
 
 def test_missing_primary_objective_excluded_not_zero_coerced():
     trial_missing = FakeTrial(metrics={"latency": 10.0}, config={"model": "A"})

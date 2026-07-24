@@ -563,15 +563,14 @@ def _find_fallback_pricing(
     matched_key = None
     for model_key, model_pricing in ESTIMATION_MODEL_PRICING.items():
         key_lower = model_key.lower()
-        # Check if base_model starts with key or key starts with base_model
+        # Forward longest-prefix match only: base_model starts with a known key.
+        # A reverse (key startswith base_model) branch mis-priced partial names
+        # like 'gpt-4' to the first dict-order family member (e.g. gpt-4o). See
+        # issue #1957. Legitimate short aliases resolve via MODEL_NAME_ALIASES
+        # before this lookup, so dropping the reverse branch loses no real match.
         if base_model.startswith(key_lower):
             if len(key_lower) > best_match_len:
                 best_match_len = len(key_lower)
-                pricing = model_pricing
-                matched_key = model_key
-        elif key_lower.startswith(base_model):
-            if len(base_model) > best_match_len:
-                best_match_len = len(base_model)
                 pricing = model_pricing
                 matched_key = model_key
 

@@ -41,6 +41,7 @@ from traigent.config.types import (
     TraigentConfig,
     resolve_execution_policy,
 )
+from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -200,6 +201,7 @@ class TestFailClosedGuardUnit:
             "timeout",
             "user_cancelled",
             "cost_limit",
+            "execution_budget",
             "vendor_error",
             "network_error",
             "error",
@@ -207,7 +209,8 @@ class TestFailClosedGuardUnit:
     )
     def test_no_raise_for_owned_stop_reasons(self, stop_reason: str) -> None:
         """Empty stops already owned by another cause (timeout, user cancel,
-        cost gate #1684, provider/network errors) are not relabeled."""
+        cost gate #1684, a cumulative ExecutionBudget stop #1980, provider/network
+        errors) are not relabeled."""
         orchestrator = _orchestrator(policy=_cloud_required_policy("bayesian"))
         orchestrator._stop_reason = stop_reason  # type: ignore[assignment]
         orchestrator._fail_closed_on_empty_smart_managed_run()
@@ -242,6 +245,37 @@ class TestFailClosedThroughOptimizeFlow:
         assert result.status is OptimizationStatus.COMPLETED
         assert len(result.trials) == 2
         assert result.best_config is not None
+
+    @pytest.mark.asyncio
+    async def test_empty_cloud_required_with_exhausted_budget_returns_gracefully(
+        self,
+    ) -> None:
+        """Finding #2 (#1980): a CLOUD_REQUIRED smart phase started with an already
+        -exhausted shared ExecutionBudget pre-batch-blocks at 0 trials and must
+        RETURN gracefully with ``stop_reason == "execution_budget"`` — never be
+        relabeled into the silent-empty OptimizationError by the fail-closed guard.
+        """
+        # A shared budget whose examples are already fully spent by an earlier phase.
+        budget = ExecutionBudget(max_examples=2)
+        # Fully spend the examples dimension (as an earlier phase would have).
+        budget.debit_trial(cost=0.0, examples=2)
+        assert budget.exhausted_dimension == "examples"
+
+        # max_suggestions=5 proves it is the BUDGET (not the optimizer) that blocks.
+        orchestrator = _orchestrator(
+            policy=_cloud_required_policy("bayesian"),
+            max_suggestions=5,
+            max_trials=5,
+        )
+        orchestrator.execution_budget = budget
+
+        # Must NOT raise: the exhausted-budget stop is owned by #1980.
+        result = await orchestrator.optimize(lambda **_: "ok", _dataset())
+
+        assert orchestrator._stop_reason == "execution_budget"
+        assert len(result.trials) == 0
+        # Graceful stop, not the FAILED silent-empty error path.
+        assert result.status is OptimizationStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_empty_cloud_brain_run_keeps_completed_semantics(self) -> None:

@@ -2018,14 +2018,38 @@ class BackendAnalyticsClient:
 
         raise_if_backend_offline("BackendAnalyticsClient request")
         if self._client is None:
+            from traigent.cloud.auth import _strip_trace_context_headers
+
             headers = self._auth_headers()
             headers.setdefault("User-Agent", get_sdk_user_agent())
+            # The cached client is long-lived: never freeze trace-context
+            # headers (traceparent/tracestate) into its defaults -- they would
+            # outlive the span and go stale. Trace context rides per-request
+            # via _request_headers(). Strip defensively to enforce the
+            # invariant even if a future _auth_headers() ever leaked one.
             self._client = httpx.AsyncClient(
                 base_url=self.backend_url,
-                headers=headers,
+                headers=_strip_trace_context_headers(headers),
                 timeout=self.timeout,
             )
         return self._client
+
+    def _request_headers(self, headers: dict[str, str] | None = None) -> dict[str, str]:
+        """Build a fresh per-request header dict carrying the active trace context.
+
+        Trace context (``traceparent``/``tracestate``) must ride on per-request
+        headers, never on the cached client's long-lived default headers (that
+        would freeze one span's context onto every later request). When no
+        OpenTelemetry span is active -- or the ``tracing`` extra is not
+        installed -- injection is a no-op and the returned dict is byte-for-byte
+        the caller's headers. See
+        :func:`traigent.cloud.auth._inject_trace_context`.
+        """
+        from traigent.cloud.auth import _inject_trace_context
+
+        request_headers = dict(headers or {})
+        _inject_trace_context(request_headers)
+        return request_headers
 
     async def close(self) -> None:
         """Close the HTTP client and release resources."""
@@ -2052,7 +2076,9 @@ class BackendAnalyticsClient:
         params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         client = self._get_client()
-        response = await client.get(path, headers=headers, params=params)
+        response = await client.get(
+            path, headers=self._request_headers(headers), params=params
+        )
         response.raise_for_status()
         return _unwrap_success_data(response.json(), what=what)
 
@@ -2064,7 +2090,9 @@ class BackendAnalyticsClient:
         json_body: dict[str, Any],
     ) -> dict[str, Any]:
         client = self._get_client()
-        response = await client.post(path, json=json_body)
+        response = await client.post(
+            path, headers=self._request_headers(), json=json_body
+        )
         response.raise_for_status()
         return _unwrap_success_data(response.json(), what=what)
 
@@ -2126,7 +2154,7 @@ class BackendAnalyticsClient:
         response = await client.post(
             path,
             json={"run_ids": cleaned},
-            headers=self._project_headers(project_id),
+            headers=self._request_headers(self._project_headers(project_id)),
         )
         response.raise_for_status()
         return _unwrap_success_data(response.json(), what="run comparison")
