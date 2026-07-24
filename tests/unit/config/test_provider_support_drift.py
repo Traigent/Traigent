@@ -19,12 +19,17 @@ cohere            yes        yes        yes         no       no         yes
 huggingface       yes        yes        no (*)      yes      no         yes
 azure_openai      no         no         no (**)     no       yes        yes
 bedrock           no         no         no (**)     no       no         yes
+nous              no         no         no (***)    yes      yes        yes
 ================  =========  =========  ==========  =======  =========  =======
 
 (*)  HuggingFace is the last-resort bare ``org/model`` match, deliberately not a
      name prefix and absent from ``_KNOWN_MODELS``.
 (**) azure_openai / bedrock are recognized LiteLLM prefixes that map to "known
      but not ours" (``None``); they are mapping-only (not validated).
+(***) nous is mapping-only (OAuth JWT-refresh, not a static env key -> not
+     key-managed / not validated) but DOES participate in tiers + discovery
+     (``detection=none``, so no prefix pattern); Azure proves discovery and
+     mapping_only coexist.
 """
 
 from __future__ import annotations
@@ -56,6 +61,11 @@ INTENDED_MATRIX = {
     "huggingface": (True, True, False, True, False, "validated"),
     "azure_openai": (False, False, False, False, True, "mapping_only"),
     "bedrock": (False, False, False, False, False, "mapping_only"),
+    # Nous Portal (#1978): OAuth JWT-refresh (env_keys=() -> not key-managed),
+    # mapping_only + not validated + detection=none (no prefix pattern), but
+    # tiered=True and discovery=True (like Azure, discovery + mapping_only
+    # coexist). This row is the #1937 coverage criterion for the new provider.
+    "nous": (False, False, False, True, True, "mapping_only"),
 }
 
 

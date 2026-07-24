@@ -31,6 +31,7 @@ class Framework(Enum):
     COHERE = "cohere"
     HUGGINGFACE = "huggingface"
     MISTRAL = "mistral"
+    NOUS = "nous"
     LITELLM = "litellm"
     PYDANTIC_AI = "pydantic_ai"
 

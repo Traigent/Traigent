@@ -24,6 +24,7 @@ OPENAI_API_KEY=sk-... TRAIGENT_MOCK_LLM=false python -m traigent.examples.provid
 | `...providers.openai`      | OpenAI        | LangChain `ChatOpenAI`        | `OPENAI_API_KEY` |
 | `...providers.anthropic`   | Anthropic     | LangChain `ChatAnthropic`     | `ANTHROPIC_API_KEY` |
 | `...providers.openrouter`  | OpenRouter    | LangChain `ChatOpenAI` + base_url | `OPENROUTER_API_KEY` |
+| `...providers.nous`        | Nous Portal (Hermes) | LangChain `ChatOpenAI` + base_url | `NOUS_API_KEY` (OAuth — see note below) |
 | `...providers.azure`       | Azure OpenAI  | LiteLLM                       | `AZURE_API_KEY`, `AZURE_API_BASE`, `AZURE_API_VERSION` (model = `azure/<deployment>`) |
 | `...providers.gemini`      | Gemini (AI Studio) | LiteLLM                  | `GEMINI_API_KEY` |
 | `...providers.groq`        | Groq          | LiteLLM                       | `GROQ_API_KEY` |
@@ -31,9 +32,37 @@ OPENAI_API_KEY=sk-... TRAIGENT_MOCK_LLM=false python -m traigent.examples.provid
 | `...providers.gcp`         | GCP Vertex AI | LiteLLM                       | `VERTEXAI_PROJECT`, `VERTEXAI_LOCATION`, ADC (`GOOGLE_APPLICATION_CREDENTIALS`) |
 | `...providers.litellm_any` | Any provider  | LiteLLM                       | the key(s) for whichever model strings you list |
 
+## Nous Portal uses OAuth, not a static API key
+
+Every other provider here authenticates with a **static API key** read straight
+from the environment. **Nous Portal is different:** it is OpenAI-compatible for
+the *calls*, but its credential is a **short-lived JWT minted from a long-lived
+refresh token** (OAuth), so the example calls
+`traigent.integrations.llms.nous_auth.get_nous_api_key()` instead of reading a
+key from `os.environ` directly. That helper resolves a *current* token, in
+order:
+
+1. `NOUS_API_KEY` — a pre-minted JWT, returned as-is (no auto-refresh; it will
+   expire). This is also what makes the keyless mock demo run offline.
+2. `NOUS_REFRESH_TOKEN` / `NOUS_PORTAL_REFRESH_TOKEN` — a refresh token,
+   exchanged for a JWT and cached in-process (auto-refreshed before expiry).
+3. `~/.hermes/auth.json` (override `TRAIGENT_NOUS_AUTH_FILE`) — the Hermes CLI's
+   login file; the refresh token is read out of it.
+
+Every failure (no credentials, malformed `auth.json`, a failed refresh) raises
+`NousAuthError` naming the source — the helper never serves a stale or mock
+token. **Cost objectives:** the SDK ships **no** Nous prices (nothing
+fabricated), so cost tracking raises `UnknownModelError` until you set
+`TRAIGENT_CUSTOM_MODEL_PRICING_JSON` / `_FILE` with your own per-token rates.
+
+> The Nous token-endpoint URL, the `~/.hermes/auth.json` schema, and the exact
+> portal model-ID strings are env-overridable placeholders pending Phase-0
+> confirmation against real `hermes-agent` output — see the `OWNER:` comments in
+> `traigent/integrations/llms/nous_auth.py` and `config/models.yaml`.
+
 ## Why LangChain for some, LiteLLM for others
 
-We use **LangChain** for OpenAI / Anthropic / OpenRouter — they are the
+We use **LangChain** for OpenAI / Anthropic / OpenRouter / Nous — they are the
 idiomatic LangChain classes (`ChatOpenAI`, `ChatAnthropic`), they ship in
 `traigent[recommended]`, and the SDK mock-intercepts them so the keyless
 demo works.

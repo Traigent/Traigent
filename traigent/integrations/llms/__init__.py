@@ -15,6 +15,11 @@ from traigent.integrations.llms.langchain_plugin import LangChainPlugin
 from traigent.integrations.llms.litellm_plugin import LiteLLMPlugin
 from traigent.integrations.llms.llamaindex_plugin import LlamaIndexPlugin
 from traigent.integrations.llms.mistral_plugin import MistralPlugin
+from traigent.integrations.llms.nous_auth import (
+    NOUS_BASE_URL,
+    NousAuthError,
+    get_nous_api_key,
+)
 from traigent.integrations.llms.openai_plugin import OpenAIPlugin
 
 __all__ = [
@@ -30,4 +35,9 @@ __all__ = [
     "LiteLLMPlugin",
     "MistralPlugin",
     "OpenAIPlugin",
+    # Nous Portal auth helper (no plugin class — Nous uses the OpenAI-compatible
+    # client with a custom base_url; see nous_auth for the JWT-refresh flow).
+    "NOUS_BASE_URL",
+    "NousAuthError",
+    "get_nous_api_key",
 ]
