@@ -138,6 +138,29 @@ jobs:
             --health-dir "$GITHUB_WORKSPACE/.spine-health" \
             --file-limit "$SPINE_FILE_LIMIT"
 
+      # A scan that examined zero files is not a clean scan. The spine's
+      # security_ledger only knows the repos listed in `_PYTHON_REPOS`
+      # (Traigent, TraigentBackend, TraigentSchema). If this repo ever drops
+      # out of that list, or the checkout subpath drifts, the report comes
+      # back with `file_count: 0` and every gate below passes vacuously —
+      # exactly how TraigentFrontend and traigent-js scanned nothing while
+      # reporting success. Assert the scan had subjects.
+      - name: Assert the scan examined files
+        if: env.SPINE_RO_TOKEN != ''
+        run: |
+          set -euo pipefail
+          graph="$GITHUB_WORKSPACE/.spine-health/latest-security-graph.json"
+          if [ ! -f "$graph" ]; then
+            echo "::error::no security graph emitted; the scan did not run."
+            exit 1
+          fi
+          files="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['scope_summary']['file_count'])" "$graph")"
+          echo "spine scan examined $files files"
+          if [ "$files" -eq 0 ]; then
+            echo "::error::spine scan examined 0 files — this repo is not covered by the scanner (see _PYTHON_REPOS in the spine's security_ledger/graph.py). A zero-subject scan cannot pass."
+            exit 1
+          fi
+
       - name: Summarize new critical findings
         if: always() && env.SPINE_RO_TOKEN != ''
         working-directory: .spine
