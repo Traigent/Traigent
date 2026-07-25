@@ -42,7 +42,13 @@ jobs:
   spine-pr-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # advisory mode — promote to blocking after calibration
+    # NOTE: job-level `continue-on-error: true` was removed 2026-07-25. It made
+    # *infrastructure* failures invisible, not just findings: on run 30148657774
+    # `Checkout validation spine` failed outright (expired VALIDATION_CI_PAT),
+    # every subsequent step was skipped, the job concluded `failure` — and the
+    # workflow still reported `success`. Advisory-findings behaviour is
+    # preserved by the step-level `continue-on-error` on the scan itself, which
+    # is the only step whose output is meant to be non-blocking.
     env:
       # MUST point at a spine commit that has the `validation security-ledger` CLI
       # (added 2026-05-14, commit 42bbba8). The old pin 0dc2d057 (2026-05-13)
@@ -51,9 +57,12 @@ jobs:
       # When changing the scan command below, bump this ref in lockstep.
       SPINE_REF: 7766f10589b24971696c63d0235763a743cd9cd3  # pragma: allowlist secret
       SPINE_FILE_LIMIT: "5000"
-      # Prefer a dedicated read-only spine token; fall back to this repo's existing
-      # VALIDATION_CI_PAT so the scan runs instead of failing closed when unset.
-      SPINE_RO_TOKEN: ${{ secrets.SPINE_RO_TOKEN || secrets.VALIDATION_CI_PAT }}
+      # Dedicated read-only spine token only. The former
+      # `|| secrets.VALIDATION_CI_PAT` fallback was removed 2026-07-25: that PAT
+      # expired and now 403s, so the fallback did not keep the scan running — it
+      # converted a clean "token not configured" signal into a hard checkout
+      # failure, which the job-level continue-on-error then hid.
+      SPINE_RO_TOKEN: ${{ secrets.SPINE_RO_TOKEN }}
 
     steps:
       # Checkout the product repo as $GITHUB_WORKSPACE/Traigent/ so the
@@ -68,7 +77,13 @@ jobs:
           fetch-depth: 1
           path: Traigent
 
+      # continue-on-error here does NOT mean "tolerate a broken scan". It exists only so
+      # this workflow can tell "token absent" apart from "token present but unusable"
+      # (expired, revoked, SAML-unauthorised, or scoped without Contents:Read on the spine
+      # repo) and report the precise reason. Either way the job still fails closed below.
       - name: Checkout validation spine
+        id: spine-checkout
+        continue-on-error: true
         if: env.SPINE_RO_TOKEN != ''
         uses: actions/checkout@v7
         with:
@@ -77,33 +92,59 @@ jobs:
           path: .spine
           token: ${{ env.SPINE_RO_TOKEN }}
 
-      - name: Note skipped spine scan
-        if: env.SPINE_RO_TOKEN == ''
+      # Availability is proven by the checkout actually SUCCEEDING, not by the token merely
+      # being non-empty. On 2026-07-25 the org token existed everywhere and was rejected by
+      # SAML enforcement / missing scope — a presence check calls that "available".
+      # Every downstream step keys off SPINE_AVAILABLE. Ported from TraigentSchema#349.
+      - name: Determine spine availability
+        id: spine-available
         run: |
-          echo "::warning::SPINE_RO_TOKEN is not configured; validation spine scan skipped."
+          if [ "${{ steps.spine-checkout.outcome }}" = "success" ] && [ -d "$GITHUB_WORKSPACE/.spine" ]; then
+            echo "SPINE_AVAILABLE=true" >> "$GITHUB_ENV"
+          else
+            echo "SPINE_AVAILABLE=false" >> "$GITHUB_ENV"
+          fi
+
+      # Fail closed — a scan that cannot run must not report success.
+      - name: Fail closed on missing spine token
+        if: env.SPINE_AVAILABLE != 'true'
+        run: |
+          if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
+            echo "::notice::SPINE_RO_TOKEN unavailable for dependabot PR (secrets blocked by design); spine scan skipped - dependabot bumps carry no policy surface."
+            exit 0
+          fi
+          if [ -z "${SPINE_RO_TOKEN}" ]; then
+            reason="repository/org secret SPINE_RO_TOKEN is not configured"
+          else
+            reason="the configured token could not check out Traigent/traigent-validation-spine (expired, revoked, SAML-unauthorised, or missing Contents:Read)"
+          fi
+          echo "::error::Validation spine scan FAILED TO RUN — ${reason}. Failing closed: a scan that cannot execute must not report success."
           {
             echo "## Validation Spine — PR scan"
             echo
-            echo "Skipped: repository secret \`SPINE_RO_TOKEN\` is not configured."
+            echo "**No gap report was produced.** Absence of findings is not evidence of none."
+            echo "Reason: ${reason}."
+            echo "This job does **not** report success when the scan cannot run."
           } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - name: Set up Python 3.11
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install uv
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         run: pip install --upgrade pip "uv==0.8.13"
 
       - name: Install spine
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         working-directory: .spine
         run: uv sync --extra dev
 
       - name: Run security_ledger against product repo
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         id: spine-run
         continue-on-error: true
         working-directory: .spine
@@ -122,8 +163,31 @@ jobs:
             --health-dir "$GITHUB_WORKSPACE/.spine-health" \
             --file-limit "$SPINE_FILE_LIMIT"
 
+      # A scan that examined zero files is not a clean scan. The spine's
+      # security_ledger only knows the repos listed in `_PYTHON_REPOS`
+      # (Traigent, TraigentBackend, TraigentSchema). If this repo ever drops
+      # out of that list, or the checkout subpath drifts, the report comes
+      # back with `file_count: 0` and every gate below passes vacuously —
+      # exactly how TraigentFrontend and traigent-js scanned nothing while
+      # reporting success. Assert the scan had subjects.
+      - name: Assert the scan examined files
+        if: env.SPINE_AVAILABLE == 'true'
+        run: |
+          set -euo pipefail
+          graph="$GITHUB_WORKSPACE/.spine-health/latest-security-graph.json"
+          if [ ! -f "$graph" ]; then
+            echo "::error::no security graph emitted; the scan did not run."
+            exit 1
+          fi
+          files="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['scope_summary']['file_count'])" "$graph")"
+          echo "spine scan examined $files files"
+          if [ "$files" -eq 0 ]; then
+            echo "::error::spine scan examined 0 files — this repo is not covered by the scanner (see _PYTHON_REPOS in the spine's security_ledger/graph.py). A zero-subject scan cannot pass."
+            exit 1
+          fi
+
       - name: Summarize new critical findings
-        if: always() && env.SPINE_RO_TOKEN != ''
+        if: always() && env.SPINE_AVAILABLE == 'true'
         working-directory: .spine
         run: |
           set -e
@@ -161,10 +225,16 @@ jobs:
           PY
 
       - name: Upload spine gap artifacts
-        if: always() && env.SPINE_RO_TOKEN != ''
+        if: always() && env.SPINE_AVAILABLE == 'true'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: validation-spine-gaps
           path: .spine-health/
+          # `.spine-health` is a dot-directory, and upload-artifact excludes
+          # hidden paths by default — so this artifact has never actually
+          # uploaded ("No files were found with the provided path"), and
+          # `if-no-files-found: warn` kept that quiet. The findings the scan
+          # produces are the only reviewable evidence it exists to produce.
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 14
-          if-no-files-found: warn
