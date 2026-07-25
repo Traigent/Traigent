@@ -28,17 +28,25 @@ jobs:
           SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           SOURCE_BASE_BRANCH: ${{ github.event.workflow_run.pull_requests[0].base.ref }}
         run: |
+          set -euo pipefail
+
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_EVENT" != "pull_request" ]; then
-            echo "Skipping G8 dispatch for non-PR upstream event: $WORKFLOW_EVENT"
+            echo "::notice::Skipping G8 dispatch for non-PR upstream event: $WORKFLOW_EVENT"
             exit 0
           fi
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_CONCLUSION" != "success" ]; then
-            echo "Skipping G8 dispatch because upstream workflow concluded: $WORKFLOW_CONCLUSION"
+            echo "::notice::Skipping G8 dispatch because upstream workflow concluded: $WORKFLOW_CONCLUSION"
             exit 0
           fi
+          # Credential presence is a HARD requirement past this point. The two
+          # skips above are legitimate untrusted/irrelevant contexts; a missing
+          # token is operator misconfiguration. A quietly-skipped dispatch reads
+          # as "the spine validated this" when nothing was ever sent — an unsafe
+          # false-green. This mirrors the hardening already in
+          # traigent-model-checking's copy of this workflow.
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::VALIDATION_CI_PAT is not configured; skipping validation-spine dispatch."
-            exit 0
+            echo "::error::VALIDATION_CI_PAT is not configured for a trusted run; cannot dispatch validation-spine G8. Configure the secret or the spine will never see this change."
+            exit 1
           fi
 
           source_sha="${SOURCE_HEAD_SHA:-$GITHUB_SHA}"
@@ -46,6 +54,15 @@ jobs:
           source_base_branch="${SOURCE_BASE_BRANCH:-}"
           source_run_id="${SOURCE_RUN_ID:-}"
           source_workflow="${SOURCE_WORKFLOW:-}"
+
+          # The payload must carry the exact commit, never a branch name that
+          # can move under the spine between dispatch and validation.
+          if ! printf '%s' "$source_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Refusing to dispatch without a full 40-char source SHA (got '$source_sha')."
+            exit 1
+          fi
+
+          echo "Dispatching validation-g8 for $SOURCE_REPO@$source_sha (base ${source_base_branch:-<none>})."
 
           gh api --method POST repos/Traigent/traigent-validation-spine/dispatches \
             -f event_type=validation-g8 \
