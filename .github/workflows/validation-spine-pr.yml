@@ -182,5 +182,11 @@ jobs:
         with:
           name: validation-spine-gaps
           path: .spine-health/
+          # `.spine-health` is a dot-directory, and upload-artifact excludes
+          # hidden paths by default — so this artifact has never actually
+          # uploaded ("No files were found with the provided path"), and
+          # `if-no-files-found: warn` kept that quiet. The findings the scan
+          # produces are the only reviewable evidence it exists to produce.
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 14
-          if-no-files-found: warn
