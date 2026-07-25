@@ -68,8 +68,13 @@ jobs:
           fetch-depth: 1
           path: Traigent
 
+      # continue-on-error so a token that is SET but unusable (expired, revoked, or — since
+      # the org enabled SAML enforcement on 2026-07-24 — SSO-deauthorized) cannot take the
+      # step down without the skip step below being reached.
       - name: Checkout validation spine
+        id: spine-checkout
         if: env.SPINE_RO_TOKEN != ''
+        continue-on-error: true
         uses: actions/checkout@v7
         with:
           repository: Traigent/traigent-validation-spine
@@ -77,33 +82,60 @@ jobs:
           path: .spine
           token: ${{ env.SPINE_RO_TOKEN }}
 
-      - name: Note skipped spine scan
-        if: env.SPINE_RO_TOKEN == ''
+      # Availability is proven by the checkout SUCCEEDING, not by the token being non-empty.
+      # The old `env.SPINE_RO_TOKEN == ''` guard is why run 30148657774 (2026-07-25) reported
+      # SUCCESS while the checkout 403'd three times and every scan step was skipped: the
+      # token was set, so the "skipped" notice never fired, and job-level continue-on-error
+      # turned the whole thing green. A scan that executed nothing looked identical to a scan
+      # that found nothing.
+      - name: Determine spine availability
         run: |
-          echo "::warning::SPINE_RO_TOKEN is not configured; validation spine scan skipped."
+          if [ "${{ steps.spine-checkout.outcome }}" = "success" ] && [ -d "$GITHUB_WORKSPACE/.spine" ]; then
+            echo "SPINE_AVAILABLE=true" >> "$GITHUB_ENV"
+          else
+            echo "SPINE_AVAILABLE=false" >> "$GITHUB_ENV"
+          fi
+
+      # This job is INTENTIONALLY advisory (job-level continue-on-error, "promote to blocking
+      # after calibration"), so staying green is correct. What was missing is a visible signal
+      # separating "scanned, nothing found" from "never scanned". This supplies it.
+      - name: Note skipped spine scan
+        if: env.SPINE_AVAILABLE != 'true'
+        run: |
+          if [ -z "${SPINE_RO_TOKEN}" ]; then
+            reason="repository secret SPINE_RO_TOKEN is not configured"
+          else
+            reason="the configured token could not check out Traigent/traigent-validation-spine (expired, revoked, or SSO-deauthorized under org SAML enforcement)"
+          fi
+          echo "::warning::Validation spine scan DID NOT RUN — ${reason}. This job is advisory and stays green by design, but NO findings were produced for this run."
           {
-            echo "## Validation Spine — PR scan"
+            echo "## Validation Spine — scan: NOT RUN"
             echo
-            echo "Skipped: repository secret \`SPINE_RO_TOKEN\` is not configured."
+            echo "**No gap report was produced.** Absence of findings here is not evidence of none."
+            echo
+            echo "Reason: ${reason}."
+            echo
+            echo "Fix: rotate the read-only spine token with \`tools/secret-ops/rotate-spine-ro-token.sh\`"
+            echo "in the traigent-workspace repo (owner-run)."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python 3.11
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install uv
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         run: pip install --upgrade pip "uv==0.8.13"
 
       - name: Install spine
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         working-directory: .spine
         run: uv sync --extra dev
 
       - name: Run security_ledger against product repo
-        if: env.SPINE_RO_TOKEN != ''
+        if: env.SPINE_AVAILABLE == 'true'
         id: spine-run
         continue-on-error: true
         working-directory: .spine
@@ -123,7 +155,7 @@ jobs:
             --file-limit "$SPINE_FILE_LIMIT"
 
       - name: Summarize new critical findings
-        if: always() && env.SPINE_RO_TOKEN != ''
+        if: always() && env.SPINE_AVAILABLE == 'true'
         working-directory: .spine
         run: |
           set -e
@@ -161,7 +193,7 @@ jobs:
           PY
 
       - name: Upload spine gap artifacts
-        if: always() && env.SPINE_RO_TOKEN != ''
+        if: always() && env.SPINE_AVAILABLE == 'true'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: validation-spine-gaps
