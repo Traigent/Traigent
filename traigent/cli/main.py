@@ -2186,10 +2186,11 @@ def validate_config(config_file: str) -> None:
         objectives = config.get("objectives", ["accuracy"])
         dataset_path = config.get("eval_dataset")
         algorithm = config.get("algorithm", "grid")
+        max_trials = config.get("max_trials")
 
         # Validate configuration
         result = OptimizationValidator.validate_optimization_config(
-            config_space, objectives, dataset_path, algorithm
+            config_space, objectives, dataset_path, algorithm, max_trials=max_trials
         )
 
         if result.is_valid:

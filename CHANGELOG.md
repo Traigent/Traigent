@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Configuration-space validation now reports degenerate knob variation. A space
+  can be structurally legal and still be unable to produce a meaningful
+  comparison, and until now the SDK said nothing. `Validators`
+  `.validate_configuration_space()` adds non-fatal warnings — never errors, the
+  space still runs — for values too close to behave differently
+  (`temperature: [0.0001, 0.0002]`), duplicate values inside one knob
+  (`[0.7, 0.7, 0.9]` claims three points and has two), a space far larger than
+  the trial budget when `max_trials` is supplied, a multi-parameter space in
+  which only one parameter actually varies, and a knob sweeping a trivial
+  fraction of its canonical range. Each message states what the finding costs
+  the reader ("these two values are the same configuration in practice") rather
+  than only flagging it as unusual. Canonical per-knob ranges are read from the
+  shipped `config_generator` range presets, so the checks cannot drift from
+  them. `traigent validate-config` passes the config file's `max_trials`
+  through, so the budget warning is reachable today.
+
 ### Security
 
 - `@observe` exception metadata now honors the content gate. `error_message`

@@ -301,3 +301,129 @@ class TestSafeOpenContainmentGuard:
         with pytest.raises(PathTraversalError):
             with safe_open("link.jsonl", base, mode="r"):
                 pass
+
+
+class TestDegenerateVariationDiagnostics:
+    """Issue #2025: legal-but-useless configuration spaces are now reported.
+
+    Every space below is structurally valid and runs to completion, so each
+    diagnostic must arrive as a warning and never flip ``is_valid``.
+    """
+
+    @staticmethod
+    def _warnings_for(config_space: dict, **kwargs) -> list[str]:
+        result = Validators.validate_configuration_space(config_space, **kwargs)
+        assert result.is_valid, "degenerate-variation diagnostics must stay non-fatal"
+        return [f"{w.field}: {w.message}" for w in result.warnings]
+
+    def test_values_too_close_to_differ_are_reported(self) -> None:
+        messages = self._warnings_for({"temperature": [0.0001, 0.0002]})
+
+        assert any("same configuration in practice" in m for m in messages), messages
+
+    def test_values_within_the_resolution_floor_are_reported(self) -> None:
+        messages = self._warnings_for({"temperature": [0.70, 0.71, 0.72]})
+
+        assert any("0.7 and 0.71 differ by 0.01" in m for m in messages), messages
+
+    def test_step_finer_than_the_resolution_floor_is_reported(self) -> None:
+        messages = self._warnings_for(
+            {
+                "temperature": {"type": "float", "low": 0.0, "high": 1.0, "step": 0.01},
+                "model": ["gpt-4o-mini", "gpt-4o"],
+            }
+        )
+
+        assert any("same configuration in practice" in m for m in messages), messages
+
+    def test_duplicate_values_within_one_knob_are_reported(self) -> None:
+        messages = self._warnings_for({"temperature": [0.7, 0.7, 0.9]})
+
+        assert any(
+            "3 values declared but only 2 are distinct" in m for m in messages
+        ), messages
+
+    def test_duplicates_do_not_count_toward_effective_variation(self) -> None:
+        messages = self._warnings_for(
+            {"temperature": [0.7, 0.7], "model": ["gpt-4o-mini"]}
+        )
+
+        assert any(
+            "none of the 2 parameters has two or more distinct values" in m
+            for m in messages
+        ), messages
+
+    def test_space_far_larger_than_the_trial_budget_is_reported(self) -> None:
+        messages = self._warnings_for(
+            {
+                "model": ["a", "b", "c", "d", "e"],
+                "prompt_style": ["p1", "p2", "p3", "p4"],
+                "temperature": [0.0, 0.5, 1.0],
+            },
+            max_trials=5,
+        )
+
+        assert any(
+            "60 distinct configurations declared but max_trials=5" in m
+            for m in messages
+        ), messages
+
+    def test_budget_covering_the_space_is_not_reported(self) -> None:
+        messages = self._warnings_for(
+            {"temperature": [0.0, 0.5, 1.0], "model": ["gpt-4o-mini", "gpt-4o"]},
+            max_trials=6,
+        )
+
+        assert messages == []
+
+    def test_single_varying_parameter_is_reported(self) -> None:
+        messages = self._warnings_for(
+            {"temperature": [0.0, 0.5, 1.0], "model": ["gpt-4o-mini"]}
+        )
+
+        assert any(
+            "2 parameters declared but only one of them varies" in m for m in messages
+        ), messages
+
+    def test_deliberate_single_parameter_space_is_not_reported(self) -> None:
+        messages = self._warnings_for({"temperature": [0.0, 0.5, 1.0]})
+
+        assert messages == []
+
+    def test_narrow_span_against_canonical_range_is_reported(self) -> None:
+        messages = self._warnings_for(
+            {"temperature": [0.1, 0.2], "model": ["gpt-4o-mini", "gpt-4o"]}
+        )
+
+        assert any(
+            "sweeps 0.1-0.2, only 10% of temperature's usual 0-1 range" in m
+            for m in messages
+        ), messages
+
+    def test_canonical_range_is_read_from_the_shipped_presets(self) -> None:
+        """The ranges are reused from range_presets, not restated here."""
+        from traigent.config_generator.presets.range_presets import get_preset_range
+
+        preset = get_preset_range("max_tokens")
+        assert preset is not None
+        low = preset["kwargs"]["low"]
+        high = preset["kwargs"]["high"]
+
+        messages = self._warnings_for(
+            {"max_tokens": [300, 400], "model": ["gpt-4o-mini", "gpt-4o"]}
+        )
+
+        assert any(f"usual {low}-{high} range" in m for m in messages), messages
+
+    def test_full_range_sweep_is_not_reported(self) -> None:
+        messages = self._warnings_for(
+            {"temperature": (0.0, 1.0), "model": ["gpt-4o-mini", "gpt-4o"]}
+        )
+
+        assert messages == []
+
+    def test_diagnostics_are_skipped_for_a_structurally_invalid_space(self) -> None:
+        result = Validators.validate_configuration_space({"temperature": []})
+
+        assert not result.is_valid
+        assert not result.warnings

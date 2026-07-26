@@ -18,6 +18,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +137,42 @@ class ValidationResult:
             lines.append("✅ Validation passed!")
 
         return "\n".join(lines)
+
+
+# ===== Canonical Knob Ranges =====
+
+# Preset range types that describe a numeric interval. Categorical presets
+# (Choices) have no span to compare a declared sweep against.
+_NUMERIC_PRESET_RANGE_TYPES: frozenset[str] = frozenset({"Range", "IntRange"})
+
+
+@lru_cache(maxsize=1)
+def _canonical_knob_ranges() -> dict[str, tuple[float, float]]:
+    """Canonical (low, high) per knob, read from the config-generator presets.
+
+    Reused rather than re-derived so the degenerate-space diagnostics cannot
+    drift from the ranges the SDK already publishes. Imported lazily because
+    the presets package is only needed when a configuration space is diagnosed.
+    """
+    from traigent.config_generator.presets import range_presets
+
+    ranges: dict[str, tuple[float, float]] = {}
+    for canonical_name in range_presets.all_canonical_names():
+        preset = range_presets.get_preset_range(canonical_name)
+        if (
+            preset is None
+            or preset.get("range_type") not in _NUMERIC_PRESET_RANGE_TYPES
+        ):
+            continue
+        kwargs = preset.get("kwargs", {})
+        low = kwargs.get("low")
+        high = kwargs.get("high")
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+            continue
+        if high <= low:
+            continue
+        ranges[canonical_name] = (float(low), float(high))
+    return ranges
 
 
 class Validators:
@@ -550,6 +587,25 @@ class Validators:
         "log",
     }
 
+    # Two values closer than this fraction of a knob's canonical range are the
+    # same configuration in practice.
+    _RESOLUTION_FLOOR_FRACTION: float = 0.02
+
+    # Per-knob resolution floors in the knob's own units, for knobs whose
+    # canonical fraction is too fine to be meaningful.
+    _RESOLUTION_FLOOR_OVERRIDES: dict[str, float] = {
+        "temperature": 0.05,
+        "top_p": 0.05,
+    }
+
+    # A sweep covering less than this fraction of a knob's canonical range
+    # cannot tell the user whether the knob matters.
+    _NARROW_SPAN_FRACTION: float = 0.2
+
+    # Declared combinations per allowed trial above which a completed run is a
+    # sample of the space rather than a search of it.
+    _OVERSIZED_SPACE_RATIO: float = 4.0
+
     @staticmethod
     def _validate_list_param(
         result: ValidationResult, param_name: str, param_values: list[Any]
@@ -713,8 +769,14 @@ class Validators:
             cls._validate_fixed_type_param(result, param_name, param_values)
 
     @classmethod
-    def validate_configuration_space(cls, config_space: Any) -> ValidationResult:
-        """Validate Traigent configuration space."""
+    def validate_configuration_space(
+        cls, config_space: Any, *, max_trials: int | None = None
+    ) -> ValidationResult:
+        """Validate Traigent configuration space.
+
+        ``max_trials`` is optional and only used to report a space whose size
+        the trial budget cannot cover.
+        """
         result = ValidationResult()
 
         # Type check
@@ -752,6 +814,12 @@ class Validators:
                 param_values = param_values.to_config_value()
 
             cls._validate_single_param(result, param_name, param_values)
+
+        # Non-fatal diagnostics: a structurally legal space can still be unable
+        # to produce a meaningful comparison (issue #2025). Only worth running
+        # once the space is known to be well-formed.
+        if result.is_valid:
+            cls._add_degenerate_variation_diagnostics(result, config_space, max_trials)
 
         # Add suggestions for common parameters
         if "model" not in config_space:
@@ -804,6 +872,303 @@ class Validators:
         if cls._TYPED_KEYS.intersection(param_values):
             cls._validate_typed_dict_param(result, param_name, param_values)
         # Otherwise accept as nested configuration (no validation needed)
+
+    # ----- Degenerate variation diagnostics (non-fatal) -----
+
+    @staticmethod
+    def _declared_values(param_values: Any) -> list[Any] | None:
+        """Return the explicit value list a parameter declares, if it has one."""
+        if isinstance(param_values, list):
+            return param_values
+        if isinstance(param_values, dict):
+            choices = param_values.get("choices")
+            if choices is None:
+                choices = param_values.get("values")
+            if isinstance(choices, (list, tuple)):
+                return list(choices)
+        return None
+
+    @staticmethod
+    def _as_number(value: Any) -> float | None:
+        """Return *value* as a float, or None when it is not a real number."""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    @classmethod
+    def _numeric_values(cls, declared: list[Any]) -> list[float] | None:
+        """Return *declared* as floats, or None unless every entry is a number."""
+        numbers: list[float] = []
+        for value in declared:
+            number = cls._as_number(value)
+            if number is None:
+                return None
+            numbers.append(number)
+        return numbers or None
+
+    @classmethod
+    def _swept_span(cls, param_values: Any) -> tuple[float, float] | None:
+        """Return the (low, high) a numeric parameter actually sweeps."""
+        declared = cls._declared_values(param_values)
+        if declared is not None:
+            numbers = cls._numeric_values(declared)
+            if numbers is None:
+                return None
+            return min(numbers), max(numbers)
+
+        if isinstance(param_values, tuple) and len(param_values) == 2:
+            low, high = (cls._as_number(bound) for bound in param_values)
+        elif isinstance(param_values, dict):
+            low = cls._as_number(param_values.get("low", param_values.get("min")))
+            high = cls._as_number(param_values.get("high", param_values.get("max")))
+        else:
+            return None
+
+        if low is None or high is None:
+            return None
+        return low, high
+
+    @classmethod
+    def _resolution_floor(cls, param_name: str) -> float | None:
+        """Smallest difference that can matter for *param_name*, if known."""
+        override = cls._RESOLUTION_FLOOR_OVERRIDES.get(param_name)
+        if override is not None:
+            return override
+        canonical = _canonical_knob_ranges().get(param_name)
+        if canonical is None:
+            return None
+        low, high = canonical
+        return (high - low) * cls._RESOLUTION_FLOOR_FRACTION
+
+    @classmethod
+    def _report_duplicate_values(
+        cls, result: ValidationResult, param_name: str, param_values: Any
+    ) -> int:
+        """Warn about repeated values in a knob; return how many repeat."""
+        declared = cls._declared_values(param_values)
+        if not declared:
+            return 0
+
+        distinct: list[Any] = []
+        repeated: list[Any] = []
+        for value in declared:
+            if _strict_choice_match(value, distinct):
+                if not _strict_choice_match(value, repeated):
+                    repeated.append(value)
+            else:
+                distinct.append(value)
+
+        if not repeated:
+            return 0
+
+        result.add_warning(
+            f"configuration_space.{param_name}",
+            f"{len(declared)} values declared but only {len(distinct)} are distinct "
+            f"({', '.join(repr(value) for value in repeated)} repeated) - a repeat is "
+            "the same configuration again, so those trials re-measure a value already "
+            "tried instead of exploring a new one",
+            suggestions=[
+                f"Remove the repeated values: {sorted(distinct, key=repr)!r}",
+            ],
+        )
+        return len(declared) - len(distinct)
+
+    @classmethod
+    def _closest_pair(cls, param_values: Any) -> tuple[float, float, float] | None:
+        """Return (gap, lower, upper) for the two closest values a knob offers."""
+        declared = cls._declared_values(param_values)
+        if declared is not None:
+            numbers = cls._numeric_values(declared)
+            if numbers is None:
+                return None
+            ordered = sorted(set(numbers))
+            if len(ordered) < 2:
+                return None
+            return min(
+                (
+                    ordered[index + 1] - ordered[index],
+                    ordered[index],
+                    ordered[index + 1],
+                )
+                for index in range(len(ordered) - 1)
+            )
+
+        # A stepped range is never materialized here: the smallest gap between
+        # two of its grid points is the step itself.
+        if not isinstance(param_values, dict):
+            return None
+        step = cls._as_number(param_values.get("step"))
+        span = cls._swept_span(param_values)
+        if step is None or step <= 0 or span is None or span[1] - span[0] < step:
+            return None
+        return step, span[0], span[0] + step
+
+    @classmethod
+    def _report_indistinguishable_values(
+        cls, result: ValidationResult, param_name: str, param_values: Any
+    ) -> None:
+        """Warn when two declared values are too close to behave differently."""
+        canonical = _canonical_knob_ranges().get(param_name)
+        floor = cls._resolution_floor(param_name)
+        if canonical is None or floor is None or floor <= 0:
+            return
+
+        closest = cls._closest_pair(param_values)
+        if closest is None:
+            return
+
+        gap, lower, upper = closest
+        if gap >= floor:
+            return
+
+        low, high = canonical
+        result.add_warning(
+            f"configuration_space.{param_name}",
+            f"{lower:g} and {upper:g} differ by {gap:g}, far below the ~{floor:g} that "
+            f"changes behaviour across {param_name}'s usual {low:g}-{high:g} range - "
+            "these two values are the same configuration in practice, so the trial "
+            "comparing them measures noise rather than the parameter",
+            suggestions=[
+                f"Space the values at least {floor:g} apart, "
+                f"e.g. [{low:g}, {(low + high) / 2:g}, {high:g}]",
+            ],
+        )
+
+    @classmethod
+    def _report_narrow_span(
+        cls, result: ValidationResult, param_name: str, param_values: Any
+    ) -> None:
+        """Warn when a knob only sweeps a sliver of its canonical range."""
+        canonical = _canonical_knob_ranges().get(param_name)
+        if canonical is None:
+            return
+        span = cls._swept_span(param_values)
+        if span is None:
+            return
+
+        swept_low, swept_high = span
+        low, high = canonical
+        swept = swept_high - swept_low
+        if swept <= 0:
+            return  # A single point is already reported as "no optimization possible"
+
+        covered = swept / (high - low)
+        if covered >= cls._NARROW_SPAN_FRACTION:
+            return
+
+        result.add_warning(
+            f"configuration_space.{param_name}",
+            f"sweeps {swept_low:g}-{swept_high:g}, only {covered:.0%} of "
+            f"{param_name}'s usual {low:g}-{high:g} range - the run can tell you which "
+            f"of these settings won, not whether {param_name} matters for your task",
+            suggestions=[
+                f"Widen the sweep toward {low:g}-{high:g} to learn whether "
+                f"{param_name} is worth tuning at all",
+            ],
+        )
+
+    @classmethod
+    def _add_degenerate_variation_diagnostics(
+        cls,
+        result: ValidationResult,
+        config_space: dict[str, Any],
+        max_trials: int | None,
+    ) -> None:
+        """Report structurally legal spaces that cannot produce a real comparison.
+
+        Every finding is a warning, never an error: the space is runnable, it
+        just cannot answer the question the user thinks it asks.
+        """
+        from traigent.api.parameter_ranges import ParameterRange
+        from traigent.utils.discrete_domains import (
+            discrete_cardinality_for_config_param,
+        )
+
+        total_combinations: int | None = 1
+        varying_params = 0
+
+        for param_name, raw_values in config_space.items():
+            param_values = (
+                raw_values.to_config_value()
+                if isinstance(raw_values, ParameterRange)
+                else raw_values
+            )
+
+            duplicates = cls._report_duplicate_values(result, param_name, param_values)
+            cls._report_indistinguishable_values(result, param_name, param_values)
+            cls._report_narrow_span(result, param_name, param_values)
+
+            cardinality = discrete_cardinality_for_config_param(param_values)
+            if cardinality is None:
+                # Continuous range: always varies, but has no finite cardinality.
+                varying_params += 1
+                total_combinations = None
+                continue
+
+            cardinality -= duplicates
+            if cardinality >= 2:
+                varying_params += 1
+            if total_combinations is not None:
+                total_combinations *= max(cardinality, 1)
+
+        cls._report_single_varying_param(result, config_space, varying_params)
+        cls._report_undersized_budget(result, total_combinations, max_trials)
+
+    @classmethod
+    def _report_single_varying_param(
+        cls, result: ValidationResult, config_space: dict[str, Any], varying: int
+    ) -> None:
+        """Warn when a multi-parameter space only varies along one axis."""
+        # A deliberately single-parameter space is a normal thing to declare;
+        # the surprise is declaring several and pinning all but one.
+        if len(config_space) < 2 or varying > 1:
+            return
+
+        if varying == 0:
+            result.add_warning(
+                "configuration_space",
+                f"none of the {len(config_space)} parameters has two or more distinct "
+                "values - every trial runs the identical configuration, so the "
+                "reported best configuration is the only one that ever existed",
+                suggestions=["Give at least one parameter two or more distinct values"],
+            )
+            return
+
+        result.add_warning(
+            "configuration_space",
+            f"{len(config_space)} parameters declared but only one of them varies - "
+            "every difference between trials comes from that one parameter, so the "
+            "run cannot say anything about the others",
+            suggestions=[
+                "Add values to the pinned parameters, or drop them from "
+                "configuration_space so the results are not read as covering them",
+            ],
+        )
+
+    @classmethod
+    def _report_undersized_budget(
+        cls,
+        result: ValidationResult,
+        total_combinations: int | None,
+        max_trials: int | None,
+    ) -> None:
+        """Warn when max_trials can only reach a fraction of the declared space."""
+        if total_combinations is None or max_trials is None or max_trials <= 0:
+            return
+        if total_combinations <= max_trials * cls._OVERSIZED_SPACE_RATIO:
+            return
+
+        result.add_warning(
+            "configuration_space",
+            f"{total_combinations} distinct configurations declared but max_trials="
+            f"{max_trials} - the run can reach at most "
+            f"{max_trials / total_combinations:.0%} of them, so a completed run is a "
+            "sample of the space, not a search of what you declared",
+            suggestions=[
+                f"Raise max_trials, or shrink the space so it fits the budget "
+                f"(currently {total_combinations} combinations)",
+            ],
+        )
 
     @staticmethod
     def validate_objectives(objectives: Any) -> ValidationResult:
@@ -1345,11 +1710,15 @@ class OptimizationValidator:
         objectives: list[str],
         dataset: str | list[str] | None = None,
         strategy: str | None = None,
+        max_trials: int | None = None,
     ) -> ValidationResult:
         """Validate optimization configuration (class method for backward compatibility)."""
         validator = cls()
         return validator.validate(
-            config_space=config_space, objectives=objectives, dataset=dataset
+            config_space=config_space,
+            objectives=objectives,
+            dataset=dataset,
+            max_trials=max_trials,
         )
 
     def validate(
@@ -1358,13 +1727,16 @@ class OptimizationValidator:
         objectives: list[str] | None = None,
         dataset: str | list[str] | None = None,
         constraints: list[Callable[..., Any]] | None = None,
+        max_trials: int | None = None,
     ) -> ValidationResult:
         """Validate complete optimization setup."""
         result = ValidationResult()
 
         # Validate configuration space
         if config_space is not None:
-            config_result = Validators.validate_configuration_space(config_space)
+            config_result = Validators.validate_configuration_space(
+                config_space, max_trials=max_trials
+            )
             result.errors.extend(config_result.errors)
             result.warnings.extend(config_result.warnings)
             result.suggestions.extend(config_result.suggestions)
