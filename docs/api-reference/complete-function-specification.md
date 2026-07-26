@@ -548,6 +548,7 @@ class OptimizationResult:
     experiment_id: str | None = None
     cloud_url: str | None = None
     run_label: str | None = None
+    sync_session_id: str | None = None
 ```
 
 **Properties:**
@@ -557,6 +558,43 @@ class OptimizationResult:
 
 `metadata["source"]` records result provenance as one of `cloud_brain`,
 `local_fallback`, `explicit_local`, or `offline`.
+
+`sync_session_id` identifies this run's record in **this run's local session
+store**, and is the argument `traigent sync` accepts against that store. It is
+populated when the local store holds the authoritative copy (offline /
+no-egress, no-API-key fallback, explicit-local with backend tracking disabled,
+mid-run degradation, trials the backend did not all acknowledge,
+backend-early-completion) and `None` when the run was tracked end-to-end on the
+backend — in that case the run is already on the portal; use `cloud_url` /
+`experiment_run_id` — or when no local record could be read for the id (storage
+unavailable or the record unreadable; it may still be on disk — check
+`traigent local list`).
+
+The id is store-relative. `traigent sync` runs as a separate process and
+resolves its store from the environment, so a run that passed the programmatic
+`local_storage_path` option must point the CLI at the same root:
+
+```bash
+TRAIGENT_RESULTS_FOLDER="<that path>" traigent sync <sync_session_id>
+```
+
+The SDK logs a warning naming that root when the run's store and the CLI default
+differ. For a backend-early-complete (#1938) or partially-acknowledged run
+(which includes a run that degraded to local-only mid-flight, since degradation
+means at least one trial went unacknowledged), the
+trials already submitted are on the portal, so syncing re-imports them as a
+*separate* experiment — a deliberate trade-off, since the SDK's own message for
+those shapes tells the user to sync.
+`optimization_id` is **not** accepted by `traigent sync`.
+The id is machine-local and is not restored when a result is reloaded from disk.
+
+```python
+import subprocess
+
+result = agent.optimize_sync()
+if result.sync_session_id:
+    subprocess.run(["traigent", "sync", result.sync_session_id], check=True)
+```
 
 #### `best_config` in multi-objective runs (authoritative accessor)
 

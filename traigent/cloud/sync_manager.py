@@ -598,7 +598,21 @@ class SyncManager:
         with self.storage.acquire_lock(f"sync_{session_id}"):
             session = self.storage.load_session(session_id)
             if not session:
-                raise TraigentStorageError(f"Session {session_id} not found") from None
+                # The store path is deliberately NOT interpolated: this message
+                # is echoed verbatim by the CLI into shared CI logs and support
+                # pastes, and the path carries the username / project directory.
+                logger.debug(
+                    "Session '%s' not found in local store at %s",
+                    session_id,
+                    self.storage.storage_path,
+                )
+                raise TraigentStorageError(
+                    f"Session '{session_id}' not found in the local store. "
+                    "`traigent sync` takes a LOCAL session id — not an "
+                    "optimization_id. Use `result.sync_session_id` from the run "
+                    "you want to upload, or `traigent local list` to see the "
+                    "ids on this machine."
+                ) from None
 
             # Convert to Traigent format
             traigent_data = self.convert_session_to_traigent_format(session)

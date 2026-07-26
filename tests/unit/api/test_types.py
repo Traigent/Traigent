@@ -1,5 +1,6 @@
 """Comprehensive tests for traigent.api.types module."""
 
+import dataclasses
 from datetime import datetime
 from typing import Any
 
@@ -558,6 +559,44 @@ class TestOptimizationResult:
         assert "accuracy" in df.columns  # From metrics
         assert "duration" in df.columns
         assert "timestamp" in df.columns
+
+    def test_sync_session_id_defaults_to_none(self):
+        """sync_session_id is additive and optional (#2020)."""
+        result = OptimizationResult(
+            trials=self.trials,
+            best_config={},
+            best_score=0.95,
+            optimization_id="opt_001",
+            duration=10.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+        )
+
+        assert result.sync_session_id is None
+
+    def test_sync_session_id_preserved_when_set(self):
+        """An explicit sync_session_id survives construction and asdict (#2020)."""
+        result = OptimizationResult(
+            trials=self.trials,
+            best_config={},
+            best_score=0.95,
+            optimization_id="opt_001",
+            duration=10.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+            sync_session_id="session_abc123",
+        )
+
+        assert result.sync_session_id == "session_abc123"
+        # ConfigStateManager.save_optimization_results dumps the dataclass with
+        # asdict(), so the key must be present on the write side.
+        assert dataclasses.asdict(result)["sync_session_id"] == "session_abc123"
 
 
 class TestSensitivityAnalysis:

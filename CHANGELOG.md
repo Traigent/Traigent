@@ -18,7 +18,60 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   retained in every mode. Closes the error-path egress gap left open when
   0.21.0 made `@observe` metadata-only.
 
+### Added
+
+- `OptimizationResult.sync_session_id` — the id of the run you just finished in
+  **that run's local session store**, and the argument
+  `traigent sync <SESSION_ID>` accepts against that store (#2020).
+  Populated for offline / no-egress runs, no-API-key local-fallback runs,
+  explicit-local runs with backend tracking disabled, runs that degraded to
+  local-only mid-flight, runs whose trials the backend did not all acknowledge,
+  and runs the backend closed early (#1938); `None` when the backend tracked the
+  run end-to-end (nothing to upload) or when no local record can be read for it.
+  This is the supported surface — read it, not `metadata`. The id is
+  store-relative: `traigent sync` is a separate process that resolves its store
+  from the environment, so a run that passed the programmatic
+  `local_storage_path` option must point the CLI at the same root
+  (`TRAIGENT_RESULTS_FOLDER="<that path>" traigent sync <id>`) — the SDK logs a
+  warning naming that root when the two differ. For a backend-early-complete
+  (#1938) or partially-acknowledged run (which includes a run that degraded to
+  local-only mid-flight, since degradation means at least one trial went
+  unacknowledged), the trials already submitted are on the
+  portal, so syncing re-imports them as a separate experiment — a deliberate
+  trade-off, since the SDK's own message for those shapes tells the user to
+  sync.
+
+  `result.metadata["local_session_id"]` is also touched, but it is **not** a
+  clean mirror and never was: on connected runs `attach_session_metadata` sets
+  it to the **backend** session id (so it was never a "this run was offline"
+  marker — use `result.source` for provenance), while #1939 set it to the local
+  id on offline runs. This release additionally populates the local id for
+  no-key, tracking-disabled, degraded, unacknowledged-trial, and #1938 runs —
+  and, deliberately, **stops** writing it when no local record can be read for
+  the id, so a value `traigent sync` would reject is never surfaced. That last
+  part is a narrowing relative to #1939, not a superset.
+
+  Known gaps — two shapes deliberately left uncovered:
+
+  - Backend persistence failed / finalize was not acknowledged. An exception
+    out of finalize cannot be distinguished from a committed write whose
+    response was lost, so that failure **does not by itself** produce an id —
+    the persistence-failure handler deliberately does not add one, because
+    handing one out could duplicate a run the backend already holds. It does
+    not take one away either: the id is assigned before the finalize block, so
+    a run that already qualified under another clause (e.g. partial
+    acknowledgement) keeps the id it was given even if finalize then fails.
+    The existing log still advises `traigent local sync`, which is whole-store.
+    A targeted repair path is follow-up work.
+  - A run that raises mid-flight re-raises instead of returning a result (the
+    orchestrator's FAILED path), so no `sync_session_id` is delivered even
+    though the local record holds the trials that completed.
+
 ### Fixed
+
+- `traigent sync` now explains what it wants when an id is not found: the old
+  `Session <id> not found` gave no path forward for the common case of passing
+  `optimization_id`, which `sync` does not accept (#2020).
 
 - `ObservabilityClient` fails fast when no credential resolves. With
   `offline_mode` off and neither an API key, a JWT, nor a non-blank
