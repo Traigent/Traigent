@@ -1,12 +1,14 @@
 """Tests for validation utilities."""
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
 
+from traigent.utils.exceptions import TraigentWarning
 from traigent.utils.secure_path import PathTraversalError, safe_open
-from traigent.utils.validation import Validators
+from traigent.utils.validation import Validators, validate_config_space
 
 
 def _write_jsonl(path: Path, records: list[dict] | None = None) -> None:
@@ -301,3 +303,31 @@ class TestSafeOpenContainmentGuard:
         with pytest.raises(PathTraversalError):
             with safe_open("link.jsonl", base, mode="r"):
                 pass
+
+
+class TestValidateConfigSpaceWarnings:
+    """Tests for surfacing non-fatal config-space warnings (issue #2021)."""
+
+    def test_emit_warnings_surfaces_single_value_warning(self) -> None:
+        with pytest.warns(
+            TraigentWarning, match="Single value in list - no optimization possible"
+        ) as record:
+            validate_config_space({"temperature": [0.7]}, emit_warnings=True)
+
+        message = str(record[0].message)
+        assert "configuration_space.temperature" in message
+        assert "Add more values or remove this parameter" in message
+
+    def test_warnings_are_opt_in(self) -> None:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            validate_config_space({"temperature": [0.7]})
+
+        assert record == []
+
+    def test_valid_space_emits_nothing(self) -> None:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            validate_config_space({"temperature": [0.0, 0.7]}, emit_warnings=True)
+
+        assert record == []
