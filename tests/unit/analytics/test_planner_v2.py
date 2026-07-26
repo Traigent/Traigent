@@ -127,6 +127,134 @@ async def test_get_next_decision_uses_additive_v2_endpoint(
 
 
 @pytest.mark.asyncio
+async def test_get_next_decision_preserves_and_validates_attribution(
+    decision_payload: dict[str, object],
+) -> None:
+    """A well-formed first-party attribution block is accepted + surfaced."""
+    attribution = {
+        "source": "traigent",
+        "label": "Traigent",
+        "headline": "Traigent selected this decision.",
+        "why": "Certified from your optimization history and value priors.",
+        "basis": ["optimization_history", "value_priors"],
+        "engine": "policy",
+    }
+    payload = deepcopy(decision_payload)
+    payload["attribution"] = attribution
+    client, _ = _client_with_response(payload)
+
+    result = await client.get_next_decision("run_123")
+
+    assert result == payload
+    assert result["attribution"] == attribution
+
+
+@pytest.mark.asyncio
+async def test_get_next_decision_without_attribution_is_unchanged(
+    decision_payload: dict[str, object],
+) -> None:
+    """Backward compat: the absent attribution case still works."""
+    client, _ = _client_with_response(decision_payload)
+
+    result = await client.get_next_decision("run_123")
+
+    assert result == decision_payload
+    assert "attribution" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attribution",
+    [
+        "not-an-object",
+        {"source": "traigent", "label": "Traigent"},  # missing fields
+        {  # third-party source
+            "source": "acme",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": ["optimization_history"],
+            "engine": "policy",
+        },
+        {  # empty basis
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": [],
+            "engine": "policy",
+        },
+        {  # unknown basis token
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": ["mystery_signal"],
+            "engine": "policy",
+        },
+        {  # unhashable basis token (dict) must fail closed, not raise TypeError
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": [{}],
+            "engine": "policy",
+        },
+        {  # non-string, non-dict basis token
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": [123],
+            "engine": "policy",
+        },
+        {  # unsupported engine
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": ["optimization_history"],
+            "engine": "smartopt",
+        },
+        {  # unhashable engine (dict) must fail closed, not raise TypeError
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": ["optimization_history"],
+            "engine": {},
+        },
+        {  # non-string, non-dict engine
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": ["optimization_history"],
+            "engine": 123,
+        },
+        {  # unexpected extra field
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "h",
+            "why": "w",
+            "basis": ["optimization_history"],
+            "engine": "policy",
+            "internal_signal": 0.99,
+        },
+    ],
+)
+async def test_get_next_decision_rejects_malformed_attribution(
+    decision_payload: dict[str, object], attribution: object
+) -> None:
+    payload = deepcopy(decision_payload)
+    payload["attribution"] = attribution
+    client, _ = _client_with_response(payload)
+
+    with pytest.raises(ValueError, match="attribution"):
+        await client.get_next_decision("run_123")
+
+
+@pytest.mark.asyncio
 async def test_get_next_decision_rejects_missing_planner_payload() -> None:
     client, _ = _client_with_response({})
 

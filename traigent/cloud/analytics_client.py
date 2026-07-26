@@ -109,6 +109,22 @@ _DECISION_PAYLOAD_REQUIRED_KEYS = frozenset(
         "warnings",
     }
 )
+# Optional first-party attribution block (BE #2431). Allowed-but-not-required:
+# absent on degenerate/empty briefs; when present it must match the frozen
+# contract exactly and is surfaced unchanged on the returned payload.
+_ATTRIBUTION_FIELDS = frozenset(
+    {"source", "label", "headline", "why", "basis", "engine"}
+)
+_ATTRIBUTION_BASIS_TOKENS = frozenset(
+    {
+        "optimization_history",
+        "run_comparison",
+        "parameter_importance",
+        "value_priors",
+        "optimization_logic",
+    }
+)
+_ATTRIBUTION_ENGINES = frozenset({"rules", "policy"})
 _RUN_PARETO_REQUIRED_KEYS = frozenset(
     {
         "run_id",
@@ -472,6 +488,51 @@ def _require_keys(
     if missing:
         raise AnalyticsClientError(
             f"Malformed {what} response: missing required key(s): {', '.join(missing)}."
+        )
+
+
+def _validate_attribution(value: Any, *, what: str) -> None:
+    """Validate the optional first-party attribution block, failing closed.
+
+    Absent is legal (degenerate/empty responses omit it). When present, the
+    block must match the frozen contract exactly: a Traigent-sourced label,
+    non-empty headline/why strings, a non-empty basis drawn from the known
+    token set, and a rules|policy engine. A malformed block fails closed the
+    same way other malformed sub-objects do.
+    """
+    if not isinstance(value, dict) or set(value) != _ATTRIBUTION_FIELDS:
+        raise AnalyticsClientError(
+            f"Malformed {what} response: attribution fields are invalid."
+        )
+    if value.get("source") != "traigent" or value.get("label") != "Traigent":
+        raise AnalyticsClientError(
+            f"Malformed {what} response: attribution must be first-party Traigent."
+        )
+    for field in ("headline", "why"):
+        text = value.get(field)
+        if not isinstance(text, str) or not text:
+            raise AnalyticsClientError(
+                f"Malformed {what} response: attribution.{field} must be a "
+                "non-empty string."
+            )
+    basis = value.get("basis")
+    if (
+        not isinstance(basis, list)
+        or not basis
+        or any(
+            not isinstance(token, str) or token not in _ATTRIBUTION_BASIS_TOKENS
+            for token in basis
+        )
+    ):
+        raise AnalyticsClientError(
+            f"Malformed {what} response: attribution.basis must be a non-empty "
+            "list of known basis tokens."
+        )
+    engine = value.get("engine")
+    if not isinstance(engine, str) or engine not in _ATTRIBUTION_ENGINES:
+        raise AnalyticsClientError(
+            f"Malformed {what} response: attribution.engine must be 'rules' or "
+            "'policy'."
         )
 
 
@@ -2195,6 +2256,8 @@ class BackendAnalyticsClient:
             params={"intent": normalized_intent},
         )
         _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what="decision brief")
+        if "attribution" in payload:
+            _validate_attribution(payload["attribution"], what="decision brief")
         return payload
 
     async def get_single_run_pareto(

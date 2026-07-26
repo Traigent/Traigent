@@ -62,6 +62,21 @@ _SELECTOR_ENGINES = frozenset({"rules", "policy", "safety"})
 _SOURCE_ENGINES = frozenset({"rules", "policy", "safety"})
 _CONTEXT_STATUSES = frozenset({"complete", "incomplete"})
 _EVIDENCE_LEVELS = frozenset({"low", "medium", "high"})
+# Optional first-party attribution block (BE #2431). Absent on degenerate/empty
+# responses; when present it must match the frozen contract exactly.
+_ATTRIBUTION_FIELDS = frozenset(
+    {"source", "label", "headline", "why", "basis", "engine"}
+)
+_ATTRIBUTION_BASIS_TOKENS = frozenset(
+    {
+        "optimization_history",
+        "run_comparison",
+        "parameter_importance",
+        "value_priors",
+        "optimization_logic",
+    }
+)
+_ATTRIBUTION_ENGINES = frozenset({"rules", "policy"})
 _CATEGORIES = frozenset(
     {
         "score_evaluation_set",
@@ -415,6 +430,45 @@ def _require_exact_keys(
     return cast(dict[str, Any], value)
 
 
+def _validate_attribution(value: Any) -> None:
+    """Validate the optional first-party attribution block, failing closed.
+
+    Absent is legal (degenerate/empty responses omit it). When present, the
+    block must match the frozen contract exactly: a Traigent-sourced label,
+    non-empty headline/why strings, a non-empty basis drawn from the known
+    token set, and a rules|policy engine. A malformed block fails closed the
+    same way other malformed sub-objects do.
+    """
+    if not isinstance(value, dict) or set(value) != _ATTRIBUTION_FIELDS:
+        raise ValueError("Planner V2 attribution fields are invalid")
+    if value.get("source") != "traigent":
+        raise ValueError("Planner V2 attribution.source must be 'traigent'")
+    if value.get("label") != "Traigent":
+        raise ValueError("Planner V2 attribution.label must be 'Traigent'")
+    for field in ("headline", "why"):
+        text = value.get(field)
+        if not isinstance(text, str) or not text:
+            raise ValueError(
+                f"Planner V2 attribution.{field} must be a non-empty string"
+            )
+    basis = value.get("basis")
+    if (
+        not isinstance(basis, list)
+        or not basis
+        or any(
+            not isinstance(token, str) or token not in _ATTRIBUTION_BASIS_TOKENS
+            for token in basis
+        )
+    ):
+        raise ValueError(
+            "Planner V2 attribution.basis must be a non-empty list of known "
+            "basis tokens"
+        )
+    engine = value.get("engine")
+    if not isinstance(engine, str) or engine not in _ATTRIBUTION_ENGINES:
+        raise ValueError("Planner V2 attribution.engine must be 'rules' or 'policy'")
+
+
 def _validate_decision_response(
     payload: Any,
     *,
@@ -427,7 +481,10 @@ def _validate_decision_response(
         payload,
         field="Planner V2 response",
         required={"schema_version", "lifecycle_id", "run_id", "decision", "meta"},
+        optional={"attribution"},
     )
+    if "attribution" in root:
+        _validate_attribution(root["attribution"])
     if root["schema_version"] != PLANNER_SCHEMA_VERSION:
         raise ValueError(
             "Planner V2 response has unsupported schema_version "
