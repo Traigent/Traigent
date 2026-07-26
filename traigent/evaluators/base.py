@@ -249,10 +249,50 @@ def _dataset_not_found_message(
     )
 
 
+def _resolve_relative_to_cwd(
+    *,
+    path_obj: Path,
+    source: str,
+    dataset_root: Path,
+) -> Path | None:
+    """Resolve a relative dataset path against the cwd, staying inside the root.
+
+    Fallback for the doubled-path case: when ``TRAIGENT_DATASET_ROOT`` points at
+    a subdirectory and the caller passes the natural cwd-relative spelling that
+    already names that subdirectory, joining it onto the root doubles the
+    segment (``runs/runs/eval.jsonl``) and misses a file that is plainly there.
+
+    Returns the fully resolved path only when the cwd-relative spelling both
+    exists and is still contained by ``dataset_root``; otherwise ``None``, so
+    the caller keeps raising its dataset-root diagnostic. Containment is checked
+    on the symlink-resolved path, so this can never widen what may be read
+    beyond the trusted root.
+    """
+
+    try:
+        resolved = (Path.cwd() / path_obj).resolve(strict=True)
+    except FileNotFoundError:
+        return None
+    except RuntimeError as exc:  # pragma: no cover - symlink loops
+        raise ValidationError(f"Invalid dataset path: {source}") from exc
+
+    try:
+        resolved.relative_to(dataset_root)
+    except ValueError:
+        return None
+
+    return resolved
+
+
 def _resolve_dataset_source(
     source: str,
 ) -> tuple[Path, DatasetRegistryEntry | None]:
     """Resolve a dataset reference to an absolute path.
+
+    Relative references are resolved against the dataset root first. When that
+    misses, they are retried against the current working directory and accepted
+    only if they still land under the dataset root (see
+    ``_resolve_relative_to_cwd``).
 
     Security: All dataset paths must reside under the configured dataset root.
     When TRAIGENT_DATASET_ROOT is not set, the current working directory is
@@ -268,15 +308,26 @@ def _resolve_dataset_source(
     try:
         resolved_path = candidate.resolve(strict=True)
     except FileNotFoundError as exc:
-        raise ValidationError(
-            _dataset_not_found_message(
+        fallback_path = (
+            None
+            if is_absolute_path
+            else _resolve_relative_to_cwd(
+                path_obj=path_obj,
                 source=source,
-                resolved_reference=resolved_reference,
-                is_absolute_path=is_absolute_path,
                 dataset_root=dataset_root,
-                candidate=candidate,
             )
-        ) from exc
+        )
+        if fallback_path is None:
+            raise ValidationError(
+                _dataset_not_found_message(
+                    source=source,
+                    resolved_reference=resolved_reference,
+                    is_absolute_path=is_absolute_path,
+                    dataset_root=dataset_root,
+                    candidate=candidate,
+                )
+            ) from exc
+        resolved_path = fallback_path
     except RuntimeError as exc:  # pragma: no cover - symlink loops
         raise ValidationError(f"Invalid dataset path: {source}") from exc
 

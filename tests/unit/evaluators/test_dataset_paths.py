@@ -346,6 +346,129 @@ def test_dataset_registry_path_matching_root_subdir_does_not_silently_double(
     assert len(dataset) == 1
 
 
+def test_dataset_cwd_relative_path_inside_root_is_accepted(monkeypatch, tmp_path):
+    """Regression for issue #2023: the cwd-relative spelling must load.
+
+    Layout from the filed repro: the run directory contains ``traigent-runs/``
+    and TRAIGENT_DATASET_ROOT points at that subdirectory. Joining the natural
+    cwd-relative spelling onto the root doubles the segment
+    (``traigent-runs/traigent-runs/eval.jsonl``) and used to fail for a file
+    that plainly exists. Resolution now retries against the cwd and accepts the
+    result because it is still contained by the dataset root.
+    """
+    run_dir = tmp_path / "run"
+    dataset_root = run_dir / "traigent-runs"
+    dataset_root.mkdir(parents=True)
+    dataset_file = dataset_root / "eval.jsonl"
+    _write_sample_dataset(dataset_file)
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+    monkeypatch.chdir(run_dir)
+
+    dataset = Dataset.from_jsonl("traigent-runs/eval.jsonl")
+
+    assert len(dataset) == 1
+    assert dataset.metadata["source_path"] == str(dataset_file.resolve())
+
+
+def test_dataset_cwd_fallback_still_rejects_paths_outside_root(monkeypatch, tmp_path):
+    """The cwd fallback must not become an escape hatch out of the dataset root.
+
+    Both spellings below resolve to a real file when interpreted against the
+    cwd, but neither lands under TRAIGENT_DATASET_ROOT, so the fallback must
+    refuse them and the original dataset-root diagnostic must survive.
+    """
+    run_dir = tmp_path / "run"
+    dataset_root = run_dir / "traigent-runs"
+    dataset_root.mkdir(parents=True)
+
+    sibling_file = run_dir / "outside.jsonl"
+    _write_sample_dataset(sibling_file)
+    parent_file = tmp_path / "secret.jsonl"
+    _write_sample_dataset(parent_file)
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+    monkeypatch.chdir(run_dir)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Dataset.from_jsonl("outside.jsonl")
+    # The message still names the dataset-root candidate, proving the cwd hit
+    # was discarded rather than silently loaded.
+    assert str(dataset_root / "outside.jsonl") in str(exc_info.value)
+
+    with pytest.raises(ValidationError):
+        Dataset.from_jsonl("../secret.jsonl")
+
+
+def test_dataset_cwd_fallback_rejects_symlink_escape(monkeypatch, tmp_path):
+    """A symlink reached through the cwd fallback is still resolved and rejected.
+
+    ``traigent-runs/link.jsonl`` misses under the root (doubled), so the cwd
+    fallback finds the symlink inside the root - but containment is enforced on
+    the symlink-resolved target, which lives outside it.
+    """
+    if not hasattr(os, "symlink"):
+        pytest.skip("OS does not support symlinks")
+
+    run_dir = tmp_path / "run"
+    dataset_root = run_dir / "traigent-runs"
+    dataset_root.mkdir(parents=True)
+
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "secret.jsonl"
+    _write_sample_dataset(outside_file)
+
+    symlink_path = dataset_root / "link.jsonl"
+    try:
+        symlink_path.symlink_to(outside_file)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not permitted in this environment")
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+    monkeypatch.chdir(run_dir)
+
+    with pytest.raises(ValidationError):
+        Dataset.from_jsonl("traigent-runs/link.jsonl")
+
+
+def test_dataset_root_relative_spelling_wins_over_cwd_spelling(monkeypatch, tmp_path):
+    """The fallback is additive: it never overrides a root-relative hit.
+
+    With the cwd itself inside the dataset root, ``data.jsonl`` names a real
+    file under both bases. The dataset root keeps winning, so no currently
+    successful resolution changes meaning.
+    """
+    dataset_root = tmp_path / "root"
+    nested = dataset_root / "nested"
+    nested.mkdir(parents=True)
+
+    _write_sample_dataset(dataset_root / "data.jsonl")
+    (nested / "data.jsonl").write_text(
+        '{"input": {"text": "a"}, "output": "1"}\n'
+        '{"input": {"text": "b"}, "output": "2"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(dataset_root))
+    monkeypatch.delenv("TRAIGENT_DATASET_REGISTRY", raising=False)
+    clear_dataset_registry_cache()
+    monkeypatch.chdir(nested)
+
+    dataset = Dataset.from_jsonl("data.jsonl")
+
+    assert len(dataset) == 1
+    assert dataset.metadata["source_path"] == str(
+        (dataset_root / "data.jsonl").resolve()
+    )
+
+
 def test_dataset_registry_outside_root_rejected(monkeypatch, tmp_path):
     dataset_root = tmp_path / "datasets"
     dataset_root.mkdir()
