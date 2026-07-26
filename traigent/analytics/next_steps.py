@@ -449,8 +449,7 @@ def _validate_attribution(value: Any) -> None:
     engine = value.get("engine")
     if not isinstance(engine, str) or engine not in _ATTRIBUTION_ENGINES:
         raise ValueError(
-            "Guidance integrity error: attribution.engine must be 'rules' or "
-            "'policy'."
+            "Guidance integrity error: attribution.engine must be 'rules' or 'policy'."
         )
 
 
