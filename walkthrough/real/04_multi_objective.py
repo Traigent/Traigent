@@ -145,7 +145,7 @@ async def main() -> None:
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
     print(f"  Cost: ${results.best_metrics.get('cost', 0):.6f}")
-    print(f"  Latency: {results.best_metrics.get('latency', 0):.3f}s")
+    print(f"  Latency: {results.best_metrics.get('latency', 0):.0f}ms")
 
 
 if __name__ == "__main__":
