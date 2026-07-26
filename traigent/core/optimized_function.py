@@ -71,6 +71,7 @@ from traigent.core.execution_policy_runtime import (
     exception_is_connectivity,
     initial_result_source,
     is_offline_requested,
+    local_fallback_notice,
     mark_local_fallback,
     policy_allows_cloud_fallback,
     policy_from_config,
@@ -2389,8 +2390,9 @@ class OptimizedFunction(Generic[_P, _R]):
                 and e.stage == "session-create"
             ):
                 logger.warning(
-                    "traigent.cloud_brain_fallback source=%s fallback_reason=%s "
-                    "stage=next-trial",
+                    "⚠️  %s traigent.cloud_brain_fallback source=%s "
+                    "fallback_reason=%s stage=next-trial",
+                    local_fallback_notice(reason),
                     SOURCE_LOCAL_FALLBACK,
                     reason,
                 )

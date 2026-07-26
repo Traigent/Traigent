@@ -242,6 +242,35 @@ def fallback_reason_from_session_result(result: SessionCreationResult) -> str:
     return ": ".join(parts) or "backend unavailable"
 
 
+def local_fallback_notice(reason: str | None) -> str:
+    """User-facing, one-paragraph explanation of a local-fallback run.
+
+    Issue #2024: the machine-readable ``traigent.cloud_brain_fallback`` line
+    tells a maintainer what happened but tells a user nothing, so an ``auto``
+    run that degraded to a local search reads exactly like managed
+    optimization. Single formatter so the session-create warning and the
+    reporting-time banner cannot drift apart.
+    """
+
+    reason_text = (reason or "backend unavailable").strip()
+    if SessionCreationFailureReason.NO_API_KEY.value in reason_text:
+        lead = (
+            "No Traigent API key was found, so this ran a LOCAL search on your "
+            "machine, not Traigent's managed optimization."
+        )
+    else:
+        lead = (
+            "Traigent's managed optimization was unavailable, so this ran a "
+            "LOCAL search on your machine."
+        )
+    return (
+        f"{lead} The reported best configuration was chosen by that local "
+        f"search (reason: {reason_text}). Set TRAIGENT_API_KEY to run managed "
+        "optimization, or TRAIGENT_REQUIRE_CLOUD=1 to fail instead of falling "
+        "back."
+    )
+
+
 def _combined_session_text(result: SessionCreationResult) -> str:
     detail = result.failure_response
     return " ".join(

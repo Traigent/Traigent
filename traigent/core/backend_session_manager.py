@@ -37,6 +37,7 @@ from traigent.core.execution_policy_runtime import (
     backend_egress_disabled,
     exception_status,
     fallback_reason_from_session_result,
+    local_fallback_notice,
     mark_local_fallback,
     policy_allows_cloud_fallback,
     policy_from_config,
@@ -981,8 +982,9 @@ class BackendSessionManager:
                     self._fallback_reason = fallback_reason
                     mark_local_fallback(self._traigent_config, fallback_reason)
                     logger.warning(
-                        "traigent.cloud_brain_fallback source=%s "
+                        "⚠️  %s traigent.cloud_brain_fallback source=%s "
                         "fallback_reason=%s stage=session-create",
+                        local_fallback_notice(fallback_reason),
                         SOURCE_LOCAL_FALLBACK,
                         fallback_reason,
                     )

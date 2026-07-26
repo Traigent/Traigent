@@ -2553,6 +2553,59 @@ class TestHandleSessionCreationResult:
         assert any("traigent.cloud_brain_fallback" in msg for msg in caplog.messages)
         assert any("HTTP 400" in msg for msg in caplog.messages)
 
+    def test_no_api_key_cloud_brain_fallback_warns_in_user_terms(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Issue #2024: the fallback must say what a user lost, at WARNING.
+
+        Without a key, ``algorithm="auto"`` degrades to a local search. The
+        machine-readable ``traigent.cloud_brain_fallback`` token alone told the
+        user nothing, so the run read exactly like managed optimization.
+        """
+        from traigent.cloud.session_types import (
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.NO_API_KEY,
+            detail="No API key configured",
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert traigent_config.result_source == "local_fallback"
+
+        warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno >= logging.WARNING
+        ]
+        assert any("No Traigent API key was found" in msg for msg in warnings)
+        assert any("LOCAL search on your machine" in msg for msg in warnings)
+        assert any("not Traigent's managed optimization" in msg for msg in warnings)
+        assert any("TRAIGENT_REQUIRE_CLOUD=1" in msg for msg in warnings)
+        # The machine-readable token stays so log pipelines keep working.
+        assert any("traigent.cloud_brain_fallback" in msg for msg in warnings)
+
     @pytest.mark.parametrize(
         "policy_kwargs,require_cloud_env,governed_session",
         [
