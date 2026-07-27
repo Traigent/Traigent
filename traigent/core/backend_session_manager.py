@@ -36,6 +36,7 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_OFFLINE,
     backend_egress_disabled,
     exception_status,
+    failure_reason_from_code,
     fallback_reason_from_session_result,
     local_fallback_notice,
     mark_local_fallback,
@@ -636,6 +637,9 @@ class BackendSessionManager:
         self._fallback_reason: str | None = getattr(
             traigent_config, "fallback_reason", None
         )
+        self._fallback_reason_code: str | None = getattr(
+            traigent_config, "fallback_reason_code", None
+        )
         self._session_owning_context: dict[str, dict[str, str]] = {}
         self._session_cost_budget_armed: set[str] = set()
         self._cost_budget_zero_backfill_logged = False
@@ -703,6 +707,25 @@ class BackendSessionManager:
         return self._fallback_reason or getattr(
             self._traigent_config, "fallback_reason", None
         )
+
+    @property
+    def fallback_reason_code(self) -> str | None:
+        """Return the TYPED local-fallback reason code, when one was recorded.
+
+        Mirrors :attr:`fallback_reason` so the pair travels together to the
+        reported result. Reporting selects its remedy from this code, never by
+        matching the reason text, which embeds backend-controlled prose (#2024).
+        """
+
+        return self._fallback_reason_code or getattr(
+            self._traigent_config, "fallback_reason_code", None
+        )
+
+    @property
+    def fallback_failure_reason(self) -> SessionCreationFailureReason | None:
+        """Return the recorded local-fallback classification, typed."""
+
+        return failure_reason_from_code(self.fallback_reason_code)
 
     @property
     def backend_remote_early_complete(self) -> bool:
@@ -858,6 +881,10 @@ class BackendSessionManager:
         """
         self._runtime_degraded = True
         self._fallback_reason = context
+        # A runtime degradation carries no typed SessionCreationFailureReason.
+        # Clear the code with the reason so a stale classification from an
+        # earlier fallback cannot be reported next to a new reason (#2024).
+        self._fallback_reason_code = None
         mark_local_fallback(self._traigent_config, context)
         if rejection_reason:
             self._backend_rejection_reason = rejection_reason
@@ -980,11 +1007,20 @@ class BackendSessionManager:
                     or session_failure_is_session_create_400(result)
                 ):
                     self._fallback_reason = fallback_reason
-                    mark_local_fallback(self._traigent_config, fallback_reason)
+                    self._fallback_reason_code = reason.value
+                    # ``reason`` is the typed SessionCreationFailureReason from
+                    # the structured result. Pass it through instead of letting
+                    # the formatter re-derive intent from ``fallback_reason``,
+                    # which embeds backend-controlled text (issue #2024).
+                    mark_local_fallback(
+                        self._traigent_config,
+                        fallback_reason,
+                        failure_reason=reason,
+                    )
                     logger.warning(
                         "⚠️  %s traigent.cloud_brain_fallback source=%s "
                         "fallback_reason=%s stage=session-create",
-                        local_fallback_notice(fallback_reason),
+                        local_fallback_notice(fallback_reason, reason),
                         SOURCE_LOCAL_FALLBACK,
                         fallback_reason,
                     )

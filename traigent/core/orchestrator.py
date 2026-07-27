@@ -2171,7 +2171,11 @@ class OptimizationOrchestrator:
                 or self.backend_session_manager.fallback_reason
                 or "backend egress disabled"
             )
-            raise CloudBrainUnavailableError("next-trial", str(reason))
+            raise CloudBrainUnavailableError(
+                "next-trial",
+                str(reason),
+                failure_reason=self.backend_session_manager.fallback_failure_reason,
+            )
 
         remote_context = {
             "privacy_enabled": getattr(self.traigent_config, "privacy_enabled", False),
@@ -2820,7 +2824,11 @@ class OptimizationOrchestrator:
                 or self.backend_session_manager.fallback_reason
                 or "backend session creation failed"
             )
-            raise CloudBrainUnavailableError("session-create", str(reason))
+            raise CloudBrainUnavailableError(
+                "session-create",
+                str(reason),
+                failure_reason=self.backend_session_manager.fallback_failure_reason,
+            )
 
         if not self._is_cloud_brain_run():
             return
@@ -4593,6 +4601,16 @@ class OptimizationOrchestrator:
         )
         if source == SOURCE_LOCAL_FALLBACK and fallback_reason:
             result_metadata["fallback_reason"] = fallback_reason
+            # Typed counterpart, so reporting can pick the right remedy without
+            # pattern-matching the backend-controlled reason text (#2024).
+            # Same two sources as the reason above: the run's config may be a
+            # different object from the one the session manager stamped.
+            fallback_reason_code = (
+                getattr(self.traigent_config, "fallback_reason_code", None)
+                or self.backend_session_manager.fallback_reason_code
+            )
+            if fallback_reason_code:
+                result_metadata["fallback_reason_code"] = fallback_reason_code
         rejection_reason = (
             self.backend_session_manager.backend_rejection_reason
             or getattr(self.traigent_config, "persistence_rejection_reason", None)

@@ -395,9 +395,15 @@ def _local_fallback_notice(results: OptimizationResult) -> str | None:
     ``fallback_reason``, but nothing printed reflected them, so a run that
     degraded to a local search rendered exactly like managed optimization.
     Printing it under the table makes the caveat travel with the number.
+
+    The remedy is selected from the typed ``fallback_reason_code`` the run
+    stamped, never from ``fallback_reason`` — that string embeds the backend's
+    own ``error_code``/``message``/``raw_body`` text, so matching against it
+    would let a backend 500 body decide what we tell the user about their key.
     """
     from traigent.core.execution_policy_runtime import (
         SOURCE_LOCAL_FALLBACK,
+        failure_reason_from_code,
         local_fallback_notice,
     )
 
@@ -406,7 +412,11 @@ def _local_fallback_notice(results: OptimizationResult) -> str | None:
         return None
     if metadata.get("source") != SOURCE_LOCAL_FALLBACK:
         return None
-    return local_fallback_notice(metadata.get("fallback_reason"))
+    code = metadata.get("fallback_reason_code")
+    return local_fallback_notice(
+        metadata.get("fallback_reason"),
+        failure_reason_from_code(code if isinstance(code, str) else None),
+    )
 
 
 def _trials_all_failed(trials: list) -> bool:

@@ -2602,9 +2602,89 @@ class TestHandleSessionCreationResult:
         assert any("No Traigent API key was found" in msg for msg in warnings)
         assert any("LOCAL search on your machine" in msg for msg in warnings)
         assert any("not Traigent's managed optimization" in msg for msg in warnings)
+        assert any("TRAIGENT_API_KEY" in msg for msg in warnings)
         assert any("TRAIGENT_REQUIRE_CLOUD=1" in msg for msg in warnings)
         # The machine-readable token stays so log pipelines keep working.
         assert any("traigent.cloud_brain_fallback" in msg for msg in warnings)
+        # The TYPED reason is stamped so reporting picks the remedy from the
+        # enum, not from backend-controlled prose.
+        assert traigent_config.fallback_reason_code == "no_api_key"
+
+    @pytest.mark.parametrize(
+        ("status_code", "raw_body"),
+        [
+            # Plain transient outage: the user's key is fine.
+            (503, "Service Unavailable"),
+            # The backend's own prose mentions the no-key token. Classifying on
+            # that text told a user with a valid key to set their key.
+            (500, '{"message": "scope no_api_key_admin missing"}'),
+        ],
+    )
+    def test_non_key_cloud_brain_fallback_omits_api_key_remedy(
+        self,
+        traigent_config,
+        objective_schema,
+        mock_optimizer,
+        caplog,
+        status_code: int,
+        raw_body: str,
+    ):
+        """A 5xx fallback must never tell the user to set the key they have.
+
+        The remedy comes from the typed ``SessionCreationFailureReason``. The
+        human reason string embeds ``one_line_summary()`` — the backend's own
+        ``error_code``/``message``/``raw_body`` — so it must not decide what we
+        claim about the user's credentials.
+        """
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.config.types import resolve_execution_policy
+
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail=f"HTTP {status_code}",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                status_code, raw_body
+            ),
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "local_test"
+        assert traigent_config.result_source == "local_fallback"
+
+        warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno >= logging.WARNING
+        ]
+        assert any("managed optimization was unavailable" in msg for msg in warnings)
+        assert any("LOCAL search on your machine" in msg for msg in warnings)
+        assert any("TRAIGENT_REQUIRE_CLOUD=1" in msg for msg in warnings)
+        # The remedy for a 5xx is not "set your key" — the run already knows
+        # the key is not the problem.
+        assert not any("No Traigent API key was found" in msg for msg in warnings)
+        assert not any("TRAIGENT_API_KEY" in msg for msg in warnings)
+        assert traigent_config.fallback_reason_code == "session_failed"
 
     @pytest.mark.parametrize(
         "policy_kwargs,require_cloud_env,governed_session",
