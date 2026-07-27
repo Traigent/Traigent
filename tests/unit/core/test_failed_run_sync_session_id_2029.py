@@ -31,6 +31,7 @@ from traigent.core import orchestrator as orchestrator_module
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.config_state_manager import ConfigStateManager
 from traigent.core.execution_policy_runtime import CloudBrainUnavailableError
+from traigent.core.optimized_function import OptimizedFunction
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.knobs import ResolutionError
@@ -674,14 +675,25 @@ async def test_unprintable_failure_after_the_orchestrator_returns_is_not_replace
     ``append_optimization_result`` is the chosen injection point because it is
     an ordinary post-run bookkeeping call on the success path: the exception it
     raises is genuinely one the orchestrator can never see.
+
+    The second half of this test is the #2029 contract itself on that same
+    path. ``orchestrator.optimize`` RETURNED here, so a result carrying a valid
+    ``sync_session_id`` existed one frame before the wrapper was minted. If the
+    wrapper does not carry it too, the caller of a run whose trials are safely
+    on disk is told ``None`` — the exact strandedness this PR exists to end.
+    Asserted as EQUALITY with the completed result's id, not merely as
+    truthiness: the id has to be the one already resolved for this run, not a
+    second storage probe's possibly-different answer.
     """
     _isolated_env(monkeypatch, tmp_path)
 
     append_calls: list[str] = []
+    result_ids: list[str | None] = []
     original = _UnprintableError()
 
     def exploding_append(self, result: Any) -> None:
         append_calls.append("called")
+        result_ids.append(result.sync_session_id)
         raise original
 
     monkeypatch.setattr(
@@ -706,6 +718,125 @@ async def test_unprintable_failure_after_the_orchestrator_returns_is_not_replace
     assert "__str__ exploded" not in repr(raised)
     # The wrapper message degraded gracefully instead of exploding.
     assert "<unprintable _UnprintableError>" in str(raised)
+
+    # Non-vacuity for the id half: the completed run really did have one.
+    completed_id = result_ids[0]
+    assert isinstance(completed_id, str) and completed_id
+    # … and the wrapper the caller actually holds names that same session.
+    assert raised.sync_session_id == completed_id
+
+
+@pytest.mark.asyncio
+async def test_save_to_failure_after_the_orchestrator_returns_carries_the_id(
+    monkeypatch, tmp_path
+) -> None:
+    """T13c: the id survives a failure in the tail past the state bookkeeping.
+
+    ``append_optimization_result`` (T13b) fails inside the try that flips
+    ``_state`` to ERROR. ``save_to`` runs LATER, outside it, and the
+    #1407/#1980 result-decoration calls sit between the two. A fix parked in
+    that inner handler would carry the id for T13b and silently drop it here,
+    so the two are pinned separately.
+
+    ``save_to`` is also the most user-facing of the three post-orchestrator
+    steps: the run finished, every trial is on disk, and the only thing that
+    broke is writing a convenience file. Losing the sync id to that would be
+    absurd, which is exactly why it is worth a test.
+    """
+    _isolated_env(monkeypatch, tmp_path)
+
+    save_calls: list[str] = []
+    captured: list[Any] = []
+    original = RuntimeError("results file is unwritable")
+
+    def capturing_append(self, result: Any) -> None:
+        captured.append(result)
+
+    def exploding_save(self, path: str) -> None:
+        save_calls.append(path)
+        raise original
+
+    monkeypatch.setattr(
+        ConfigStateManager, "append_optimization_result", capturing_append
+    )
+    monkeypatch.setattr(OptimizedFunction, "save_optimization_results", exploding_save)
+
+    @_optimized
+    async def answer(text: str, config=None) -> str:
+        return "ok"
+
+    with pytest.raises(BaseException) as excinfo:
+        await answer.optimize(algorithm="grid", save_to=str(tmp_path / "out.json"))
+    raised = excinfo.value
+
+    # Non-vacuity: the tail really was reached, and the run really completed.
+    assert save_calls, "save_optimization_results was never reached"
+    completed_id = captured[0].sync_session_id
+    assert isinstance(completed_id, str) and completed_id
+
+    assert type(raised) is OptimizationError
+    assert raised.__cause__ is original
+    assert raised.sync_session_id == completed_id
+
+
+@pytest.mark.asyncio
+async def test_post_orchestrator_failure_with_no_syncable_record_stays_none(
+    monkeypatch, tmp_path
+) -> None:
+    """T13d: nothing to copy must mean ``None``, not a crash and not a guess.
+
+    The mirror image of T13b. When the #2020 predicate declines — no durable
+    local record for this run — the completed result's ``sync_session_id`` is
+    ``None``, so the copy has nothing to carry. The wrapper must still be an
+    ordinary ``OptimizationError`` whose ``sync_session_id`` reads ``None``:
+    the copy step may not raise (an ``AttributeError`` about labelling would
+    replace the caller's real failure), and it may not invent an id by probing
+    storage a second time behind the predicate's back.
+
+    The injected exception arrives PRE-LABELLED with another run's id — the
+    post-orchestrator twin of ``test_attach_is_unconditional_and_never_leaves_a
+    _previous_runs_id``. ``None`` is this run's answer, so it must be written
+    over that stale value rather than merely skipped: "skip when there is
+    nothing to copy" looks identical on a fresh exception (the class default is
+    already ``None``) and sends the caller to upload the wrong session here.
+    """
+    _isolated_env(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        BackendSessionManager,
+        "syncable_local_session_id",
+        lambda self, session_id: None,
+    )
+
+    append_calls: list[str | None] = []
+    original = RuntimeError("bookkeeping boom")
+    original.sync_session_id = "stale-id-from-an-earlier-run"  # type: ignore[attr-defined]
+
+    def exploding_append(self, result: Any) -> None:
+        append_calls.append(result.sync_session_id)
+        raise original
+
+    monkeypatch.setattr(
+        ConfigStateManager, "append_optimization_result", exploding_append
+    )
+
+    @_optimized
+    async def answer(text: str, config=None) -> str:
+        return "ok"
+
+    with pytest.raises(BaseException) as excinfo:
+        await answer.optimize(algorithm="grid")
+    raised = excinfo.value
+
+    # Non-vacuity: the run completed and the predicate really did decline.
+    assert append_calls == [None]
+
+    # No crash, no invented id — the declining answer is carried faithfully.
+    assert type(raised) is OptimizationError
+    assert raised.__cause__ is original
+    assert raised.sync_session_id is None
+    # …and the stale id was overwritten at the source, not stepped around.
+    assert original.sync_session_id is None
 
 
 class _HardExit(BaseException):

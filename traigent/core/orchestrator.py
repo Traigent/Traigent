@@ -3908,6 +3908,22 @@ class OptimizationOrchestrator:
         spelled out on ``_attach_sync_session_id``: the attribute describes THIS
         raise, so ``None`` must overwrite a stale value, and writing to the
         class would poison every other exception object in the process.
+
+        KNOWN BOUNDARY — an exception that refuses attribute assignment cannot
+        be labelled. A caller-defined ``OptimizationError`` subclass declared as
+        a frozen dataclass, or one with a restrictive ``__setattr__`` / a
+        ``__slots__`` without this field, makes the line below raise. There is
+        deliberately no fallback for the identity-preserving branches: they must
+        re-raise the caller's own object unchanged (for ``ResolutionError``, RFC
+        0001 §3.4 typed identity depends on it), so substituting a labelled copy
+        is not available and the id simply does not ride along. This is not
+        swallowed: the assignment failure escapes into ``_attach_sync_session_id``'s
+        guarded handler — the write happens in that method's ``finally``, inside
+        its ``try`` — and is reported by its ``logger.warning(..., exc_info=True)``
+        rather than replacing the run's real failure. ``OptimizedFunction``'s
+        post-orchestrator call site guards it the same way. Ordinary
+        ``OptimizationError`` / ``ResolutionError`` carry class-level defaults for
+        the field and are unaffected.
         """
         exc.sync_session_id = syncable_id  # type: ignore[attr-defined]
 

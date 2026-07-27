@@ -2086,70 +2086,139 @@ class OptimizedFunction(Generic[_P, _R]):
         # Set state to OPTIMIZING before starting
         self._state = OptimizationState.OPTIMIZING
 
+        # #2029: pre-bound so the post-orchestrator handler at the bottom of this
+        # method can tell the two failure eras apart. Still ``None`` => the
+        # orchestrator never returned, so ITS handlers own the labelling. Bound
+        # => ``optimize()`` completed and the id is on the result, which is the
+        # only place left to read it from once this frame unwinds.
+        result: OptimizationResult | None = None
         try:
-            with ConfigurationSpaceContext(effective_config_space):
-                if self.auto_override_frameworks and self.framework_targets:
-                    with override_context(self.framework_targets):
+            try:
+                with ConfigurationSpaceContext(effective_config_space):
+                    if self.auto_override_frameworks and self.framework_targets:
+                        with override_context(self.framework_targets):
+                            result = await orchestrator.optimize(
+                                func=trial_func,
+                                dataset=dataset,
+                                function_name=self.experiment_name,
+                            )
+                    else:
                         result = await orchestrator.optimize(
                             func=trial_func,
                             dataset=dataset,
                             function_name=self.experiment_name,
                         )
-                else:
-                    result = await orchestrator.optimize(
-                        func=trial_func,
-                        dataset=dataset,
-                        function_name=self.experiment_name,
+
+                # Store results
+                self._optimization_results = result
+                self._csm.append_optimization_result(result)
+
+                # Update current config to best found
+                if result.best_config:
+                    self.apply_best_config(result)
+
+                # Set state to OPTIMIZED on success
+                self._state = OptimizationState.OPTIMIZED
+
+            except Exception:
+                # Set state to ERROR on failure
+                self._state = OptimizationState.ERROR
+                raise
+            # Surface any models that priced to $0 at runtime despite non-zero tokens
+            # (#1407). Strict accounting already raised mid-run via
+            # ``cost_from_tokens(strict=True)`` (fail-closed), so anything collected
+            # here is the non-strict warn-and-continue case — make it visible on the
+            # result instead of leaving only a buried log.
+            self._attach_unpriced_model_warning(result)
+
+            # Surface the shared cumulative ExecutionBudget's consumed/remaining state
+            # onto the result via metadata (issue #1980). No-op when no budget was
+            # attached -> result shape unchanged.
+            self._attach_execution_budget_snapshot(result, orchestrator)
+
+            # Save results if requested
+            if save_to:
+                self.save_optimization_results(save_to)
+
+            logger.info(
+                f"Optimization completed: {len(result.trials)} trials, "
+                f"best score: {'N/A' if result.best_score is None else f'{result.best_score:.4f}'}"
+            )
+
+            # Show upgrade hints after optimization completion (Edge Analytics mode only)
+            if self.traigent_config.is_local_mode():  # type: ignore[has-type]
+                try:
+                    show_upgrade_hint(
+                        "session_complete",
+                        trial_count=len(result.trials),
+                        best_score=result.best_score,
                     )
+                except Exception as e:
+                    logger.debug(f"Failed to show upgrade hint: {e}")
 
-            # Store results
-            self._optimization_results = result
-            self._csm.append_optimization_result(result)
-
-            # Update current config to best found
-            if result.best_config:
-                self.apply_best_config(result)
-
-            # Set state to OPTIMIZED on success
-            self._state = OptimizationState.OPTIMIZED
-
-        except Exception:
-            # Set state to ERROR on failure
-            self._state = OptimizationState.ERROR
+            return result  # type: ignore[no-any-return,return-value]
+        except BaseException as post_orchestrator_failure:
+            # #2029: everything above from ``self._optimization_results = result``
+            # onwards — the context-manager exits, ``append_optimization_result``,
+            # ``apply_best_config`` (which reaches user framework targets),
+            # ``save_to`` — runs OUTSIDE ``orchestrator.optimize``'s own try, so
+            # the orchestrator's labelling handlers never see these failures. The
+            # run nonetheless completed and its trials are on disk under an id the
+            # returned result already names. Carry that id onto the exception here,
+            # while ``result`` is still in scope; ``_execute_optimization``'s
+            # wrapper then copies it off this object instead of re-probing storage.
+            self._carry_result_sync_session_id(
+                orchestrator, post_orchestrator_failure, result
+            )
             raise
-        # Surface any models that priced to $0 at runtime despite non-zero tokens
-        # (#1407). Strict accounting already raised mid-run via
-        # ``cost_from_tokens(strict=True)`` (fail-closed), so anything collected
-        # here is the non-strict warn-and-continue case — make it visible on the
-        # result instead of leaving only a buried log.
-        self._attach_unpriced_model_warning(result)
 
-        # Surface the shared cumulative ExecutionBudget's consumed/remaining state
-        # onto the result via metadata (issue #1980). No-op when no budget was
-        # attached -> result shape unchanged.
-        self._attach_execution_budget_snapshot(result, orchestrator)
+    def _carry_result_sync_session_id(
+        self,
+        orchestrator: OptimizationOrchestrator,
+        exc: BaseException,
+        result: OptimizationResult | None,
+    ) -> None:
+        """Label a POST-orchestrator failure with the completed run's id (#2029).
 
-        # Save results if requested
-        if save_to:
-            self.save_optimization_results(save_to)
+        Delegates the write to the orchestrator's ``_label_with_sync_session_id``
+        rather than assigning here, so both layers share one definition of what
+        labelling means (instance-level, unconditional, last-write-wins).
 
-        logger.info(
-            f"Optimization completed: {len(result.trials)} trials, "
-            f"best score: {'N/A' if result.best_score is None else f'{result.best_score:.4f}'}"
-        )
+        No storage probe: ``result.sync_session_id`` is the answer the #2020
+        success path already resolved for THIS run through the same locality +
+        durability predicate. Re-probing would risk a second, differing answer —
+        the exact defect ``_label_with_sync_session_id`` exists to avoid.
 
-        # Show upgrade hints after optimization completion (Edge Analytics mode only)
-        if self.traigent_config.is_local_mode():  # type: ignore[has-type]
+        ``result is None`` means ``optimize()`` never returned, so the
+        orchestrator's own handlers already labelled this exception (or decided
+        there is nothing syncable). Returning early leaves their answer intact
+        instead of overwriting it with a guess. When the result IS bound but its
+        ``sync_session_id`` is ``None`` — no durable local record — that ``None``
+        is itself this run's answer and is written, not skipped.
+
+        Never raises: this runs on a path whose only job is to re-raise the
+        caller's real failure, and a diagnostic label may not replace it. That
+        includes the frozen-dataclass / restrictive-``__setattr__`` boundary
+        documented on ``_label_with_sync_session_id`` — such an exception
+        propagates unlabelled, with the reason logged, rather than reaching the
+        caller as an ``AttributeError`` about labelling.
+        """
+        if result is None:
+            return
+        try:
+            orchestrator._label_with_sync_session_id(exc, result.sync_session_id)
+        except Exception:
             try:
-                show_upgrade_hint(
-                    "session_complete",
-                    trial_count=len(result.trials),
-                    best_score=result.best_score,
+                logger.warning(
+                    "Could not label the post-optimization failure with the "
+                    "`traigent sync` id for session %s; the local record may "
+                    "still be on disk — run `traigent local list` to look it up.",
+                    result.sync_session_id,
+                    exc_info=True,
                 )
-            except Exception as e:
-                logger.debug(f"Failed to show upgrade hint: {e}")
-
-        return result  # type: ignore[no-any-return]
+            except Exception:
+                # A broken logging handler must not become the run's failure.
+                pass
 
     def _attach_unpriced_model_warning(self, result: OptimizationResult) -> None:
         """Attach a user-visible warning for models that priced to $0 at runtime.
@@ -2897,7 +2966,21 @@ Remediation:
                 # IS the public contract — never dilute it into a generic
                 # OptimizationError.
                 raise
-            raise OptimizationError(f"Optimization failed: {safe_text}") from e
+            wrapped = OptimizationError(f"Optimization failed: {safe_text}")
+            # #2029: `e` escaped a run whose orchestrator may already have
+            # RETURNED a result, in which case _run_and_finalize_optimization
+            # labelled it with that result's syncable id on the way out. This
+            # wrapper is the only object the caller ever sees, so the id has to
+            # be copied across or the PR's headline contract reads None one
+            # frame after a perfectly good id existed. Read off `e` rather than
+            # probing storage again — same single-answer rule as the
+            # orchestrator's wrapper branch. `getattr` because `e` is any
+            # exception type at all, and an absent attribute means the same
+            # thing an explicit None does: nothing syncable for this run.
+            orchestrator._label_with_sync_session_id(
+                wrapped, getattr(e, "sync_session_id", None)
+            )
+            raise wrapped from e
         finally:
             self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
 
