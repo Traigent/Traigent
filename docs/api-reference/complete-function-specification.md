@@ -578,8 +578,12 @@ resolves its store from the environment, so a run that passed the programmatic
 TRAIGENT_RESULTS_FOLDER="<that path>" traigent sync <sync_session_id>
 ```
 
-The SDK logs a warning naming that root when the run's store and the CLI default
-differ. For a backend-early-complete (#1938) or partially-acknowledged run
+The SDK logs a warning naming that root when the run's configured store differs
+from the CLI default *as resolved in this process*. That default is read from
+this process's environment, so a script that sets `TRAIGENT_RESULTS_FOLDER`
+itself before optimizing sees no warning even though a fresh shell without that
+variable would reject the id — `traigent local list` looks the record up either
+way. For a backend-early-complete (#1938) or partially-acknowledged run
 (which includes a run that degraded to local-only mid-flight, since degradation
 means at least one trial went unacknowledged), the
 trials already submitted are on the portal, so syncing re-imports them as a

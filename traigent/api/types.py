@@ -1016,8 +1016,13 @@ class OptimizationResult:
             that resolves its store from the environment, so a run that passed
             the programmatic ``local_storage_path`` option must point the CLI at
             the same root — ``TRAIGENT_RESULTS_FOLDER="<that path>" traigent
-            sync <id>``. The SDK logs a warning naming that root when the two
-            differ.
+            sync <id>``. The SDK logs a warning naming that root when the run's
+            configured store differs from the CLI default *as resolved in this
+            process*. That default is read from this process's environment, so
+            a script that sets ``TRAIGENT_RESULTS_FOLDER`` itself before
+            optimizing sees no warning even though a fresh shell without that
+            variable would reject the id; ``traigent local list`` looks the
+            record up either way.
             For a backend-early-complete (#1938) or partially-acknowledged run
             (which includes a run that degraded to local-only mid-flight, since
             degradation means at least one trial went unacknowledged),

@@ -331,21 +331,43 @@ async def test_failed_backend_persistence_withholds_syncable_session_id(
     assert "local_session_id" not in result.metadata
 
 
-def _trial(index: int, *, abandoned: bool = False) -> TrialResult:
-    metadata: dict[str, object] = {"abandoned": True} if abandoned else {}
+def _trial(
+    index: int, *, abandoned: bool = False, constraint_rejected: bool = False
+) -> TrialResult:
+    """A trial as it lands in ``result.trials``.
+
+    ``abandoned`` mirrors ``_abandon_optuna_trial``'s marker; ``constraint_rejected``
+    mirrors ``TrialLifecycleManager._record_pre_constraint_pruned_result``. Both
+    append to ``orchestrator._trials`` and are never submitted to the backend —
+    note they share no metadata key, which is why the predicate no longer tries
+    to recognize the family by metadata shape.
+    """
+    metadata: dict[str, object] = {}
+    if abandoned:
+        metadata["abandoned"] = True
+    if constraint_rejected:
+        metadata["constraint_rejected"] = True
+        metadata["stop_reason"] = "trial_rejected_by_constraint"
+    never_submitted = abandoned or constraint_rejected
     return TrialResult(
         trial_id=f"trial-{index}",
         config={"x": "a"},
         metrics={"accuracy": 1.0},
-        status=TrialStatus.PRUNED if abandoned else TrialStatus.COMPLETED,
+        status=TrialStatus.PRUNED if never_submitted else TrialStatus.COMPLETED,
         duration=0.01,
         timestamp=datetime.now(UTC),
         metadata=metadata,
     )
 
 
-def _partially_tracked_run(config, session_id, *, acknowledged):
-    """A connected, tracking-enabled manager whose backend saw only some trials."""
+def _partially_tracked_run(config, session_id, *, attempted, acknowledged):
+    """A connected, tracking-enabled manager whose backend saw only some trials.
+
+    ``attempted`` is what ``_log_trial_to_backend`` records just before it posts;
+    ``acknowledged`` is what came back accepted. The first ``acknowledged``
+    attempts are the ones that landed, so ``attempted - acknowledged`` is the
+    number of trials the backend is genuinely missing.
+    """
     backend_client = Mock()
     backend_client.get_session_mapping = Mock(return_value=None)
     backend_client.update_trial_weighted_scores = AsyncMock(return_value=True)
@@ -364,6 +386,9 @@ def _partially_tracked_run(config, session_id, *, acknowledged):
         optimization_id="opt-2020-partial",
         optimization_status=OptimizationStatus.RUNNING,
     )
+    manager._attempted_trials = {
+        (session_id, f"backend-trial-{i}") for i in range(attempted)
+    }
     manager._acknowledged_trials = {
         (session_id, f"backend-trial-{i}") for i in range(acknowledged)
     }
@@ -413,7 +438,7 @@ async def test_partial_acknowledgement_keeps_its_id_when_finalize_also_fails(
     storage = LocalStorageManager(config.get_local_storage_path())
     storage.create_session("answer", session_id=session_id)
 
-    manager = _partially_tracked_run(config, session_id, acknowledged=1)
+    manager = _partially_tracked_run(config, session_id, attempted=3, acknowledged=1)
     orchestrator = _connected_orchestrator(config, manager)
     result = _result([_trial(0), _trial(1), _trial(2)])
 
@@ -427,22 +452,29 @@ async def test_partial_acknowledgement_keeps_its_id_when_finalize_also_fails(
 
 
 @pytest.mark.asyncio
-async def test_abandoned_trials_do_not_inflate_the_unacknowledged_denominator(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("label", ["abandoned", "constraint_rejected"])
+async def test_never_submitted_trials_do_not_inflate_the_unacknowledged_denominator(
+    monkeypatch, tmp_path, label
 ) -> None:
-    """Abandoned trials are never submitted, so they must not count as missing.
+    """Trials the SDK never submits must not read as "missing from the backend".
 
-    ``_abandon_optuna_trial`` appends PRUNED trials carrying
-    ``metadata["abandoned"] = True`` that are never sent to the backend by
-    design. Comparing acknowledgements against the raw ``len(result.trials)``
-    would read a fully-tracked connected run as partially acknowledged and hand
-    out a sync id for a run the portal already holds — importing it a second
-    time as a duplicate experiment.
+    Two writers append to ``orchestrator._trials`` without ever posting the
+    trial, and they share NO metadata key:
 
-    This shape is currently unreachable in production (the abandon paths need
-    ``_optuna_trial_id`` on a trial and no shipping optimizer emits one); the
-    ask/tell residual is marked for follow-up, so the count is made correct now
-    rather than after re-activation.
+    * ``_abandon_optuna_trial`` — ``metadata["abandoned"] = True``. Currently
+      unreachable (the abandon paths need ``_optuna_trial_id`` on a trial and no
+      shipping optimizer emits one), kept correct for the ask/tell residual.
+    * ``TrialLifecycleManager._record_pre_constraint_pruned_result`` —
+      ``metadata["constraint_rejected"] = True`` /
+      ``stop_reason="trial_rejected_by_constraint"``. LIVE: it fires for every
+      config a pre-eval ``constraints=[...]`` predicate rejects, a documented
+      public ``@optimize`` option.
+
+    Counting either against the acknowledgements reads a fully-tracked connected
+    run as partially acknowledged and hands out a sync id for a run the portal
+    already holds — importing it a second time as a duplicate experiment. The
+    predicate therefore measures the SDK's own submission ATTEMPTS, which no
+    future member of this family can inflate.
     """
     _isolated_env(monkeypatch, tmp_path)
 
@@ -451,22 +483,22 @@ async def test_abandoned_trials_do_not_inflate_the_unacknowledged_denominator(
     config.no_egress = False
     config.execution_mode = "hybrid"
 
-    session_id = "sess-2020-abandoned"
+    session_id = f"sess-2020-{label}"
     storage = LocalStorageManager(config.get_local_storage_path())
     storage.create_session("answer", session_id=session_id)
 
-    # Two real trials, both acknowledged; one abandoned trial that was never
-    # submitted. The backend holds everything it could ever hold.
-    manager = _partially_tracked_run(config, session_id, acknowledged=2)
+    # Two real trials submitted and acknowledged; one never-submitted trial in
+    # `result.trials`. The backend holds everything it could ever hold.
+    manager = _partially_tracked_run(config, session_id, attempted=2, acknowledged=2)
     orchestrator = _connected_orchestrator(config, manager)
-    result = _result([_trial(0), _trial(1), _trial(2, abandoned=True)])
+    result = _result([_trial(0), _trial(1), _trial(2, **{label: True})])
 
     await OptimizationOrchestrator._finalize_optimization(
         orchestrator, result, session_id, None
     )
 
-    # The record exists — the None is earned by the eligible count, not by a
-    # failed durability probe.
+    # The record exists — the None is earned by the predicate, not by a failed
+    # durability probe.
     assert manager.local_session_record_exists(session_id) is True
     assert result.sync_session_id is None
     assert "local_session_id" not in result.metadata

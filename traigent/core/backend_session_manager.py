@@ -683,6 +683,20 @@ class BackendSessionManager:
         # never acknowledged).
         self._acknowledged_trials: set[tuple[str, str]] = set()
 
+        # Tracks (session_id, backend_trial_id) pairs the SDK ATTEMPTED to hand
+        # the backend, recorded BEFORE the outcome is known — a transient skip
+        # (BE#1194), a rejection and a raised exception all leave an attempt on
+        # record. #2020's "the backend is missing part of this run" predicate
+        # subtracts acknowledgements from THIS set rather than from a count of
+        # ``result.trials``: the orchestrator appends trials it never submits
+        # (``_abandon_optuna_trial``; the pre-eval ``constraints=[...]``
+        # rejections in ``TrialLifecycleManager``), and no metadata-shape filter
+        # can be trusted to enumerate that family — each new member would
+        # silently re-inflate the denominator and hand out a sync id for a run
+        # the portal already holds. Recording the submissions themselves cannot
+        # miss one.
+        self._attempted_trials: set[tuple[str, str]] = set()
+
         # Issue #1265: a backend that becomes unreachable *mid-run* (transient
         # outage / maintenance window) is distinct from the explicit
         # TRAIGENT_OFFLINE_MODE air-gap. When it happens in a backend-tracking
@@ -917,19 +931,36 @@ class BackendSessionManager:
             context,
         )
 
-    def _trials_not_fully_acknowledged(self, session_id: str, trial_count: int) -> bool:
-        """True when the backend is missing at least one of this run's trials.
+    def _attempted_trial_ids(self) -> set[tuple[str, str]]:
+        """The ``(session_id, backend_trial_id)`` pairs this run tried to submit.
+
+        Materialized through ``getattr`` so a partially-constructed or
+        test-substituted manager that predates the attribute reads as "nothing
+        attempted" instead of raising — the same defensive shape the
+        ``_acknowledged_trials`` reader uses.
+        """
+        attempted = getattr(self, "_attempted_trials", None)
+        if attempted is None:
+            attempted = set()
+            self._attempted_trials = attempted
+        return attempted
+
+    def _trials_not_fully_acknowledged(self, session_id: str) -> bool:
+        """True when the backend is missing a trial the SDK tried to give it.
 
         The #2020 predicate's notion of "the backend does not hold the whole
-        run". Counts only acknowledgements recorded for ``session_id`` (the set
-        is keyed ``(session_id, backend_trial_id)`` and a manager can outlive a
-        single session), and compares that count against ``trial_count``.
+        run". Both sets are keyed ``(session_id, backend_trial_id)`` — a manager
+        can outlive a single session — so the question is asked strictly within
+        ``session_id``: is any submission attempted for it still unacknowledged?
 
-        ``trial_count`` must be the count of trials the backend could plausibly
-        have acknowledged, NOT ``len(result.trials)``: the orchestrator passes
-        ``_sync_eligible_trial_count``, which drops the abandoned trials it
-        appends without ever submitting them. Counting those would read a
-        fully-tracked run as partially acknowledged.
+        The denominator is what the SDK ATTEMPTED, not what ``result.trials``
+        holds. The orchestrator appends trials it never submits — abandoned
+        ask/tell residuals, and every config a pre-eval ``constraints=[...]``
+        predicate rejects — and reading their count as "missing from the
+        backend" would hand a healthy, fully-tracked run a sync id, duplicating
+        the experiment on import. Filtering them out by metadata shape only
+        works until the next never-submitted trial kind appears; comparing
+        against the submissions themselves cannot go stale that way.
 
         Deliberately STRICTER than the all-or-nothing test ``result_source``
         uses (``trial_count > 0 and not self._acknowledged_trials``, i.e. "the
@@ -946,11 +977,11 @@ class BackendSessionManager:
         recorded as follow-up work and deliberately NOT changed here, so this
         fix does not silently restate what ``result.source`` means.
         """
-        if trial_count <= 0:
-            return False
         acknowledged = getattr(self, "_acknowledged_trials", None) or set()
-        acknowledged_here = sum(1 for known, _ in acknowledged if known == session_id)
-        return acknowledged_here < trial_count
+        return any(
+            known == session_id and (known, trial_id) not in acknowledged
+            for known, trial_id in self._attempted_trial_ids()
+        )
 
     def result_source(self, trial_count: int) -> str:
         """Return the provenance of this run's result.
@@ -1707,9 +1738,7 @@ class BackendSessionManager:
                 exc_info=True,
             )
 
-    def syncable_local_session_id(
-        self, session_id: str | None, *, trial_count: int = 0
-    ) -> str | None:
+    def syncable_local_session_id(self, session_id: str | None) -> str | None:
         """Return ``session_id`` when the LOCAL store holds the authoritative,
         sync-eligible record for this run; ``None`` otherwise (issue #2020).
 
@@ -1719,8 +1748,8 @@ class BackendSessionManager:
            egress disabled, backend tracking disabled, the run degraded to
            local-only mid-flight (#1265), the backend closed the tracking
            session early while local sequencing continued (#1938), or the
-           backend did not acknowledge every trial the run produced (reachable
-           with ``_runtime_degraded`` still False — see
+           backend did not acknowledge every trial the SDK submitted to it
+           (reachable with ``_runtime_degraded`` still False — see
            ``_trials_not_fully_acknowledged``, which is stricter than the
            all-or-nothing test ``result_source`` uses).
         2. Durability — a session record actually exists under this id in THIS
@@ -1748,33 +1777,29 @@ class BackendSessionManager:
 
         Args:
             session_id: The local/backend session id for this run.
-            trial_count: Number of trials the run produced, for the
-                unacknowledged-trials clause. 0 disables that clause only.
         """
         if not session_id:
             return None
         # A privacy-enabled run never submits trials (`_log_trial_to_backend`
-        # returns early), so its acknowledgement set is empty by design and the
-        # unacknowledged-trials clause would fire on a HEALTHY run — handing out
-        # an id whose `traigent sync` uploads the full local trial records,
-        # including exactly what the privacy path withheld from the backend.
-        # This exclusion applies to that clause ONLY: an offline or
+        # returns early, ahead of the slot acquisition that records an attempt),
+        # so it reaches this clause with BOTH sets empty and the clause is
+        # already inert. The exclusion stays as a second lock on the same door:
+        # were a privacy-aware submission path ever to record attempts it
+        # deliberately does not expect the backend to acknowledge, the clause
+        # would start handing out an id whose `traigent sync` uploads the full
+        # local trial records — including exactly what the privacy path withheld
+        # from the backend. Scoped to this clause ONLY: an offline or
         # tracking-disabled privacy run still legitimately owns its record
-        # locally. Currently unreachable — the public `privacy_enabled` option
-        # is deprecated and dropped before it reaches the config — so this is a
-        # guard, not a live fix: it exists so that re-enabling the option can
-        # never turn an empty ack set into an instruction to upload withheld
-        # data.
+        # locally. Doubly a guard rather than a live fix — the public
+        # `privacy_enabled` option is deprecated and dropped before it reaches
+        # the config.
         privacy_enabled = bool(getattr(self._traigent_config, "privacy_enabled", False))
         locally_authoritative = (
             self._egress_disabled()
             or not getattr(self, "_backend_tracking_enabled", True)
             or bool(getattr(self, "_runtime_degraded", False))
             or self._remote_session_completed(session_id)
-            or (
-                not privacy_enabled
-                and self._trials_not_fully_acknowledged(session_id, trial_count)
-            )
+            or (not privacy_enabled and self._trials_not_fully_acknowledged(session_id))
         )
         if not locally_authoritative:
             return None
@@ -2255,6 +2280,14 @@ class BackendSessionManager:
             # Rebind in place: _best_trial_cached holds this same object, so the
             # incumbent's trial_id becomes the backend id the report needs.
             trial_result.trial_id = backend_trial_id
+
+            # Record the attempt BEFORE the outcome is known (#2020). Every way
+            # this submission can fail — the transient `submitted is None` skip
+            # (BE#1194), an outright rejection, a raised network error — leaves
+            # the backend without a trial the SDK tried to give it, which is
+            # exactly what `_trials_not_fully_acknowledged` must see. Keyed on
+            # the backend-minted id so it pairs with `_acknowledged_trials`.
+            self._attempted_trial_ids().add((session_id, backend_trial_id))
 
             # P8 content-freedom (live-E2E finding): the resolved trial
             # config carries injected CALIBRATED values; the wire submission

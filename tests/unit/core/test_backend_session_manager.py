@@ -3186,6 +3186,117 @@ class TestWeightedSchemaThreading1846:
         assert weighted["best_weighted_config"] == result.best_config
 
 
+class TestAttemptedTrialBookkeeping:
+    """Issue #2020: the submission ATTEMPTS the unacknowledged-trials clause counts.
+
+    ``_trials_not_fully_acknowledged`` asks "is the backend missing a trial the
+    SDK tried to give it?". That only works if the writer records the attempt at
+    the moment of submission and BEFORE the outcome is known — every one of the
+    ways a submission can fail must leave an attempt behind, or the clause goes
+    blind exactly when the user needs the sync id.
+    """
+
+    @pytest.mark.asyncio
+    async def test_acknowledged_submission_leaves_nothing_missing(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """The happy path: attempted once, acknowledged once, nothing missing."""
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert backend_session_manager._attempted_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert backend_session_manager._acknowledged_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("label", "submit_mock"),
+        [
+            # BE#1194 transient session-not-found: deliberately does NOT flag
+            # the run degraded, so this clause is the ONLY thing that can hand
+            # out the id its own log message tells the user to sync with.
+            ("transient_none", AsyncMock(return_value=None)),
+            ("rejected", AsyncMock(return_value=False)),
+            ("raised", AsyncMock(side_effect=ConnectionError("network down"))),
+        ],
+    )
+    async def test_failed_submission_still_counts_as_attempted(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        label,
+        submit_mock,
+    ):
+        """A post-slot failure leaves the backend missing a trial we sent."""
+        mock_backend_client._submit_trial_result_via_session = submit_mock
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert backend_session_manager._attempted_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert backend_session_manager._acknowledged_trials == set()
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_slot_records_no_attempt(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Nothing was sent, so nothing is "missing" by THIS clause.
+
+        The manager fails closed without a backend-minted slot, so there is no
+        id to key an attempt on and no submission ever leaves the process. The
+        run is not left without a sync id — ``_flag_backend_degraded`` fires and
+        the degraded locality clause covers it — but this clause must stay
+        inert rather than invent a missing trial.
+        """
+        mock_backend_client.request_trial_slot = AsyncMock(return_value=None)
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert backend_session_manager._attempted_trials == set()
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+        assert backend_session_manager.backend_degraded is True
+
+    def test_missing_attribute_reads_as_nothing_attempted(
+        self, backend_session_manager
+    ):
+        """A partially-constructed manager must not raise from the predicate.
+
+        Mirrors the ``getattr`` guard the ``_acknowledged_trials`` reader
+        already carries: this runs inside result finalization, where an
+        AttributeError would fail a run that otherwise succeeded.
+        """
+        del backend_session_manager._attempted_trials
+
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+
+
 class TestSyncableLocalSessionId:
     """Issue #2020: `syncable_local_session_id` hands out the id `traigent sync`
     accepts — and ONLY when the local store is the system of record for the run.
@@ -3206,6 +3317,13 @@ class TestSyncableLocalSessionId:
     def _acks(session_id, count):
         """The `(session_id, backend_trial_id)` entries `submit_trial_result`
         records — the real key shape, so per-session counting is exercised."""
+        return {(session_id, f"backend-trial-{i}") for i in range(count)}
+
+    @staticmethod
+    def _attempts(session_id, count):
+        """The submission attempts `_log_trial_to_backend` records just before
+        it posts. Same key shape as `_acks`, so an acknowledged attempt cancels
+        out exactly; the first `count` entries here pair with `_acks(.., n)`."""
         return {(session_id, f"backend-trial-{i}") for i in range(count)}
 
     @staticmethod
@@ -3273,35 +3391,41 @@ class TestSyncableLocalSessionId:
         clause the id that advice needs is never handed out.
         """
         manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 2)
         manager._acknowledged_trials = set()
         self._stub_storage(manager, Mock(return_value=Mock()))
 
         # Same shape `result_source` already calls local_fallback.
         assert manager.result_source(trial_count=2) == "local_fallback"
-        assert (
-            manager.syncable_local_session_id("sess-2020", trial_count=2) == "sess-2020"
-        )
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
 
     def test_fully_acknowledged_trials_on_connected_run_returns_none(
         self, backend_session_manager, monkeypatch
     ):
-        """Every trial acknowledged ⇒ the backend has the run; nothing to upload."""
+        """Every submitted trial acknowledged ⇒ the backend has the run."""
         manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = self._acks("sess-2020", 3)
         self._stub_storage(manager, Mock(return_value=Mock()))
 
         assert manager.result_source(trial_count=3) == "cloud_brain"
-        assert manager.syncable_local_session_id("sess-2020", trial_count=3) is None
+        assert manager.syncable_local_session_id("sess-2020") is None
 
-    def test_zero_trials_does_not_trigger_unacknowledged_clause(
+    def test_nothing_attempted_does_not_trigger_unacknowledged_clause(
         self, backend_session_manager, monkeypatch
     ):
-        """A run with no trials has nothing to sync — the default must be inert."""
+        """No submission attempted ⇒ nothing can be missing from the backend.
+
+        An empty attempted set must read as "the clause has no opinion", not as
+        "the backend is missing everything" — otherwise every connected run that
+        produced no trials, and every locality shape that never reaches the
+        submission path at all, would be handed an id it does not need.
+        """
         manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = set()
         manager._acknowledged_trials = set()
         self._stub_storage(manager, Mock(return_value=Mock()))
 
-        assert manager.syncable_local_session_id("sess-2020", trial_count=0) is None
         assert manager.syncable_local_session_id("sess-2020") is None
 
     def test_backend_closed_session_early_with_record_returns_id(
@@ -3318,15 +3442,16 @@ class TestSyncableLocalSessionId:
     ):
         """The run is already on the portal — there is nothing to upload.
 
-        Passes the real ``trial_count`` (the orchestrator calls this with
-        ``len(result.trials)``) AND the matching acknowledgements, so the
-        ``None`` is earned by "the backend holds the whole run" rather than by
-        the ``trial_count=0`` default silently disabling the clause.
+        Records real submission attempts AND their matching acknowledgements,
+        so the ``None`` is earned by "the backend holds every trial the SDK
+        sent" rather than by an empty attempted set silently disabling the
+        clause (that inertness has its own test above).
         """
         manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = self._acks("sess-2020", 3)
         self._stub_storage(manager, Mock(return_value=Mock()))
-        assert manager.syncable_local_session_id("sess-2020", trial_count=3) is None
+        assert manager.syncable_local_session_id("sess-2020") is None
 
     def test_explicit_local_source_on_connected_run_returns_none(
         self, backend_session_manager, monkeypatch
@@ -3348,10 +3473,11 @@ class TestSyncableLocalSessionId:
         """
         manager = self._connected(backend_session_manager, monkeypatch)
         manager._traigent_config.result_source = "explicit_local"
+        manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = self._acks("sess-2020", 3)
         self._stub_storage(manager, Mock(return_value=Mock()))
         assert manager.result_source(trial_count=3) == "explicit_local"
-        assert manager.syncable_local_session_id("sess-2020", trial_count=3) is None
+        assert manager.syncable_local_session_id("sess-2020") is None
 
     def test_partially_acknowledged_trials_returns_id(
         self, backend_session_manager, monkeypatch
@@ -3362,65 +3488,77 @@ class TestSyncableLocalSessionId:
         ``result_source`` uses calls this set "non-empty" and so would withhold
         the id — but the backend really is missing trials 2 and 3, exactly the
         shape the ``submitted is None`` branch tells the user to "Recover via
-        ``traigent sync``". ``_trials_not_fully_acknowledged`` compares counts
-        instead.
+        ``traigent sync``". ``_trials_not_fully_acknowledged`` subtracts the
+        acknowledgements from the attempts instead.
         """
         manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = self._acks("sess-2020", 1)
         self._stub_storage(manager, Mock(return_value=Mock()))
 
         # The looser provenance test disagrees — deliberately left unchanged.
         assert manager.result_source(trial_count=3) == "cloud_brain"
-        assert (
-            manager.syncable_local_session_id("sess-2020", trial_count=3) == "sess-2020"
-        )
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
 
     def test_acks_from_another_session_do_not_count(
         self, backend_session_manager, monkeypatch
     ):
         """A manager reused across sessions must not inflate the ack count.
 
-        ``_acknowledged_trials`` is keyed ``(session_id, trial_id)``; three acks
-        belonging to a previous session leave THIS session with none.
+        Both sets are keyed ``(session_id, trial_id)``; three acks belonging to
+        a previous session leave THIS session's three attempts unacknowledged.
         """
         manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = self._acks("sess-other", 3)
         self._stub_storage(manager, Mock(return_value=Mock()))
 
-        assert (
-            manager.syncable_local_session_id("sess-2020", trial_count=3) == "sess-2020"
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_attempts_from_another_session_do_not_leak_in(
+        self, backend_session_manager, monkeypatch
+    ):
+        """The mirror of the ack-scoping test: a previous session's UNacknowledged
+        attempts must not make THIS fully-tracked session look incomplete."""
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 2) | self._attempts(
+            "sess-other", 3
         )
+        manager._acknowledged_trials = self._acks("sess-2020", 2)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        assert manager.syncable_local_session_id("sess-2020") is None
 
     def test_privacy_enabled_run_returns_none(
         self, backend_session_manager, monkeypatch
     ):
         """Guard, not a live fix: a privacy run must never be told to sync.
 
-        ``_log_trial_to_backend`` returns early for a privacy-enabled config, so
-        the ack set is empty by design and the unacknowledged-trials clause
-        would fire on a HEALTHY run — offering an id whose ``traigent sync``
+        ``_log_trial_to_backend`` returns early for a privacy-enabled config —
+        ahead of the slot acquisition that records an attempt — so a real
+        privacy run reaches the clause with both sets empty and the clause is
+        already inert. This test constructs the state the guard exists FOR:
+        attempts on record that the backend is never expected to acknowledge.
+        Without the exclusion that shape offers an id whose ``traigent sync``
         uploads the full local trial records, including what the privacy path
         deliberately withheld from the backend.
 
-        This state is constructed directly because it is currently unreachable
-        in production: ``@traigent.optimize(privacy_enabled=True)`` is
-        deprecated and the value is dropped before it reaches the config. The
-        exclusion exists so that re-enabling the option can never turn an empty
-        ack set into an instruction to upload withheld data.
+        Doubly hypothetical in production today:
+        ``@traigent.optimize(privacy_enabled=True)`` is deprecated and the value
+        is dropped before it reaches the config.
         """
         manager = self._connected(backend_session_manager, monkeypatch)
         manager._traigent_config.privacy_enabled = True
+        manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = set()
         self._stub_storage(manager, Mock(return_value=Mock()))
 
-        assert manager.syncable_local_session_id("sess-2020", trial_count=3) is None
+        assert manager.syncable_local_session_id("sess-2020") is None
 
         # The exclusion is scoped to that clause only: an offline privacy run
         # still legitimately owns its record locally.
         manager._no_egress = True
-        assert (
-            manager.syncable_local_session_id("sess-2020", trial_count=3) == "sess-2020"
-        )
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
 
     def test_no_local_record_returns_none(self, backend_session_manager, caplog):
         """The ephemeral `local_session_<uuid>` minted when storage is
@@ -3527,6 +3665,7 @@ class TestSyncableLocalSessionId:
         manager._backend_tracking_enabled = True
         manager._runtime_degraded = False
         manager._remote_completed_sessions = set()
+        manager._attempted_trials = self._attempts("sess-2020", 3)
         manager._acknowledged_trials = self._acks("sess-2020", 3)
         self._stub_storage(manager, Mock(return_value=Mock()))
         assert manager._egress_disabled() is False
@@ -3534,7 +3673,7 @@ class TestSyncableLocalSessionId:
         # A `source != "cloud_brain"` predicate would offer an id here …
         assert manager.result_source(trial_count=3) == "explicit_local"
         # … and duplicate a run the backend tracked end-to-end. Ours does not.
-        assert manager.syncable_local_session_id("sess-2020", trial_count=3) is None
+        assert manager.syncable_local_session_id("sess-2020") is None
 
 
 class TestStoreRelativeSyncId:

@@ -178,35 +178,13 @@ _OBJECTIVE_INERT_CONSTANT_WARNING_CODE = "OBJECTIVE_INERT_CONSTANT"
 # fixed additive term that cannot change the argmax. Using selection's OWN span
 # test makes the #1832 inertness warning provably equivalent to actual inertness.
 _OBJECTIVE_ZERO_SPAN_EPSILON = 1e-9
-# Trials this orchestrator appends to the result WITHOUT ever submitting them to
-# the backend (``_abandon_optuna_trial``). Mirrors the same marker
+# Marker ``_abandon_optuna_trial`` stamps on the trials it appends to the result
+# without ever evaluating them. Mirrors the same marker
 # ``MaxTrialsStopCondition`` excludes from the execution budget
 # (``stop_conditions.py``); that one is a private class attribute of an
 # unrelated stop condition, so it is not importable as a shared constant —
 # writer and reader are kept in sync here instead.
 _ABANDONED_TRIAL_METADATA_KEY = "abandoned"
-
-
-def _sync_eligible_trial_count(trials: Sequence[TrialResult]) -> int:
-    """Trials the backend could plausibly have acknowledged (#2020).
-
-    ``_trials_not_fully_acknowledged`` reads "fewer acks than trials" as "the
-    backend is missing part of this run". Abandoned trials are never submitted
-    by design, so counting them would make a fully-tracked connected run look
-    partially acknowledged — handing out a sync id for a run the portal already
-    holds and duplicating the experiment on import.
-
-    Currently unreachable: the abandon paths need ``_optuna_trial_id`` on a
-    trial and no shipping optimizer emits one. This keeps the count correct if
-    the ask/tell residual is re-activated.
-    """
-    return sum(
-        1
-        for trial in trials
-        if not (getattr(trial, "metadata", None) or {}).get(
-            _ABANDONED_TRIAL_METADATA_KEY, False
-        )
-    )
 
 
 def _successful_trial_metric_names(trials: Sequence[TrialResult]) -> list[str]:
@@ -3663,8 +3641,14 @@ class OptimizationOrchestrator:
         # without --all or private-storage archaeology. Covers the runs the
         # #1939 offline-only metadata gate missed — no-key local fallback,
         # tracking-disabled, mid-run degraded, backend-early-complete (#1938),
-        # and trials the backend did not all acknowledge — and it verifies the
-        # record exists so a rejected id is never surfaced. Assigned here,
+        # and trials the SDK submitted that the backend did not acknowledge —
+        # and it verifies the record exists so a rejected id is never surfaced.
+        # The unacknowledged-trials clause counts SUBMISSION ATTEMPTS recorded
+        # by the session manager, not entries in `result.trials`: this
+        # orchestrator appends trials it never submits (abandoned residuals;
+        # configs a pre-eval `constraints=[...]` predicate rejects), and
+        # counting those would offer a sync id for a run the portal already
+        # holds. Assigned here,
         # before the backend-finalize block, so a finalization failure that
         # still returns a partial result (see
         # _finalize_user_cancelled_optimization) cannot drop it. This is the
@@ -3675,9 +3659,7 @@ class OptimizationOrchestrator:
         # backend already holds would duplicate the experiment. It does not
         # CLEAR it either — a run that already qualified under another locality
         # clause keeps the id it was given even if finalize then fails.
-        syncable_id = self.backend_session_manager.syncable_local_session_id(
-            session_id, trial_count=_sync_eligible_trial_count(result.trials)
-        )
+        syncable_id = self.backend_session_manager.syncable_local_session_id(session_id)
         if syncable_id is not None:
             result.sync_session_id = syncable_id
             result.metadata["local_session_id"] = syncable_id
