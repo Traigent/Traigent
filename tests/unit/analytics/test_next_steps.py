@@ -392,6 +392,215 @@ class TestGetNextSteps:
         assert result["guidance_meta"] == payload_with_guidance_meta["guidance_meta"]
 
     @pytest.mark.asyncio
+    async def test_get_next_steps_preserves_and_validates_attribution(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        """A well-formed first-party attribution block is accepted + surfaced."""
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        attribution = {
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "Traigent tuned this recommendation.",
+            "why": "Chosen from your optimization history and run comparison.",
+            "basis": ["optimization_history", "run_comparison"],
+            "engine": "policy",
+        }
+        payload_with_attribution = {
+            **valid_next_steps_payload,
+            "attribution": attribution,
+        }
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload_with_attribution
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_next_steps("run_123")
+
+        assert result == payload_with_attribution
+        assert result["attribution"] == attribution
+
+    @pytest.mark.asyncio
+    async def test_get_next_steps_without_attribution_is_unchanged(
+        self,
+        valid_next_steps_payload: dict[str, object],
+    ) -> None:
+        """Backward compat: the absent attribution case still works."""
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = valid_next_steps_payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_next_steps("run_123")
+
+        assert result == valid_next_steps_payload
+        assert "attribution" not in result
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "attribution",
+        [
+            "not-an-object",
+            {"source": "traigent", "label": "Traigent"},  # missing fields
+            {  # third-party source
+                "source": "acme",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "policy",
+            },
+            {  # wrong label
+                "source": "traigent",
+                "label": "acme",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "policy",
+            },
+            {  # empty basis
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": [],
+                "engine": "policy",
+            },
+            {  # unknown basis token
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["mystery_signal"],
+                "engine": "policy",
+            },
+            {  # unhashable basis token (dict) must fail closed, not raise TypeError
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": [{}],
+                "engine": "policy",
+            },
+            {  # non-string, non-dict basis token
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": [123],
+                "engine": "policy",
+            },
+            {  # whitespace-only headline
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "   ",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "policy",
+            },
+            {  # headline exceeds the schema bound
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h" * 501,
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "policy",
+            },
+            {  # why exceeds the schema bound
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w" * 1001,
+                "basis": ["optimization_history"],
+                "engine": "policy",
+            },
+            {  # basis tokens must be unique
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history", "optimization_history"],
+                "engine": "policy",
+            },
+            {  # unsupported engine
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "smartopt",
+            },
+            {  # unhashable engine (dict) must fail closed, not raise TypeError
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": {},
+            },
+            {  # non-string, non-dict engine
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": 123,
+            },
+            {  # empty headline
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "policy",
+            },
+            {  # unexpected extra field
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "policy",
+                "internal_signal": 0.99,
+            },
+        ],
+    )
+    async def test_get_next_steps_rejects_malformed_attribution(
+        self,
+        valid_next_steps_payload: dict[str, object],
+        attribution: object,
+    ) -> None:
+        """A malformed attribution block fails closed."""
+        from traigent.analytics.next_steps import NextStepsClient
+
+        client = NextStepsClient(api_key="test")
+        payload = {**valid_next_steps_payload, "attribution": attribution}
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload
+        mock_response.raise_for_status = MagicMock()
+
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(ValueError, match="attribution"):
+            await client.get_next_steps("run_123")
+
+    @pytest.mark.asyncio
     async def test_explicit_guidance_variant_overrides_env_and_validates_response(
         self,
         valid_next_steps_payload: dict[str, object],

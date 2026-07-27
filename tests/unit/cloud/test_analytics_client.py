@@ -369,6 +369,182 @@ class TestGetRunDecisionBrief:
 
         mock_http.get.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_preserves_and_validates_optional_attribution(
+        self, decision_payload: dict[str, object]
+    ) -> None:
+        """A well-formed first-party attribution block is accepted + surfaced."""
+        attribution = {
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "Traigent tuned this recommendation.",
+            "why": "Chosen from your optimization history and run comparison.",
+            "basis": ["optimization_history", "run_comparison"],
+            "engine": "rules",
+        }
+        payload_with_attribution = {**decision_payload, "attribution": attribution}
+
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(payload_with_attribution)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_run_decision_brief("proj_abc", "run_123")
+
+        assert result == payload_with_attribution
+        assert result["attribution"] == attribution
+
+    @pytest.mark.asyncio
+    async def test_without_attribution_is_unchanged(
+        self, decision_payload: dict[str, object]
+    ) -> None:
+        """Backward compat: the absent attribution case still works."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(decision_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_run_decision_brief("proj_abc", "run_123")
+
+        assert result == decision_payload
+        assert "attribution" not in result
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "attribution",
+        [
+            "not-an-object",
+            {"source": "traigent", "label": "Traigent"},  # missing fields
+            {  # third-party source
+                "source": "acme",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "rules",
+            },
+            {  # empty basis
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": [],
+                "engine": "rules",
+            },
+            {  # unknown basis token
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["mystery_signal"],
+                "engine": "rules",
+            },
+            {  # unhashable basis token (dict) must fail closed, not raise TypeError
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": [{}],
+                "engine": "rules",
+            },
+            {  # non-string, non-dict basis token
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": [123],
+                "engine": "rules",
+            },
+            {  # whitespace-only headline
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "   ",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "rules",
+            },
+            {  # headline exceeds the schema bound
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h" * 501,
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "rules",
+            },
+            {  # why exceeds the schema bound
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w" * 1001,
+                "basis": ["optimization_history"],
+                "engine": "rules",
+            },
+            {  # basis tokens must be unique
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history", "optimization_history"],
+                "engine": "rules",
+            },
+            {  # unsupported engine
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "smartopt",
+            },
+            {  # unhashable engine (dict) must fail closed, not raise TypeError
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": {},
+            },
+            {  # non-string, non-dict engine
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": 123,
+            },
+            {  # unexpected extra field
+                "source": "traigent",
+                "label": "Traigent",
+                "headline": "h",
+                "why": "w",
+                "basis": ["optimization_history"],
+                "engine": "rules",
+                "internal_signal": 0.99,
+            },
+        ],
+    )
+    async def test_malformed_attribution_fails_closed(
+        self, decision_payload: dict[str, object], attribution: object
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        payload = {**decision_payload, "attribution": attribution}
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(AnalyticsClientError, match="attribution"):
+            await client.get_run_decision_brief("proj_abc", "run_123")
+
 
 class TestWave2SingleRunAnalytics:
     @pytest.fixture()

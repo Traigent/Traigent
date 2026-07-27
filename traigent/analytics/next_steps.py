@@ -53,6 +53,7 @@ _ALLOWED_RESPONSE_KEYS = _REQUIRED_RESPONSE_KEYS | {
     "posture",
     "guidance_meta",
     "decision",
+    "attribution",  # optional first-party attribution block (BE #2431)
 }
 _GUIDANCE_META_FIELDS = {
     "requested_variant",
@@ -88,6 +89,21 @@ _AUTHORITATIVE_CATEGORIES = frozenset(
         "wait",
     }
 )
+# Optional first-party attribution block (BE #2431). Absent on degenerate/empty
+# responses; when present it must match the frozen contract exactly.
+_ATTRIBUTION_FIELDS = frozenset(
+    {"source", "label", "headline", "why", "basis", "engine"}
+)
+_ATTRIBUTION_BASIS_TOKENS = frozenset(
+    {
+        "optimization_history",
+        "run_comparison",
+        "parameter_importance",
+        "value_priors",
+        "optimization_logic",
+    }
+)
+_ATTRIBUTION_ENGINES = frozenset({"rules", "policy"})
 
 GuidanceVariant = Literal["rules", "policy"]
 ReceiptStatus = Literal["started", "completed", "failed", "skipped"]
@@ -388,6 +404,58 @@ def _parse_rfc3339(value: Any, field: str) -> None:
         raise ValueError(f"{field} must include a timezone offset")
 
 
+def _validate_attribution(value: Any) -> None:
+    """Validate the optional first-party attribution block, failing closed.
+
+    Absent is legal (degenerate/empty responses omit it). When present, the
+    block must match the frozen contract exactly: a Traigent-sourced label,
+    non-empty headline/why strings, a non-empty basis drawn from the known
+    token set, and a rules|policy engine. A malformed block fails closed the
+    same way other malformed sub-objects do.
+    """
+    if not isinstance(value, dict) or set(value) != _ATTRIBUTION_FIELDS:
+        raise ValueError(
+            "Guidance integrity error: attribution fields do not match the "
+            "public contract."
+        )
+    if value.get("source") != "traigent":
+        raise ValueError(
+            "Guidance integrity error: attribution.source must be 'traigent'."
+        )
+    if value.get("label") != "Traigent":
+        raise ValueError(
+            "Guidance integrity error: attribution.label must be 'Traigent'."
+        )
+    text_limits = {"headline": 500, "why": 1000}
+    for field, max_length in text_limits.items():
+        text = value.get(field)
+        if not isinstance(text, str) or not text.strip() or len(text) > max_length:
+            raise ValueError(
+                f"Guidance integrity error: attribution.{field} must be a "
+                f"non-blank string of at most {max_length} characters."
+            )
+    basis = value.get("basis")
+    if (
+        not isinstance(basis, list)
+        or not basis
+        or any(
+            not isinstance(token, str) or token not in _ATTRIBUTION_BASIS_TOKENS
+            for token in basis
+        )
+        or len(basis) > 5
+        or len(set(basis)) != len(basis)
+    ):
+        raise ValueError(
+            "Guidance integrity error: attribution.basis must be a non-empty "
+            "list of at most five unique known basis tokens."
+        )
+    engine = value.get("engine")
+    if not isinstance(engine, str) or engine not in _ATTRIBUTION_ENGINES:
+        raise ValueError(
+            "Guidance integrity error: attribution.engine must be 'rules' or 'policy'."
+        )
+
+
 def _validate_receipt_response(
     payload: dict[str, Any],
     *,
@@ -564,7 +632,9 @@ class NextStepsClient:
             ``posture`` block, it is returned unchanged. If the backend
             includes the optional ``guidance_meta`` block (served_variant,
             engine, policy_table_sha, smartopt_version, fallback_reason), it
-            is returned unchanged.
+            is returned unchanged. If the backend includes the optional
+            first-party ``attribution`` block, it is validated against the
+            frozen contract and returned unchanged for display.
 
         Raises:
             httpx.HTTPError: If request fails. A 404 response is raised as
@@ -637,6 +707,8 @@ class NextStepsClient:
             )
 
         typed_payload = cast(dict[str, Any], payload)
+        if "attribution" in payload:
+            _validate_attribution(payload["attribution"])
         if (
             requested_variant is not None
             or "guidance_meta" in payload
