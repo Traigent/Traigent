@@ -32,6 +32,9 @@ from traigent.cloud.auth import AuthenticationError, AuthManager
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 _VALID_LOOKING_KEY = "tg_" + "x" * 61
 
 

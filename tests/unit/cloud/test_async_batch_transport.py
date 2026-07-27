@@ -6,6 +6,9 @@ import pytest
 
 from traigent.cloud.async_batch_transport import AsyncBatchTransport
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.mark.asyncio
 async def test_transport_remains_reusable_after_completed_flush():

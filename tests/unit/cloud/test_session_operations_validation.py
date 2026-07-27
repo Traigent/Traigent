@@ -19,6 +19,9 @@ from traigent.cloud.session_types import (
 )
 from traigent.utils.exceptions import ValidationError as ValidationException
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture(autouse=True)
 def _backend_enabled_for_session_operations(monkeypatch):

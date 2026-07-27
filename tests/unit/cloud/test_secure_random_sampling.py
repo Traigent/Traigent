@@ -11,6 +11,9 @@ from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 from traigent.core import types as types_module
 from traigent.evaluators.base import Dataset, EvaluationExample
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 retry_module = importlib.import_module("traigent.utils.retry")
 
 

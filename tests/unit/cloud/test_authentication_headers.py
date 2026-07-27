@@ -21,6 +21,9 @@ from traigent.cloud.auth import (
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 async def _stub_validate(self, api_key):  # noqa: ARG001
     """Bypass backend API key validation for header-only tests."""

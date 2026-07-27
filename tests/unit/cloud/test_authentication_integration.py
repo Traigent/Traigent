@@ -14,6 +14,9 @@ from traigent.cloud.backend_client import BackendClientConfig, BackendIntegrated
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestFullOptimizationWorkflows:
     """Test complete optimization workflows with authentication."""

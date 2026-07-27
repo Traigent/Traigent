@@ -23,6 +23,9 @@ from aiohttp.connector import TCPConnector as _REAL_TCP_CONNECTOR
 
 from traigent.cloud.client import TraigentCloudClient
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture(autouse=True)
 def _restore_real_aiohttp_after_stress():

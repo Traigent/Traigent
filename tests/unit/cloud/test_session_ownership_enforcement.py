@@ -11,6 +11,9 @@ from traigent.cloud.optimizer_client import OptimizerDirectClient
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.trial_operations import TrialOperations
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture(autouse=True)
 def _mock_public_cloud_dns(monkeypatch):

@@ -10,6 +10,9 @@ from traigent.cloud.dataset_converter import converter
 from traigent.cloud.models import AgentSpecification, OptimizationRequest
 from traigent.evaluators.base import Dataset, EvaluationExample
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestSecureDataConversion:
     """Test security aspects of data conversion."""

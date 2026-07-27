@@ -1,9 +1,14 @@
+import pytest
+
 from traigent.cloud.dtos import (
     QuotaExceededErrorDTO,
     WalletInsufficientBalanceErrorDTO,
     WalletTopUpPackDTO,
     WalletTopUpPacksResponseDTO,
 )
+
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
 
 
 def test_quota_exceeded_error_dto_matches_schema_shape():

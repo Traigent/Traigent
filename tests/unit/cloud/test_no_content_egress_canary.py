@@ -15,6 +15,9 @@ from traigent import optimize
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.artifact_fingerprints import artifact_fingerprints_to_wire
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 CANARY_INPUT = "CANARY_INPUT_a1b2"
 CANARY_OUTPUT = "CANARY_OUTPUT_c3d4"

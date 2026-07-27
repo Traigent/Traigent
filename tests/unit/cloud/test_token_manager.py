@@ -27,11 +27,31 @@ from traigent.cloud.auth import (
 )
 from traigent.cloud.token_manager import TokenManager
 
+pytestmark = pytest.mark.backend_online
+
+# https so it satisfies the production URL guard, and `.test` (RFC 6761) so the
+# name is reserved and can never be registered by anyone.
+#
+# Non-routability is NOT what keeps these tests offline: the fixture below
+# replaces url_security's getaddrinfo with a fixed public address precisely so
+# the guard's public-address check passes, which defeats `.test` not resolving.
+# What keeps them offline is that every test mocks the transport
+# (ResilientClient.execute_with_retry), so no socket is ever opened.
+PINNED_BACKEND_URL = "https://backend.example.test"
+
 
 @pytest.fixture(autouse=True)
 def _mock_public_cloud_dns(monkeypatch):
     """Keep cloud URL validation deterministic for mocked HTTP tests."""
     monkeypatch.setenv("ENVIRONMENT", "production")
+    # Pin the backend URL: the last ambient input this fixture did not control.
+    # get_cloud_backend_url falls through TRAIGENT_BACKEND_URL -> TRAIGENT_API_URL
+    # -> stored `traigent auth login` credentials -> the https default, so
+    # unsetting is not isolation. TRAIGENT_API_URL is deleted separately because
+    # _build_api_url reads it directly and it does NOT sit behind
+    # TRAIGENT_BACKEND_URL.
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", PINNED_BACKEND_URL)
+    monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
 
     def _resolve_public_backend(_host, _port, *_args, **_kwargs):
         return [(0, 0, 0, "", ("93.184.216.34", 0))]
@@ -546,7 +566,10 @@ class TestRefreshSecurity:
         if not AIOHTTP_AVAILABLE:
             pytest.skip("aiohttp unavailable")
 
+        reached: list[str] = []
+
         async def _raise_sensitive_error(*_args, **_kwargs):
+            reached.append("transport")
             raise RuntimeError("upstream leaked token=secret-value")
 
         monkeypatch.setattr(
@@ -556,6 +579,59 @@ class TestRefreshSecurity:
 
         result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
 
+        # Reachability: refresh_jwt_secure returns
+        # AuthResult(success=False, INVALID, "Token refresh failed") from its
+        # offline egress guard (cloud_backend_egress_disabled) BEFORE any
+        # transport runs -- byte-identical to the assertions below. Without
+        # pinning that the transport ran, this test passes just as green with
+        # backend egress switched off, testing nothing (#2033). The URL guard is
+        # the other pre-transport exit, but it returns str(exc), not the generic
+        # message, so it is already distinguishable.
+        assert reached == ["transport"]
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "Token refresh failed"
+
+    @pytest.mark.asyncio
+    async def test_stored_cli_credentials_do_not_steer_refresh_url(
+        self, token_manager, monkeypatch
+    ):
+        """Stored `traigent auth login` state must not reach the refresh URL.
+
+        Regression for #2034. With no env vars set at all,
+        ``_get_configured_backend_origin`` falls through to the backend_url
+        saved by ``traigent auth login``, so *unsetting* TRAIGENT_BACKEND_URL is
+        not isolation -- only pinning it is. This is the one vector the filed
+        issue missed: it needs no environment variable to fire.
+        """
+        if not AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp unavailable")
+
+        from traigent.config.backend_config import BackendConfig
+
+        reached: list[str] = []
+
+        async def _raise_sensitive_error(*_args, **_kwargs):
+            reached.append("transport")
+            raise RuntimeError("upstream leaked token=secret-value")
+
+        monkeypatch.setattr(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            _raise_sensitive_error,
+        )
+
+        # Patch the accessor, not HOME: CREDENTIALS_FILE is resolved at import
+        # time, so this must never read the developer's real ~/.traigent.
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value="http://127.0.0.1:5000",
+        ):
+            assert BackendConfig.get_cloud_backend_url() == PINNED_BACKEND_URL
+            result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
+
+        # Reachability: pins that the transport ran. The offline egress guard
+        # in refresh_jwt_secure returns the same generic failure without it.
+        assert reached == ["transport"]
         assert result.success is False
         assert result.status == AuthStatus.INVALID
         assert result.error_message == "Token refresh failed"
@@ -743,9 +819,12 @@ class TestOAuth2RefreshHardening:
         with patch(
             "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
             side_effect=fail_refresh,
-        ):
+        ) as execute:
             result = await token_manager.refresh_jwt_secure("refresh_token")
 
+        # Reachability: pins that the transport ran. The offline egress guard
+        # in refresh_jwt_secure returns the same generic failure without it.
+        execute.assert_awaited_once()
         assert result.success is False
         assert result.error_message == "Token refresh failed"
         assert "secret-token-value" not in result.error_message

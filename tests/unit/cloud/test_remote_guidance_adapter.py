@@ -42,6 +42,9 @@ from traigent.optimizers.interactive_optimizer import (
 )
 from traigent.utils.exceptions import OptimizationError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _make_cloud_client_mock(
     *,

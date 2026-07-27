@@ -19,6 +19,9 @@ from traigent.cloud.auth import (
 )
 from traigent.security.jwt_validator import ValidationMode
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _mock_backend_validate(success: bool = True):
     """Patch ``AuthManager._validate_api_key_with_backend`` for offline tests.

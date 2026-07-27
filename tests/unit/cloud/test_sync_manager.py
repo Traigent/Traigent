@@ -28,6 +28,9 @@ from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def backend_response(status_code=201, payload=None, text="Created"):
     response = Mock(status_code=status_code, text=text)

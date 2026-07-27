@@ -10,6 +10,9 @@ import pytest
 
 from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestAgentCostBreakdown:
     """Tests for AgentCostBreakdown validation."""

@@ -5,6 +5,9 @@ import pytest
 from traigent.cloud.production_mcp_client import MCPServerConfig, ProductionMCPClient
 from traigent.utils.exceptions import ValidationError as ValidationException
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def test_mcp_server_config_rejects_invalid_values():
     with pytest.raises(ValidationException):

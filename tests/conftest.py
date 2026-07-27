@@ -162,7 +162,12 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip slow tests unless they are explicitly requested."""
+    """Skip slow tests unless they are explicitly requested.
+
+    Do NOT extend this hook to add `backend_online` from a file path (#2033):
+    that marker must stay declared per-file/per-test, or a test's offline
+    semantics become location-dependent again. See `jwt_development_mode`.
+    """
     if config.getoption("--run-slow"):
         return
 
@@ -224,17 +229,37 @@ def jwt_development_mode(monkeypatch, request):
     monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "development")
     # Ensure mock LLM mode to avoid real LLM API calls during tests
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
-    # Most tests run fully offline. Cloud unit tests exercise mocked transport
-    # boundaries, so keep them online unless an individual test opts into
-    # offline mode explicitly. Env-gated LIVE-contract tests (which only run
-    # when their gate is exported, e.g. by the live-contract CI lane) must not
-    # have offline forced on either — this autouse monkeypatch would otherwise
-    # override the lane's environment and fail those runs with "backend egress
-    # is disabled (offline)". SCOPING IS LOAD-BEARING: the carve-out requires
-    # BOTH the env gate AND the test to live in a known live-test module — a
-    # stray exported gate variable in a developer shell must NOT flip offline
-    # mode off for the rest of the suite (that would silently no-op the
-    # backend-egress guards in unit tests).
+    # Most tests run fully offline. Tests that exercise connected/backend code
+    # paths against mocked transports opt in EXPLICITLY with
+    # @pytest.mark.backend_online (registered in pyproject.toml), applied per
+    # test, per class, or module-wide via `pytestmark`. This replaced the old
+    # cloud-unit-test directory carve-out (#2033), which matched the node's
+    # file path: with a path carve-out, a test's offline semantics depended on
+    # which directory the file happened to live in, so moving a connected test
+    # out of that directory silently flipped it offline and it kept passing
+    # while no longer testing the path it named (PR #2026 / #2020).
+    #
+    # REVIEW RULE: this marker is applied per-file or per-test only — it must
+    # NEVER be path-derived in a collection hook (see the already-present
+    # pytest_collection_modifyitems above). Doing so would reintroduce exactly
+    # the location dependence #2033 deleted.
+    #
+    # The marker is NOT permission for real network egress; transports must
+    # still be mocked. The actual zero-egress guarantee is enforced by the
+    # cloud canaries (test_no_content_egress_canary.py and
+    # test_no_unguarded_backend_egress.py), not by this flag.
+    #
+    # Env-gated LIVE-contract tests (which only run when their gate is
+    # exported, e.g. by the live-contract CI lane) must not have offline forced
+    # on either — this autouse monkeypatch would otherwise override the lane's
+    # environment and fail those runs with "backend egress is disabled
+    # (offline)". That clause stays path-based on purpose: its semantics are
+    # compound (env gate AND known live module), which a static marker cannot
+    # express. SCOPING IS LOAD-BEARING: the carve-out requires BOTH the env
+    # gate AND the test to live in a known live-test module — a stray exported
+    # gate variable in a developer shell must NOT flip offline mode off for the
+    # rest of the suite (that would silently no-op the backend-egress guards in
+    # unit tests).
     _live_gates = (
         "TRAIGENT_LIVE_SYNC_E2E",
         "TRAIGENT_HYBRID_LIVE",
@@ -251,9 +276,48 @@ def jwt_development_mode(monkeypatch, request):
     _is_gated_live_test = any(
         marker in _node_path for marker in _live_test_paths
     ) and any(os.getenv(gate) for gate in _live_gates)
-    if "tests/unit/cloud/" in _node_path or _is_gated_live_test:
+    # get_closest_marker honours function-, class-, and module-level
+    # (`pytestmark`) placement, so a module opts its whole file in with one line.
+    _wants_backend_online = (
+        request.node.get_closest_marker("backend_online") is not None
+    )
+    if _wants_backend_online or _is_gated_live_test:
+        # A marked test is put in connected mode UNCONDITIONALLY — an ambient
+        # TRAIGENT_OFFLINE / TRAIGENT_OFFLINE_MODE does not suppress it, and
+        # must never turn it into a skip. The marker was never permission for
+        # real egress (its registered description in pyproject.toml requires
+        # transports to be mocked), and mocked transports — not this env var —
+        # are what actually prevents network access. An ambient "no real
+        # network" switch is therefore already satisfied for these tests, so
+        # honouring it here would buy no safety while silently converting "ran"
+        # into "skipped": publish.yml, release-review.yml, sonarcloud.yml and
+        # tests.yml all export TRAIGENT_OFFLINE_MODE around `pytest
+        # tests/unit`, no lane asserts a skip count, and the publish gate would
+        # then ship a release with the whole cloud suite unexercised and exit 0.
+        #
+        # RESIDUAL PRECEDENCE CHANGE (deliberate, called out rather than
+        # hidden): before this change an ambient TRAIGENT_OFFLINE=1 survived
+        # the fixture for cloud tests, because the old carve-out only wrote
+        # TRAIGENT_OFFLINE_MODE. It no longer survives — the connected branch
+        # clears BOTH spellings. That is required by #2033 AC1: a connected
+        # test must actually observe connected mode, and is_backend_offline()
+        # ORs the two spellings (env_config.py:492-494), so clearing only
+        # TRAIGENT_OFFLINE_MODE would leave an ambient TRAIGENT_OFFLINE in
+        # force and the test would run offline under a connected name. The two
+        # spellings are NOT interchangeable — see #1773. So for `backend_online`
+        # tests specifically, the operator's env var no longer decides egress;
+        # the per-module transport mocks do.
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     else:
+        # Setting TRAIGENT_OFFLINE_MODE=true is enough for is_backend_offline(),
+        # which ORs the two spellings. It is NOT a blanket offline default:
+        # consumers that read only TRAIGENT_OFFLINE (e.g.
+        # TraigentConfig.from_environment, resolve_execution_policy) still see
+        # whatever the ambient shell has, so they stay online-capable unless the
+        # operator exported TRAIGENT_OFFLINE themselves. The zero-egress
+        # guarantee for unit tests rests on mocked transports plus the cloud
+        # canaries, not on this line alone.
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("MOCK_MODE", "true")
     if not _test_exercises_policy(request.node, _CI_APPROVAL_POLICY_TEST_PATHS):

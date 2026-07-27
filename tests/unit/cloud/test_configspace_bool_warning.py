@@ -3,8 +3,13 @@
 import logging
 from unittest.mock import Mock
 
+import pytest
+
 from traigent.cloud.api_operations import ApiOperations, _typed_configuration_space
 from traigent.cloud.models import SessionCreationRequest
+
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
 
 LOGGER_NAME = "traigent.cloud.api_operations"
 

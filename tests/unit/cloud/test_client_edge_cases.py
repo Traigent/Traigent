@@ -15,6 +15,9 @@ from traigent.cloud.models import (
 )
 from traigent.utils.retry import NetworkError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def create_mock_response(status=200, json_data=None, text_data="", raise_on_json=False):
     """Create a mock response that works as an async context manager."""
