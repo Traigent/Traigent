@@ -29,6 +29,7 @@ from traigent.cloud.sync_manager import SyncManager
 from traigent.config.types import TraigentConfig
 from traigent.core import orchestrator as orchestrator_module
 from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.core.config_state_manager import ConfigStateManager
 from traigent.core.execution_policy_runtime import CloudBrainUnavailableError
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -648,6 +649,63 @@ async def test_unprintable_exception_still_finalizes_and_carries_the_id(
     session = storage.load_session(sync_id)
     assert session is not None
     assert session.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_unprintable_failure_after_the_orchestrator_returns_is_not_replaced(
+    monkeypatch, tmp_path
+) -> None:
+    """T13b: the same defect one layer up, in ``OptimizedFunction``.
+
+    T13 covers the orchestrator's handler. But ``_run_and_finalize_optimization``
+    does real work AFTER ``orchestrator.optimize`` has already returned — exiting
+    ``ConfigurationSpaceContext``/``override_context``, appending to the config
+    state manager, ``apply_best_config``, ``save_to`` — and none of it is inside
+    the orchestrator's try. A failure there lands in ``_execute_optimization``'s
+    own generic handler, which rendered the caught exception eagerly into both
+    its ``logger.error`` diagnostic and its ``OptimizationError`` message.
+
+    With a raising ``__str__`` that formatting call was itself the thing that
+    raised, so the caller received ``RuntimeError('__str__ exploded')`` — a
+    report about the logging, from a line that never names the real failure —
+    instead of the exception the run actually died on. Nothing was labelled,
+    and the cause chain pointed at the formatting error rather than the defect.
+
+    ``append_optimization_result`` is the chosen injection point because it is
+    an ordinary post-run bookkeeping call on the success path: the exception it
+    raises is genuinely one the orchestrator can never see.
+    """
+    _isolated_env(monkeypatch, tmp_path)
+
+    append_calls: list[str] = []
+    original = _UnprintableError()
+
+    def exploding_append(self, result: Any) -> None:
+        append_calls.append("called")
+        raise original
+
+    monkeypatch.setattr(
+        ConfigStateManager, "append_optimization_result", exploding_append
+    )
+
+    @_optimized
+    async def answer(text: str, config=None) -> str:
+        return "ok"
+
+    with pytest.raises(BaseException) as excinfo:
+        await answer.optimize(algorithm="grid")
+    raised = excinfo.value
+
+    # Non-vacuity: the post-orchestrator call really was reached and raised.
+    assert append_calls, "append_optimization_result was never reached"
+
+    # The caller gets the REAL failure, wrapped — not the formatting error.
+    assert type(raised) is OptimizationError
+    assert raised.__cause__ is original
+    assert not isinstance(raised, RuntimeError)
+    assert "__str__ exploded" not in repr(raised)
+    # The wrapper message degraded gracefully instead of exploding.
+    assert "<unprintable _UnprintableError>" in str(raised)
 
 
 class _HardExit(BaseException):

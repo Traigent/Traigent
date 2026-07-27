@@ -320,9 +320,16 @@ Notes when debugging with this:
   outcome exceptions) also get the id attached before they propagate, but those
   types have no class-level default, so read them with
   `getattr(exc, "sync_session_id", None)`. `KeyboardInterrupt` and
-  `asyncio.CancelledError` are not in this group: they do not raise out of
-  `optimize()` at all — the run returns a partial `OptimizationResult`, and the
-  id is on `result.sync_session_id`.
+  `asyncio.CancelledError` are not in this group: they normally do not raise out
+  of `optimize()` at all — the run returns a partial `OptimizationResult`, and
+  the id is on `result.sync_session_id`.
+- **The one exit with no id at all: an interrupt that lands *during*
+  finalization.** After the first Ctrl-C the run finalizes its completed trials,
+  and that finalize talks to the network. A *second* Ctrl-C (or an outer
+  cancellation) while it is in flight is not caught — a bare
+  `KeyboardInterrupt`/`CancelledError` propagates, so there is no result to read
+  and no exception attribute to read either. The trials are still on disk; find
+  the session with `traigent local list` and sync it by id.
 - `None` means there is nothing to name: the backend tracked the run
   end-to-end (it is already on the portal), no local record could be read, or
   the failure happened before a session existed.

@@ -637,7 +637,8 @@ Exactly which exits carry it:
 | `ResolutionError` (unwrapped, type preserved) | yes | `exc.sync_session_id` |
 | Any other `Exception` (wrapped into `OptimizationError`) | yes, on the wrapper | `exc.sync_session_id` |
 | `SystemExit` / `GeneratorExit` / other non-`Exception` exits | yes, attached then re-raised untouched | `getattr(exc, "sync_session_id", None)` — no class default |
-| `KeyboardInterrupt` / `asyncio.CancelledError` | n/a — does not raise; a partial result is returned | `result.sync_session_id` (#2020) |
+| `KeyboardInterrupt` / `asyncio.CancelledError` | n/a — normally does not raise; a partial result is returned | `result.sync_session_id` (#2020) |
+| …**unless a second interrupt lands during finalization** | no — a bare `KeyboardInterrupt`/`CancelledError` propagates, so there is no result and no attribute | `traigent local list`, then `traigent sync <id>` |
 | `CostLimitExceeded` | no, always `None` — the pre-run approval gate raises it before a session exists | — |
 
 #### `best_config` in multi-objective runs (authoritative accessor)

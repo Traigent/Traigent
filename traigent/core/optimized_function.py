@@ -96,7 +96,10 @@ from traigent.core.optimization_pipeline import (
     resolve_effective_parallel_config,
     resolve_execution_parameters,
 )
-from traigent.core.orchestrator import OptimizationOrchestrator
+from traigent.core.orchestrator import (
+    OptimizationOrchestrator,
+    _safe_exception_text,
+)
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -2878,13 +2881,23 @@ Remediation:
         except Exception as e:
             from traigent.knobs import ResolutionError
 
-            logger.error(f"Optimization failed: {e}")
+            # #2029: both renderings of `e` are calls into user-controlled
+            # `__str__`. This handler catches what escapes
+            # _run_and_finalize_optimization OUTSIDE orchestrator.optimize's own
+            # try — the ConfigurationSpaceContext/override_context exit,
+            # _csm.append_optimization_result, apply_best_config, save_to — so
+            # the orchestrator's guarded handler never sees these, and an eager
+            # f-string here raised the formatting error IN PLACE OF the real
+            # failure. Shared helper, deliberately not re-implemented: the two
+            # layers must degrade identically.
+            safe_text = _safe_exception_text(e)
+            logger.error("Optimization failed: %s", safe_text)
             if isinstance(e, ResolutionError):
                 # RFC 0001 §3.4: the typed fail-closed governance rejection
                 # IS the public contract — never dilute it into a generic
                 # OptimizationError.
                 raise
-            raise OptimizationError(f"Optimization failed: {e}") from e
+            raise OptimizationError(f"Optimization failed: {safe_text}") from e
         finally:
             self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
 
