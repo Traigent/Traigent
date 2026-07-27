@@ -109,6 +109,7 @@ from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
 from traigent.utils.exceptions import (
     ConfigurationError,
+    TraigentWarning,
     TVLValidationError,
     ValidationError,
 )
@@ -726,6 +727,72 @@ def _warn_context_mode_param_shadowing(
         f'injection_mode="parameter".'
     )
     warnings.warn(message, UserWarning, stacklevel=3)
+    logger.warning("%s", message)
+
+
+def _count_configurations(configuration_space: Any) -> int:
+    """Count the configurations a space enumerates, or 0 when unknowable.
+
+    Companion to ``OptimizedFunction._estimate_search_space_size``. Only sized
+    collections (list / tuple / set) are countable; a typed-dict parameter is
+    deliberately reported as 0 ("unknown") so callers stay silent rather than
+    guess. An empty collection is likewise 0 rather than 1 - it is invalid, not
+    degenerate, and ``validate_config_space`` raises on it a moment later.
+    """
+    if not isinstance(configuration_space, dict) or not configuration_space:
+        return 0
+
+    total = 1
+    for values in configuration_space.values():
+        if isinstance(values, (list, tuple, set)) and values:
+            total *= len(values)
+        else:
+            return 0
+    return total
+
+
+def _warn_degenerate_configuration_space(
+    func: Callable[..., Any], configuration_space: Any
+) -> None:
+    """Warn when the whole space enumerates exactly one configuration (#2021).
+
+    The predicate is deliberately about the space *as a whole*, not about any
+    individual knob. Pinning one knob while sweeping others ("pin one, sweep
+    another") is a documented, supported pattern - e.g.
+    ``examples/core/rag-optimization/run.py`` pins ``temperature`` and still
+    enumerates 12 real configurations - so a per-knob check would nag on correct
+    code. Only when *no* parameter offers a second value does the run become a
+    no-op: exactly one configuration exists, and the "best" it reports was never
+    compared against anything.
+
+    Advisory only (never raises). The message names the wrapped function so that
+    Python's default warning filter - which dedups on
+    ``(message, category, module, lineno)`` - cannot collapse the warnings of
+    two different decorated functions into one.
+    """
+    if _count_configurations(configuration_space) != 1:
+        return
+
+    import warnings
+
+    func_name = getattr(func, "__name__", repr(func))
+    # Sort by ``str`` so a non-string parameter name cannot raise here; that is
+    # the validator's error to report, not this advisory warning's.
+    pinned = {
+        name: next(iter(values))
+        for name, values in sorted(
+            configuration_space.items(), key=lambda kv: str(kv[0])
+        )
+    }
+    message = (
+        f"@traigent.optimize: the configuration_space for '{func_name}' pins every "
+        f"tuned variable to a single value ({pinned}), so it enumerates exactly one "
+        f"configuration. There is nothing to compare: the run will report that lone "
+        f"configuration as the 'best' one by construction, not by measurement. Give "
+        f"at least one parameter a second value to make this a real search - for "
+        f"example {{'{next(iter(pinned))}': [...two or more values...]}}."
+    )
+    warnings.warn(message, TraigentWarning, stacklevel=3)
     logger.warning("%s", message)
 
 
@@ -3080,6 +3147,10 @@ def optimize(  # NOSONAR(S107)
             actual_injection_mode,
             config_param,
         )
+
+        # #2021: loudly warn if the space enumerates exactly one configuration
+        # (every knob pinned), so the reported "best" is the only candidate.
+        _warn_degenerate_configuration_space(func, resolved_configuration_space)
 
         # Experiment name resolution (#1422).
         #

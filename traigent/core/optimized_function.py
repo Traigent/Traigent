@@ -984,9 +984,7 @@ class OptimizedFunction(Generic[_P, _R]):
         if self.configuration_space:
             try:
                 validate_config_space(
-                    self.configuration_space,
-                    default_config=self.default_config,
-                    emit_warnings=True,
+                    self.configuration_space, default_config=self.default_config
                 )
             except ValidationError as e:
                 if _CONFIG_SPACE_TYPE_ERROR in str(e):

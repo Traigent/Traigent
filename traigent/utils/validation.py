@@ -15,14 +15,13 @@ from __future__ import annotations
 
 import json
 import re
-import warnings as warnings_module
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any
 
-from traigent.utils.exceptions import ConfigurationError, TraigentWarning
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_open
@@ -1268,42 +1267,13 @@ def _validate_default_config_against_config_space(
         _validate_default_config_value(param_name, value, config_space[param_name])
 
 
-def _emit_validation_warnings(result: ValidationResult, stacklevel: int = 3) -> None:
-    """Surface non-fatal validation warnings to the caller.
-
-    ``raise_if_invalid`` only raises on errors, and warnings are otherwise only
-    rendered by ``get_feedback`` (used by the CLI and MCP tools). Callers that
-    validate on a user's behalf - notably the ``@traigent.optimize`` decorator -
-    use this so non-fatal findings such as "Single value in list - no
-    optimization possible" actually reach the user.
-    """
-    for warning in result.warnings:
-        message = f"{warning.field}: {warning.message}"
-        if warning.suggestions:
-            message += "\nSuggestions:\n" + "\n".join(
-                f"  - {s}" for s in warning.suggestions
-            )
-        warnings_module.warn(message, TraigentWarning, stacklevel=stacklevel)
-
-
 def validate_config_space(
     config_space: dict[str, Any],
     default_config: dict[str, Any] | None = None,
-    emit_warnings: bool = False,
 ) -> None:
-    """Validate configuration space (raises exception on error).
-
-    Args:
-        config_space: Configuration space to validate.
-        default_config: Optional defaults checked against the space.
-        emit_warnings: Also surface non-fatal validation warnings through
-            ``warnings.warn`` (``TraigentWarning``). Off by default so internal
-            re-validation does not warn repeatedly for the same space.
-    """
+    """Validate configuration space (raises exception on error)."""
     result = Validators.validate_configuration_space(config_space)
     result.raise_if_invalid()
-    if emit_warnings:
-        _emit_validation_warnings(result)
     _validate_default_config_against_config_space(config_space, default_config)
 
 
