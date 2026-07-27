@@ -2,12 +2,14 @@
 
 import ast
 import json
+import re
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from traigent.utils.secure_path import PathTraversalError, safe_open
-from traigent.utils.validation import Validators
+from traigent.utils.validation import Validators, _canonical_knob_ranges
 
 
 def _write_jsonl(path: Path, records: list[dict] | None = None) -> None:
@@ -625,3 +627,274 @@ class TestShippedExamplesAreNotFlagged:
 
         assert scanned > 50, f"expected the example corpus, scanned {scanned} spaces"
         assert offenders == [], "\n".join(offenders)
+
+
+class TestSuggestedSpacingIsNeverFlagged:
+    """Following the tool's own advice has to silence the tool.
+
+    The thresholds are rounded heuristics and the quantities compared against
+    them are binary floats, so an exact ``>=`` decided the outcome by which
+    decimals the user happened to write: ``0.95 - 0.9`` is 0.04999999999999993
+    and ``0.7 - 0.65`` is 0.04999999999999999, but ``0.75 - 0.7`` is
+    0.050000000000000044. Ten of the twenty adjacent ``temperature`` pairs
+    spaced at the recommended 0.05 were told they were "the same configuration
+    in practice" while the other ten were silent, and ``top_p: [0.9, 0.95]`` -
+    a mainstream sweep - was one of the ten.
+
+    A diagnostic that keeps firing after the user does what it asked cannot be
+    acted on, and it teaches users to ignore every warning on this channel,
+    including the single-value warning that shares it.
+    """
+
+    #: The claim that must never survive a sweep at the recommended spacing.
+    _CLOSENESS_MARKER = "same configuration in practice"
+
+    #: The claim that must never survive a sweep covering the whole range.
+    _NARROW_SPAN_MARKER = "the run can tell you which of these settings won"
+
+    @staticmethod
+    def _warnings_for(config_space: dict) -> list[str]:
+        result = Validators.validate_configuration_space(config_space)
+        assert result.is_valid, "degenerate-variation diagnostics must stay non-fatal"
+        return [w.message for w in result.warnings]
+
+    @staticmethod
+    def _decimal_grid(low: float, high: float, spacing: float) -> list[float]:
+        """The points a user would type to sweep *low*-*high* at *spacing*.
+
+        Built with :class:`~decimal.Decimal` so each point is exactly the float
+        a decimal literal produces: ``float(Decimal("0.65")) == 0.65``. Adding
+        the step in binary floats instead would build a grid no user writes and
+        would hide the representation problem this test exists for.
+        """
+        step = Decimal(str(spacing))
+        assert step > 0
+        point = Decimal(str(low))
+        stop = Decimal(str(high))
+        points: list[float] = []
+        while point <= stop:
+            points.append(float(point))
+            point += step
+        return points
+
+    @staticmethod
+    def _sampled_pairs(
+        points: list[float], limit: int = 60
+    ) -> list[tuple[float, float]]:
+        """Adjacent pairs of *points*, thinned to *limit* for wide integer knobs."""
+        pairs = [(points[i], points[i + 1]) for i in range(len(points) - 1)]
+        if len(pairs) <= limit:
+            return pairs
+        stride = len(pairs) // limit + 1
+        return pairs[::stride] + pairs[-1:]
+
+    def test_every_pair_at_the_suggested_spacing_is_silent(self) -> None:
+        """Both knob kinds, every canonical knob, every adjacent pair.
+
+        The spacing is the one the diagnostic itself prints: 1 for a
+        whole-numbered knob, the resolution floor for a continuous one.
+        """
+        offenders: list[str] = []
+        checked = 0
+
+        for name, canonical in sorted(_canonical_knob_ranges().items()):
+            spacing = Validators._resolution_floor(name)
+            assert spacing is not None, name
+            grid = self._decimal_grid(canonical.low, canonical.high, spacing)
+            assert len(grid) >= 3, (name, grid)
+
+            for lower, upper in self._sampled_pairs(grid):
+                checked += 1
+                pair: list[float] = [lower, upper]
+                if canonical.is_integer:
+                    pair = [int(lower), int(upper)]
+                offenders.extend(
+                    f"{name}={pair!r} (gap {upper - lower!r}): {message}"
+                    for message in self._warnings_for(
+                        {"model": ["gpt-4o-mini", "gpt-4o"], name: pair}
+                    )
+                    if self._CLOSENESS_MARKER in message
+                )
+
+        assert checked > 100, f"expected the whole knob catalog, checked {checked}"
+        assert offenders == [], "\n".join(offenders)
+
+    @pytest.mark.parametrize(
+        ("param_name", "spacing"),
+        [("temperature", 0.05), ("top_p", 0.05)],
+    )
+    def test_a_full_sweep_at_the_suggested_spacing_is_silent(
+        self, param_name: str, spacing: float
+    ) -> None:
+        """The reviewer's repro: the whole canonical range, stepped as advised."""
+        canonical = _canonical_knob_ranges()[param_name]
+        grid = self._decimal_grid(canonical.low, canonical.high, spacing)
+
+        messages = self._warnings_for(
+            {"model": ["gpt-4o-mini", "gpt-4o"], param_name: grid}
+        )
+
+        assert messages == [], messages
+
+    def test_the_spacing_the_tool_prints_is_the_spacing_it_accepts(self) -> None:
+        """Take the number out of the printed advice and hand it back.
+
+        ``_resolution_floor`` is not consulted here on purpose: the user only
+        ever sees the rendered suggestion, so the rendered number is the one
+        that has to work.
+        """
+        offenders: list[str] = []
+
+        for name, canonical in sorted(_canonical_knob_ranges().items()):
+            if name in Validators._VARIANCE_ONLY_KNOBS:
+                continue  # No distance advice exists for these, by design.
+            # Provoke the warning with a gap nothing could consider meaningful.
+            provoking = [
+                canonical.low,
+                canonical.low + (canonical.high - canonical.low) / 1e6,
+            ]
+            result = Validators.validate_configuration_space(
+                {"model": ["gpt-4o-mini", "gpt-4o"], name: provoking}
+            )
+            printed = [
+                suggestion
+                for warning in result.warnings
+                for suggestion in warning.suggestions
+                if "apart" in suggestion
+            ]
+            assert printed, f"{name}: expected spacing advice, got {result.warnings}"
+
+            match = re.search(r"at least ([0-9]*\.?[0-9]+) apart", printed[0])
+            assert match, printed[0]
+            advised = float(match.group(1))
+
+            grid = self._decimal_grid(canonical.low, canonical.high, advised)
+            if canonical.is_integer:
+                grid = [int(point) for point in grid]
+            offenders.extend(
+                f"{name}: advised {advised:g} apart, still warned: {message}"
+                for message in self._warnings_for(
+                    {"model": ["gpt-4o-mini", "gpt-4o"], name: grid}
+                )
+            )
+
+        assert offenders == [], "\n".join(offenders)
+
+    def test_the_mainstream_top_p_pair_is_not_called_one_configuration(self) -> None:
+        """``top_p: [0.9, 0.95]`` sits exactly at the recommended 0.05."""
+        messages = self._warnings_for(
+            {"model": ["gpt-4o-mini", "gpt-4o"], "top_p": [0.9, 0.95]}
+        )
+
+        assert not any(self._CLOSENESS_MARKER in m for m in messages), messages
+
+    @pytest.mark.parametrize(
+        ("param_name", "values"),
+        [
+            # 0.3 - 0.1 is 0.19999999999999998, exactly the 20% coverage floor.
+            ("temperature", [0.1, 0.2, 0.3]),
+            # 0.7 - 0.3 is 0.39999999999999997, 20% of the 0-2 penalty range.
+            ("frequency_penalty", [0.3, 0.5, 0.7]),
+        ],
+    )
+    def test_a_sweep_exactly_at_the_coverage_floor_is_silent(
+        self, param_name: str, values: list[float]
+    ) -> None:
+        """The same representation trap on the coverage threshold."""
+        messages = self._warnings_for(
+            {"model": ["gpt-4o-mini", "gpt-4o"], param_name: values}
+        )
+
+        assert not any(self._NARROW_SPAN_MARKER in m for m in messages), messages
+
+    def test_values_below_the_suggested_spacing_are_still_reported(self) -> None:
+        """The tolerance is an epsilon, not an amnesty."""
+        messages = self._warnings_for(
+            {"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.70, 0.71]}
+        )
+
+        assert any(self._CLOSENESS_MARKER in m for m in messages), messages
+
+
+class TestTrialBudgetIsReadDefensively:
+    """A budget this diagnostic cannot read is not this diagnostic's to report.
+
+    ``traigent validate-config`` hands ``json.load(...)["max_trials"]`` to the
+    validator untouched, so the value is whatever the config file contained.
+    Comparing a string against a number raised ``TypeError``, which the CLI
+    rendered as "Error reading config file" - a config that validated cleanly
+    before this diagnostic existed suddenly failed to validate at all.
+    """
+
+    _CONFIG_SPACE = {
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.0, 0.5, 1.0],
+    }
+
+    @pytest.mark.parametrize(
+        "max_trials",
+        [
+            "10",
+            "",
+            None,
+            [10],
+            {"n": 10},
+            True,
+            False,
+            0,
+            -5,
+            float("nan"),
+            float("inf"),
+        ],
+    )
+    def test_an_unusable_budget_is_ignored_rather_than_raising(
+        self, max_trials: object
+    ) -> None:
+        result = Validators.validate_configuration_space(
+            self._CONFIG_SPACE, max_trials=max_trials
+        )
+
+        assert result.is_valid
+        assert not any("max_trials=" in w.message for w in result.warnings)
+
+    def test_a_usable_budget_is_still_reported(self) -> None:
+        """The guard must not disarm the check for budgets it can read."""
+        result = Validators.validate_configuration_space(
+            {
+                "model": ["a", "b", "c", "d", "e"],
+                "prompt_style": ["p1", "p2", "p3", "p4"],
+                "temperature": [0.0, 0.5, 1.0],
+            },
+            max_trials=5,
+        )
+
+        assert any(
+            "60 distinct configurations declared but max_trials=5" in w.message
+            for w in result.warnings
+        ), [w.message for w in result.warnings]
+
+    def test_validate_config_cli_accepts_a_non_numeric_max_trials(
+        self, tmp_path: Path
+    ) -> None:
+        """End to end: the regression the reviewer reproduced from the CLI."""
+        from click.testing import CliRunner
+
+        from traigent.cli.main import cli
+
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "configuration_space": self._CONFIG_SPACE,
+                    "objectives": ["accuracy"],
+                    "max_trials": "10",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(cli, ["validate-config", str(config_file)])
+
+        assert result.exit_code == 0, result.output
+        assert "Error reading config file" not in result.output, result.output
+        assert "Configuration validation passed" in result.output, result.output

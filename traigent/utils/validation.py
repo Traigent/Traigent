@@ -14,6 +14,7 @@ developer-friendly and user-friendly.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -644,6 +645,24 @@ class Validators:
     # sample of the space rather than a search of it.
     _OVERSIZED_SPACE_RATIO: float = 4.0
 
+    # Slack applied when a measured quantity is compared against one of the
+    # thresholds above. Every one of those thresholds is a rounded heuristic,
+    # and the quantities are binary floats: ``0.95 - 0.9`` is 0.04999999999999993
+    # while ``0.75 - 0.7`` is 0.050000000000000044, so an exact ``>=`` made a
+    # sweep at the tool's own suggested spacing pass or fail on which pair of
+    # decimals the user happened to write. A diagnostic that fires on a sweep
+    # that already follows its advice cannot be followed, and it teaches users
+    # to ignore the whole warning channel - so anything within this slack of a
+    # threshold counts as meeting it and stays silent.
+    _THRESHOLD_TOLERANCE: float = 1e-9
+
+    @classmethod
+    def _meets_threshold(cls, measured: float, threshold: float) -> bool:
+        """Whether *measured* reaches *threshold*, treating near-equal as equal."""
+        return measured >= threshold or math.isclose(
+            measured, threshold, rel_tol=cls._THRESHOLD_TOLERANCE, abs_tol=0.0
+        )
+
     @staticmethod
     def _validate_list_param(
         result: ValidationResult, param_name: str, param_values: list[Any]
@@ -1070,7 +1089,7 @@ class Validators:
             return
 
         gap, lower, upper = closest
-        if gap >= floor:
+        if cls._meets_threshold(gap, floor):
             return
 
         if canonical.is_integer:
@@ -1121,7 +1140,7 @@ class Validators:
             return  # A single point is already reported as "no optimization possible"
 
         covered = swept / (high - low)
-        if covered >= cls._NARROW_SPAN_FRACTION:
+        if cls._meets_threshold(covered, cls._NARROW_SPAN_FRACTION):
             return
 
         result.add_warning(
@@ -1140,12 +1159,16 @@ class Validators:
         cls,
         result: ValidationResult,
         config_space: dict[str, Any],
-        max_trials: int | None,
+        max_trials: Any,
     ) -> None:
         """Report structurally legal spaces that cannot produce a real comparison.
 
         Every finding is a warning, never an error: the space is runnable, it
         just cannot answer the question the user thinks it asks.
+
+        ``max_trials`` is typed ``Any`` on purpose: the declared contract is an
+        optional int, but the value arrives from a JSON config file the SDK does
+        not control, so this path has to survive whatever it actually holds.
         """
         from traigent.api.parameter_ranges import ParameterRange
         from traigent.utils.discrete_domains import (
@@ -1219,23 +1242,41 @@ class Validators:
         )
 
     @classmethod
+    def _trial_budget(cls, max_trials: Any) -> float | None:
+        """Return *max_trials* as a usable trial count, or None if it is not one.
+
+        ``max_trials`` reaches here straight off a user config file (the CLI
+        hands over ``json.load(...)["max_trials"]`` untouched), so it can be a
+        string, ``None``, a list - anything JSON allows. Comparing such a value
+        against a number raises ``TypeError``, which the CLI turns into "Error
+        reading config file", failing a config that validated fine before this
+        diagnostic existed. A budget this check cannot read is not this check's
+        to complain about: it stays silent and lets the space be validated.
+        """
+        budget = cls._as_number(max_trials)
+        if budget is None or not math.isfinite(budget) or budget <= 0:
+            return None
+        return budget
+
+    @classmethod
     def _report_undersized_budget(
         cls,
         result: ValidationResult,
         total_combinations: int | None,
-        max_trials: int | None,
+        max_trials: Any,
     ) -> None:
         """Warn when max_trials can only reach a fraction of the declared space."""
-        if total_combinations is None or max_trials is None or max_trials <= 0:
+        budget = cls._trial_budget(max_trials)
+        if total_combinations is None or budget is None:
             return
-        if total_combinations <= max_trials * cls._OVERSIZED_SPACE_RATIO:
+        if total_combinations <= budget * cls._OVERSIZED_SPACE_RATIO:
             return
 
         result.add_warning(
             "configuration_space",
             f"{total_combinations} distinct configurations declared but max_trials="
-            f"{max_trials} - the run can reach at most "
-            f"{max_trials / total_combinations:.0%} of them, so a completed run is a "
+            f"{budget:g} - the run can reach at most "
+            f"{budget / total_combinations:.0%} of them, so a completed run is a "
             "sample of the space, not a search of what you declared",
             suggestions=[
                 f"Raise max_trials, or shrink the space so it fits the budget "

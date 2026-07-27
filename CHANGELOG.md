@@ -38,6 +38,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `configuration_space` shipped under `examples/` is checked against this in
   the test suite.
 
+  Both thresholds are compared with a tolerance, so following the tool's own
+  advice silences the tool. The thresholds are rounded heuristics and the
+  quantities measured against them are binary floats: `0.95 - 0.9` is
+  `0.04999999999999993` while `0.75 - 0.7` is `0.050000000000000044`, so an
+  exact `>=` flagged ten of the twenty adjacent `temperature` pairs spaced at
+  the 0.05 the diagnostic itself recommends and stayed silent on the other ten
+  — `top_p: [0.9, 0.95]`, a mainstream sweep, was one of the ten told its two
+  values were "the same configuration in practice". A sweep at or numerically
+  indistinguishable from the recommended spacing is now always silent, for both
+  continuous and whole-numbered knobs, and the same tolerance applies to the
+  coverage threshold.
+
+  A `max_trials` the budget check cannot read is ignored instead of compared.
+  `traigent validate-config` hands `max_trials` over exactly as the JSON config
+  file spelled it, so a string, list or `null` reached a `<=` against an int and
+  raised `TypeError`, which the CLI reported as "Error reading config file" — a
+  config that validated cleanly before this diagnostic existed stopped
+  validating at all. Unreadable budgets (non-numeric, boolean, non-positive,
+  NaN, infinite) now leave the space to be validated in silence.
+
 ### Security
 
 - `@observe` exception metadata now honors the content gate. `error_message`
