@@ -16,13 +16,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`temperature: [0.0001, 0.0002]`), duplicate values inside one knob
   (`[0.7, 0.7, 0.9]` claims three points and has two), a space far larger than
   the trial budget when `max_trials` is supplied, a multi-parameter space in
-  which only one parameter actually varies, and a knob sweeping a trivial
-  fraction of its canonical range. Each message states what the finding costs
-  the reader ("these two values are the same configuration in practice") rather
-  than only flagging it as unusual. Canonical per-knob ranges are read from the
-  shipped `config_generator` range presets, so the checks cannot drift from
-  them. `traigent validate-config` passes the config file's `max_trials`
+  which only one parameter actually varies, and a continuous knob sweeping a
+  trivial fraction of its canonical range. Each message states what the finding
+  costs the reader ("these two values are the same configuration in practice")
+  rather than only flagging it as unusual. Canonical per-knob ranges are read
+  from the shipped `config_generator` range presets, so the checks cannot drift
+  from them. `traigent validate-config` passes the config file's `max_trials`
   through, so the budget warning is reachable today.
+
+  The two value-judgement checks are deliberately scoped so they cannot fire on
+  a space that is genuinely varied. For a whole-numbered knob the smallest gap
+  that exists is 1, so values 1 apart are never called indistinguishable —
+  `top_k: [1, 2, 3]` is greedy decoding versus not, and any suggested sweep for
+  such a knob is quoted as whole numbers. Coverage is only measured against a
+  continuous preset, which bounds the whole domain; an integer preset is a
+  suggested sweep, and `max_tokens` is legitimately 256-4096 for long-form
+  generation and 80-120 for one-line answers. `seed` is exempt from both: the
+  distance between two seeds carries no information, since sweeping seeds
+  measures run-to-run variance rather than configuration quality. Repeated
+  values are still reported for every knob, `seed` included. Every literal
+  `configuration_space` shipped under `examples/` is checked against this in
+  the test suite.
 
 ### Security
 

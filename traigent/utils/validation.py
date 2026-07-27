@@ -141,14 +141,42 @@ class ValidationResult:
 
 # ===== Canonical Knob Ranges =====
 
+# Preset range type for a knob whose values are whole numbers. The finest gap
+# such a knob can express is 1, whatever its range.
+_INTEGER_PRESET_RANGE_TYPE = "IntRange"
+
 # Preset range types that describe a numeric interval. Categorical presets
 # (Choices) have no span to compare a declared sweep against.
-_NUMERIC_PRESET_RANGE_TYPES: frozenset[str] = frozenset({"Range", "IntRange"})
+_NUMERIC_PRESET_RANGE_TYPES: frozenset[str] = frozenset(
+    {"Range", _INTEGER_PRESET_RANGE_TYPE}
+)
+
+
+@dataclass(frozen=True)
+class _KnobRange:
+    """The span a knob is normally tuned over, and whether it is whole-numbered."""
+
+    low: float
+    high: float
+    is_integer: bool
+
+    @property
+    def bounds_whole_domain(self) -> bool:
+        """Whether the range is everything the knob can be, not a suggested sweep.
+
+        A continuous preset bounds a knob that has nowhere else to go:
+        ``temperature`` is 0-1, ``top_p`` is a probability. An integer preset is
+        a suggested sweep instead - ``max_tokens`` is 256-4096 for long-form
+        generation and 80-120 for one-line answers, both entirely legitimate -
+        so measuring a declared sweep against it would report the preset rather
+        than the configuration space.
+        """
+        return not self.is_integer
 
 
 @lru_cache(maxsize=1)
-def _canonical_knob_ranges() -> dict[str, tuple[float, float]]:
-    """Canonical (low, high) per knob, read from the config-generator presets.
+def _canonical_knob_ranges() -> dict[str, _KnobRange]:
+    """Canonical range per knob, read from the config-generator presets.
 
     Reused rather than re-derived so the degenerate-space diagnostics cannot
     drift from the ranges the SDK already publishes. Imported lazily because
@@ -156,13 +184,13 @@ def _canonical_knob_ranges() -> dict[str, tuple[float, float]]:
     """
     from traigent.config_generator.presets import range_presets
 
-    ranges: dict[str, tuple[float, float]] = {}
+    ranges: dict[str, _KnobRange] = {}
     for canonical_name in range_presets.all_canonical_names():
         preset = range_presets.get_preset_range(canonical_name)
-        if (
-            preset is None
-            or preset.get("range_type") not in _NUMERIC_PRESET_RANGE_TYPES
-        ):
+        if preset is None:
+            continue
+        range_type = preset.get("range_type")
+        if range_type not in _NUMERIC_PRESET_RANGE_TYPES:
             continue
         kwargs = preset.get("kwargs", {})
         low = kwargs.get("low")
@@ -171,7 +199,11 @@ def _canonical_knob_ranges() -> dict[str, tuple[float, float]]:
             continue
         if high <= low:
             continue
-        ranges[canonical_name] = (float(low), float(high))
+        ranges[canonical_name] = _KnobRange(
+            low=float(low),
+            high=float(high),
+            is_integer=range_type == _INTEGER_PRESET_RANGE_TYPE,
+        )
     return ranges
 
 
@@ -587,16 +619,22 @@ class Validators:
         "log",
     }
 
-    # Two values closer than this fraction of a knob's canonical range are the
-    # same configuration in practice.
+    # Two values of a continuous knob closer than this fraction of its canonical
+    # range are the same configuration in practice. Deliberately not applied to
+    # whole-numbered knobs, where 1 is the finest gap that exists at all.
     _RESOLUTION_FLOOR_FRACTION: float = 0.02
 
-    # Per-knob resolution floors in the knob's own units, for knobs whose
-    # canonical fraction is too fine to be meaningful.
+    # Per-knob resolution floors in the knob's own units, for continuous knobs
+    # whose canonical fraction is too fine to be meaningful.
     _RESOLUTION_FLOOR_OVERRIDES: dict[str, float] = {
         "temperature": 0.05,
         "top_p": 0.05,
     }
+
+    # Knobs whose values are labels rather than settings: sweeping them measures
+    # run-to-run variance, so the distance between two of them carries no
+    # information and no closeness check applies.
+    _VARIANCE_ONLY_KNOBS: frozenset[str] = frozenset({"seed"})
 
     # A sweep covering less than this fraction of a knob's canonical range
     # cannot tell the user whether the knob matters.
@@ -931,14 +969,19 @@ class Validators:
     @classmethod
     def _resolution_floor(cls, param_name: str) -> float | None:
         """Smallest difference that can matter for *param_name*, if known."""
-        override = cls._RESOLUTION_FLOOR_OVERRIDES.get(param_name)
-        if override is not None:
-            return override
         canonical = _canonical_knob_ranges().get(param_name)
         if canonical is None:
             return None
-        low, high = canonical
-        return (high - low) * cls._RESOLUTION_FLOOR_FRACTION
+        if canonical.is_integer:
+            # 1 is the finest gap a whole-numbered knob can express, so any two
+            # values that far apart are genuinely two configurations - top_k=1
+            # is greedy decoding and top_k=2 is not. Scaling the floor to the
+            # canonical range here would make the check unfalsifiable.
+            return 1.0
+        override = cls._RESOLUTION_FLOOR_OVERRIDES.get(param_name)
+        if override is not None:
+            return override
+        return (canonical.high - canonical.low) * cls._RESOLUTION_FLOOR_FRACTION
 
     @classmethod
     def _report_duplicate_values(
@@ -1003,6 +1046,15 @@ class Validators:
             return None
         return step, span[0], span[0] + step
 
+    @staticmethod
+    def _spaced_example(canonical: _KnobRange) -> str:
+        """A three-point sweep of *canonical*, kept whole for integer knobs."""
+        midpoint = (canonical.low + canonical.high) / 2
+        if canonical.is_integer:
+            points = sorted({int(canonical.low), int(midpoint), int(canonical.high)})
+            return repr(points)
+        return f"[{canonical.low:g}, {midpoint:g}, {canonical.high:g}]"
+
     @classmethod
     def _report_indistinguishable_values(
         cls, result: ValidationResult, param_name: str, param_values: Any
@@ -1021,17 +1073,33 @@ class Validators:
         if gap >= floor:
             return
 
-        low, high = canonical
+        if canonical.is_integer:
+            # Only reachable for fractional values: two whole numbers are always
+            # at least 1 apart, which is exactly the floor.
+            reason = (
+                f"below the 1 that separates two whole values of {param_name}, "
+                "a whole-number setting"
+            )
+            fix = (
+                "Use whole numbers, at least 1 apart, "
+                f"e.g. {cls._spaced_example(canonical)}"
+            )
+        else:
+            reason = (
+                f"far below the ~{floor:g} that changes behaviour across "
+                f"{param_name}'s usual {canonical.low:g}-{canonical.high:g} range"
+            )
+            fix = (
+                f"Space the values at least {floor:g} apart, "
+                f"e.g. {cls._spaced_example(canonical)}"
+            )
+
         result.add_warning(
             f"configuration_space.{param_name}",
-            f"{lower:g} and {upper:g} differ by {gap:g}, far below the ~{floor:g} that "
-            f"changes behaviour across {param_name}'s usual {low:g}-{high:g} range - "
-            "these two values are the same configuration in practice, so the trial "
-            "comparing them measures noise rather than the parameter",
-            suggestions=[
-                f"Space the values at least {floor:g} apart, "
-                f"e.g. [{low:g}, {(low + high) / 2:g}, {high:g}]",
-            ],
+            f"{lower:g} and {upper:g} differ by {gap:g}, {reason} - these two values "
+            "are the same configuration in practice, so the trial comparing them "
+            "measures noise rather than the parameter",
+            suggestions=[fix],
         )
 
     @classmethod
@@ -1040,14 +1108,14 @@ class Validators:
     ) -> None:
         """Warn when a knob only sweeps a sliver of its canonical range."""
         canonical = _canonical_knob_ranges().get(param_name)
-        if canonical is None:
+        if canonical is None or not canonical.bounds_whole_domain:
             return
         span = cls._swept_span(param_values)
         if span is None:
             return
 
         swept_low, swept_high = span
-        low, high = canonical
+        low, high = canonical.low, canonical.high
         swept = swept_high - swept_low
         if swept <= 0:
             return  # A single point is already reported as "no optimization possible"
@@ -1094,9 +1162,14 @@ class Validators:
                 else raw_values
             )
 
+            # A repeat is the same configuration again whatever the knob means,
+            # so duplicates are reported for every parameter. The other two ask
+            # what the distance between values is worth, which only some knobs
+            # can answer.
             duplicates = cls._report_duplicate_values(result, param_name, param_values)
-            cls._report_indistinguishable_values(result, param_name, param_values)
-            cls._report_narrow_span(result, param_name, param_values)
+            if param_name not in cls._VARIANCE_ONLY_KNOBS:
+                cls._report_indistinguishable_values(result, param_name, param_values)
+                cls._report_narrow_span(result, param_name, param_values)
 
             cardinality = discrete_cardinality_for_config_param(param_values)
             if cardinality is None:
