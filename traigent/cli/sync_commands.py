@@ -43,6 +43,26 @@ def _emit_session_warnings(result: dict[str, Any]) -> None:
         click.echo(f"   ⚠️  {warning}")
 
 
+def _synced_session_id(result: dict[str, Any]) -> str:
+    """Return the id SyncManager actually synced, or raise if it did not report one.
+
+    Downstream lookups (``--clean`` verification and cleanup) must key off the id
+    the sync actually wrote, never the raw CLI argument. Substituting a default
+    would silently reintroduce issue #2030: the sync_state lookup misses, nothing
+    is verified, ``--clean`` deletes nothing and still exits 0. A result that
+    claims success without a usable ``session_id`` is a contract violation, so it
+    fails loudly here instead.
+    """
+    sid = result.get("session_id")
+    if not isinstance(sid, str) or not sid:
+        raise ValueError(
+            "Sync result reported status "
+            f"{result.get('status')!r} but no usable 'session_id' (got {sid!r}); "
+            "refusing to verify or clean a run whose synced id is unknown."
+        )
+    return sid
+
+
 def _resolve_api_key(api_key: str | None) -> str | None:
     if api_key:
         return api_key
@@ -148,7 +168,9 @@ def sync_command(
             else:
                 _emit_session_result(result, dry_run=dry_run)
             if result.get("status") in {"success", "already_synced"}:
-                synced_ids.append(session_id)
+                # Record the id SyncManager actually synced, not the raw argument:
+                # downstream lookups (--clean verification) must use the resolved id.
+                synced_ids.append(_synced_session_id(result))
             elif not dry_run:
                 # A real sync that did not succeed is a failure — exit non-zero
                 # so callers (CI, scripts) do not assume the session was uploaded.
@@ -167,7 +189,7 @@ def sync_command(
                 for session_result in result["session_results"]:
                     _emit_session_result(session_result, dry_run=dry_run)
             synced_ids = [
-                r["session_id"]
+                _synced_session_id(r)
                 for r in result["session_results"]
                 if r.get("status") in {"success", "already_synced"}
             ]
