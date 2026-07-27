@@ -59,16 +59,23 @@ def _synced_session_id(result: dict[str, Any]) -> str:
     claims success without a usable ``session_id`` is a contract violation, so it
     fails loudly here instead.
 
-    A whitespace-only id is just as unusable as an empty one — ``load_session("   ")``
-    misses and ``cleanup_after_sync`` has nothing to delete — so it is rejected too,
-    not silently stripped: the stripped value is not an id the sync ever wrote.
+    The accepted contract is exact: a ``str`` that is non-empty and equal to its own
+    ``strip()``. Anything else — absent, ``None``, non-``str``, empty, whitespace-only,
+    or surrounded by whitespace — is rejected. Session ids are machine-generated
+    (``local_storage.py``: ``f"{timestamp}_{safe_function}_{uuid4().hex[:8]}"``) and can
+    never legitimately carry leading or trailing whitespace, so a padded id is always a
+    contract violation. It is rejected rather than stripped, in either direction:
+    ``load_session(" resolved-1 ")`` misses the real ``resolved-1`` row (``--clean``
+    then deletes nothing and still exits 0), while silently stripping it would return an
+    id the sync never actually wrote.
     """
     sid = result.get("session_id")
-    if not isinstance(sid, str) or not sid.strip():
+    if not isinstance(sid, str) or not sid.strip() or sid != sid.strip():
         raise ValueError(
             "Sync result reported status "
             f"{result.get('status')!r} but no usable 'session_id' (got {sid!r}); "
-            "refusing to verify or clean a run whose synced id is unknown."
+            "a session id must be a non-empty string with no surrounding whitespace. "
+            "Refusing to verify or clean a run whose synced id is unknown."
         )
     return sid
 

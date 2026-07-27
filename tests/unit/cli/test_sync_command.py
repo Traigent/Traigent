@@ -244,12 +244,19 @@ def test_sync_clean_skips_when_persisted_state_is_not_synced(label, sync_state):
 # synced id is unknowable, so #2030's silent no-op must become a loud failure.
 # Whitespace-only ids are unusable for the same reason "" is — load_session("   ")
 # misses — but they are truthy, so a bare ``not sid`` check waves them through.
+# Padded ids ("  resolved-1 ") are the same bug one step along: they survive a
+# ``not sid.strip()`` check, then load_session(" resolved-1 ") misses the real
+# ``resolved-1`` row. Generated ids (timestamp_function_uuid) never carry surrounding
+# whitespace, so a padded one is always a contract violation, not a value to strip.
 _UNUSABLE_ID_RESULTS = [
     ("absent", {}),
     ("none", {"session_id": None}),
     ("empty", {"session_id": ""}),
     ("spaces", {"session_id": "   "}),
     ("tab-newline", {"session_id": "\t\n"}),
+    ("leading-space", {"session_id": " resolved-1"}),
+    ("trailing-space", {"session_id": "resolved-1 "}),
+    ("both-padded", {"session_id": " resolved-1 "}),
 ]
 
 
