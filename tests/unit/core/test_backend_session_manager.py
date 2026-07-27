@@ -3280,6 +3280,81 @@ class TestAttemptedTrialBookkeeping:
         )
         assert backend_session_manager.backend_degraded is True
 
+    @pytest.mark.asyncio
+    async def test_retry_of_the_same_trial_reuses_its_slot_and_leaves_nothing_missing(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        monkeypatch,
+    ):
+        """Attempt-keyed bookkeeping is only safe because retries reuse a slot.
+
+        Keying `_attempted_trials` on the backend-minted id would strand a
+        stale, never-acknowledged entry if a retry of the SAME logical trial
+        minted a SECOND backend id — the run would stay "missing a trial"
+        forever and hand a healthy connected run a sync id, duplicating the
+        experiment on import. It does not: `_acquire_backend_trial_id` reuses
+        the id already recorded in `_started_trials`, because
+        `_log_trial_to_backend` rebinds `trial_result.trial_id` to the backend
+        id IN PLACE on the shared object before recording the attempt.
+
+        This test exists because two independent post-PR reviewers disagreed
+        about that behaviour (one ruled the stale-attempt defect out by
+        executing the path, the other reported it live from a static reading),
+        so the invariant is pinned here rather than left to argument.
+
+        If `_acquire_backend_trial_id` ever stops reusing slots, this test
+        fails FIRST — and the fix is not to relax it: attempt-vs-ack
+        bookkeeping would then have to be keyed on a stable logical trial id
+        instead of the backend-minted one.
+        """
+        # Attempt A takes the transient BE#1194 `None` skip; the retry of the
+        # very same TrialResult object is acknowledged.
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            side_effect=[None, True]
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        # The retry reused attempt A's slot instead of burning a second one.
+        assert mock_backend_client.request_trial_slot.await_count == 1
+        assert backend_session_manager._attempted_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert backend_session_manager._acknowledged_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+
+        # The user-visible consequence: an otherwise-healthy connected run gets
+        # NO sync id, even though a local record exists — nothing to re-import.
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        backend_session_manager._traigent_config.execution_mode = "hybrid"
+        backend_session_manager._no_egress = False
+        backend_session_manager._backend_tracking_enabled = True
+        backend_session_manager._runtime_degraded = False
+        backend_session_manager._remote_completed_sessions = set()
+        assert backend_session_manager._egress_disabled() is False
+        storage = Mock()
+        storage.load_session = Mock(return_value=Mock())
+        backend_session_manager._local_storage = Mock(return_value=storage)
+
+        assert (
+            backend_session_manager.syncable_local_session_id("test-session-id") is None
+        )
+
     def test_missing_attribute_reads_as_nothing_attempted(
         self, backend_session_manager
     ):
