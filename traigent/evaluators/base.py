@@ -252,7 +252,6 @@ def _dataset_not_found_message(
 def _resolve_relative_to_cwd(
     *,
     path_obj: Path,
-    source: str,
     dataset_root: Path,
 ) -> Path | None:
     """Resolve a relative dataset path against the cwd, staying inside the root.
@@ -267,14 +266,27 @@ def _resolve_relative_to_cwd(
     the caller keeps raising its dataset-root diagnostic. Containment is checked
     on the symlink-resolved path, so this can never widen what may be read
     beyond the trusted root.
+
+    This helper is strictly additive and must never raise: it is only ever
+    reached after the dataset-root candidate already failed, and the caller owns
+    the resulting diagnostic. ``resolve(strict=True)`` walks the *cwd* tree,
+    which the caller did not choose, so it can fail for reasons beyond ENOENT -
+    ENOTDIR when a path component is a file, EACCES when a component is
+    unreadable, ELOOP on a symlink cycle. Every such failure means "the
+    cwd-relative spelling is unusable", which is exactly ``None``; letting one
+    escape would turn a structured ``ValidationError`` into a raw ``OSError``
+    and break the callers that only catch ``ValidationError`` (the MCP
+    ``validate_dataset`` tool and ``traigent validate-dataset``).
     """
 
     try:
         resolved = (Path.cwd() / path_obj).resolve(strict=True)
-    except FileNotFoundError:
+    except OSError:
+        # FileNotFoundError (ENOENT) plus every other resolution failure in the
+        # cwd tree: ENOTDIR, EACCES, ELOOP, ENAMETOOLONG.
         return None
-    except RuntimeError as exc:  # pragma: no cover - symlink loops
-        raise ValidationError(f"Invalid dataset path: {source}") from exc
+    except RuntimeError:  # pragma: no cover - legacy symlink-loop signal
+        return None
 
     try:
         resolved.relative_to(dataset_root)
@@ -289,10 +301,16 @@ def _resolve_dataset_source(
 ) -> tuple[Path, DatasetRegistryEntry | None]:
     """Resolve a dataset reference to an absolute path.
 
-    Relative references are resolved against the dataset root first. When that
-    misses, they are retried against the current working directory and accepted
-    only if they still land under the dataset root (see
+    A relative path the *caller* passed is resolved against the dataset root
+    first; when that misses it is retried against the current working directory
+    and accepted only if it still lands under the dataset root (see
     ``_resolve_relative_to_cwd``).
+
+    Registry-resolved references are deliberately excluded from that retry. A
+    registry is an admin-curated deployment artifact, so a given key must name
+    the same file from every launch directory; letting the cwd participate would
+    make an entry resolve from one directory and fail from another. Registry
+    paths therefore keep the single, deterministic dataset-root join.
 
     Security: All dataset paths must reside under the configured dataset root.
     When TRAIGENT_DATASET_ROOT is not set, the current working directory is
@@ -308,14 +326,17 @@ def _resolve_dataset_source(
     try:
         resolved_path = candidate.resolve(strict=True)
     except FileNotFoundError as exc:
+        # The cwd retry applies only to a relative path the caller passed
+        # directly. Absolute paths are used as-is, and registry entries must
+        # resolve identically from every launch directory.
+        use_cwd_fallback = not is_absolute_path and registry_entry is None
         fallback_path = (
-            None
-            if is_absolute_path
-            else _resolve_relative_to_cwd(
+            _resolve_relative_to_cwd(
                 path_obj=path_obj,
-                source=source,
                 dataset_root=dataset_root,
             )
+            if use_cwd_fallback
+            else None
         )
         if fallback_path is None:
             raise ValidationError(

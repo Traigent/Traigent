@@ -633,6 +633,38 @@ async def test_validate_dataset_missing_dataset_root_is_rejected(
     assert validate["code"] == "path_rejected"
 
 
+async def test_validate_dataset_non_enoent_resolution_error_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client-supplied path can fail resolution with more than ENOENT.
+
+    ``notadir.jsonl`` is a file, so resolving ``notadir.jsonl/eval.jsonl``
+    raises NotADirectoryError rather than FileNotFoundError. The tool must
+    still answer with a structured failure instead of propagating the OSError
+    out of the tool call.
+    """
+    run_dir = tmp_path / "run"
+    root = run_dir / "traigent-runs"
+    root.mkdir(parents=True)
+    (run_dir / "notadir.jsonl").write_text(
+        '{"input": "x", "output": "y"}\n', encoding="utf-8"
+    )
+
+    monkeypatch.chdir(run_dir)
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(root))
+
+    async with mcp_session() as session:
+        validate = await call_tool(
+            session,
+            "validate_dataset",
+            {"path": "notadir.jsonl/eval.jsonl"},
+        )
+
+    assert validate["ok"] is False
+    assert validate["code"] == "path_rejected"
+
+
 async def test_run_optimization_real_refused_when_mock_mode_forced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
